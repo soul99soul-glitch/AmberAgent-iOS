@@ -736,7 +736,13 @@ struct NativeTimelineScrollViewResolver: UIViewRepresentable {
 
     func updateUIView(_ view: UIView, context: Context) {
         context.coordinator.onDismissKeyboard = onDismissKeyboard
-        if context.coordinator.hasResolvedScrollView {
+        if let scrollView = context.coordinator.resolvedScrollView {
+            // Resolver 观察和 driver 挂载的生命周期独立；可见性变化或返回页面后仍需通知当前 owner。
+            // 回调可能发布消息锚点状态，保持在 UIViewRepresentable 更新事务之外执行。
+            DispatchQueue.main.async { [weak scrollView] in
+                guard let scrollView else { return }
+                onResolve(scrollView)
+            }
             context.coordinator.sampleMetricsIfChanged()
             return
         }
@@ -753,7 +759,7 @@ struct NativeTimelineScrollViewResolver: UIViewRepresentable {
         private let onMetricsChanged: () -> Void
         var onDismissKeyboard: (() -> Void)?
         private weak var observedScrollView: UIScrollView?
-        var hasResolvedScrollView: Bool { observedScrollView != nil }
+        var resolvedScrollView: UIScrollView? { observedScrollView }
         private weak var tapGestureRecognizer: UITapGestureRecognizer?
         private var displayLink: CADisplayLink?
         private var monitoringDeadline: CFTimeInterval?

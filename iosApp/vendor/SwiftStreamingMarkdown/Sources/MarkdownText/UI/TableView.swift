@@ -34,6 +34,7 @@ struct TableView: View {
   @Environment(\.markdownAnimateInitialText) var animateInitialText
   @Environment(\.markdownController) var controller: MarkdownController?
   @Environment(\.markdownUsesLayerBackedTableAnimation) var usesLayerBackedTableAnimation
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   let headings: [AttributedString]
   let rows: [[RowContent]]
@@ -93,7 +94,13 @@ struct TableView: View {
   @ViewBuilder
   var gridView: some View {
     VStack(alignment: .leading, spacing: 0) {
-      TableLayout(columnCount: headings.count, columnMaxWidths: self.actualColumnMaxWidths()) {
+      TableLayout(
+        columnCount: headings.count,
+        columnMaxWidths: self.actualColumnMaxWidths(),
+        rowContents: [headings.map { RowContent.text(string: $0) }] + rows,
+        cellPadding: CGSize(width: config.tableCellHorizontalPadding, height: config.tableCellVerticalPadding),
+        dynamicTypeSize: dynamicTypeSize
+      ) {
         ForEach(0..<headings.count, id: \.self) { colIdx in
           headerView(colIdx: colIdx)
         }
@@ -462,6 +469,9 @@ struct TableLayout: Layout {
   struct CacheData {
     var columnCount: Int = 0
     var columnMaxWidths: [CGFloat] = []
+    var rowContents: [[RowContent]] = []
+    var cellPadding: CGSize = .zero
+    var dynamicTypeSize: DynamicTypeSize = .large
     var cellUnconstrainedWidths: [CGFloat] = []
     var columnWidths: [CGFloat] = []
     var rowHeights: [CGFloat] = []
@@ -469,6 +479,9 @@ struct TableLayout: Layout {
 
   let columnCount: Int
   let columnMaxWidths: [CGFloat]
+  let rowContents: [[RowContent]]
+  let cellPadding: CGSize
+  let dynamicTypeSize: DynamicTypeSize
 
   private let defaultRowHeight: CGFloat = 44
 
@@ -487,23 +500,27 @@ struct TableLayout: Layout {
     let totalCells = rowCount * columnCount
     let previousRowCount = cache.rowHeights.count
 
-    if cache.columnCount == columnCount,
-       cache.columnMaxWidths == columnMaxWidths,
-       previousRowCount > 0,
-       rowCount == previousRowCount,
-       cache.cellUnconstrainedWidths.count == totalCells {
-      return
-    }
-
-    let canIncrementalAppend = cache.columnCount == columnCount
+    let canReuseMeasurements = cache.columnCount == columnCount
       && cache.columnMaxWidths == columnMaxWidths
+      && cache.cellPadding == cellPadding
+      && cache.dynamicTypeSize == dynamicTypeSize
       && previousRowCount > 0
-      && rowCount > previousRowCount
+      && cache.rowContents.count == previousRowCount
       && cache.cellUnconstrainedWidths.count == previousRowCount * columnCount
 
-    // Preserve settled rows 0 ..< max(0, previousRowCount - 1) and only re-measure the
-    // previous trailing row (in case streaming completed a partial row) plus newly appended rows.
-    let preservedRowCount = canIncrementalAppend ? max(0, previousRowCount - 1) : 0
+    // A partial trailing row can grow without adding a row. Reuse only the
+    // equal content prefix, including attributed fonts, rather than row counts.
+    var preservedRowCount = 0
+    if canReuseMeasurements {
+      let sharedRowCount = min(previousRowCount, rowCount)
+      while preservedRowCount < sharedRowCount,
+            cache.rowContents[preservedRowCount] == rowContents[preservedRowCount] {
+        preservedRowCount += 1
+      }
+      if preservedRowCount == rowCount, rowCount == previousRowCount {
+        return
+      }
+    }
     let preservedCellCount = preservedRowCount * columnCount
 
     var cellUnconstrainedWidths: [CGFloat]
@@ -532,7 +549,7 @@ struct TableLayout: Layout {
       }
     }
 
-    let columnsChanged = !canIncrementalAppend || columnWidths != cache.columnWidths
+    let columnsChanged = !canReuseMeasurements || columnWidths != cache.columnWidths
     let heightStartRow = columnsChanged ? 0 : preservedRowCount
 
     var rowHeights: [CGFloat]
@@ -557,6 +574,9 @@ struct TableLayout: Layout {
 
     cache.columnCount = columnCount
     cache.columnMaxWidths = columnMaxWidths
+    cache.rowContents = rowContents
+    cache.cellPadding = cellPadding
+    cache.dynamicTypeSize = dynamicTypeSize
     cache.cellUnconstrainedWidths = cellUnconstrainedWidths
     cache.columnWidths = columnWidths
     cache.rowHeights = rowHeights

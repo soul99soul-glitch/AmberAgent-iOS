@@ -1,12 +1,14 @@
 import Combine
 import SwiftUI
 import XCTest
+@testable import SwiftStreamingMarkdown
 @testable import iosApp
 
 @MainActor
 final class ChatStreamingTableLayoutTests: XCTestCase {
     private final class Stream: ObservableObject {
         @Published var text = ""
+        @Published var fontPointSize: CGFloat = 17
     }
 
     private struct Fixture: View {
@@ -65,6 +67,85 @@ final class ChatStreamingTableLayoutTests: XCTestCase {
     private func scrollView(in view: UIView) -> UIScrollView? {
         if let scroll = view as? UIScrollView, !(scroll is UITextView) { return scroll }
         return view.subviews.lazy.compactMap { self.scrollView(in: $0) }.first
+    }
+
+    func testStreamingLastRowGrowthRemeasuresWithoutAddingRows() async throws {
+        let stream = Stream()
+        let prefix = "| 方案 | 说明 |\n| --- | --- |\n| A | 短"
+        stream.text = prefix
+        let (host, window) = try makeHostedWindow(Fixture(stream: stream))
+        defer { HostedFixture(host: host, window: window).tearDown() }
+        await settleLiveTable(in: host)
+        let originalTable = try XCTUnwrap(scrollView(in: host.view))
+        let originalHeight = originalTable.frame.height
+
+        stream.text = prefix + String(repeating: "逐渐追加的说明需要换行显示。", count: 12) + " |"
+        await settleLiveTable(in: host)
+
+        let expectedStream = Stream()
+        expectedStream.text = stream.text
+        let (expectedHost, expectedWindow) = try makeHostedWindow(Fixture(stream: expectedStream))
+        defer { HostedFixture(host: expectedHost, window: expectedWindow).tearDown() }
+        await settleLiveTable(in: expectedHost)
+        let grownTable = try XCTUnwrap(scrollView(in: host.view))
+        let expectedTable = try XCTUnwrap(scrollView(in: expectedHost.view))
+
+        XCTAssertTrue(originalTable === grownTable, "同一表格尾行增长应复用表格视图")
+        XCTAssertGreaterThan(grownTable.frame.height, originalHeight + 20, "尾行追加长文本必须增加行高")
+        XCTAssertEqual(grownTable.contentSize.width, expectedTable.contentSize.width, accuracy: 0.5)
+        XCTAssertEqual(grownTable.frame.height, expectedTable.frame.height, accuracy: 0.5,
+                       "同一行增量增长后的布局必须等于直接渲染最终文本")
+    }
+
+    private struct TableFontFixture: View {
+        @ObservedObject var stream: Stream
+
+        private func styled(_ text: String) -> NSMutableAttributedString {
+            NSMutableAttributedString(string: text, attributes: [.font: UIFont.systemFont(ofSize: stream.fontPointSize)])
+        }
+
+        var body: some View {
+            TableView(headings: [styled("方案"), styled("说明")], rows: [[styled("A"), styled(stream.text)]])
+                .frame(width: 361)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(16)
+                .frame(maxHeight: .infinity, alignment: .top)
+        }
+    }
+
+    func testTableRemeasuresWhenCellFontChanges() async throws {
+        let stream = Stream()
+        stream.text = "一段需要跟随字号设置重新测量行高的说明文字。"
+        let (host, window) = try makeHostedWindow(TableFontFixture(stream: stream))
+        defer { HostedFixture(host: host, window: window).tearDown() }
+        await settleLiveTable(in: host)
+        let originalTable = try XCTUnwrap(scrollView(in: host.view))
+        let originalHeight = originalTable.frame.height
+
+        stream.fontPointSize = 32
+        await settleLiveTable(in: host)
+
+        let expectedStream = Stream()
+        expectedStream.text = stream.text
+        expectedStream.fontPointSize = stream.fontPointSize
+        let (expectedHost, expectedWindow) = try makeHostedWindow(TableFontFixture(stream: expectedStream))
+        defer { HostedFixture(host: expectedHost, window: expectedWindow).tearDown() }
+        await settleLiveTable(in: expectedHost)
+        let resizedTable = try XCTUnwrap(scrollView(in: host.view))
+        let expectedTable = try XCTUnwrap(scrollView(in: expectedHost.view))
+
+        XCTAssertTrue(originalTable === resizedTable, "字号变化不应通过重建表格掩盖缓存失效")
+        XCTAssertGreaterThan(resizedTable.frame.height, originalHeight + 10)
+        XCTAssertEqual(resizedTable.contentSize.width, expectedTable.contentSize.width, accuracy: 0.5)
+        XCTAssertEqual(resizedTable.frame.height, expectedTable.frame.height, accuracy: 0.5)
+    }
+
+    private func settleLiveTable(in host: UIHostingController<AnyView>) async {
+        // Live table parsing and its text entrance have separate throttles.
+        for _ in 0..<24 {
+            try? await Task.sleep(for: .milliseconds(16))
+            host.view.layoutIfNeeded()
+        }
     }
 
     // MARK: - Measure cache vs. full-measure equivalence

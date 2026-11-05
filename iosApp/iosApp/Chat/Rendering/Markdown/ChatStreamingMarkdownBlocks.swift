@@ -33,6 +33,7 @@ struct ChatStreamingBlockMarkdownView: View {
         ChatStreamingMarkdownBlockListView(
             controller: controller,
             config: config,
+            liveStreaming: liveStreaming,
             renderCacheNamespace: renderCacheNamespace
         )
             .task(id: ChatStreamingMarkdownBlockParseKey(
@@ -50,19 +51,29 @@ struct ChatStreamingBlockMarkdownView: View {
 private struct ChatStreamingMarkdownBlockListView: View {
     @ObservedObject var controller: ChatStreamingMarkdownBlockController
     let config: SwiftStreamingMarkdown.MarkdownRenderConfig
+    let liveStreaming: Bool
     let renderCacheNamespace: String?
+    @Environment(\.chatPacesStreamingTextBlocks) private var pacesTextBlocks
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: config.blockSpacing) {
             ForEach(controller.blocks) { block in
                 switch block.kind {
                 case .text(let content):
-                    ChatStableStreamingMarkdownView(
-                        text: content,
-                        config: config,
-                        cacheIdentity: renderCacheNamespace.map { "\($0):\(block.id)" }
-                    )
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if pacesTextBlocks {
+                        ChatStreamingRevealPacer(
+                            text: content,
+                            isStreaming: liveStreaming,
+                            reduceMotion: reduceMotion,
+                            initiallyRevealedUTF16Count: controller.initiallyRevealedTextLength(for: block),
+                            pacePendingText: true
+                        ) { revealedText in
+                            textBlock(revealedText, id: block.id)
+                        }
+                    } else {
+                        textBlock(content, id: block.id)
+                    }
                 case .table(let table):
                     // 用 vendor 的真实 Markdown 表格渲染，保留 inline 样式、链接与
                     // shouldAnimateText 淡入；块解析只负责隐藏尚未闭合的尾行。
@@ -76,6 +87,15 @@ private struct ChatStreamingMarkdownBlockListView: View {
                 }
             }
         }
+    }
+
+    private func textBlock(_ text: String, id: String) -> some View {
+        ChatStableStreamingMarkdownView(
+            text: text,
+            config: config,
+            cacheIdentity: renderCacheNamespace.map { "\($0):\(id)" }
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -99,6 +119,19 @@ final class ChatStreamingMarkdownBlockController: ObservableObject {
                 includeTrailingPartialTableRow: includeTrailingPartialTableRow
             )
         }
+    }
+
+    func initiallyRevealedTextLength(for block: ChatStreamingMarkdownBlock) -> Int {
+        guard case .text(let content) = block.kind else { return 0 }
+        // 表格出现前的正文已经由外层推进；切换 owner 时不能重播它。
+        if let index = blocks.firstIndex(where: { $0.id == block.id }),
+           !blocks[..<index].contains(where: { preceding in
+               if case .table = preceding.kind { return true }
+               return false
+           }) {
+            return content.utf16.count
+        }
+        return 0
     }
 
     deinit {

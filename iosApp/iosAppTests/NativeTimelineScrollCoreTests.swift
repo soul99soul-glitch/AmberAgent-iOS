@@ -1,9 +1,103 @@
 import CoreGraphics
+import SwiftUI
 import UIKit
 import XCTest
 @testable import iosApp
 
 final class NativeTimelineScrollCoreTests: XCTestCase {
+    @MainActor
+    private final class ResolverState: ObservableObject {
+        @Published var canAttach: Bool
+        @Published var revision = 0
+        let driver = NativeTimelineScrollDriver()
+        var resolutionCount = 0
+
+        init(canAttach: Bool) {
+            self.canAttach = canAttach
+        }
+    }
+
+    private struct ResolverFixture: View {
+        @ObservedObject var state: ResolverState
+
+        var body: some View {
+            let canAttach = state.canAttach
+            let _ = state.revision
+            ScrollView {
+                Color.clear.frame(height: 1_200)
+                    .background {
+                        NativeTimelineScrollViewResolver(
+                            onResolve: { scrollView in
+                                state.resolutionCount += 1
+                                guard canAttach else { return }
+                                state.driver.attach(scrollView)
+                            },
+                            onMetricsChanged: {}
+                        )
+                    }
+            }
+        }
+    }
+
+    @MainActor
+    func testResolverAttachesWhenSurfaceBecomesVisibleAfterResolution() async throws {
+        let state = ResolverState(canAttach: false)
+        try await withResolvedScrollView(state: state) { host in
+            XCTAssertGreaterThan(state.resolutionCount, 0)
+            XCTAssertFalse(state.driver.isAttached)
+
+            state.canAttach = true
+            await settleResolver(host)
+
+            XCTAssertTrue(state.driver.isAttached, "已解析视图后仍须用最新可见状态挂载 driver")
+        }
+    }
+
+    @MainActor
+    func testResolverReattachesAfterDriverInvalidation() async throws {
+        let state = ResolverState(canAttach: true)
+        try await withResolvedScrollView(state: state) { host in
+            XCTAssertTrue(state.driver.isAttached)
+            state.driver.invalidate()
+            XCTAssertFalse(state.driver.isAttached)
+
+            state.revision += 1
+            await settleResolver(host)
+
+            XCTAssertTrue(state.driver.isAttached, "保留 UIKit 视图时 driver 失效后必须可以重新挂载")
+        }
+    }
+
+    @MainActor
+    private func withResolvedScrollView(
+        state: ResolverState,
+        body: (UIHostingController<ResolverFixture>) async -> Void
+    ) async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let host = UIHostingController(rootView: ResolverFixture(state: state))
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            state.driver.invalidate()
+            window.isHidden = true
+            window.rootViewController = nil
+            previousKeyWindow?.makeKey()
+        }
+        await settleResolver(host)
+        await body(host)
+    }
+
+    @MainActor
+    private func settleResolver(_ host: UIHostingController<ResolverFixture>) async {
+        for _ in 0..<6 {
+            try? await Task.sleep(for: .milliseconds(16))
+            host.view.layoutIfNeeded()
+        }
+    }
+
     private final class InteractionReportingScrollView: UIScrollView {
         var reportsTracking = false
         var reportsDragging = false

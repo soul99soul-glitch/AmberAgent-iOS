@@ -1,5 +1,16 @@
 import SwiftUI
 
+private struct ChatPacesStreamingTextBlocksKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var chatPacesStreamingTextBlocks: Bool {
+        get { self[ChatPacesStreamingTextBlocksKey.self] }
+        set { self[ChatPacesStreamingTextBlocksKey.self] = newValue }
+    }
+}
+
 /// 流式正文的平滑吐字器 + 平滑高度。
 ///
 /// 三个问题一起解决：
@@ -26,6 +37,8 @@ struct ChatStreamingRevealPacer<Content: View>: View {
     let isStreaming: Bool
     /// 无障碍「减弱动态效果」：不做逐字推进，也不做高度过渡。
     let reduceMotion: Bool
+    /// 分块前已显示的正文保持原样；新尾块即使随最终快照到达也需排空。
+    private let initiallyRevealedUTF16Count: Int?
     @ViewBuilder let content: (String) -> Content
 
     @State private var revealedUTF16Count = 0
@@ -44,13 +57,17 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         text: String,
         isStreaming: Bool,
         reduceMotion: Bool,
+        initiallyRevealedUTF16Count: Int? = nil,
+        pacePendingText: Bool = false,
         @ViewBuilder content: @escaping (String) -> Content
     ) {
         self.text = text
         self.isStreaming = isStreaming
         self.reduceMotion = reduceMotion
+        self.initiallyRevealedUTF16Count = initiallyRevealedUTF16Count
         self.content = content
-        let initialPacing = isStreaming && !reduceMotion
+        self._revealedUTF16Count = State(initialValue: initiallyRevealedUTF16Count ?? 0)
+        let initialPacing = (isStreaming || pacePendingText) && !reduceMotion
         self._isActivelyPacing = State(initialValue: initialPacing)
     }
 
@@ -85,13 +102,26 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                 activePacing && !bypassPacingForTable ? proxy.size.height : 0
             } action: { height in
                 guard activePacing && !bypassPacingForTable else { return }
+                let isFirstMeasurement = contentHeight == 0
                 contentHeight = height
-                syncDisplayedHeight(heightTransitionActive: heightTransitionActive)
+                if isFirstMeasurement,
+                   initiallyRevealedUTF16Count != nil,
+                   revealedUTF16Count >= text.utf16.count {
+                    displayedHeight = height
+                } else {
+                    syncDisplayedHeight(heightTransitionActive: heightTransitionActive)
+                }
             }
-            .frame(height: heightTransitionActive ? displayedHeight : nil, alignment: .top)
+            .frame(
+                height: heightTransitionActive && (initiallyRevealedUTF16Count == nil || contentHeight > 0 || revealedUTF16Count < text.utf16.count)
+                    ? displayedHeight : nil,
+                alignment: .top
+            )
             .clipped()
+            .environment(\.chatPacesStreamingTextBlocks, bypassPacingForTable)
             .onAppear {
                 guard isPacing, revealedUTF16Count == 0 else { return }
+                guard initiallyRevealedUTF16Count == nil else { return }
                 if pacerBox.containsTable(in: text) {
                     revealedUTF16Count = text.utf16.count
                     return
@@ -145,9 +175,8 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         }
         if pacerBox.containsTable(in: text) {
             revealedUTF16Count = text.utf16.count
-            if !isStreaming, isActivelyPacing {
-                isActivelyPacing = false
-            }
+            // 分块子树持有各正文尾块的排空状态。完成事件后仍保留委托，
+            // 包括只随最终快照新增的正文，不能拆掉其 pacer 后一次性露出全文。
             return
         }
         if isStreaming && !isActivelyPacing {
