@@ -92,6 +92,7 @@ struct MessageBubbleView: View {
     }
 
     var body: some View {
+        let _ = ChatRenderProbe.record("message")
         Group {
             if ChatMessageProjector.isSubAgentResult(message) {
                 ChatSubAgentResultCard(message: message, displaySetting: displaySetting)

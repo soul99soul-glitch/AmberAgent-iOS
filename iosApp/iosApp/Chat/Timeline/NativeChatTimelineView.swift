@@ -65,6 +65,7 @@ private struct ChatTimelineActivityRowView: View {
     @State private var now = ProcessInfo.processInfo.systemUptime
 
     var body: some View {
+        let _ = ChatRenderProbe.record("progress")
         let state = activity.resolvedPresentation(at: now)
         let rollup: ChatTaskRollupState = state.kind == .awaitingUser ? .approvalPending(count: 1)
             : (state.tint == .red ? .needsAttention(failedCount: 1, totalCount: 1, failedToolTitle: state.title, reason: nil)
@@ -160,6 +161,7 @@ struct NativeChatTimelineView: View {
     @AppStorage(IOSDisplayPreferenceKeys.agentName) private var agentName = true
 
     var body: some View {
+        let _ = ChatRenderProbe.record("timeline")
         let _ = phoneToolGroupToggleHandler.action = togglePhoneToolGroup
         let messages = messagesProvider()
         let startIndex = resolvedHistoryStartIndex(messages: messages)

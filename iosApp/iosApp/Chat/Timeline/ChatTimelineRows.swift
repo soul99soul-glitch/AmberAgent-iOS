@@ -98,6 +98,7 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
     let onAction: (ChatListAction) -> Void
 
     var body: some View {
+        let _ = ChatRenderProbe.record("row", id: model.row.messageId)
         ChatTimelineRowLayout {
             ChatMessageHostedBubble(
                 model: model,
@@ -112,6 +113,7 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
     }
 
     static func == (lhs: NativeTimelineMessageBubble, rhs: NativeTimelineMessageBubble) -> Bool {
+        ChatRenderProbe.record("row-compare", id: lhs.model.row.messageId)
         guard lhs.entryID == rhs.entryID,
               lhs.model.row.messageId == rhs.model.row.messageId,
               lhs.model.row.role == rhs.model.row.role,
@@ -155,6 +157,7 @@ private struct ChatMessageHostedBubble: View {
     let onAction: (ChatListAction) -> Void
 
     var body: some View {
+        let _ = ChatRenderProbe.record("hosted")
         if let liveTailModel = model.liveTailModel {
             ChatLiveTailBubble(
                 model: model,
@@ -227,6 +230,7 @@ private struct ChatLiveTailBubble: View {
     let onAction: (ChatListAction) -> Void
 
     var body: some View {
+        let _ = ChatRenderProbe.record("live-tail")
         ChatMessageHostedBubble(
             model: model,
             displaySetting: displaySetting,

@@ -21,6 +21,8 @@ import Shared
 @MainActor
 class ChatNativeTimelineReplayTestCase: XCTestCase {
     final class HarnessModel: ObservableObject {
+        @Published var activity: ChatTimelineActivity?
+        @Published var pausesDecorativeTimelines = false
         @Published var signal = ChatMessageUpdateSignal(revision: 0, reason: .initialLoad)
         @Published var isGenerationActive = false
         @Published var followGeneration = true
@@ -59,6 +61,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
                 signal: model.signal,
                 configurationIssue: nil,
                 isGenerationActive: model.isGenerationActive,
+                activity: model.activity,
                 isLoading: false,
                 isRecognizingImages: false,
                 contextCompactState: .idle,
@@ -80,6 +83,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
                 onViewportStateChange: { [weak model] state in model?.recordViewport(state) },
                 onDismissKeyboard: {}
             )
+            .environment(\.amberIsUnderlyingSheetPresented, model.pausesDecorativeTimelines)
         }
     }
 
