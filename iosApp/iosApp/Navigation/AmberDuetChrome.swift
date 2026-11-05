@@ -504,6 +504,8 @@ struct AmberDuetTaskCenterCard: View {
     var onOpenTask: ((AmberUnifiedTaskItem) -> Void)? = nil
     var onFollowupTask: ((AmberUnifiedTaskItem) -> Void)? = nil
     var onDismissPanel: (() -> Void)? = nil
+    var onHeaderDragChanged: ((DragGesture.Value) -> Void)? = nil
+    var onHeaderDragEnded: ((DragGesture.Value) -> Void)? = nil
 
     static let initialRecentPreviewCount = 3
 
@@ -534,78 +536,44 @@ struct AmberDuetTaskCenterCard: View {
 
     var body: some View {
         let current = groups
-        VStack(alignment: .leading, spacing: 20) {
-            header
-
-            if let inlineTask = inlineDeliverableTask {
-                AmberTaskDeliverablePreviewContent(
-                    item: inlineTask,
-                    onBack: {
-                        withAnimation(.snappy(duration: 0.2)) {
-                            inlineDeliverableTask = nil
-                        }
-                    },
-                    onOpenDestination: { task in
-                        inlineDeliverableTask = nil
-                        openDestinationDirectly(task)
-                    },
-                    onQuickDecision: { task, decision in
-                        inlineDeliverableTask = nil
-                        handleQuickDecision(decision, for: task)
-                    }
-                )
-            } else {
-                AmberIntentInboxSectionView(
-                    store: intentInboxStore,
-                    onAcceptCandidate: { payload in
-                        let resolvedPayload = intentInboxStore.accept(id: payload.candidateId) ?? payload
-                        let followupItem = AmberUnifiedTaskItem(
-                            id: "intent-candidate-\(resolvedPayload.candidateId)",
-                            title: resolvedPayload.title,
-                            subtitle: resolvedPayload.sourceQuote,
-                            statusText: resolvedPayload.kind.badgeTitle,
-                            actionButtonTitle: resolvedPayload.suggestedPrompt,
-                            phase: .needsAttention,
-                            ownership: resolvedPayload.kind == .scheduledWatch ? .scheduledMonitor : .delegated,
-                            source: .localSubAgent(resolvedPayload.candidateId)
-                        )
-                        onDismissPanel?()
-                        onFollowupTask?(followupItem)
-                    }
-                )
-
-                if current.isEmpty {
-                    if intentInboxStore.pendingCandidates.isEmpty {
-                        emptyState
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 18) {
-                        if !current.needsAttention.isEmpty {
-                            section(
-                                title: IOSAppLocalization.string("等你处理", defaultValue: "等你处理"),
-                                items: current.needsAttention
-                            )
-                        }
-                        if !current.running.isEmpty {
-                            section(
-                                title: IOSAppLocalization.string("进行中", defaultValue: "进行中"),
-                                items: current.running
-                            )
-                        }
-                        if !current.scheduled.isEmpty {
-                            section(
-                                title: IOSAppLocalization.string("已排定", defaultValue: "已排定"),
-                                items: current.scheduled
-                            )
-                        }
-                        if !current.recent.isEmpty {
-                            recentSection(current.recent)
-                        }
-                    }
+        Group {
+            if isEmbeddedInModalSheet {
+                VStack(alignment: .leading, spacing: 20) {
+                    header
+                    taskBodyContent(current: current)
                 }
+                .padding(.horizontal, 20)
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    header
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 12)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 8)
+                                .onChanged { value in
+                                    onHeaderDragChanged?(value)
+                                }
+                                .onEnded { value in
+                                    onHeaderDragEnded?(value)
+                                }
+                        )
+
+                    ScrollView(.vertical, showsIndicators: true) {
+                        VStack(alignment: .leading, spacing: 20) {
+                            taskBodyContent(current: current)
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.top, 2)
+                        .padding(.bottom, 20)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }
-        .padding(.horizontal, 20)
         .accessibilityIdentifier("chat.duet.tasksPanel")
         .sheet(item: $selectedCloudTask) { selection in
             MacGatewayCloudTaskDetailSheet(store: gateway, requestId: selection.requestId)
@@ -621,6 +589,77 @@ struct AmberDuetTaskCenterCard: View {
                 }
             )
             .amberFloatingSheet(detents: [.medium, .large])
+        }
+    }
+
+    @ViewBuilder
+    private func taskBodyContent(current: AmberUnifiedTaskBuilder.Groups) -> some View {
+        if let inlineTask = inlineDeliverableTask {
+            AmberTaskDeliverablePreviewContent(
+                item: inlineTask,
+                onBack: {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        inlineDeliverableTask = nil
+                    }
+                },
+                onOpenDestination: { task in
+                    inlineDeliverableTask = nil
+                    openDestinationDirectly(task)
+                },
+                onQuickDecision: { task, decision in
+                    inlineDeliverableTask = nil
+                    handleQuickDecision(decision, for: task)
+                }
+            )
+        } else {
+            AmberIntentInboxSectionView(
+                store: intentInboxStore,
+                onAcceptCandidate: { payload in
+                    let resolvedPayload = intentInboxStore.accept(id: payload.candidateId) ?? payload
+                    let followupItem = AmberUnifiedTaskItem(
+                        id: "intent-candidate-\(resolvedPayload.candidateId)",
+                        title: resolvedPayload.title,
+                        subtitle: resolvedPayload.sourceQuote,
+                        statusText: resolvedPayload.kind.badgeTitle,
+                        actionButtonTitle: resolvedPayload.suggestedPrompt,
+                        phase: .needsAttention,
+                        ownership: resolvedPayload.kind == .scheduledWatch ? .scheduledMonitor : .delegated,
+                        source: .localSubAgent(resolvedPayload.candidateId)
+                    )
+                    onDismissPanel?()
+                    onFollowupTask?(followupItem)
+                }
+            )
+
+            if current.isEmpty {
+                if intentInboxStore.pendingCandidates.isEmpty {
+                    emptyState
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 18) {
+                    if !current.needsAttention.isEmpty {
+                        section(
+                            title: IOSAppLocalization.string("等你处理", defaultValue: "等你处理"),
+                            items: current.needsAttention
+                        )
+                    }
+                    if !current.running.isEmpty {
+                        section(
+                            title: IOSAppLocalization.string("进行中", defaultValue: "进行中"),
+                            items: current.running
+                        )
+                    }
+                    if !current.scheduled.isEmpty {
+                        section(
+                            title: IOSAppLocalization.string("已排定", defaultValue: "已排定"),
+                            items: current.scheduled
+                        )
+                    }
+                    if !current.recent.isEmpty {
+                        recentSection(current.recent)
+                    }
+                }
+            }
         }
     }
 
@@ -922,12 +961,8 @@ struct AmberDuetTaskCenterCard: View {
             selectedCloudTask = AmberCloudTaskSelection(requestId: requestId)
             return
         }
-        if isEmbeddedInModalSheet {
-            withAnimation(.snappy(duration: 0.2)) {
-                inlineDeliverableTask = item
-            }
-        } else {
-            selectedDeliverableTask = item
+        withAnimation(.snappy(duration: 0.2)) {
+            inlineDeliverableTask = item
         }
     }
 
@@ -1175,6 +1210,8 @@ struct AmberDuetHubsCard: View {
     var wakeStore: IOSWakeTaskStore = .shared
     var onSelectHub: ((AmberHubItem) -> Void)? = nil
     var onDismissPanel: (() -> Void)? = nil
+    var onHeaderDragChanged: ((DragGesture.Value) -> Void)? = nil
+    var onHeaderDragEnded: ((DragGesture.Value) -> Void)? = nil
 
     @State private var isSmartCollectionsExpanded: Bool = false
     @State private var isShowingCreateHubForm: Bool = false
@@ -1193,7 +1230,7 @@ struct AmberDuetHubsCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 0) {
             VStack(spacing: 12) {
                 // Drag indicator
                 HStack {
@@ -1217,33 +1254,53 @@ struct AmberDuetHubsCard: View {
                 }
             }
             .padding(.horizontal, 20)
+            .padding(.bottom, 12)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 8)
+                    .onChanged { value in
+                        onHeaderDragChanged?(value)
+                    }
+                    .onEnded { value in
+                        onHeaderDragEnded?(value)
+                    }
+            )
 
-            if isShowingCreateHubForm {
-                createHubInlineForm
-                    .padding(.horizontal, 20)
-            }
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 14) {
+                    if isShowingCreateHubForm {
+                        createHubInlineForm
+                    }
 
-            VStack(alignment: .leading, spacing: 10) {
-                if hubStore.hubs.isEmpty {
-                    Text(IOSAppLocalization.string("尚未创建中心 · 点按右上角 + 可将长期主题归拢为中心", defaultValue: "尚未创建中心 · 点按右上角 + 可将长期主题归拢为中心"))
-                        .font(.subheadline)
-                        .foregroundStyle(AmberTheme.muted)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(16)
-                        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                } else {
-                    let activeTasks = allActiveTasks
-                    // Pure-typography Hub cards (No left category icon boxes)
-                    ForEach(hubStore.hubs) { hub in
-                        hubRowCard(hub, activeTasks: activeTasks)
+                    VStack(alignment: .leading, spacing: 10) {
+                        if hubStore.hubs.isEmpty {
+                            Text(IOSAppLocalization.string("尚未创建中心 · 点按右上角 + 可将长期主题归拢为中心", defaultValue: "尚未创建中心 · 点按右上角 + 可将长期主题归拢为中心"))
+                                .font(.subheadline)
+                                .foregroundStyle(AmberTheme.muted)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(16)
+                                .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        } else {
+                            let activeTasks = allActiveTasks
+                            // Pure-typography Hub cards (No left category icon boxes)
+                            ForEach(hubStore.hubs) { hub in
+                                hubRowCard(hub, activeTasks: activeTasks)
+                            }
+                        }
+
+                        // Collapsed single-line Smart Collections bar
+                        smartCollectionsSection
                     }
                 }
-
-                // Collapsed single-line Smart Collections bar
-                smartCollectionsSection
+                .padding(.horizontal, 20)
+                .padding(.top, 2)
+                .padding(.bottom, 20)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 20)
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .accessibilityIdentifier("chat.duet.hubsPanel")
     }
 

@@ -1390,5 +1390,51 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         XCTAssertEqual(completedItem.deliverableBullets.count, 3)
         XCTAssertTrue(completedItem.hasDeliverablePreview)
         XCTAssertEqual(AmberDuetTaskCenterCard.initialRecentPreviewCount, 3)
+
+        // 3. Verify inline AmberDuetTaskCenterCard (isEmbeddedInModalSheet == false) mounts an active vertical UIScrollView
+        // and respects bounded container height without overflowing.
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKey = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 540)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousKey?.makeKey()
+        }
+
+        let inlineCard = AmberDuetTaskCenterCard(
+            gateway: MacGatewayStore.shared,
+            subAgentStore: subAgentStore,
+            taskStore: tasksStore,
+            wakeStore: wakeStore,
+            hubStore: hubStore,
+            isEmbeddedInModalSheet: false,
+            onOpenFullTaskBoard: {}
+        )
+        .frame(width: 390, height: 540)
+        let cardHost = UIHostingController(rootView: inlineCard)
+        window.rootViewController = cardHost
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.08))
+        window.layoutIfNeeded()
+
+        func findScrollViews(in view: UIView) -> [UIScrollView] {
+            var result: [UIScrollView] = []
+            if let sv = view as? UIScrollView {
+                result.append(sv)
+            }
+            for sub in view.subviews {
+                result.append(contentsOf: findScrollViews(in: sub))
+            }
+            return result
+        }
+        let mountedScrollViews = findScrollViews(in: cardHost.view)
+        XCTAssertFalse(mountedScrollViews.isEmpty, "Inline AmberDuetTaskCenterCard must mount a vertical UIScrollView so tasks can scroll")
+        if let primaryScrollView = mountedScrollViews.first {
+            XCTAssertTrue(primaryScrollView.isScrollEnabled)
+            XCTAssertLessThanOrEqual(primaryScrollView.frame.height, 540)
+        }
     }
 }

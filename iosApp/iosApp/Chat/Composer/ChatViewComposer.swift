@@ -161,7 +161,37 @@ extension ChatView {
 
                         // Inline Argon Panels (02 Tasks / 03 Hubs) when composer input is collapsed
                         if collapsesComposerForDuetPanel {
-                            VStack(alignment: .leading, spacing: 18) {
+                            let availableHeight = chatSize.height > 0 ? chatSize.height : 778
+                            let topClearance = ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight + 28
+                            let panelHeight = min(
+                                max(360, availableHeight - topClearance),
+                                availableHeight * 0.78
+                            )
+                            let panelShape = UnevenRoundedRectangle(
+                                topLeadingRadius: 28,
+                                bottomLeadingRadius: 0,
+                                bottomTrailingRadius: 0,
+                                topTrailingRadius: 28,
+                                style: .continuous
+                            )
+                            let handleHeaderDragChanged: (DragGesture.Value) -> Void = { value in
+                                guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                                composerState.inlineDuetPanelDragOffsetY = max(0, value.translation.height)
+                            }
+                            let handleHeaderDragEnded: (DragGesture.Value) -> Void = { value in
+                                let shouldDismiss = ChatSheetDismissSmoothnessPolicy.shouldDismissInlineDuetPanel(
+                                    translationY: value.translation.height,
+                                    predictedEndTranslationY: value.predictedEndTranslation.height
+                                )
+                                withAnimation(.snappy(duration: 0.22)) {
+                                    composerState.inlineDuetPanelDragOffsetY = 0
+                                    if shouldDismiss {
+                                        composerState.activeDuetTab = .chat
+                                    }
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 0) {
                                 if composerState.activeDuetTab == .tasks {
                                     AmberDuetTaskCenterCard(
                                         gateway: MacGatewayStore.shared,
@@ -184,7 +214,9 @@ extension ChatView {
                                             withAnimation(.snappy(duration: 0.22)) {
                                                 composerState.activeDuetTab = .chat
                                             }
-                                        }
+                                        },
+                                        onHeaderDragChanged: handleHeaderDragChanged,
+                                        onHeaderDragEnded: handleHeaderDragEnded
                                     )
                                 } else if composerState.activeDuetTab == .hubs {
                                     AmberDuetHubsCard(
@@ -199,55 +231,19 @@ extension ChatView {
                                             withAnimation(.snappy(duration: 0.22)) {
                                                 composerState.activeDuetTab = .chat
                                             }
-                                        }
+                                        },
+                                        onHeaderDragChanged: handleHeaderDragChanged,
+                                        onHeaderDragEnded: handleHeaderDragEnded
                                     )
                                 }
-
-                                Spacer(minLength: 0)
                             }
-                            .padding(.bottom, 58)
+                            .padding(.bottom, 64)
                             .frame(maxWidth: .infinity)
-                            .frame(height: max(420, (chatSize.height > 0 ? chatSize.height : 832) - 220))
-                            .background(
-                                AmberTheme.background,
-                                in: UnevenRoundedRectangle(
-                                    topLeadingRadius: 28,
-                                    bottomLeadingRadius: 0,
-                                    bottomTrailingRadius: 0,
-                                    topTrailingRadius: 28,
-                                    style: .continuous
-                                )
-                            )
-                            .overlay(
-                                UnevenRoundedRectangle(
-                                    topLeadingRadius: 28,
-                                    bottomLeadingRadius: 0,
-                                    bottomTrailingRadius: 0,
-                                    topTrailingRadius: 28,
-                                    style: .continuous
-                                )
-                                .stroke(AmberTheme.border, lineWidth: 0.8)
-                            )
+                            .frame(height: panelHeight, alignment: .top)
+                            .clipShape(panelShape)
+                            .background(AmberTheme.background, in: panelShape)
+                            .overlay(panelShape.stroke(AmberTheme.border, lineWidth: 0.8))
                             .offset(y: max(0, composerState.inlineDuetPanelDragOffsetY))
-                            .gesture(
-                                DragGesture(minimumDistance: 8)
-                                    .onChanged { value in
-                                        guard abs(value.translation.height) > abs(value.translation.width) else { return }
-                                        composerState.inlineDuetPanelDragOffsetY = max(0, value.translation.height)
-                                    }
-                                    .onEnded { value in
-                                        let shouldDismiss = ChatSheetDismissSmoothnessPolicy.shouldDismissInlineDuetPanel(
-                                            translationY: value.translation.height,
-                                            predictedEndTranslationY: value.predictedEndTranslation.height
-                                        )
-                                        withAnimation(.snappy(duration: 0.22)) {
-                                            composerState.inlineDuetPanelDragOffsetY = 0
-                                            if shouldDismiss {
-                                                composerState.activeDuetTab = .chat
-                                            }
-                                        }
-                                    }
-                            )
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
 
