@@ -566,4 +566,9 @@ private final class WakeNotificationCenter: IOSLocalNotificationCenter {
     func removePendingRequests(identifiers: [String]) { for id in identifiers { requests.removeValue(forKey: id) } }
     func deliveredRequestIdentifiers() async -> [String] { [] }
     func removeDeliveredRequests(identifiers: [String]) {}
+    func updateTaskCompletionSound(enabled: Bool) async throws {
+        for id in requests.keys where id.hasPrefix("amber.task-complete.") {
+            requests[id]?.playsSound = enabled
+        }
+    }
 }

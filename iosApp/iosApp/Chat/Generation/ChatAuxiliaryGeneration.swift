@@ -61,19 +61,30 @@ extension ChatViewModel {
 
         syncSoulFromCompletedTurnIfNeeded(messages: state.messages)
 
-        // 完成触觉：统一由「显示与字体 → 生成完成振动」（默认开）实时门控；
-        // 仅在当前可见主会话最终回复完成时触发，等待子代理的前台让出或子代理会话不触发。
-        if isCurrentConversation(state.conversationId),
-           !state.isOrchestratedChild,
-           state.waitingForChildRunId == nil {
-            AmberHaptics.triggerCompletion(.rigidImpact)
-        }
-
         if isCurrentConversation(state.conversationId) { generateChatSuggestions() }
         let userMessageCount = state.messages.filter { $0.role == MessageRole.user }.count
         if userMessageCount == 1 { generateConversationTitle(state: state) }
         // 与标题共用 titleModelId；后台成功路径走同一 generator。
         generateConversationListPreview(state: state)
+    }
+
+    func finishCompletionFeedback(
+        state: ChatConversationRunState, runID: String, succeeded: Bool, messages: [UIMessage]
+    ) {
+        guard succeeded, isCurrentConversation(state.conversationId),
+              !state.isOrchestratedChild, state.waitingForChildRunId == nil,
+              let last = messages.last, last.role == MessageRole.assistant else {
+            state.completionFeedback.finishWithoutFeedback(runID: runID)
+            return
+        }
+        let textParts: [Int: String] = Dictionary(uniqueKeysWithValues: last.parts.enumerated().compactMap { index, part in
+            guard let text = part as? UIMessagePart.Text,
+                  !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return (index, text.text)
+        })
+        state.completionFeedback.complete(
+            runID: runID, messageID: last.id.toHexDashString(), textParts: textParts
+        )
     }
 
     /// 兜底：若用户在本轮明确要求改人设/写入 soul，但模型仅在回复中答应而漏调 `agent_soul_update`，

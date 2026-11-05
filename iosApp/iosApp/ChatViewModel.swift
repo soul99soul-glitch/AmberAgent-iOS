@@ -356,6 +356,8 @@ final class ChatViewModel {
         return runRegistry.run(forHex: conversationId)?.host?.currentRunId
     }
 
+    var completionFeedback: ChatCompletionFeedback { currentRun.state.completionFeedback }
+
     // MARK: - P1-e 编排子线程只读缓存
 
     /// 当前会话是否编排子线程（存在 thread_edge）。composerSendBlockReason 每条

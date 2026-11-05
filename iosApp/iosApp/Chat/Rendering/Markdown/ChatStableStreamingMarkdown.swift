@@ -35,6 +35,9 @@ struct ChatStableStreamingMarkdownView: View {
             usesLayerBackedTableAnimation: config.shouldAnimateText,
             usesTextKit1ForAttachmentFreeText: true
         )
+            .transformPreference(ChatStreamingRevealProgressKey.self) { progress in
+                progress.hasPendingReveal = progress.hasPendingReveal || !controller.hasRendered(text)
+            }
             .task(id: ChatStableStreamingMarkdownParseKey(
                 text: text,
                 animate: config.shouldAnimateText,
@@ -105,6 +108,11 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
 
     deinit {
         parseTask?.cancel()
+    }
+
+    func hasRendered(_ text: String) -> Bool {
+        guard let renderedText, renderedText.utf16.count == text.utf16.count else { return false }
+        return renderedText == text
     }
 
     func renderable(

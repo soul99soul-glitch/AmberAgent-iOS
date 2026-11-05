@@ -88,8 +88,11 @@ struct ChatView: View {
         self._composerState = State(initialValue: initialComposerState)
     }
 
+    private var isCloudHostActive: Bool {
+        MacGatewayStore.shared.connection != nil && MacGatewayStore.shared.isCloudMainDialogueSelected
+    }
+
     private var chatContent: some View {
-        let isCloudHostActive = MacGatewayStore.shared.connection != nil && MacGatewayStore.shared.isCloudMainDialogueSelected
         return ZStack {
             AmberThemePageBackground(surface: .app)
             ChatDialogueHostContent(isCloudSelected: isCloudHostActive) {
@@ -1026,6 +1029,11 @@ struct ChatView: View {
             .environment(\.intelligentUIBusy, viewModel.isGenerationActive || viewModel.isLoading || viewModel.isIntelligentUISubmissionInFlight)
             .environment(\.chatMessageEditingAllowed, !viewModel.isIntelligentUISubmissionInFlight)
             .environment(\.chatArtifactPinAction, artifactPinHandler)
+            .environment(\.chatCompletionFeedback, viewModel.completionFeedback)
+            .modifier(ChatCompletionFeedbackVisibility(
+                owner: viewModel.completionFeedback,
+                isVisible: scenePhase == .active && composerState.activeDuetTab == .chat && !isCloudHostActive
+            ))
             .id(NativeChatTimelineSessionIdentity.viewID(conversationId: conversationStore.currentConversation?.id))
         }
     }

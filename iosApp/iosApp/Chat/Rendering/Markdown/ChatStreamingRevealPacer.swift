@@ -11,6 +11,22 @@ extension EnvironmentValues {
     }
 }
 
+/// A subtree publishes only pending/settled transitions, never per-frame text or offsets.
+struct ChatStreamingRevealProgress: Equatable {
+    var isMounted = false
+    var hasPendingReveal = false
+}
+
+struct ChatStreamingRevealProgressKey: PreferenceKey {
+    static let defaultValue = ChatStreamingRevealProgress()
+
+    static func reduce(value: inout ChatStreamingRevealProgress, nextValue: () -> ChatStreamingRevealProgress) {
+        let next = nextValue()
+        value.isMounted = value.isMounted || next.isMounted
+        value.hasPendingReveal = value.hasPendingReveal || next.hasPendingReveal
+    }
+}
+
 /// 流式正文的平滑吐字器 + 平滑高度。
 ///
 /// 三个问题一起解决：
@@ -39,6 +55,10 @@ struct ChatStreamingRevealPacer<Content: View>: View {
     let reduceMotion: Bool
     /// 分块前已显示的正文保持原样；新尾块即使随最终快照到达也需排空。
     private let initiallyRevealedUTF16Count: Int?
+    private let completionFeedback: ChatCompletionFeedback?
+    private let completionRunID: String?
+    private let messageID: String?
+    private let textPartIndex: Int
     @ViewBuilder let content: (String) -> Content
 
     @State private var revealedUTF16Count = 0
@@ -59,12 +79,19 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         reduceMotion: Bool,
         initiallyRevealedUTF16Count: Int? = nil,
         pacePendingText: Bool = false,
+        completionFeedback: ChatCompletionFeedback? = nil,
+        messageID: String? = nil,
+        textPartIndex: Int = 0,
         @ViewBuilder content: @escaping (String) -> Content
     ) {
         self.text = text
         self.isStreaming = isStreaming
         self.reduceMotion = reduceMotion
         self.initiallyRevealedUTF16Count = initiallyRevealedUTF16Count
+        self.completionFeedback = completionFeedback
+        self.completionRunID = completionFeedback?.runID
+        self.messageID = messageID
+        self.textPartIndex = textPartIndex
         self.content = content
         self._revealedUTF16Count = State(initialValue: initiallyRevealedUTF16Count ?? 0)
         let initialPacing = (isStreaming || pacePendingText) && !reduceMotion
@@ -80,6 +107,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         // 若外层再按 60fps 逐字切片并对整张 `TableView` 施加 `.frame(height: displayedHeight)` 动画，
         // 会导致数百个单元格每 16ms 触发多遍 `TableLayout` 与滚动几何反馈环（单帧卡死 200-330ms）。
         let bypassPacingForTable = activePacing && pacerBox.containsTable(in: text)
+        let hasPendingReveal = isStreaming || (activePacing && !bypassPacingForTable && revealedUTF16Count < text.utf16.count)
         let displayedText: String
         let heightTransitionActive: Bool
         if activePacing && !bypassPacingForTable {
@@ -119,6 +147,17 @@ struct ChatStreamingRevealPacer<Content: View>: View {
             )
             .clipped()
             .environment(\.chatPacesStreamingTextBlocks, bypassPacingForTable)
+            .transformPreference(ChatStreamingRevealProgressKey.self) { progress in
+                progress.isMounted = true
+                progress.hasPendingReveal = progress.hasPendingReveal || hasPendingReveal
+            }
+            .onPreferenceChange(ChatStreamingRevealProgressKey.self) { progress in
+                guard progress.isMounted, !progress.hasPendingReveal,
+                      let completionRunID, let messageID else { return }
+                completionFeedback?.didDrain(
+                    runID: completionRunID, messageID: messageID, partIndex: textPartIndex, text: text
+                )
+            }
             .onAppear {
                 guard isPacing, revealedUTF16Count == 0 else { return }
                 guard initiallyRevealedUTF16Count == nil else { return }

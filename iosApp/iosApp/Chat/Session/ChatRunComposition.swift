@@ -247,6 +247,7 @@ extension ChatViewModel {
                     return await self.resumeRunAfterPermission(runId: runId)
                 },
                 startLiveActivity: { [weak self] runId, conversationId, presentation in
+                    state.completionFeedback.begin(runID: runId)
                     self?.startLiveActivity(
                         runId: runId,
                         conversationId: conversationId,
@@ -325,6 +326,10 @@ extension ChatViewModel {
                 },
                 onRunTerminal: { [weak self] conversationId, runId, terminalStatus, finalMessages, displayBaseline in
                     guard let self else { return }
+                    self.finishCompletionFeedback(
+                        state: state, runID: runId, succeeded: terminalStatus == .completed,
+                        messages: finalMessages
+                    )
                     if let taskSlot {
                         self.markTaskSlotTerminal(taskSlot, in: self.runRegistry.current(for: state.conversationId))
                     }

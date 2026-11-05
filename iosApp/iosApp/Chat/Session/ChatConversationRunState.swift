@@ -13,6 +13,7 @@ struct PendingAssistantRegeneration {
 @MainActor @Observable
 final class ChatConversationRunState {
     let conversationId: KotlinUuid?
+    @ObservationIgnored let completionFeedback = ChatCompletionFeedback()
     var messages: [UIMessage] = []
     var isLoading = false
     var pendingMemoryApproval: MemoryToolApprovalRequest?

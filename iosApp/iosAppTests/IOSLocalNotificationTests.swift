@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UserNotifications
 @testable import iosApp
 
 @MainActor
@@ -12,7 +13,10 @@ private final class FakeLocalNotificationCenter: IOSLocalNotificationCenter {
     var deliveredIdentifiers: [String] = []
     var removedDelivered: [[String]] = []
     var blocksAdd = false
+    var blocksSoundUpdate = false
+    var completionSoundUpdates: [Bool] = []
     private(set) var addContinuation: CheckedContinuation<Void, Never>?
+    private(set) var soundUpdateContinuation: CheckedContinuation<Void, Never>?
 
     init(status: IOSLocalNotificationAuthorization) { self.status = status }
 
@@ -23,6 +27,7 @@ private final class FakeLocalNotificationCenter: IOSLocalNotificationCenter {
     }
     func add(_ request: IOSLocalNotificationRequest) async throws {
         requests.append(request)
+        if !pendingIdentifiers.contains(request.identifier) { pendingIdentifiers.append(request.identifier) }
         if blocksAdd {
             await withCheckedContinuation { continuation in
                 addContinuation = continuation
@@ -30,9 +35,34 @@ private final class FakeLocalNotificationCenter: IOSLocalNotificationCenter {
         }
     }
     func pendingRequestIdentifiers() async -> [String] { pendingIdentifiers }
-    func removePendingRequests(identifiers: [String]) { removed.append(identifiers) }
+    func removePendingRequests(identifiers: [String]) {
+        removed.append(identifiers)
+        pendingIdentifiers.removeAll { identifiers.contains($0) }
+    }
     func deliveredRequestIdentifiers() async -> [String] { deliveredIdentifiers }
     func removeDeliveredRequests(identifiers: [String]) { removedDelivered.append(identifiers) }
+    func updateTaskCompletionSound(enabled: Bool) async throws {
+        completionSoundUpdates.append(enabled)
+        let targets = requests.indices.filter {
+            requests[$0].identifier.hasPrefix("amber.task-complete.") &&
+                pendingIdentifiers.contains(requests[$0].identifier) && requests[$0].playsSound != enabled
+        }
+        if blocksSoundUpdate {
+            await withCheckedContinuation { soundUpdateContinuation = $0 }
+        }
+        for index in targets {
+            requests[index].playsSound = enabled
+            // UNUserNotificationCenter updates content by adding the request again.
+            if !pendingIdentifiers.contains(requests[index].identifier) {
+                pendingIdentifiers.append(requests[index].identifier)
+            }
+        }
+    }
+
+    func resumeSoundUpdate() {
+        soundUpdateContinuation?.resume()
+        soundUpdateContinuation = nil
+    }
 
     func resumeAdd() {
         addContinuation?.resume()
@@ -67,6 +97,76 @@ struct IOSLocalNotificationTests {
         let request = try #require(center.requests.first)
         #expect(IOSAppDeepLink.parse(request.deepLink) == .conversation(id: "abc-123"))
         #expect(request.fireDate == now.addingTimeInterval(1))
+    }
+
+    @Test func completionSoundFollowsPreferenceWithoutSilencingOtherNotifications() async throws {
+        let center = FakeLocalNotificationCenter(status: .allowed)
+        var hapticEnabled = false
+        let service = IOSLocalNotificationService(
+            center: center, now: { now }, completionNotificationsEnabled: { true },
+            completionHapticEnabled: { hapticEnabled }
+        )
+        _ = try await service.scheduleTaskCompletion(conversationID: "reply")
+        #expect(center.requests.first?.playsSound == false)
+        _ = try await service.scheduleManualReminder(title: "提醒", fireDate: now.addingTimeInterval(600))
+        hapticEnabled = true
+        try await service.refreshTaskCompletionSound()
+        #expect(center.requests.first?.playsSound == true)
+        hapticEnabled = false
+        try await service.refreshTaskCompletionSound()
+        #expect(center.requests.first?.playsSound == false)
+        #expect(center.requests.last?.playsSound == true)
+        #expect(center.requests.first?.userInfo[IOSTaskCompletionNotificationFeedback.markerKey] == "true")
+    }
+
+    @Test func completionSettingChangeDuringAddIsReconciledAfterCommit() async throws {
+        let center = FakeLocalNotificationCenter(status: .allowed)
+        center.blocksAdd = true
+        var hapticEnabled = true
+        let service = IOSLocalNotificationService(
+            center: center, now: { now }, completionNotificationsEnabled: { true },
+            completionHapticEnabled: { hapticEnabled }
+        )
+        let task = Task { try await service.scheduleTaskCompletion(conversationID: "reply") }
+        while center.addContinuation == nil { await Task.yield() }
+        #expect(center.requests.first?.playsSound == true)
+        hapticEnabled = false
+        center.resumeAdd()
+        _ = try await task.value
+        #expect(center.requests.first?.playsSound == false)
+        #expect(center.completionSoundUpdates == [false])
+    }
+
+    @Test func foregroundCompletionKeepsBannerAndLeavesRevealOwnerTheOnlyFeedbackSource() {
+        #expect(IOSTaskCompletionNotificationFeedback.presentationOptions(
+            identifier: "amber.task-complete.reply", userInfo: [:]
+        ) == [.banner])
+        #expect(IOSTaskCompletionNotificationFeedback.presentationOptions(
+            identifier: IOSLocalNotificationService.manualReminderIdentifier, userInfo: [:]
+        ) == [.banner, .sound])
+        #expect(IOSTaskCompletionNotificationFeedback.presentationOptions(
+            identifier: "amber.watch-attention.reply.decision", userInfo: [:]
+        ) == [.banner, .sound])
+    }
+
+    @Test func cancellationWinsAgainstInFlightCompletionSoundUpdate() async throws {
+        let center = FakeLocalNotificationCenter(status: .allowed)
+        var hapticEnabled = true
+        let service = IOSLocalNotificationService(
+            center: center, now: { now }, completionNotificationsEnabled: { true },
+            completionHapticEnabled: { hapticEnabled }
+        )
+        _ = try await service.scheduleTaskCompletion(conversationID: "reply")
+        center.pendingIdentifiers.append(IOSLocalNotificationService.manualReminderIdentifier)
+        hapticEnabled = false
+        center.blocksSoundUpdate = true
+        let update = Task { try await service.refreshTaskCompletionSound() }
+        while center.soundUpdateContinuation == nil { await Task.yield() }
+        await service.cancelTaskCompletionNotifications()
+        center.resumeSoundUpdate()
+        try await update.value
+        #expect(center.pendingIdentifiers == [IOSLocalNotificationService.manualReminderIdentifier])
+        #expect(center.removed.last == ["amber.task-complete.reply"])
     }
 
     @Test func reminderValidatesDateAndReplacesPreviousRequest() async throws {

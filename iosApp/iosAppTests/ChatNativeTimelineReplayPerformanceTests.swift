@@ -192,6 +192,45 @@ final class ChatNativeTimelineReplayPerformanceTests: ChatNativeTimelineReplayTe
         XCTAssertTrue(finalText.contains("| 56 | final state"))
     }
 
+    func testLongMarkdownHistoryDoesNotConsumeTheLiveUpdateBudget() {
+        let fixture = makeFixture()
+        defer { fixture.tearDown() }
+        let paragraph = "历史记录包含**中文强调**、`代码`和说明文字，当前回复增长时不应反复测量整段离屏历史。\n\n"
+        let historyText = "## 已完成的分析\n\n" + String(repeating: paragraph, count: 60)
+        fixture.model.messages = (0..<18).flatMap { index in
+            [makeUserMessage("历史问题 \(index)"), makeAssistantMessage(text: historyText, finished: true)]
+        }
+        fixture.model.send(.initialLoad)
+        pump(seconds: 3)
+        fixture.model.messages.append(makeUserMessage("继续回复当前问题。"))
+        fixture.model.isGenerationActive = true
+        fixture.model.send(.userAppend)
+        let id = KotlinUuid.companion.random()
+        var text = "## 当前回复\n\n连续正文开始。"
+        fixture.model.messages.append(makeAssistantMessage(id: id, text: text, finished: false))
+        fixture.model.send(.streamDelta)
+        pump(seconds: 1)
+
+        XCTAssertTrue(pumpUntil(timeout: 4) { fixture.model.latestViewport.isAtBottom },
+            "流式性能必须在当前回复可见时验证")
+
+        let updates = 30
+        let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+        for _ in 0..<updates {
+            text += "当前正文继续平滑增长，同时保留所有历史消息。"
+            fixture.model.messages[fixture.model.messages.count - 1] = makeAssistantMessage(id: id, text: text, finished: false)
+            fixture.model.send(.streamDelta)
+            pump(seconds: 0.03)
+        }
+        pump(seconds: 0.3)
+        let perUpdateMs = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start) / 1e6 / Double(updates)
+        print("[PERF-LONG-HISTORY] historicalTurns=18 updates=\(updates) mainCPUPerUpdateMs=\(perUpdateMs)")
+        XCTAssertLessThan(perUpdateMs, 60, "离屏长历史不能让每次流式更新持续占用主线程多个帧预算")
+        XCTAssertEqual(fixture.model.messages.last?.toText(), text)
+        XCTAssertTrue(pumpUntil(timeout: 4) { fixture.model.latestViewport.isAtBottom },
+            "性能改善不能以丢失底部跟随为代价")
+    }
+
     func testPerfGrowingTableStreamingKeepsDisplayLinkResponsive() throws {
         let fixture = makeFixture()
         defer { fixture.tearDown() }

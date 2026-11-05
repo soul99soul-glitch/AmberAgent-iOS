@@ -294,6 +294,7 @@ final class IOSSettingsWiringTests: XCTestCase {
         let keys = try source("iosApp/AmberDesignSystem.swift")
         let settings = try source("iosApp/DisplayFontSettingsView.swift")
         let chatAux = try source("iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift")
+        let completionFeedback = try source("iosApp/Chat/Generation/ChatCompletionFeedback.swift")
         let topBar = try source("iosApp/ChatTopBarView.swift")
         let novelSeal = try source("iosApp/NovelCreation/NovelInkSeal.swift")
         let deepRead = try source("iosApp/IOSDeepReadNewsroomView.swift")
@@ -307,7 +308,8 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(settings.contains(storageDeclaration))
         XCTAssertTrue(settings.contains("生成完成振动"))
         XCTAssertTrue(settings.contains("completionHaptic.toggle()"))
-        XCTAssertTrue(chatAux.contains("AmberHaptics.triggerCompletion(.rigidImpact)"))
+        XCTAssertTrue(completionFeedback.contains("AmberHaptics.triggerCompletion(.rigidImpact)"))
+        XCTAssertTrue(chatAux.contains("state.completionFeedback.complete("))
         XCTAssertFalse(chatAux.contains("AmberHaptics.trigger(.rigidImpact)"))
         XCTAssertTrue(topBar.contains("AmberHaptics.triggerCompletion(.lightImpact)"))
         XCTAssertFalse(topBar.contains("else if notice.kind == .completed {\n                UIImpactFeedbackGenerator"))
@@ -343,11 +345,24 @@ final class IOSSettingsWiringTests: XCTestCase {
             UIMessage.companion.user(prompt: "你好"),
             UIMessage.companion.assistant(prompt: "你好，这是最终回复。")
         ]
+        let reply = try XCTUnwrap(state.messages.last)
+        let feedback = state.completionFeedback
+        feedback.setForegroundVisible(true)
+        func finish(_ runID: String) {
+            viewModel.onGenerationCompleted(state: state)
+            viewModel.finishCompletionFeedback(state: state, runID: runID, succeeded: true, messages: state.messages)
+        }
+        func drain(_ runID: String) {
+            feedback.didDrain(runID: runID, messageID: reply.id.toHexDashString(), partIndex: 0, text: reply.toText())
+        }
 
         // 1. 默认值（未写入 key）为 true，前台完成与后台提醒到达均正常触发
         standard.removeObject(forKey: key)
         XCTAssertTrue(AmberHaptics.isCompletionHapticEnabled(defaults: standard))
-        viewModel.onGenerationCompleted(state: state)
+        feedback.begin(runID: "default")
+        finish("default")
+        XCTAssertTrue(recordedEvents.isEmpty, "provider terminal 不应先于可见正文排空触发")
+        drain("default")
         XCTAssertTrue(AmberHaptics.triggerCompletion(.lightImpact, defaults: standard))
         XCTAssertEqual(recordedEvents, [.rigidImpact, .lightImpact])
 
@@ -355,7 +370,9 @@ final class IOSSettingsWiringTests: XCTestCase {
         recordedEvents.removeAll()
         standard.set(false, forKey: key)
         XCTAssertFalse(AmberHaptics.isCompletionHapticEnabled(defaults: standard))
-        viewModel.onGenerationCompleted(state: state)
+        feedback.begin(runID: "off")
+        finish("off")
+        drain("off")
         XCTAssertFalse(AmberHaptics.triggerCompletion(.lightImpact, defaults: standard))
         XCTAssertFalse(AmberHaptics.triggerCompletion(.rigidImpact, defaults: standard))
         XCTAssertTrue(recordedEvents.isEmpty, "生成完成振动关闭时所有完成路径必须零触发")
@@ -366,16 +383,22 @@ final class IOSSettingsWiringTests: XCTestCase {
         recordedEvents.removeAll()
         standard.set(true, forKey: key)
         state.waitingForChildRunId = "run-yielded"
-        viewModel.onGenerationCompleted(state: state)
+        feedback.begin(runID: "yielded")
+        finish("yielded")
+        drain("yielded")
         XCTAssertTrue(recordedEvents.isEmpty, "前台让出等待子代理期间不应提前触发完成振动")
 
         state.waitingForChildRunId = nil
         state.isOrchestratedChild = true
-        viewModel.onGenerationCompleted(state: state)
+        feedback.begin(runID: "child")
+        finish("child")
+        drain("child")
         XCTAssertTrue(recordedEvents.isEmpty, "后台子代理会话不应直接触发前台完成振动")
 
         state.isOrchestratedChild = false
-        viewModel.onGenerationCompleted(state: state)
+        feedback.begin(runID: "main")
+        finish("main")
+        drain("main")
         XCTAssertEqual(recordedEvents, [.rigidImpact], "主会话最终完成且开关开启时应触发一次刚性轻触")
     }
 

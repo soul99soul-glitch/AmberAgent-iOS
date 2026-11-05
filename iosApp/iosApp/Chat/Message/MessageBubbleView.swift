@@ -71,6 +71,7 @@ struct MessageBubbleView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.locale) private var locale
     @Environment(\.chatMessageEditingAllowed) private var messageEditingAllowed
+    @Environment(\.chatCompletionFeedback) private var completionFeedback
     @Environment(\.chatArtifactPinAction) private var artifactPinAction
     @Environment(\.chatMessageAnchorHighlighted) private var chatMessageAnchorHighlighted
     @State private var workspaceSaveAlert: WorkspaceSaveAlert?
@@ -413,7 +414,10 @@ struct MessageBubbleView: View {
                     ChatStreamingRevealPacer(
                         text: textPart.text,
                         isStreaming: isGenerating && isLastMessage,
-                        reduceMotion: reduceMotion
+                        reduceMotion: reduceMotion,
+                        completionFeedback: completionFeedback,
+                        messageID: message.id.toHexDashString(),
+                        textPartIndex: partIndex
                     ) { revealedText in
                         ChatAssistantText {
                             ChatAssistantMarkdownView(
@@ -569,7 +573,10 @@ struct MessageBubbleView: View {
                     ChatStreamingRevealPacer(
                         text: textPart.text,
                         isStreaming: isGenerating && isLastMessage,
-                        reduceMotion: reduceMotion
+                        reduceMotion: reduceMotion,
+                        completionFeedback: completionFeedback,
+                        messageID: message.id.toHexDashString(),
+                        textPartIndex: partIndex
                     ) { revealedText in
                         ChatAssistantText {
                             ChatAssistantMarkdownView(

@@ -98,15 +98,17 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
     let onAction: (ChatListAction) -> Void
 
     var body: some View {
-        ChatMessageHostedBubble(
-            model: model,
-            displaySetting: displaySetting,
-            generativeUiSetting: generativeUiSetting,
-            reasoningLevelLabel: reasoningLevelLabel,
-            imageAccessibilityFocusToolCallID: imageAccessibilityFocusToolCallID,
-            onAction: onAction
-        )
-        .id(model.renderIdentity)
+        ChatTimelineRowLayout {
+            ChatMessageHostedBubble(
+                model: model,
+                displaySetting: displaySetting,
+                generativeUiSetting: generativeUiSetting,
+                reasoningLevelLabel: reasoningLevelLabel,
+                imageAccessibilityFocusToolCallID: imageAccessibilityFocusToolCallID,
+                onAction: onAction
+            )
+            .id(model.renderIdentity)
+        }
     }
 
     static func == (lhs: NativeTimelineMessageBubble, rhs: NativeTimelineMessageBubble) -> Bool {

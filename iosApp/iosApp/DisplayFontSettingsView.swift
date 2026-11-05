@@ -165,6 +165,9 @@ struct DisplayFontSettingsView: View {
                     isOn: completionHaptic
                 ) {
                     completionHaptic.toggle()
+                    Task {
+                        try? await IOSLocalNotificationService.shared.refreshTaskCompletionSound()
+                    }
                 }
             }
         }
