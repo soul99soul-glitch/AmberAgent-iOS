@@ -73,8 +73,11 @@ class CloudRouterIngressTest {
                 if (tools.none { it.name == "dispatch_work" }) {
                     workerStarted.complete(Unit)
                     releaseWorker.await()
-                }
-                UIMessage.assistant("检查完成。")
+                    UIMessage.assistant("").copy(parts = listOf(UIMessagePart.Tool(
+                        toolCallId = "finish-ingress", toolName = "task_finish",
+                        input = """{"outcome":"completed","summary":"检查完成。"}""",
+                    )))
+                } else UIMessage.assistant("检查完成。")
             }
         }, masterSecretOverride = "router-ingress-test-key")
         val connector = Connector(ChannelKind.TELEGRAM)

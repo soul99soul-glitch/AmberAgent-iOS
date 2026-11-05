@@ -147,8 +147,8 @@ internal class OrchestrationRollupCoordinator(
             // Acceptance and terminal admission share the store monitor: an ACKed input cannot slip past settlement.
             if(report.outcome!="cancelled" && (kernel.workerEvents.isStopping(existing.workItemId)||kernel.workerEvents.pending(existing.workItemId).isNotEmpty()))return existing
             kernel.store.upsertWorkItem(settled)
-            kernel.settlementListener(settled,report)
         }
+        kernel.settlementListener(settled,report)
         existing.workerSessionId?.let { sessionId ->
             kernel.appendMessageToSessionInternal(sessionId,UIMessage.assistant("【任务结算 · ${report.outcome}】\n${CredentialRedactor.redact(report.summary)}"),nowEpochMs)
         }

@@ -239,7 +239,7 @@ internal class OrchestrationSessionInspector(
         return when (kind) {
             RecallObjectKind.WORK_ITEM -> {
                 val item = kernel.store.getWorkItem(id) ?: return null
-                val full = "Title: ${item.title}\nState: ${item.state}\nBrief: ${item.brief}\nProgress: ${item.latestProgressNote.orEmpty()}"
+                val full = "Title: ${item.title}\nState: ${item.state}\nOutcome: ${item.settlementOutcome.orEmpty()}\nFailure: ${item.failureReason.orEmpty()}\nBrief: ${item.brief}\nProgress: ${item.latestProgressNote.orEmpty()}"
                 val safeEnd = OrchestrationHash.unicodeSafeEndOffset(full, 0, cleanMax)
                 RecallNodeSnapshot(
                     kind = kind,

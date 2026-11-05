@@ -48,6 +48,7 @@ internal class CloudRouterIngress(private val kernel: CloudAgentKernel) : Channe
                 updateAt = Clock.System.now(),
             ))
         }
+        message.metadata["native_event_id"]?.let { kernel.nativeDialogue.acknowledge(it) }
         // The connector sends the returned acknowledgement; Router only sends subsequent replies/status.
         val ack = kernel.router.onInbound(message, postAck = false, sessionId = conversationId.toString())
         return response(message, ack.text)
@@ -56,7 +57,11 @@ internal class CloudRouterIngress(private val kernel: CloudAgentKernel) : Channe
     suspend fun contextMessages(input: RouterTurnInput): List<UIMessage> = conversationMutex.withLock {
         val conversationId = Uuid.parse(input.events.first().conversationId)
         val conversation = kernel.conversationStorage.loadConversation(conversationId) ?: return@withLock emptyList()
-        val history = conversation.messageNodes.map { it.currentMessage }
+        val fullHistory = conversation.messageNodes.map { it.currentMessage }
+        // Concurrent native turns each see history through their own input, never a newer user's request.
+        val nativeId = input.events.singleOrNull()?.sourceMessageId?.takeIf { it.startsWith("native:") }?.removePrefix("native:")
+        val boundary = nativeId?.let { id -> fullHistory.indexOfFirst { it.id.toString() == id } } ?: -1
+        val history = if (boundary >= 0) fullHistory.take(boundary + 1) else fullHistory
         kernel.contextManager.compactIfNeeded(conversationId.toString(), history, kernel.contextWindowTokens)
         val memories = kernel.memoryStore.recallForPrompt(input.batchPrompt).let { recalled ->
             if (conversationId == PRIMARY_CONVERSATION_ID) recalled else recalled.filter { it.scope != MemoryScope.CORE }

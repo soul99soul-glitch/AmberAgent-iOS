@@ -2,12 +2,6 @@ package app.amber.cloud.runtime
 
 import app.amber.ai.core.MessageRole
 import app.amber.ai.core.Tool
-import app.amber.ai.provider.Model
-import app.amber.ai.provider.ModelAbility
-import app.amber.ai.provider.ProviderSetting
-import app.amber.ai.provider.TextGenerationParams
-import app.amber.ai.provider.claude.ClaudeKmpProvider
-import app.amber.ai.provider.openai.OpenAIKmpProvider
 import app.amber.ai.ui.ToolApprovalState
 import app.amber.ai.ui.UIMessage
 import app.amber.ai.ui.UIMessagePart
@@ -101,31 +95,6 @@ fun interface CloudModelClient {
         messages: List<UIMessage>,
         tools: List<Tool>,
     ): UIMessage
-}
-
-/**
- * Production [CloudModelClient] backed by `:ai-provider-claude` and `:ai-provider-openai`.
- */
-class KmpProviderModelClient(
-    private val providerSetting: ProviderSetting,
-    private val modelId: String,
-) : CloudModelClient {
-    private val openAIProvider by lazy { OpenAIKmpProvider() }
-    private val claudeProvider by lazy { ClaudeKmpProvider() }
-
-    override suspend fun generateReply(messages: List<UIMessage>, tools: List<Tool>): UIMessage {
-        val params = TextGenerationParams(
-            model = Model(modelId = modelId, abilities = if (tools.isEmpty()) emptyList() else listOf(ModelAbility.TOOL)),
-            tools = tools,
-        )
-        val chunk = when (providerSetting) {
-            is ProviderSetting.OpenAI -> openAIProvider.generateText(providerSetting, messages, params)
-            is ProviderSetting.Claude -> claudeProvider.generateText(providerSetting, messages, params)
-            else -> error("Unsupported provider setting on cloud daemon: ${providerSetting::class.simpleName}")
-        }
-        val base = UIMessage(role = MessageRole.ASSISTANT, parts = emptyList())
-        return base + chunk
-    }
 }
 
 /**

@@ -47,6 +47,12 @@ class NativeDialogueService(private val kernel: CloudAgentKernel, private val in
             catch(_:Exception){enqueued.remove(input.id)} // Remains durable and is retried by recovery, without claiming consumption.
         }
     }
+    suspend fun acknowledge(id: String) {
+        val input = events.pending("message").firstOrNull { it.id == id } ?: return
+        val text = "收到，我来处理。完成或遇到问题都会在这里告诉你。"
+        persistReply("ack:${input.id}", text)
+        events.append(DialogueEvent("ack:${input.id}", "assistant_reply", "assistant", text, input.topicId))
+    }
     suspend fun handled(triggers:List<RouterTriggerEvent>,replies:List<String>) {
         triggers.mapNotNull {it.sourceMessageId?.removePrefix("native:")}.forEach {id->
             events.pending("message").firstOrNull {it.id==id}?.let {
@@ -61,10 +67,11 @@ class NativeDialogueService(private val kernel: CloudAgentKernel, private val in
         events.consume(listOf(input))
     }
     fun topic(item:CloudWorkItemRecord)=item.subscribedThreadKeys.firstOrNull {it.startsWith("native:")}?.removePrefix("native:") ?: item.workItemId
-    fun settlement(item:CloudWorkItemRecord,report:WorkerSettlementReport) {
+    suspend fun settlement(item:CloudWorkItemRecord,report:WorkerSettlementReport) {
         if(report.outcome=="cancelled")events.abandonPending(item.workItemId)
         if(item.subscribedThreadKeys.none {it.startsWith("native:")})return
         val text=OutwardTextSanitizer.sanitize(report.summary,kernel.router.forbiddenToolNames)
+        persistReply("result:${item.workItemId}", "${item.title} · ${if(report.outcome=="completed") "已完成" else if(report.outcome=="cancelled") "已停止" else "未完成"}\n$text")
         events.append(DialogueEvent("result:${item.workItemId}","task_result","assistant",text,topic(item),item.workItemId,report.outcome))
     }
     suspend fun recover() {

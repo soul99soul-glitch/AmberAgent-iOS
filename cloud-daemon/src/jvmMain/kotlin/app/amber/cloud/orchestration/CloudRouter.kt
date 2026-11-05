@@ -17,6 +17,10 @@ import app.amber.cloud.runtime.ToolEffect
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.soul.CloudSoulStore
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
@@ -202,6 +206,7 @@ class CloudRouter(
         get() = executionToolNames + kernel.toolRegistry.registeredToolNames() + routerTools.registeredToolNames()
 
     private val running = AtomicBoolean(false)
+    private val nativeTurns = ConcurrentHashMap<String, Job>()
     private val loopMutex = Mutex()
     private val statusMutex = Mutex()
     private val eventAddress = ConcurrentHashMap<String, ImAddress>()
@@ -273,13 +278,14 @@ class CloudRouter(
      */
     suspend fun awaitIdle(includeWorkers: Boolean = false) {
         while (true) {
-            while (running.get() || kernel.hasPendingRouterEvents()) {
+            while (running.get() || kernel.hasPendingRouterEvents() || nativeTurns.isNotEmpty()) {
                 runLoop()
                 loopMutex.withLock { }
+                nativeTurns.values.toList().joinAll()
             }
             if (!includeWorkers) break
             kernel.awaitBackgroundWorkers()
-            if (!running.get() && !kernel.hasPendingRouterEvents()) break
+            if (!running.get() && !kernel.hasPendingRouterEvents() && nativeTurns.isEmpty()) break
         }
     }
 
@@ -296,7 +302,10 @@ class CloudRouter(
                             // A native message is a durable operation; its plan/replay boundary stays stable across restarts.
                             val turns = if (conversationEvents.any { it.sourceMessageId?.startsWith("native:")==true }) conversationEvents.map(::listOf)
                                 else agentCoordinator?.splitTurns(conversationEvents) ?: listOf(conversationEvents)
-                            for (turn in turns) runCatching { processTurn(turn) }
+                            for (turn in turns) {
+                                if (turn.all { it.sourceMessageId?.startsWith("native:") == true }) launchNativeTurn(turn)
+                                else processTurnSafely(turn)
+                            }
                         }
                     } finally {
                         kernel.isRouterTurnBusy = false
@@ -308,6 +317,25 @@ class CloudRouter(
         }
         // 关闭窗口内新到的事件：再踢一次
         if (kernel.hasPendingRouterEvents()) kick()
+    }
+
+    private fun launchNativeTurn(events: List<RouterTriggerEvent>) {
+        val id = events.single().eventId
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            try { processTurnSafely(events) }
+            finally { nativeTurns.remove(id) }
+        }
+        if (nativeTurns.putIfAbsent(id, job) == null) job.start() else job.cancel()
+    }
+
+    private suspend fun processTurnSafely(events: List<RouterTriggerEvent>) {
+        try { processTurn(events) }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) {
+            kernel.store.appendDiagnosticEvent(events.first().conversationId, null, "router_turn_failed",
+                detail = CredentialRedactor.redact(e.stackTraceToString()), nowMs = clockMs())
+            onEventsHandled(events, listOf(app.amber.cloud.runtime.cloudFailureSummary(e)))
+        }
     }
 
     private suspend fun processTurn(events: List<RouterTriggerEvent>) {
@@ -330,8 +358,14 @@ class CloudRouter(
         )
         val native = events.all { it.sourceMessageId?.startsWith("native:")==true }
         val planId = "dialogue-plan:"+events.joinToString("|") {it.eventId}
-        val decision = (if(native) kernel.store.dialogue.plan(planId) else null) ?: runCatching { agentCoordinator?.plan(events, ownerIds) ?: brain.decide(input) }
-            .getOrElse { RouterDecision(reply = "这次没处理好，我稍后再试。") }
+        val decision = (if(native) kernel.store.dialogue.plan(planId) else null) ?: try {
+            agentCoordinator?.plan(events, ownerIds) ?: brain.decide(input)
+        } catch (e: CancellationException) { throw e }
+          catch (e: Exception) {
+            kernel.store.appendDiagnosticEvent(events.first().conversationId, null, "router_model_failed",
+                detail = CredentialRedactor.redact(e.stackTraceToString()), nowMs = clockMs())
+            RouterDecision(reply = app.amber.cloud.runtime.cloudFailureSummary(e))
+        }
             .also { if(native) kernel.store.dialogue.savePlan(planId,it) }
 
         val replies = mutableListOf<String>()
@@ -480,12 +514,19 @@ class CloudRouter(
 
     private fun onBatchRollup(rollup: BatchRollupRecord) {
         val items = rollup.workItemIds.mapNotNull { kernel.store.getWorkItem(it) }
+        // Native settlements already publish the actual result and persist it in the main history.
+        // A second model turn can invent a retry or overwrite a useful failure explanation.
+        if (items.isNotEmpty() && items.all { item -> item.subscribedThreadKeys.any { it.startsWith("native:") } }) return
         val done = items.count { it.state == WorkItemState.COMPLETED }
         val notDone = items.size - done
         val summary = buildString {
             append("这批任务结束：").append(done).append(" 项完成")
             if (notDone > 0) append("，").append(notDone).append(" 项未完成")
             append("。详情 doc:rollups/").append(rollup.batchId).append(".md")
+            items.forEach { item ->
+                append('\n').append(item.workItemId).append(" [").append(item.state).append("] ")
+                append(item.settlementReportPath?.let(kernel.store::readArchivedDocumentText)?.take(2_000).orEmpty())
+            }
         }
         val address = batchAddress[rollup.batchId]
         val eventId = "rollup:${rollup.wakeClaimId}"

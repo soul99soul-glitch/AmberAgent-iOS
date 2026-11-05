@@ -92,7 +92,7 @@ class DefaultCloudOrchestrationKernel(
     val workerEvents = WorkerEventInbox(this)
     var stopTaskProcesses: suspend (String)->Unit = {}
     var hasBackgroundProcesses: (String)->Boolean = {false}
-    var settlementListener: (CloudWorkItemRecord,WorkerSettlementReport)->Unit = {_,_->}
+    var settlementListener: suspend (CloudWorkItemRecord,WorkerSettlementReport)->Unit = {_,_->}
     fun signalWorker(id:String)=workerEvents.signal(id)
 
     sealed class InboundRoutingDecision {
@@ -137,7 +137,9 @@ class DefaultCloudOrchestrationKernel(
                     val report = try { runner(current, workerPrincipal) }
                     catch (t: Exception) {
                         if (t is CancellationException) throw t
-                        WorkerSettlementReport(item.workItemId,"failed","执行异常: ${CredentialRedactor.redact(t.message.orEmpty())}")
+                        store.appendDiagnosticEvent(current.workerSessionId ?: current.workItemId, current.workItemId,
+                            "worker_execution_failed", detail = CredentialRedactor.redact(t.stackTraceToString()), nowMs = clockMs())
+                        WorkerSettlementReport(item.workItemId,"failed",app.amber.cloud.runtime.cloudFailureSummary(t))
                     } ?: break
                     val settled=reportWorkerSettlement(workerPrincipal, report, clockMs())
                     if(settled.state.isTerminal)break
