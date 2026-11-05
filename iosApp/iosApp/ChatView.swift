@@ -92,7 +92,16 @@ struct ChatView: View {
         let isCloudHostActive = MacGatewayStore.shared.connection != nil && MacGatewayStore.shared.isCloudMainDialogueSelected
         return ZStack {
             AmberThemePageBackground(surface: .app)
-            if isCloudHostActive {
+            ChatDialogueHostContent(isCloudSelected: isCloudHostActive) {
+                messageList
+                    .safeAreaBar(edge: .top, spacing: 0) {
+                        Color.clear
+                            .frame(height: ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight)
+                            .allowsHitTesting(false)
+                    }
+                    .opacity(composerState.activeDuetTab == .chat ? 1 : 0)
+                    .allowsHitTesting(composerState.activeDuetTab == .chat)
+            } cloud: {
                 AmberInlineCloudMainDialogueView(
                     store: MacGatewayStore.shared,
                     topInset: ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight,
@@ -102,15 +111,6 @@ struct ChatView: View {
                 )
                 .opacity(composerState.activeDuetTab == .chat ? 1 : 0)
                 .allowsHitTesting(composerState.activeDuetTab == .chat)
-            } else {
-                messageList
-                    .safeAreaBar(edge: .top, spacing: 0) {
-                        Color.clear
-                            .frame(height: ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight)
-                            .allowsHitTesting(false)
-                    }
-                    .opacity(composerState.activeDuetTab == .chat ? 1 : 0)
-                    .allowsHitTesting(composerState.activeDuetTab == .chat)
             }
 
             // 冷启动：会话历史还没读上来时先顶上与最终页同构的中性骨架，

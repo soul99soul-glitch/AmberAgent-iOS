@@ -587,11 +587,9 @@ extension MacGatewayStore {
         }
         isCloudMainDialogueSelected = selected
         persistCloudDialogueState()
-        if selected {
-            startCloudDialoguePollingIfNeeded()
-        } else {
-            stopCloudDialoguePolling()
-        }
+        // Switching the visible host does not end accepted cloud work or its pending reply.
+        // The loop retires itself once the cloud is hidden and all work has settled.
+        startCloudDialoguePollingIfNeeded()
     }
 
     func loadPersistedCloudDialogueState() {
@@ -1232,7 +1230,11 @@ extension MacGatewayStore {
               client != nil,
               (isCloudMainDialogueSelected || !activeCloudDialogueWorkItemIds.isEmpty || isAwaitingCloudMainReply) else { return }
         cloudDialoguePollTask = Task { @MainActor [weak self] in
-            defer { self?.cloudDialoguePollTask = nil }
+            defer {
+                // stopCloudDialoguePolling already releases a cancelled handle. Its old
+                // task may finish after a replacement has started and must not clear it.
+                if !Task.isCancelled { self?.cloudDialoguePollTask = nil }
+            }
             while !Task.isCancelled {
                 guard let self, self.client != nil,
                       (self.isCloudMainDialogueSelected || !self.activeCloudDialogueWorkItemIds.isEmpty || self.isAwaitingCloudMainReply) else { break }
