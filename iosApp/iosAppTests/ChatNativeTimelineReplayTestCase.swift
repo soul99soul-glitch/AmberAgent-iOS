@@ -29,6 +29,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
         @Published var scrollToBottomTrigger = 0
         @Published var messageAnchor: ChatMessageAnchor?
         @Published var currentConversationID: String?
+        var completionFeedback: ChatCompletionFeedback?
         var messages: [UIMessage] = []
         var requestedVariantIndices: Set<Int> = []
         private(set) var viewportHistory: [ChatViewportState] = []
@@ -84,6 +85,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
                 onDismissKeyboard: {}
             )
             .environment(\.amberIsUnderlyingSheetPresented, model.pausesDecorativeTimelines)
+            .environment(\.chatCompletionFeedback, model.completionFeedback)
         }
     }
 
