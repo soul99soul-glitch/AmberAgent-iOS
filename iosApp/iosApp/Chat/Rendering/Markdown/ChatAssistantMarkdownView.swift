@@ -137,7 +137,7 @@ struct ChatAssistantMarkdownView: View {
     }
 
     var body: some View {
-        let _ = ChatRenderProbe.record("markdown")
+        let _ = ChatRenderProbe.record("markdown", id: sourceMessageID ?? "unattributed")
         let widgetSettings = IOSGenerativeWidgetSettings(generativeUiSetting)
         let renderedMarkdown = renderedMarkdownText
         let liveStreaming = isStreaming && liveRenderingEnabled

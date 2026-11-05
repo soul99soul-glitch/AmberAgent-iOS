@@ -92,7 +92,9 @@ struct MessageBubbleView: View {
     }
 
     var body: some View {
-        let _ = ChatRenderProbe.record("message")
+        #if DEBUG
+        let _ = ChatRenderProbe.record("message", id: message.id.toHexDashString())
+        #endif
         Group {
             if ChatMessageProjector.isSubAgentResult(message) {
                 ChatSubAgentResultCard(message: message, displaySetting: displaySetting)

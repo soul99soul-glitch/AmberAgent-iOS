@@ -99,7 +99,7 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
 
     var body: some View {
         let _ = ChatRenderProbe.record("row", id: model.row.messageId)
-        ChatTimelineRowLayout {
+        ChatTimelineRowLayout(messageID: model.row.messageId) {
             ChatMessageHostedBubble(
                 model: model,
                 displaySetting: displaySetting,
@@ -132,15 +132,24 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
               lhs.displaySettingSignature == rhs.displaySettingSignature,
               lhs.generativeUiSettingSignature == rhs.generativeUiSettingSignature,
               lhs.imageAccessibilityFocusToolCallID == rhs.imageAccessibilityFocusToolCallID
-        else { return false }
+        else {
+            #if DEBUG
+            ChatRenderProbe.recordRowDifferences(lhs, rhs)
+            #endif
+            return false
+        }
 
         if lhs.usesLiveTail || rhs.usesLiveTail {
             return lhs.model.liveTailModel === rhs.model.liveTailModel &&
                 lhs.reasoningLevelLabel == rhs.reasoningLevelLabel
         }
 
-        return lhs.renderDigest == rhs.renderDigest &&
+        let equal = lhs.renderDigest == rhs.renderDigest &&
             lhs.model.isGenerationActive == rhs.model.isGenerationActive
+        #if DEBUG
+        if !equal { ChatRenderProbe.recordRowDifferences(lhs, rhs) }
+        #endif
+        return equal
     }
 
     private var usesLiveTail: Bool {
@@ -157,7 +166,7 @@ private struct ChatMessageHostedBubble: View {
     let onAction: (ChatListAction) -> Void
 
     var body: some View {
-        let _ = ChatRenderProbe.record("hosted")
+        let _ = ChatRenderProbe.record("hosted", id: model.row.messageId)
         if let liveTailModel = model.liveTailModel {
             ChatLiveTailBubble(
                 model: model,
@@ -230,7 +239,7 @@ private struct ChatLiveTailBubble: View {
     let onAction: (ChatListAction) -> Void
 
     var body: some View {
-        let _ = ChatRenderProbe.record("live-tail")
+        let _ = ChatRenderProbe.record("live-tail", id: model.row.messageId)
         ChatMessageHostedBubble(
             model: model,
             displaySetting: displaySetting,
