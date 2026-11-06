@@ -52,6 +52,8 @@ class ParagraphUIView: UITextView {
   private(set) var activeAnimations: [FadeAnimationData] = []
   private var fadeAnimationDisplayLink: CADisplayLink?
   private var cachedSize: CachedParagraphUIViewSize?
+  private var lastReportedFittingSize: CachedParagraphUIViewSize?
+  private var intrinsicContentSizeSuppressionDepth = 0
   /// Bounds width seen by the last layout pass. `cachedSize` is populated only
   /// by `intrinsicContentSize`; SwiftUI's `UIViewRepresentable.sizeThatFits`
   /// path can leave it nil even after a stable layout, so it cannot be used as
@@ -173,6 +175,16 @@ class ParagraphUIView: UITextView {
     return roundedUpSize
   }
 
+  var isSuppressingIntrinsicContentSizeInvalidation: Bool {
+    intrinsicContentSizeSuppressionDepth > 0
+  }
+
+  override func invalidateIntrinsicContentSize() {
+    guard !isSuppressingIntrinsicContentSizeInvalidation else { return }
+    invalidateCachedSize()
+    super.invalidateIntrinsicContentSize()
+  }
+
   override func layoutSubviews() {
     super.layoutSubviews()
     var needsIntrinsicSizeInvalidation = false
@@ -276,10 +288,12 @@ class ParagraphUIView: UITextView {
         height: ParagraphUIView.unboundedMeasuringHeight
       )
       let measuredWidth = (used.width + textContainerInset.left + textContainerInset.right).rounded(.up)
-      return CGSize(
+      let fittedSize = CGSize(
         width: min(measuredWidth, size.width),
         height: (used.height + textContainerInset.top + textContainerInset.bottom).rounded(.up)
       )
+      lastReportedFittingSize = CachedParagraphUIViewSize(size: fittedSize, targetWidth: size.width)
+      return fittedSize
     }
     // Steady state (including the table measurement chain's repeated
     // same-width passes): measure against the container as-is, no invalidation.
@@ -289,10 +303,12 @@ class ParagraphUIView: UITextView {
     _ = layoutManager.glyphRange(for: textContainer)
     let used = layoutManager.usedRect(for: textContainer)
     let measuredWidth = (used.width + textContainerInset.left + textContainerInset.right).rounded(.up)
-    return CGSize(
+    let fittedSize = CGSize(
       width: min(measuredWidth, size.width),
       height: (used.height + textContainerInset.top + textContainerInset.bottom).rounded(.up)
     )
+    lastReportedFittingSize = CachedParagraphUIViewSize(size: fittedSize, targetWidth: size.width)
+    return fittedSize
   }
 
   /// Union of the actually used line-fragment bounds. `usedRect(for:)` can lag a
@@ -324,7 +340,8 @@ class ParagraphUIView: UITextView {
     _ newContents: NSMutableAttributedString,
     lineSpacing: CGFloat? = nil,
     animatedByWord: Bool,
-    appendsTailFadeAsUnit: Bool = false
+    appendsTailFadeAsUnit: Bool = false,
+    suppressIntrinsicInvalidation: Bool = false
   ) {
     // Keep the cached interface style up to date for citation preview rendering.
     // This runs on the main thread so it's safe to read traitCollection here.
@@ -354,19 +371,38 @@ class ParagraphUIView: UITextView {
       if let lineSpacing {
         suffix.setLineSpacing(lineSpacing)
       }
+      let previousFittingSize = lastReportedFittingSize
       invalidateCachedSize()
+      intrinsicContentSizeSuppressionDepth += 1
       textStorage.beginEditing()
       textStorage.append(suffix)
       textStorage.endEditing()
-      setNeedsLayout()
+      intrinsicContentSizeSuppressionDepth -= 1
       // TextKit 1 is selected only for attachment-free paragraphs. Avoid a
       // full attributed-range scan on every append when no citation action can
       // exist on this path.
       accessibilityLabel = textStorage.string
       accessibilityCustomActions = nil
-      invalidateIntrinsicContentSize()
       if animatedByWord {
         appendFadeAnimations(in: appendedRange, asUnit: appendsTailFadeAsUnit)
+      }
+      if suppressIntrinsicInvalidation {
+        setNeedsDisplay()
+      } else if let previousFittingSize,
+                previousFittingSize.targetWidth > 0,
+                previousFittingSize.targetWidth.isFinite {
+        let updatedFittingSize = sizeThatFits(
+          CGSize(width: previousFittingSize.targetWidth, height: .greatestFiniteMagnitude)
+        )
+        if updatedFittingSize != previousFittingSize.size {
+          setNeedsLayout()
+          invalidateIntrinsicContentSize()
+        } else {
+          setNeedsDisplay()
+        }
+      } else {
+        setNeedsLayout()
+        invalidateIntrinsicContentSize()
       }
       return
     }
@@ -405,8 +441,11 @@ class ParagraphUIView: UITextView {
     // fades for the newly appended tail are added below; otherwise the stale
     // ranges apply wrong alphas to unrelated characters in the replacement.
     activeAnimations.removeAll()
+    lastReportedFittingSize = nil
     invalidateCachedSize()
+    intrinsicContentSizeSuppressionDepth += 1
     attributedText = finalString
+    intrinsicContentSizeSuppressionDepth -= 1
 
     // Vendored fix (AmberAgent): a reused view's TextKit2 text container can still
     // be sized for a previous, wider context (e.g. an unconstrained table cell).
@@ -418,7 +457,9 @@ class ParagraphUIView: UITextView {
 
     configureAccessibility(for: finalString)
 
-    invalidateIntrinsicContentSize()
+    if !suppressIntrinsicInvalidation {
+      invalidateIntrinsicContentSize()
+    }
 
     // Vendored fix (AmberAgent): a non-append replacement can keep a real text
     // prefix while changing everything after it. The old-length heuristic skipped
@@ -622,6 +663,8 @@ class ParagraphUIView: UITextView {
   }
 
   private func updateTextViewWithCurrentAnimations(at currentTime: CFTimeInterval = CACurrentMediaTime()) {
+    intrinsicContentSizeSuppressionDepth += 1
+    defer { intrinsicContentSizeSuppressionDepth -= 1 }
     textStorage.beginEditing()
     defer { textStorage.endEditing() }
 
@@ -654,9 +697,9 @@ class ParagraphUIView: UITextView {
   private func setUpDisplayLink() {
     fadeAnimationDisplayLink = CADisplayLink(target: self, selector: #selector(updateFadeAnimation))
     fadeAnimationDisplayLink?.preferredFrameRateRange = CAFrameRateRange(
-      minimum: 60,
-      maximum: 120,
-      preferred: 120
+      minimum: 30,
+      maximum: 60,
+      preferred: 60
     )
     fadeAnimationDisplayLink?.add(to: .main, forMode: .common)
   }
@@ -683,6 +726,7 @@ class ParagraphUIView: UITextView {
     paragraphContents = NSMutableAttributedString()
     lineSpacing = nil
     attributedText = NSAttributedString()
+    lastReportedFittingSize = nil
     invalidateCachedSize()
     lastLaidOutWidth = nil
     // Vendored fix (AmberAgent): also drop the previous context's frame. A

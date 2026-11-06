@@ -223,13 +223,16 @@ struct ChatStreamingRevealPacer<Content: View>: View {
     /// 小步推进直到追平全文。全程同一节奏：流式结束后不提速、不一次性刷出。
     private func drain() async {
         guard !reduceMotion else {
+            pacerBox.lastTickUptime = nil
             if isActivelyPacing { isActivelyPacing = false }
             return
         }
         guard isStreaming || isActivelyPacing else {
+            pacerBox.lastTickUptime = nil
             return
         }
         if pacerBox.containsTable(in: text) {
+            pacerBox.lastTickUptime = nil
             revealedUTF16Count = text.utf16.count
             // 分块子树持有各正文尾块的排空状态。完成事件后仍保留委托，
             // 包括只随最终快照新增的正文，不能拆掉其 pacer 后一次性露出全文。
@@ -239,19 +242,59 @@ struct ChatStreamingRevealPacer<Content: View>: View {
             isActivelyPacing = true
         }
         let totalUTF16 = text.utf16.count
+        guard revealedUTF16Count < totalUTF16 else {
+            pacerBox.lastTickUptime = nil
+            if !Task.isCancelled, !isStreaming, isActivelyPacing {
+                isActivelyPacing = false
+            }
+            return
+        }
+        let tickSeconds = Double(ChatStreamingRevealTiming.tickNanos) / 1_000_000_000
+        let maxCatchUpTicks = ChatStreamingRevealTiming.maxCatchUpTicksPerWake
+        let maxCreditWindow = Double(maxCatchUpTicks) * tickSeconds
         while !Task.isCancelled, revealedUTF16Count < totalUTF16 {
-            let nextUTF16 = ChatStreamingRevealTiming.nextStepUTF16Offset(
-                in: text,
-                fromUTF16Offset: revealedUTF16Count
-            )
-            if nextUTF16 <= revealedUTF16Count {
-                revealedUTF16Count = totalUTF16
+            let now = ProcessInfo.processInfo.systemUptime
+            let stepsToAdvance: Int
+            if let lastTick = pacerBox.lastTickUptime {
+                let elapsed = now - lastTick
+                if elapsed < tickSeconds {
+                    let remainingNanos = UInt64(max(1, (tickSeconds - elapsed) * 1_000_000_000))
+                    try? await Task.sleep(nanoseconds: remainingNanos)
+                    guard !Task.isCancelled else { return }
+                }
+                let wakeUptime = ProcessInfo.processInfo.systemUptime
+                let totalElapsed = max(0, wakeUptime - lastTick)
+                let dueTicks = max(1, Int(totalElapsed / tickSeconds))
+                stepsToAdvance = min(maxCatchUpTicks, dueTicks)
+                let advancedSeconds = Double(stepsToAdvance) * tickSeconds
+                pacerBox.lastTickUptime = max(lastTick + advancedSeconds, wakeUptime - maxCreditWindow)
+            } else {
+                stepsToAdvance = 1
+                pacerBox.lastTickUptime = now
+            }
+
+            var nextUTF16 = revealedUTF16Count
+            for _ in 0..<stepsToAdvance {
+                guard nextUTF16 < totalUTF16 else { break }
+                let candidate = ChatStreamingRevealTiming.nextStepUTF16Offset(
+                    in: text,
+                    fromUTF16Offset: nextUTF16
+                )
+                if candidate <= nextUTF16 {
+                    nextUTF16 = totalUTF16
+                    break
+                }
+                nextUTF16 = min(candidate, totalUTF16)
+            }
+            revealedUTF16Count = nextUTF16
+            if revealedUTF16Count >= totalUTF16 {
+                pacerBox.lastTickUptime = nil
                 break
             }
-            revealedUTF16Count = min(nextUTF16, totalUTF16)
             try? await Task.sleep(nanoseconds: ChatStreamingRevealTiming.tickNanos)
         }
         if !Task.isCancelled, !isStreaming, revealedUTF16Count >= totalUTF16, isActivelyPacing {
+            pacerBox.lastTickUptime = nil
             isActivelyPacing = false
         }
     }
@@ -265,6 +308,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
 
 private final class ChatStreamingRevealPacerBox {
     var naturalHeight: CGFloat = 0
+    var lastTickUptime: TimeInterval?
     private var tableDetector = ChatStreamingTableDetectionState()
 
     func containsTable(in text: String) -> Bool {
@@ -277,6 +321,8 @@ private final class ChatStreamingRevealPacerBox {
 enum ChatStreamingRevealTiming {
     /// 约 60fps 一拍。
     static let tickNanos: UInt64 = 16_000_000
+    /// 主线程掉帧导致单次唤醒跨多拍时，单次唤醒最多补拍的逻辑拍数上限。
+    static let maxCatchUpTicksPerWake = 4
     /// 高度增长的过渡时长：短到不拖沓，长到足以盖住单帧一整行的台阶。
     static let heightSettleSeconds: Double = 0.14
     /// 中途重进入时只补齐尾部这么多个字，避免把已有正文整段重打。

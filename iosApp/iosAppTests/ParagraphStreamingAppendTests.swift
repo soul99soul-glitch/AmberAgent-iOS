@@ -8,6 +8,7 @@ private final class TextKit1IntrinsicInvalidationProbe: ParagraphUIView {
     private(set) var invalidationCount = 0
 
     override func invalidateIntrinsicContentSize() {
+        guard !isSuppressingIntrinsicContentSizeInvalidation else { return }
         invalidationCount += 1
         super.invalidateIntrinsicContentSize()
     }
@@ -76,6 +77,40 @@ final class ParagraphStreamingAppendTests: XCTestCase {
             view.invalidationCount,
             afterFirstLayout,
             "稳定 TextKit 1 layout 不应再次触发 intrinsic 测量"
+        )
+    }
+
+    func testSameHeightStreamingAppendDoesNotReinvalidateIntrinsicSizeUntilLineWraps() {
+        let view = TextKit1IntrinsicInvalidationProbe.makeProbe()
+        let width: CGFloat = 337
+        view.frame = CGRect(x: 0, y: 0, width: width, height: 1)
+        let baseText = "这是一段已经超过一整行宽度的流式回复正文，第二行目前只有一个字"
+        let initial = NSMutableAttributedString(string: baseText, attributes: attributes)
+
+        view.setParagraphContents(initial, lineSpacing: 4, animatedByWord: false)
+        let initialSize = view.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        view.frame.size.height = initialSize.height
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        let baselineInvalidations = view.invalidationCount
+
+        let sameLineAppend = NSMutableAttributedString(string: baseText + "续", attributes: attributes)
+        view.setParagraphContents(sameLineAppend, lineSpacing: 4, animatedByWord: true, appendsTailFadeAsUnit: true)
+        XCTAssertEqual(
+            view.invalidationCount,
+            baselineInvalidations,
+            "同行追加且宽高未变时，不应触发 invalidateIntrinsicContentSize 打穿外层行缓存"
+        )
+
+        let multiLineAppend = NSMutableAttributedString(
+            string: baseText + "续\n\n新增一段换行正文，高度必须增长并通知宿主重新测量。",
+            attributes: attributes
+        )
+        view.setParagraphContents(multiLineAppend, lineSpacing: 4, animatedByWord: true, appendsTailFadeAsUnit: true)
+        XCTAssertGreaterThan(
+            view.invalidationCount,
+            baselineInvalidations,
+            "跨行导致高度增长时，必须触发 invalidateIntrinsicContentSize"
         )
     }
 

@@ -110,4 +110,56 @@ final class ChatTimelineReviewRegressionTests: ChatNativeTimelineReplayTestCase 
         driver.submit(.generationTerminated)
         XCTAssertEqual(driver.frameDriverRateForTesting?.preferred, 120, "终态收敛也不属于流式降帧范围")
     }
+
+    func testLiveTailSingleTokenAndChunkHeightGrowthLayoutMeasurements() throws {
+        let fixture = makeFixture()
+        defer { fixture.tearDown(); ChatRenderProbe.enabled = false; ChatRenderProbe.reset() }
+        let history = longConversation(turns: 6)
+        let historicalIDs = Set(history.map { $0.id.toHexDashString() })
+        fixture.model.messages = history + [makeUserMessage("继续搜索并整理回复")]
+        fixture.model.isGenerationActive = true
+        fixture.model.send(.initialLoad)
+        pump(seconds: 2.0)
+
+        let id = KotlinUuid.companion.random()
+        let liveID = id.toHexDashString()
+        let seed = "## 连续正文\n\n" + String(repeating: "这是当前回复。", count: 5)
+        fixture.model.messages.append(makeAssistantMessage(id: id, text: seed, finished: false))
+        fixture.model.send(.streamDelta)
+        pump(seconds: 2.0)
+
+        ChatRenderProbe.reset()
+        ChatRenderProbe.enabled = true
+        fixture.model.messages[fixture.model.messages.count - 1] = makeAssistantMessage(
+            id: id, text: seed + "续", finished: false
+        )
+        fixture.model.send(.streamDelta)
+        pump(seconds: 0.3)
+        ChatRenderProbe.enabled = false
+
+        let singleTokenMeasures = ChatRenderProbe.counts["layout-measure"] ?? [:]
+        let singleTokenHistorical = singleTokenMeasures.filter { historicalIDs.contains($0.key) }.values.reduce(0, +)
+        let singleTokenCurrent = singleTokenMeasures[liveID] ?? 0
+        print("[FANOUT-PROBE] single-token historical=\(singleTokenHistorical) current=\(singleTokenCurrent) all=\(singleTokenMeasures)")
+        XCTAssertEqual(singleTokenHistorical, 0, "单字流式更新不得触发历史行重测")
+        XCTAssertLessThanOrEqual(singleTokenCurrent, 3, "同行单字追加与淡入帧不得反复打穿当前行布局缓存")
+
+        pump(seconds: 0.5)
+        ChatRenderProbe.reset()
+        ChatRenderProbe.enabled = true
+        fixture.model.messages[fixture.model.messages.count - 1] = makeAssistantMessage(
+            id: id,
+            text: seed + "续\n\n" + String(repeating: "换行后的连续回复。", count: 8),
+            finished: false
+        )
+        fixture.model.send(.streamDelta)
+        pump(seconds: 0.3)
+        ChatRenderProbe.enabled = false
+
+        let chunkMeasures = ChatRenderProbe.counts["layout-measure"] ?? [:]
+        let chunkHistorical = chunkMeasures.filter { historicalIDs.contains($0.key) }.values.reduce(0, +)
+        let chunkCurrent = chunkMeasures[liveID] ?? 0
+        print("[FANOUT-PROBE] newline-chunk historical=\(chunkHistorical) current=\(chunkCurrent) all=\(chunkMeasures)")
+        XCTAssertEqual(chunkHistorical, 0, "换行流式更新不得触发历史行重测")
+    }
 }

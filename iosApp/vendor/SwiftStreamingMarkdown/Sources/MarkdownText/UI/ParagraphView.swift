@@ -76,13 +76,8 @@ struct ParagraphView: UIViewRepresentable {
         animatedByWord: shouldAnimate,
         appendsTailFadeAsUnit: config.animatesAppendedTailAsUnit
       )
-      // Vendored fix (AmberAgent): sizeThatFits runs BEFORE updateUIView in the
-      // same layout pass, so it measures the old UITextView content and caches
-      // the wrong height.  Clear the cache here so the next sizeThatFits (triggered
-      // by invalidateIntrinsicContentSize inside setParagraphContents) recalculates
-      // with the correct text.  Without this, the stale height persists until the
-      // next streaming delta, causing VStack rows to overlap.
       context.coordinator.sizeCache.removeAll()
+      context.coordinator.lastContents = nil
     }
     view.setTextContextMenu(config.textContextMenu)
     view.setMarkdownController(markdownController)
@@ -108,6 +103,25 @@ struct ParagraphView: UIViewRepresentable {
     #if DEBUG
     ParagraphViewSizeThatFitsTestHook.recordCall()
     #endif
+
+    // Vendored fix (AmberAgent): SwiftUI invokes sizeThatFits BEFORE updateUIView
+    // in the same layout pass. Synchronize uiView's contents here (while
+    // suppressing intrinsic size invalidation since we are already returning the
+    // new measurement to SwiftUI) so the first pass measures the real text and
+    // updateUIView does not have to invalidate and trigger a second layout pass.
+    let viewContentsUnchanged = uiView.paragraphContents === contents
+      || uiView.paragraphContents == contents
+    if !viewContentsUnchanged || uiView.lineSpacing != lineSpacing {
+      let shouldAnimate = config.shouldAnimateText
+        && (config.animatesAppendedTailAsUnit || uiView.window != nil)
+      uiView.setParagraphContents(
+        contents,
+        lineSpacing: lineSpacing,
+        animatedByWord: shouldAnimate,
+        appendsTailFadeAsUnit: config.animatesAppendedTailAsUnit,
+        suppressIntrinsicInvalidation: true
+      )
+    }
 
     // Check if content or lineSpacing changed - if so, clear the cache
     // Vendored fix (AmberAgent): identity-first short circuit, see updateUIView.
