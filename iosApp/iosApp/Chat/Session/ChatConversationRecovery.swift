@@ -19,6 +19,9 @@ extension ChatViewModel {
             reason: reason,
             lagAllowance: lagAllowance
         )
+        if timelineUpdates.publish(messageUpdateSignal, messages: messages) {
+            timelineStructuralSignal = messageUpdateSignal
+        }
         // 独立保留产物刷新信号，避免工具结果与后续文字 chunk 合并上屏时丢失。
         switch reason {
         // 生成式 UI 修复重试直接发布定稿正文（.assistantStreamClosed），也要重建索引。

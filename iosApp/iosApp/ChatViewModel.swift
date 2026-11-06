@@ -132,6 +132,8 @@ final class ChatViewModel {
     var reasoningLevel: ReasoningLevel = .off
     var messageRevision: Int = 0
     var messageUpdateSignal = ChatMessageUpdateSignal()
+    var timelineStructuralSignal = ChatMessageUpdateSignal()
+    @ObservationIgnored let timelineUpdates = ChatTimelineUpdates()
     var artifactUpdateSignal = ChatMessageUpdateSignal()
     var artifactUpdateWasRunning = false
     /// token 聚合只在结构性消息事件后重算；流式 delta 不改 usage，跳过 O(n) 扫描。

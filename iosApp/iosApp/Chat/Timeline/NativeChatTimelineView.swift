@@ -9,6 +9,7 @@ import Combine
 struct NativeChatTimelineView: View {
     static let historyPageSize = 60
     var signal: ChatMessageUpdateSignal
+    var timelineUpdates: ChatTimelineUpdates? = nil
     var configurationIssue: ChatConfigurationIssue?
     var isGenerationActive: Bool
     var liveTaskTailIDs: Set<String> = []
@@ -35,6 +36,7 @@ struct NativeChatTimelineView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    @State private var timelineStreamOwner = UUID()
     @State private var viewportState = ChatViewportState()
     @State private var scrollPosition = ScrollPosition()
     @State private var lastScrollToBottomTrigger = 0
@@ -73,7 +75,8 @@ struct NativeChatTimelineView: View {
     var body: some View {
         let _ = ChatRenderProbe.record("timeline")
         let _ = phoneToolGroupToggleHandler.action = togglePhoneToolGroup
-        let messages = messagesProvider()
+        let _ = timelineUpdates?.attach(owner: timelineStreamOwner, consume: consumeTimelineStream)
+        let messages = timelineUpdates?.structuralMessages ?? messagesProvider()
         let startIndex = resolvedHistoryStartIndex(messages: messages)
         let nativeScrollDriverDesired = isNativeScrollDriverDesired
         let displaySettingSignature = projectionCache.settings.display(displaySetting, fontScale: fontScale, chatFont: chatFont, agentName: agentName)
@@ -387,6 +390,7 @@ struct NativeChatTimelineView: View {
                 highlightedMessageAnchor = nil
                 isNativeScrollSurfaceVisible = false
                 timelineGrowth.setEnabled(false)
+                timelineUpdates?.detach(owner: timelineStreamOwner)
                 historyRevealAnchor = nil
                 nativeUserScrollActive = false
                 scrollDriver.invalidate()
@@ -1074,6 +1078,21 @@ struct NativeChatTimelineView: View {
         return ChatMessageProjector.messageId(for: lastAssistant)
     }
 
+    private func consumeTimelineStream(_ message: UIMessage, signal: ChatMessageUpdateSignal) -> Bool {
+        let id = ChatMessageProjector.messageId(for: message)
+        guard streamedMessageIDs.contains(id),
+              !usesIndependentTasks || liveTaskTailIDs.contains(id),
+              let model = renderStateStore.existingLiveTailModel(messageID: id),
+              model.renderState.hasEverStreamed, model.renderState.liveRenderingEnabled,
+              NativeTimelineStreamingTailUpdatePolicy.shouldUpdate(messageID: id,
+                  isFarFromBottom: viewportState.liveRenderingFarFromBottom,
+                  visibility: nativeStreamingTailVisibility) else { return false }
+        model.update(message: message, isGenerationActive: isGenerationActive,
+                     renderState: model.renderState, sourceRevision: signal.revision)
+        submitNativeScrollIntent(for: signal.event, lagAllowance: signal.lagAllowance)
+        return true
+    }
+
     private func updateNativeLiveTailModelIfNeeded(messages: [UIMessage], viewportState: ChatViewportState) {
         guard let indexedMessage = messages.enumerated().last(where: { $0.element.role == MessageRole.assistant })
         else { return }
@@ -1081,7 +1100,8 @@ struct NativeChatTimelineView: View {
         let messageID = ChatMessageProjector.messageId(for: message)
         guard !usesIndependentTasks || liveTaskTailIDs.contains(messageID) else { return }
         let isLast = indexedMessage.offset == messages.lastIndex(where: ChatMessageProjector.isVisibleInTimeline)
-        let isStreaming = signal.event == .assistantStreamDelta && isLast
+        let currentSignal = timelineUpdates?.latestSignal ?? signal
+        let isStreaming = currentSignal.event == .assistantStreamDelta && isLast
         let row = ChatMessageRowModel(
             rowId: messageID,
             messageId: messageID,
@@ -1109,7 +1129,7 @@ struct NativeChatTimelineView: View {
             message: row.message,
             isGenerationActive: isGenerationActive,
             renderState: renderState,
-            sourceRevision: signal.revision
+            sourceRevision: currentSignal.revision
         )
     }
 

@@ -135,6 +135,9 @@ struct ChatStreamingRevealPacer<Content: View>: View {
             } action: { height in
                 guard activePacing && !bypassPacingForTable else { return }
                 if let timelineGrowth {
+                    #if DEBUG
+                    ChatRenderProbe.record("pacer-native-height")
+                    #endif
                     let previous = pacerBox.naturalHeight
                     pacerBox.naturalHeight = height
                     let prefilledFirstFrame = previous == 0 && initiallyRevealedUTF16Count != nil &&

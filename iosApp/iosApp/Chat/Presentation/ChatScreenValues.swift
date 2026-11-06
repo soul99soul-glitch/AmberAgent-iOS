@@ -241,9 +241,9 @@ struct ChatTimelineSignalHost<Content: View>: View {
     }
 
     var body: some View {
-        let signal = viewModel.messageUpdateSignal
+        let signal = viewModel.timelineStructuralSignal
         content(signal)
-            .onChange(of: signal, perform: onSignalChange)
+            .onReceive(viewModel.timelineUpdates.signals, perform: onSignalChange)
     }
 }
 

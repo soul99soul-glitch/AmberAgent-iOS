@@ -18,6 +18,9 @@ final class ChatTimelineGrowth: ObservableObject {
 
     func contentGrew(by delta: CGFloat) {
         guard enabled, delta > 0 else { return }
+        #if DEBUG
+        ChatRenderProbe.record("growth-transform")
+        #endif
         withAnimation(.linear(duration: ChatStreamingRevealTiming.heightSettleSeconds)) {
             totalGrowth += delta
         }

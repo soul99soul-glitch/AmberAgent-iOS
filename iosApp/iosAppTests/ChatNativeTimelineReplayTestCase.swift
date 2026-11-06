@@ -20,6 +20,7 @@ import Shared
 /// 的 reducer 纯单测锁定。
 @MainActor
 class ChatNativeTimelineReplayTestCase: XCTestCase {
+    @MainActor
     final class HarnessModel: ObservableObject {
         @Published var activity: ChatTimelineActivity?
         @Published var pausesDecorativeTimelines = false
@@ -29,6 +30,8 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
         @Published var scrollToBottomTrigger = 0
         @Published var messageAnchor: ChatMessageAnchor?
         @Published var currentConversationID: String?
+        let timelineUpdates = ChatTimelineUpdates()
+        private var messageRevision = 0
         var completionFeedback: ChatCompletionFeedback?
         var messages: [UIMessage] = []
         var requestedVariantIndices: Set<Int> = []
@@ -43,11 +46,13 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
         }
 
         func send(_ reason: ChatMessageUpdateReason, lagAllowance: CGFloat = 1) {
-            signal = ChatMessageUpdateSignal(
-                revision: signal.revision + 1,
+            messageRevision = max(messageRevision, signal.revision) + 1
+            let next = ChatMessageUpdateSignal(
+                revision: messageRevision,
                 reason: reason,
                 lagAllowance: lagAllowance
             )
+            if timelineUpdates.publish(next, messages: messages) { signal = next }
         }
     }
 
@@ -60,6 +65,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
         var body: some View {
             NativeChatTimelineView(
                 signal: model.signal,
+                timelineUpdates: model.timelineUpdates,
                 configurationIssue: nil,
                 isGenerationActive: model.isGenerationActive,
                 activity: model.activity,
@@ -332,6 +338,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
         )
         let model = HarnessModel()
         configure(model)
+        model.timelineUpdates.publish(model.signal, messages: model.messages)
         let host = UIHostingController(rootView: Harness(
             model: model,
             displaySetting: sharedSettings.displaySetting,

@@ -1000,6 +1000,7 @@ struct ChatView: View {
             let timelineActivity = currentTimelineActivity
             NativeChatTimelineView(
                 signal: signal,
+                timelineUpdates: viewModel.timelineUpdates,
                 configurationIssue: configurationIssue,
                 isGenerationActive: viewModel.isGenerationActive,
                 liveTaskTailIDs: viewModel.currentRun.state.liveTaskTailMessageIds,
