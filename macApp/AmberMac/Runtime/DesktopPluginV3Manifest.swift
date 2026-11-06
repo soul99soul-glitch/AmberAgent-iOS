@@ -44,9 +44,13 @@ struct DesktopPluginViewManifest: Codable, Equatable, Identifiable, Sendable {
     var entry: String = "index.html"
     var width: Double? = nil
     var height: Double? = nil
+    var compactHeight: Double? = nil
+    var aspectRatio: Double? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, title, slot, symbol, subtitle, entry, html, width, height
+        case compactHeight = "compact_height"
+        case aspectRatio = "aspect_ratio"
     }
 
     init(
@@ -57,7 +61,9 @@ struct DesktopPluginViewManifest: Codable, Equatable, Identifiable, Sendable {
         subtitle: String = "",
         entry: String = "index.html",
         width: Double? = nil,
-        height: Double? = nil
+        height: Double? = nil,
+        compactHeight: Double? = nil,
+        aspectRatio: Double? = nil
     ) {
         self.id = id
         self.title = title
@@ -67,6 +73,8 @@ struct DesktopPluginViewManifest: Codable, Equatable, Identifiable, Sendable {
         self.entry = entry
         self.width = width
         self.height = height
+        self.compactHeight = compactHeight
+        self.aspectRatio = aspectRatio
     }
 
     init(from decoder: Decoder) throws {
@@ -85,6 +93,8 @@ struct DesktopPluginViewManifest: Codable, Equatable, Identifiable, Sendable {
         }
         width = try container.decodeIfPresent(Double.self, forKey: .width)
         height = try container.decodeIfPresent(Double.self, forKey: .height)
+        compactHeight = try container.decodeIfPresent(Double.self, forKey: .compactHeight)
+        aspectRatio = try container.decodeIfPresent(Double.self, forKey: .aspectRatio)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -97,6 +107,8 @@ struct DesktopPluginViewManifest: Codable, Equatable, Identifiable, Sendable {
         try container.encode(entry, forKey: .entry)
         try container.encodeIfPresent(width, forKey: .width)
         try container.encodeIfPresent(height, forKey: .height)
+        try container.encodeIfPresent(compactHeight, forKey: .compactHeight)
+        try container.encodeIfPresent(aspectRatio, forKey: .aspectRatio)
     }
 }
 
@@ -112,6 +124,8 @@ struct DesktopPluginCustomViewEntry: Equatable, Identifiable, Sendable {
     let entryPath: String
     let width: Double?
     let height: Double?
+    let compactHeight: Double?
+    let aspectRatio: Double?
 }
 
 // MARK: - Bridge Error Codes
@@ -369,6 +383,12 @@ struct DesktopPluginManifest: Codable, Equatable, Identifiable, Sendable {
             }
             guard Self.isValidRelativeAssetPath(view.entry) else {
                 throw DesktopRuntimeError.message("插件视图 \(view.id) 的入口资源路径无效：\(view.entry)。")
+            }
+            if let height = view.compactHeight, !(48...160).contains(height) {
+                throw DesktopRuntimeError.message("插件视图 \(view.id) 的 compact_height 须在 48–160 之间。")
+            }
+            if let ratio = view.aspectRatio, !(0.5...2).contains(ratio) {
+                throw DesktopRuntimeError.message("插件视图 \(view.id) 的 aspect_ratio 须在 0.5–2 之间。")
             }
         }
         for wv in ui.workspaceViews {

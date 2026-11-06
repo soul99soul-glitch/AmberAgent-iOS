@@ -1,4 +1,5 @@
 import Foundation
+import JavaScriptCore
 import XCTest
 @testable import AmberMac
 
@@ -45,6 +46,77 @@ final class DesktopPluginV3Tests: XCTestCase {
             credentials: credentials,
             httpTransport: httpTransport
         )
+    }
+
+    private var musicPluginSource: URL {
+        if let path = ProcessInfo.processInfo.environment["AMBER_TEST_MUSIC_PLUGIN"] {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("examples/plugins/netease-music")
+    }
+
+    func testNeteaseMusicPermissionAndCommandBoundary() async throws {
+        let store = makeStore()
+        let source = musicPluginSource
+        let plan = try store.inspectPluginPackage(at: source)
+        XCTAssertTrue(plan.permissions.contains { $0.token == "music.netease" && $0.isHighRisk })
+        _ = try store.importPlugin(from: source, approvePermissions: false)
+        do {
+            _ = try await store.dispatchBridgeRPC(pluginID: "netease-music", namespace: "neteaseMusic", method: "state", args: [])
+            XCTFail("未批准的插件不应启动 CLI")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("尚未获得用户批准"))
+        }
+
+        let keyword = "歌名; $(not-a-command)"
+        let search = try DesktopNeteaseMusicCLI.arguments(method: "search", args: [keyword])
+        XCTAssertEqual(search[3], keyword)
+        let id = String(repeating: "a", count: 32)
+        XCTAssertEqual(try DesktopNeteaseMusicCLI.arguments(method: "play", args: [["encryptedId": id, "originalId": "123"]]).prefix(2), ["play", "--song"])
+        XCTAssertThrowsError(try DesktopNeteaseMusicCLI.arguments(method: "play", args: [["encryptedId": id + "\n", "originalId": "123"]]))
+        XCTAssertThrowsError(try DesktopNeteaseMusicCLI.arguments(method: "exec", args: ["anything"]))
+    }
+
+    func testCompactPresentationKeepsPluginDocumentState() throws {
+        let source = musicPluginSource
+        let manifest = try makeStore().inspectPluginPackage(at: source).manifest
+        let view = try XCTUnwrap(manifest.ui.views.first { $0.id == "netease_player_sidebar" })
+        XCTAssertEqual(view.aspectRatio, 1)
+        XCTAssertEqual(view.compactHeight, 60)
+        let roundTrip = try JSONDecoder().decode(DesktopPluginManifest.self, from: JSONEncoder().encode(manifest))
+        XCTAssertEqual(roundTrip.ui.views.first { $0.id == view.id }?.compactHeight, 60)
+        XCTAssertEqual(roundTrip.ui.views.first { $0.id == view.id }?.aspectRatio, 1)
+
+        let context = try XCTUnwrap(JSContext())
+        context.evaluateScript("""
+            globalThis.window = globalThis;
+            globalThis.document = { documentElement: { dataset: {} }, head: { prepend: function() {} },
+              getElementById: function() { return null; }, createElement: function() { return {}; },
+              addEventListener: function() {} };
+            globalThis.webkit = { messageHandlers: { amberBridge: { postMessage: function() {} } } };
+            globalThis.animationCalls = 0; globalThis.animationCancels = 0;
+            globalThis.matchMedia = function() { return { matches: false }; };
+            document.querySelectorAll = function() { return [{
+              getBoundingClientRect: function() { return document.documentElement.dataset.amberPresentation === 'compact'
+                ? { left: 4, top: 4, width: 40, height: 40 } : { left: 8, top: 40, width: 76, height: 76 }; },
+              animate: function() { animationCalls++; return { cancel: function() { animationCancels++; } }; }
+            }]; };
+            """)
+        context.evaluateScript(DesktopPluginWebViewBridgeScript.webViewBootstrapJS(
+            pluginID: "netease-music", viewID: view.id, isDark: false, isCompact: false
+        ))
+        XCTAssertNil(context.exception)
+        context.evaluateScript("window.playbackMarker = { position: 42 }; window.__amberSetCompact(true);")
+        XCTAssertEqual(context.evaluateScript("document.documentElement.dataset.amberPresentation").toString(), "compact")
+        context.evaluateScript("window.__amberSetCompact(false);")
+        XCTAssertEqual(context.evaluateScript("document.documentElement.dataset.amberPresentation").toString(), "expanded")
+        XCTAssertEqual(context.evaluateScript("window.playbackMarker.position").toInt32(), 42)
+        XCTAssertEqual(context.evaluateScript("animationCalls").toInt32(), 2)
+        XCTAssertEqual(context.evaluateScript("animationCancels").toInt32(), 1)
+        context.evaluateScript("window.__amberSetCompact(false); window.matchMedia = function() { return { matches: true }; }; window.__amberSetCompact(true);")
+        XCTAssertEqual(context.evaluateScript("animationCalls").toInt32(), 2)
+        XCTAssertEqual(context.evaluateScript("animationCancels").toInt32(), 2)
     }
 
     // MARK: - 1. Manifest v3 Validation & Permission Token Validation

@@ -168,6 +168,7 @@ final class DesktopPluginWebViewCoordinator: NSObject, WKScriptMessageHandler, W
     let viewID: String
     private weak var store: DesktopPluginStore?
     weak var webView: WKWebView?
+    private var compactPresentation: Bool?
 
     init(pluginID: String, viewID: String, store: DesktopPluginStore) {
         self.pluginID = pluginID
@@ -205,6 +206,19 @@ final class DesktopPluginWebViewCoordinator: NSObject, WKScriptMessageHandler, W
                 _ = try? await self.webView?.evaluateJavaScript(js)
             }
         }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFinish navigation: WKNavigation!
+    ) {
+        setCompact(compactPresentation)
+    }
+
+    func setCompact(_ compact: Bool?) {
+        compactPresentation = compact
+        let value = compact.map { $0 ? "true" : "false" } ?? "null"
+        webView?.evaluateJavaScript("window.__amberSetCompact && window.__amberSetCompact(\(value));", completionHandler: nil)
     }
 
     func webView(

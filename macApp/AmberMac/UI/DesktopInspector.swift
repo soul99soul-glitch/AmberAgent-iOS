@@ -9,8 +9,13 @@ struct DesktopInspector: View {
     let onOpenTasks: () -> Void
     var onFocusComposer: () -> Void = {}
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("desktop.inspector.collapsed") private var collapsedRaw = ""
+    @State private var collapsedKeys = Set((UserDefaults.standard.string(forKey: "desktop.inspector.collapsed") ?? "")
+        .split(separator: ",").map(String.init))
     @State private var expandedEmptyShelf = false
+    @State private var pluginViewWidths: [String: CGFloat] = [:]
+    @Namespace private var pluginMorph
 
     private enum Section: String, CaseIterable { case context, shelf, files, tasks }
 
@@ -22,40 +27,63 @@ struct DesktopInspector: View {
                 VStack(alignment: .leading, spacing: 16) {
                     // Module 1: Live Plugin Agenda Islands (e.g. 今日飞书日程)
                     ForEach(workspace.plugins.inspectorSnapshots) { snapshot in
-                        floatingIsland {
-                            sectionBlock(
-                                "plugin.\(snapshot.id)",
-                                title: snapshot.title,
-                                glyph: .calendar,
-                                tone: .terracotta,
-                                badge: snapshot.statusBadge
-                            ) {
-                                pluginCardContent(snapshot)
-                            }
-                        }
+                        pluginSnapshotIsland(snapshot)
                     }
 
                     // Module 1b: Custom WebView Inspector / Right Sidebar Views (amber.plugin.v3)
                     ForEach(workspace.plugins.activeCustomViews.filter { $0.slot == .inspector || $0.slot == .rightSidebar }) { customView in
-                        floatingIsland {
-                            sectionBlock(
-                                "plugin.webview.\(customView.id)",
-                                title: customView.title,
-                                glyph: .calendar,
-                                tone: .amber,
-                                badge: customView.pluginName
-                            ) {
+                        if let compactHeight = customView.compactHeight {
+                            let key = "plugin.webview.\(customView.id)"
+                            let collapsed = isCollapsed(key)
+                            floatingIsland {
                                 DesktopPluginWebView(
                                     store: workspace.plugins,
                                     pluginID: customView.pluginID,
                                     viewID: customView.viewID,
                                     entryPath: customView.entryPath,
                                     reloadRevision: workspace.plugins.pluginReloadRevisions[customView.pluginID] ?? 0,
-                                    isDark: scheme == .dark
+                                    isDark: scheme == .dark,
+                                    isCompact: collapsed
                                 )
-                                .frame(height: max(180, customView.height ?? 240))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: collapsed ? CGFloat(compactHeight) :
+                                    (pluginViewWidths[customView.id] ?? 280) / CGFloat(customView.aspectRatio ?? 1))
+                                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+                                    if width > 0, pluginViewWidths[customView.id] != width {
+                                        pluginViewWidths[customView.id] = width
+                                    }
+                                }
+                                .clipShape(RoundedRectangle(cornerRadius: 18))
+                                .overlay(alignment: .leading) {
+                                    if collapsed {
+                                        HStack(spacing: 0) {
+                                            Button { toggle(key, animation: reduceMotion ? nil : .easeInOut(duration: 0.24)) } label: {
+                                                Color.clear.contentShape(Rectangle())
+                                            }
+                                            .buttonStyle(.plain)
+                                            .accessibilityLabel("展开\(customView.title)")
+                                            Color.clear.frame(width: 52).allowsHitTesting(false)
+                                        }
+                                    }
+                                }
+                                .overlay(alignment: .topTrailing) {
+                                    if !collapsed {
+                                        Button { toggle(key, animation: reduceMotion ? nil : .easeInOut(duration: 0.24)) } label: {
+                                            Image(systemName: "chevron.down")
+                                                .font(.system(size: 11, weight: .semibold))
+                                                .foregroundStyle(DesktopTheme.inkTertiary)
+                                                .frame(width: 36, height: 36)
+                                                .contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityLabel("收起\(customView.title)")
+                                    }
+                                }
+                                .animation(reduceMotion ? nil : .easeInOut(duration: 0.24), value: collapsed)
+                                .transaction { if reduceMotion { $0.animation = nil } }
                             }
+                        } else {
+                            legacyPluginIsland(customView)
                         }
                     }
 
@@ -148,17 +176,178 @@ struct DesktopInspector: View {
                 .padding(.trailing, 20)
                 .padding(.leading, 8)
                 .padding(.bottom, 24)
-                .animation(.spring(response: 0.32, dampingFraction: 0.85), value: collapsedRaw)
                 .animation(.spring(response: 0.32, dampingFraction: 0.85), value: expandedEmptyShelf)
             }
             .scrollIndicators(.automatic)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onChange(of: collapsedRaw, initial: true) { _, value in
+            let stored = Set(value.split(separator: ",").map(String.init))
+            if stored != collapsedKeys {
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.24)) {
+                    collapsedKeys = stored
+                }
+            }
+        }
     }
 
-    private func floatingIsland<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    private func floatingIsland<Content: View>(cornerRadius: CGFloat = 18, @ViewBuilder content: () -> Content) -> some View {
         content()
-            .desktopGlass(cornerRadius: 18)
+            .desktopGlass(cornerRadius: cornerRadius)
+    }
+
+    private func pluginSnapshotIsland(_ snapshot: DesktopInspectorCardSnapshot) -> some View {
+        let key = "plugin.\(snapshot.id)"
+        let widthKey = "snapshot.\(snapshot.id)"
+        let collapsed = isCollapsed(key)
+        let first = snapshot.items.first
+        let detail = first.map { [$0.badge, $0.subtitle ?? ""].filter { !$0.isEmpty }.joined(separator: " · ") }
+        let emptyDetail = snapshot.emptyMessage.isEmpty ? (snapshot.statusBadge ?? "已启用") : snapshot.emptyMessage
+        return floatingIsland {
+            Group {
+                if collapsed {
+                    compactPluginRow(
+                        symbol: snapshot.symbol,
+                        title: first?.title ?? snapshot.title,
+                        detail: (detail?.isEmpty == false ? detail : nil) ?? (first == nil ? emptyDetail : snapshot.statusBadge ?? "已启用"),
+                        morphID: key,
+                        expand: { toggle(key, animation: reduceMotion ? nil : .easeInOut(duration: 0.24)) },
+                        open: {
+                            if let viewID = snapshot.opensWorkspaceViewID {
+                                workspace.openPluginView(pluginID: snapshot.pluginID, viewID: viewID)
+                            } else {
+                                toggle(key, animation: reduceMotion ? nil : .easeInOut(duration: 0.24))
+                            }
+                        }
+                    )
+                    .transition(reduceMotion ? .opacity.animation(.easeInOut(duration: 0.1)) : .opacity)
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        pluginIslandHeader(title: snapshot.title, symbol: snapshot.symbol, badge: snapshot.statusBadge, morphID: key) {
+                            toggle(key, animation: reduceMotion ? nil : .easeInOut(duration: 0.24))
+                        }
+                        ScrollView {
+                            pluginCardContent(snapshot)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 16)
+                        }
+                        .scrollIndicators(.automatic)
+                    }
+                    .transition(reduceMotion ? .opacity.animation(.easeInOut(duration: 0.1)) : .opacity)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: collapsed ? 60 : (pluginViewWidths[widthKey] ?? 280))
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+                if width > 0, pluginViewWidths[widthKey] != width { pluginViewWidths[widthKey] = width }
+            }
+            .transaction { if reduceMotion { $0.animation = nil } }
+        }
+    }
+
+    private func legacyPluginIsland(_ view: DesktopPluginCustomViewEntry) -> some View {
+        let key = "plugin.webview.\(view.id)"
+        let collapsed = isCollapsed(key)
+        let height = (pluginViewWidths[view.id] ?? 280) / CGFloat(view.aspectRatio ?? 1)
+        return floatingIsland {
+            VStack(spacing: 0) {
+                if !collapsed {
+                    pluginIslandHeader(title: view.title, symbol: view.symbol, badge: nil, morphID: key) {
+                        toggle(key, animation: reduceMotion ? nil : .easeInOut(duration: 0.24))
+                    }
+                    .transition(reduceMotion ? .opacity.animation(.easeInOut(duration: 0.1)) : .opacity)
+                }
+                // The view stays mounted at zero height so the plugin document and its state survive collapse.
+                DesktopPluginWebView(
+                    store: workspace.plugins,
+                    pluginID: view.pluginID,
+                    viewID: view.viewID,
+                    entryPath: view.entryPath,
+                    reloadRevision: workspace.plugins.pluginReloadRevisions[view.pluginID] ?? 0,
+                    isDark: scheme == .dark
+                )
+                .frame(maxWidth: .infinity)
+                .frame(height: collapsed ? 0 : max(0, height - 48))
+                .clipped()
+                .opacity(collapsed ? 0 : 1)
+                .allowsHitTesting(!collapsed)
+                .accessibilityHidden(collapsed)
+                if collapsed {
+                    compactPluginRow(
+                        symbol: view.symbol,
+                        title: view.title,
+                        detail: "已启用",
+                        morphID: key,
+                        expand: { toggle(key, animation: reduceMotion ? nil : .easeInOut(duration: 0.24)) },
+                        open: { toggle(key, animation: reduceMotion ? nil : .easeInOut(duration: 0.24)) }
+                    )
+                    .transition(reduceMotion ? .opacity.animation(.easeInOut(duration: 0.1)) : .opacity)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: collapsed ? 60 : height)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+                if width > 0, pluginViewWidths[view.id] != width { pluginViewWidths[view.id] = width }
+            }
+            .transaction { if reduceMotion { $0.animation = nil } }
+        }
+    }
+
+    private func pluginIslandHeader(title: String, symbol: String, badge: String?, morphID: String, collapse: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            pluginMorphIcon(symbol: symbol, size: 14, morphID: morphID)
+            Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(DesktopTheme.ink).lineLimit(1)
+            Spacer(minLength: 4)
+            if let badge { Text(badge).font(.system(size: 11)).foregroundStyle(DesktopTheme.inkTertiary).lineLimit(1) }
+            Button(action: collapse) {
+                Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(DesktopTheme.inkTertiary).frame(width: 36, height: 36).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("收起\(title)")
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 6)
+        .frame(height: 48)
+    }
+
+    private func compactPluginRow(symbol: String, title: String, detail: String, morphID: String, expand: @escaping () -> Void, open: @escaping () -> Void) -> some View {
+        HStack(spacing: 4) {
+            Button(action: expand) {
+                HStack(spacing: 10) {
+                    pluginMorphIcon(symbol: symbol, size: 15, morphID: morphID)
+                        .frame(width: 36, height: 36).background(DesktopTheme.honeySoft, in: RoundedRectangle(cornerRadius: 8))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(DesktopTheme.ink).lineLimit(1)
+                        Text(detail).font(.system(size: 11)).foregroundStyle(DesktopTheme.inkSecondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("展开\(title)，\(detail)")
+            Button("打开", action: open)
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(DesktopTheme.accentInk)
+                .frame(minWidth: 44, minHeight: 44)
+                .accessibilityLabel("打开\(title)")
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 8)
+        .frame(height: 60)
+    }
+
+    @ViewBuilder
+    private func pluginMorphIcon(symbol: String, size: CGFloat, morphID: String) -> some View {
+        let icon = Image(systemName: symbol).font(.system(size: size)).foregroundStyle(DesktopTheme.accent)
+        if reduceMotion {
+            icon
+        } else {
+            icon.matchedGeometryEffect(id: "\(morphID).icon", in: pluginMorph)
+        }
     }
 
     private var hasShelfContent: Bool {
@@ -214,18 +403,19 @@ struct DesktopInspector: View {
 
     // MARK: Cards
 
-    private func isCollapsed(_ key: String) -> Bool { collapsedRaw.split(separator: ",").contains(Substring(key)) }
+    private func isCollapsed(_ key: String) -> Bool { collapsedKeys.contains(key) }
 
-    private func toggle(_ key: String) {
+    private func toggle(_ key: String, animation: Animation? = .spring(response: 0.32, dampingFraction: 0.85)) {
         if key == Section.shelf.rawValue, !hasShelfContent, expandedEmptyShelf {
             withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
                 expandedEmptyShelf = false
             }
             return
         }
-        var set = Set(collapsedRaw.split(separator: ",").map(String.init))
+        var set = collapsedKeys
         if set.contains(key) { set.remove(key) } else { set.insert(key) }
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+        withAnimation(animation) {
+            collapsedKeys = set
             collapsedRaw = set.sorted().joined(separator: ",")
         }
     }

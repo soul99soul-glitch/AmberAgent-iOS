@@ -144,7 +144,7 @@ enum DesktopPluginWebViewBridgeScript {
         """
     }
 
-    static func webViewBootstrapJS(pluginID: String, viewID: String, isDark: Bool) -> String {
+    static func webViewBootstrapJS(pluginID: String, viewID: String, isDark: Bool, isCompact: Bool? = nil) -> String {
         let css = DesktopPluginThemeCSS.stylesheet(isDark: isDark)
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "`", with: "\\`")
@@ -153,6 +153,39 @@ enum DesktopPluginWebViewBridgeScript {
             const __pending = Object.create(null);
             const __listeners = Object.create(null);
             let __seq = 0;
+            let __compact = \(isCompact.map { $0 ? "true" : "false" } ?? "null");
+            let __morphAnimations = [];
+
+            window.__amberSetCompact = function(compact) {
+                const changed = __compact !== compact;
+                if (!changed) {
+                    if (document.documentElement) {
+                        document.documentElement.dataset.amberPresentation = compact == null ? 'regular' : compact ? 'compact' : 'expanded';
+                    }
+                    return;
+                }
+                const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                const nodes = changed && !reduce && document.documentElement && typeof document.querySelectorAll === 'function'
+                    ? Array.from(document.querySelectorAll('[data-amber-morph]')) : [];
+                const before = nodes.map(function(node) { return node.getBoundingClientRect(); });
+                __morphAnimations.forEach(function(animation) { animation.cancel(); });
+                __morphAnimations.length = 0;
+                __compact = compact;
+                if (document.documentElement) {
+                    document.documentElement.dataset.amberPresentation = compact == null ? 'regular' : compact ? 'compact' : 'expanded';
+                }
+                nodes.forEach(function(node, index) {
+                    const from = before[index], to = node.getBoundingClientRect();
+                    if (!from.width || !from.height || !to.width || !to.height || typeof node.animate !== 'function') return;
+                    const dx = from.left - to.left, dy = from.top - to.top;
+                    const sx = from.width / to.width, sy = from.height / to.height;
+                    __morphAnimations.push(node.animate([
+                        { transformOrigin: 'top left', transform: 'translate(' + dx + 'px,' + dy + 'px) scale(' + sx + ',' + sy + ')' },
+                        { transformOrigin: 'top left', transform: 'none' }
+                    ], { duration: 240, easing: 'ease-in-out' }));
+                });
+            };
+            window.__amberSetCompact(__compact);
 
             function applyTheme(theme, cssText) {
                 if (document.documentElement) {
@@ -171,6 +204,7 @@ enum DesktopPluginWebViewBridgeScript {
 
             document.addEventListener('DOMContentLoaded', function() {
                 applyTheme('\(isDark ? "dark" : "light")', `\(css)`);
+                window.__amberSetCompact(__compact);
             });
             applyTheme('\(isDark ? "dark" : "light")', `\(css)`);
 
@@ -222,6 +256,9 @@ enum DesktopPluginWebViewBridgeScript {
             window.amber = Object.freeze({
                 pluginId: '\(pluginID)',
                 viewId: '\(viewID)',
+                neteaseMusic: Object.freeze({
+                    call: function(action, value) { return rpc('neteaseMusic', String(action), value == null ? [] : [value]); }
+                }),
                 settings: Object.freeze({
                     get: function(key) { return rpc('settings', 'get', [String(key)]); },
                     set: function(key, val) { return rpc('settings', 'set', [String(key), val]); },
@@ -339,6 +376,14 @@ extension DesktopPluginStore {
 
         if namespace == "ui" && method == "confirm" {
             return try await handleUIConfirmAsyncBridgeCall(plugin: plugin, args: args)
+        }
+
+        if namespace == "neteaseMusic" {
+            try requirePermission(plugin: plugin, permission: "music.netease")
+            let arguments = try DesktopNeteaseMusicCLI.arguments(method: method, args: args)
+            return try await Task.detached(priority: .userInitiated) {
+                try DesktopNeteaseMusicCLI.run(arguments: arguments)
+            }.value
         }
 
         return try performSynchronousBridgeCall(

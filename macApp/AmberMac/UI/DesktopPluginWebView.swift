@@ -11,6 +11,7 @@ struct DesktopPluginWebView: NSViewRepresentable {
     let entryPath: String
     let reloadRevision: Int
     let isDark: Bool
+    var isCompact: Bool? = nil
 
     func makeCoordinator() -> CoordinatorHolder {
         CoordinatorHolder(pluginID: pluginID, viewID: viewID, store: store)
@@ -28,7 +29,8 @@ struct DesktopPluginWebView: NSViewRepresentable {
         let bootstrapJS = DesktopPluginWebViewBridgeScript.webViewBootstrapJS(
             pluginID: pluginID,
             viewID: viewID,
-            isDark: isDark
+            isDark: isDark,
+            isCompact: isCompact
         )
         let userScript = WKUserScript(
             source: bootstrapJS,
@@ -43,6 +45,7 @@ struct DesktopPluginWebView: NSViewRepresentable {
         webView.navigationDelegate = context.coordinator.bridgeCoordinator
         webView.setValue(false, forKey: "drawsBackground")
         context.coordinator.bridgeCoordinator.webView = webView
+        context.coordinator.bridgeCoordinator.setCompact(isCompact)
         store.registerWebViewCoordinator(context.coordinator.bridgeCoordinator)
 
         context.coordinator.loadIfNeeded(
@@ -56,6 +59,7 @@ struct DesktopPluginWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        context.coordinator.bridgeCoordinator.setCompact(isCompact)
         context.coordinator.loadIfNeeded(
             webView: webView,
             pluginID: pluginID,

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>网易云音乐</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="player" data-od-id="music-player">
+    <header class="heading" data-od-id="music-heading">
+      <div><p class="eyebrow">NETEASE CLOUD MUSIC</p><h1>网易云音乐</h1></div>
+      <button id="refresh" class="text-button" type="button" aria-label="刷新播放状态">刷新</button>
+      <button id="open-search" class="text-button sidebar-only" type="button">搜索</button>
+    </header>
+
+    <section class="now-playing" aria-label="当前播放" data-od-id="now-playing">
+      <div class="cover" id="cover" data-amber-morph="cover"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M29 11v22.5a6.5 6.5 0 1 1-2-4.7V15l12-3v17.5a6.5 6.5 0 1 1-2-4.7V9z" fill="currentColor"/></svg><img id="cover-image" alt="专辑封面" hidden></div>
+      <div class="track"><p class="status" id="play-status">正在连接播放器</p><h2 id="song-name" data-amber-morph="title">选择一首歌</h2><p id="artist">搜索后开始播放</p><p id="mini-detail" class="sidebar-only">正在连接播放器</p></div>
+    </section>
+
+    <section class="controls" aria-label="播放控制" data-od-id="music-controls">
+      <div class="progress" id="progress" aria-label="播放进度" aria-valuemin="0" aria-valuemax="100"><span id="progress-fill"></span></div>
+      <div class="time"><span id="position">--:--</span><span id="duration">--:--</span></div>
+      <div class="transport">
+        <button id="previous" type="button" aria-label="上一首" title="上一首"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14M18 5 8 12l10 7z"/></svg></button>
+        <button id="toggle" class="primary" data-amber-morph="control" type="button" aria-label="播放" title="播放"><svg id="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg><svg id="pause-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M8 5h3v14H8zM15 5h3v14h-3z"/></svg></button>
+        <button id="next" type="button" aria-label="下一首" title="下一首"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14M6 5l10 7-10 7z"/></svg></button>
+      </div>
+    </section>
+
+    <div class="message" id="message" role="status" aria-live="polite" hidden><span id="message-text"></span><button id="setup-help" class="text-button" type="button">修复指引</button></div>
+    <section class="search" data-od-id="music-search">
+      <div class="search-header sidebar-only"><button id="back-to-player" class="text-button" type="button">返回播放</button><h2>搜索歌曲</h2></div>
+      <p id="setup-details" class="setup-details" hidden></p>
+      <button id="retry-setup" class="text-button" type="button" hidden>重新连接</button>
+      <form id="search-form"><label for="query">搜索歌曲</label><div class="search-field"><input id="query" type="search" placeholder="歌曲或歌手" autocomplete="off" maxlength="120"><button type="submit">搜索</button></div></form>
+      <div class="results-heading"><h2>搜索结果</h2><span id="result-count"></span></div>
+      <p class="empty" id="empty">搜索歌曲，选择播放或加入队列。</p>
+      <ul id="results" aria-label="搜索结果"></ul>
+    </section>
+    <p class="hint">使用本机 ncm-cli 的网易云账号与播放队列。</p>
+  </main>
+  <script src="player.js"></script>
+</body>
+</html>

@@ -1,0 +1,162 @@
+* { box-sizing: border-box; }
+body { margin: 0; color: var(--amber-ink, #191815); background: var(--amber-paper, #faf8f3); font: 14px/1.45 var(--amber-font-sans, -apple-system, sans-serif); }
+button, input { font: inherit; }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--amber-accent); outline-offset: 3px; }
+button:disabled { cursor: default; opacity: .45; }
+.player { max-width: 560px; margin: auto; padding: 28px; }
+.heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 30px; }
+.eyebrow { margin: 0 0 5px; color: var(--amber-ink-tertiary); font: 600 10px/1.3 var(--amber-font-mono, monospace); letter-spacing: .1em; }
+h1, h2, p { margin: 0; }
+h1 { font-size: 21px; letter-spacing: -.02em; }
+.text-button { border: 0; background: transparent; padding: 8px; color: var(--amber-accent-ink); }
+.now-playing { display: flex; align-items: center; gap: 20px; min-width: 0; }
+.cover { width: 120px; height: 120px; flex: 0 0 120px; position: relative; display: grid; place-items: center; overflow: hidden; border-radius: 12px; background: var(--amber-paper-deep); color: var(--amber-ink-tertiary); }
+.cover svg { width: 37px; opacity: .65; }
+.cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.track { min-width: 0; }
+.status { margin-bottom: 9px; color: var(--amber-accent-ink); font-size: 12px; }
+.track h2 { overflow-wrap: anywhere; font-size: 19px; line-height: 1.3; }
+.track > p:last-child { margin-top: 6px; color: var(--amber-ink-secondary); overflow-wrap: anywhere; }
+.controls { margin: 24px 0 22px; }
+.progress { height: 4px; background: var(--amber-hairline-strong); border-radius: 4px; overflow: hidden; }
+.progress span { display: block; width: 0; height: 100%; background: var(--amber-accent); }
+.time { display: flex; justify-content: space-between; margin-top: 8px; color: var(--amber-ink-tertiary); font: 11px var(--amber-font-mono, monospace); font-variant-numeric: tabular-nums; }
+.transport { display: flex; align-items: center; justify-content: center; gap: 18px; margin-top: 12px; }
+.transport button { display: grid; place-items: center; width: 44px; height: 44px; padding: 11px; border: 0; border-radius: 50%; background: transparent; color: var(--amber-ink); }
+.transport button:hover { background: var(--amber-hover); }
+.transport button.primary { width: 48px; height: 48px; color: var(--amber-paper); background: var(--amber-ink); }
+.transport button.primary:hover { background: var(--amber-ink-secondary); }
+.transport svg { width: 22px; fill: currentColor; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
+[hidden] { display: none !important; }
+.message { margin: 0 0 20px; padding: 12px; border: 1px solid var(--amber-honey-edge); border-radius: 8px; color: var(--amber-ink-secondary); background: var(--amber-honey-soft); overflow-wrap: anywhere; }
+.search { border-top: 1px solid var(--amber-hairline-strong); padding-top: 23px; }
+.search label, .results-heading h2 { font-size: 13px; font-weight: 650; }
+.search-field { display: flex; gap: 8px; margin-top: 9px; }
+.search-field input { flex: 1; min-width: 0; border: 1px solid var(--amber-hairline-strong); border-radius: 8px; color: var(--amber-ink); background: var(--amber-field); padding: 10px 11px; }
+.search-field button { border: 1px solid var(--amber-honey-edge); border-radius: 8px; padding: 8px 16px; color: var(--amber-accent-ink); background: var(--amber-honey-soft); font-weight: 600; }
+.search-field button:hover { background: var(--amber-honey); }
+.results-heading { display: flex; justify-content: space-between; align-items: center; margin: 26px 0 8px; }
+.results-heading span, .empty, .hint { color: var(--amber-ink-tertiary); font-size: 12px; }
+.empty { padding: 12px 0; }
+#results { list-style: none; padding: 0; margin: 0; }
+.result { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--amber-hairline); }
+.result-info { flex: 1; min-width: 0; }
+.result-info strong, .result-info span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.result-info strong { font-weight: 600; }
+.result-info span { color: var(--amber-ink-secondary); font-size: 12px; margin-top: 2px; }
+.result button { flex: none; border: 1px solid var(--amber-hairline-strong); border-radius: 7px; padding: 6px 9px; background: transparent; color: var(--amber-ink-secondary); font-size: 12px; }
+.result button:hover { background: var(--amber-hover); }
+.hint { margin-top: 24px; }
+@media (max-width: 350px) { .player { padding: 18px; } .cover { width: 86px; height: 86px; flex-basis: 86px; } .now-playing { gap: 14px; } .result { flex-wrap: wrap; } .result-info { flex-basis: 100%; } }
+
+.sidebar-only { display: none; }
+.message { display: flex; align-items: center; gap: 8px; }
+.message > span { min-width: 0; flex: 1; }
+.message .text-button { flex: none; padding: 4px; font-size: 12px; }
+.setup-details { margin: 8px 0; color: var(--amber-ink-secondary); font-size: 12px; overflow-wrap: anywhere; white-space: pre-line; }
+
+/* The host changes presentation on this document without reloading it. */
+:root[data-amber-presentation="expanded"], :root[data-amber-presentation="compact"],
+:root[data-amber-presentation="expanded"] body, :root[data-amber-presentation="compact"] body { height: 100%; }
+:root[data-amber-presentation="expanded"] body,
+:root[data-amber-presentation="compact"] body { background: var(--amber-card); }
+:root[data-amber-presentation="expanded"] .player { position: relative; display: flex; flex-direction: column; height: 100vw; max-width: none; padding: 16px; overflow: hidden; }
+:root[data-amber-presentation="expanded"] .heading { flex: none; margin-bottom: 12px; padding-right: 32px; }
+:root[data-amber-presentation="expanded"] .eyebrow,
+:root[data-amber-presentation="expanded"] #refresh,
+:root[data-amber-presentation="expanded"] .hint { display: none; }
+:root[data-amber-presentation="expanded"] h1 { font-size: 14px; font-weight: 600; letter-spacing: 0; }
+:root[data-amber-presentation="expanded"] #open-search { display: inline-block; font-size: 12px; padding: 4px; }
+:root[data-amber-presentation="expanded"] .now-playing { flex: 1; gap: 12px; min-height: 0; }
+:root[data-amber-presentation="expanded"] .cover { width: 76px; height: 76px; flex-basis: 76px; border-radius: 8px; }
+:root[data-amber-presentation="expanded"] .cover svg { width: 26px; }
+:root[data-amber-presentation="expanded"] .status { margin-bottom: 4px; font-size: 11px; }
+:root[data-amber-presentation="expanded"] .track h2 { font-size: 15px; font-weight: 600; }
+:root[data-amber-presentation="expanded"] .track > p#artist { font-size: 12px; margin-top: 3px; }
+:root[data-amber-presentation="expanded"] .track h2,
+:root[data-amber-presentation="expanded"] .track > p#artist { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-amber-presentation="expanded"] #mini-detail { display: block; position: absolute; opacity: 0; visibility: hidden; }
+:root[data-amber-presentation="expanded"] .status,
+:root[data-amber-presentation="expanded"] #artist,
+:root[data-amber-presentation="expanded"] .time,
+:root[data-amber-presentation="expanded"] #previous,
+:root[data-amber-presentation="expanded"] #next { opacity: 1; visibility: visible; transition: opacity 140ms ease-in-out 80ms, visibility 0s; }
+:root[data-amber-presentation="expanded"] .controls { flex: none; margin: 12px 0 0; }
+:root[data-amber-presentation="expanded"] .time { margin-top: 4px; }
+:root[data-amber-presentation="expanded"] .transport { gap: 12px; margin-top: 4px; }
+:root[data-amber-presentation="expanded"] .transport button { width: 36px; height: 36px; padding: 8px; }
+:root[data-amber-presentation="expanded"] .transport button.primary { width: 44px; height: 44px; padding: 11px; }
+:root[data-amber-presentation="expanded"] .message { flex: none; margin: 8px 0 0; padding: 4px 8px; font-size: 11px; }
+:root[data-amber-presentation="expanded"] .message > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-amber-presentation="expanded"] .message .text-button { font-size: 11px; }
+:root[data-amber-presentation="expanded"] .search { display: block; position: absolute; inset: 0; padding: 16px; overflow-y: auto; background: var(--amber-card); border: 0; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 150ms ease-in-out, visibility 0s linear 150ms; }
+:root[data-amber-presentation="expanded"][data-music-view="search"] .search { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity 150ms ease-in-out, visibility 0s; }
+:root[data-amber-presentation="expanded"] .heading,
+:root[data-amber-presentation="expanded"] .now-playing,
+:root[data-amber-presentation="expanded"] .controls,
+:root[data-amber-presentation="expanded"] .message { opacity: 1; transition: opacity 140ms ease-in-out, visibility 0s; }
+:root[data-amber-presentation="expanded"][data-music-view="search"] .heading,
+:root[data-amber-presentation="expanded"][data-music-view="search"] .now-playing,
+:root[data-amber-presentation="expanded"][data-music-view="search"] .controls,
+:root[data-amber-presentation="expanded"][data-music-view="search"] .message { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 100ms ease-in-out, visibility 0s linear 100ms; }
+:root[data-amber-presentation="expanded"] .results-heading,
+:root[data-amber-presentation="expanded"] #results,
+:root[data-amber-presentation="expanded"] .empty { opacity: 0; transform: translateY(6px); transition: opacity 160ms ease-in-out, transform 200ms ease-in-out; }
+:root[data-amber-presentation="expanded"][data-music-view="search"] .results-heading,
+:root[data-amber-presentation="expanded"][data-music-view="search"] #results,
+:root[data-amber-presentation="expanded"][data-music-view="search"] .empty { opacity: 1; transform: none; transition-delay: 60ms; }
+:root[data-amber-presentation="expanded"][data-music-view="search"] .search-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding-right: 32px; }
+:root[data-amber-presentation="expanded"] .search-header h2 { font-size: 13px; font-weight: 600; }
+:root[data-amber-presentation="expanded"] .search-header button { padding: 4px 0; font-size: 12px; }
+:root[data-amber-presentation="expanded"] .search label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+:root[data-amber-presentation="expanded"] .results-heading { margin-top: 16px; }
+
+:root[data-amber-presentation="compact"] .player { position: relative; height: 100%; max-width: none; padding: 10px 58px 10px 12px; overflow: hidden; }
+:root[data-amber-presentation="compact"], :root[data-amber-presentation="compact"] body { overflow: hidden; }
+:root[data-amber-presentation="compact"] ::-webkit-scrollbar { display: none; }
+:root[data-amber-presentation="compact"] .search,
+:root[data-amber-presentation="compact"] .hint { display: none; }
+/* Hide relocated secondary content immediately: WebKit can pause CSS fades in a backgrounded window. */
+:root[data-amber-presentation="compact"] .heading,
+:root[data-amber-presentation="compact"] .message,
+:root[data-amber-presentation="compact"] .time,
+:root[data-amber-presentation="compact"] #previous,
+:root[data-amber-presentation="compact"] #next,
+:root[data-amber-presentation="compact"] #artist,
+:root[data-amber-presentation="compact"] .status { position: absolute; opacity: 0; visibility: hidden; pointer-events: none; transition: none; }
+:root[data-amber-presentation="compact"] .now-playing { gap: 10px; height: 40px; }
+:root[data-amber-presentation="compact"] .cover { width: 40px; height: 40px; flex-basis: 40px; border-radius: 7px; }
+:root[data-amber-presentation="compact"] .cover svg { width: 20px; }
+:root[data-amber-presentation="compact"] .track h2,
+:root[data-amber-presentation="compact"] #mini-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-amber-presentation="compact"] .track h2 { font-size: 13px; font-weight: 600; }
+:root[data-amber-presentation="compact"] #mini-detail { display: block; position: static; opacity: 1; visibility: visible; margin-top: 2px; color: var(--amber-ink-secondary); font-size: 11px; transition: none; }
+:root[data-amber-presentation="compact"] .controls { margin: 0; }
+:root[data-amber-presentation="compact"] .progress { display: none; position: absolute; left: 24px; right: 24px; bottom: 3px; height: 2px; }
+:root[data-amber-presentation="compact"] .progress[data-live] { display: block; }
+:root[data-amber-presentation="compact"] .transport { position: absolute; top: 12px; right: 12px; margin: 0; }
+:root[data-amber-presentation="compact"] .transport button.primary { width: 36px; height: 36px; padding: 9px; }
+:root[data-amber-presentation="compact"] .transport svg { width: 18px; }
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-amber-presentation="expanded"] .results-heading,
+  :root[data-amber-presentation="expanded"] #results,
+  :root[data-amber-presentation="expanded"] .empty { transform: none; transition: opacity 100ms ease-in-out; }
+  :root[data-amber-presentation="expanded"][data-music-view="search"] .results-heading,
+  :root[data-amber-presentation="expanded"][data-music-view="search"] #results,
+  :root[data-amber-presentation="expanded"][data-music-view="search"] .empty { transition-delay: 0s; }
+  :root[data-amber-presentation="expanded"] .search,
+  :root[data-amber-presentation="expanded"] .heading,
+  :root[data-amber-presentation="expanded"] .now-playing,
+  :root[data-amber-presentation="expanded"] .controls,
+  :root[data-amber-presentation="expanded"] .message { transition-duration: 100ms, 0s; transition-delay: 0s, 0s; }
+  :root[data-amber-presentation="compact"] .heading,
+  :root[data-amber-presentation="compact"] .message,
+  :root[data-amber-presentation="compact"] .time,
+  :root[data-amber-presentation="compact"] #previous,
+  :root[data-amber-presentation="compact"] #next,
+  :root[data-amber-presentation="compact"] #artist,
+  :root[data-amber-presentation="compact"] .status,
+  :root[data-amber-presentation="compact"] #mini-detail { transition: none; }
+}

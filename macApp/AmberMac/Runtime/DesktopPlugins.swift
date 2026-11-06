@@ -807,14 +807,14 @@ final class DesktopPluginStore {
                             .compactMap { $0 }.filter { !$0.isEmpty }
                         return DesktopInspectorCardItem(
                             id: event.id,
-                            badge: event.timeRangeText,
+                            badge: event.datePrefix == today ? event.timeRangeText : "\(event.datePrefix) \(event.timeRangeText)",
                             title: event.summary,
                             subtitle: subParts.isEmpty ? nil : subParts.joined(separator: " · "),
                             actionTitle: "准备",
                             prompt: event.preparationPrompt
                         )
                     }
-                    let badgeText = todayEvents.isEmpty ? "\(calendarEvents.count)" : "\(todayEvents.count)"
+                    let badgeText = "\(todayEvents.count)"
                     pluginCards.append(DesktopInspectorCardSnapshot(
                         pluginID: plugin.id,
                         pluginName: plugin.manifest.name,
@@ -881,7 +881,9 @@ final class DesktopPluginStore {
                         subtitle: customView.subtitle,
                         entryPath: customView.entry,
                         width: customView.width,
-                        height: customView.height
+                        height: customView.height,
+                        compactHeight: customView.compactHeight,
+                        aspectRatio: customView.aspectRatio
                     ))
                     if customView.slot == .workspace,
                        !nextViews.contains(where: { $0.pluginID == plugin.id && $0.viewID == customView.id }) {

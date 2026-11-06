@@ -41,7 +41,8 @@ enum DesktopPluginPermissionCatalog {
         "agent.tools",
         "commands",
         "events",
-        "settings"
+        "settings",
+        "music.netease"
     ]
 
     static func validateToken(_ raw: String) throws {
@@ -69,6 +70,15 @@ enum DesktopPluginPermissionCatalog {
     }
 
     static func descriptor(for token: String, manifest: DesktopPluginManifest, isNewlyRequested: Bool = false) -> DesktopPluginPermissionDescriptor {
+        if token == "music.netease" {
+            return DesktopPluginPermissionDescriptor(
+                token: token,
+                title: "控制网易云音乐播放器",
+                summary: "使用本机 ncm-cli 搜索歌曲、查看播放状态、选曲、加入队列和控制播放；使用 CLI 已配置的网易云账号，不允许执行任意命令。",
+                isHighRisk: true,
+                isNewlyRequested: isNewlyRequested
+            )
+        }
         if token == "ui.views" {
             return DesktopPluginPermissionDescriptor(
                 token: token,
