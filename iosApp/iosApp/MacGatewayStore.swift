@@ -28,7 +28,7 @@ final class MacGatewayStore {
     private(set) var connection: MacGatewayConnection? { didSet { publishBoard() } }
     private(set) var status: MacGatewayStatus? { didSet { publishBoard() } }
     /// nil until the first refresh after launch or pairing.
-    private(set) var isReachable: Bool? { didSet { publishBoard() } }
+    var isReachable: Bool? { didSet { publishBoard() } }
     private(set) var isBusy = false
     private(set) var isSendingTestPush = false
     private(set) var pushError: String?
@@ -62,6 +62,7 @@ final class MacGatewayStore {
     var cloudDialogueSubmissions: [MacGatewayCloudDialoguePersistedSubmission] = []
     var selectedCloudDialogueWorkItemId: String?
     var busyCloudDialogueRequestIds: Set<String> = []
+    var cloudDialogueTransportState: MacGatewayCloudDialogueTransportState = .unknown
     /// Cloud configuration (/v2 config API): non-secret remote view plus fetch/
     /// import state. Owned here so behavior extensions in CloudConfigStore.swift
     /// stay tracked by @Observable.
@@ -110,6 +111,7 @@ final class MacGatewayStore {
         self.connection = connection
         self.client = client
         self.isReachable = true
+        self.cloudDialogueTransportState = .unknown
         self.hasCheckedCloudSoulOnConnect = false
         bindCloudSoulStoreIfNeeded()
         loadPersistedCloudTasks()
@@ -262,8 +264,11 @@ final class MacGatewayStore {
             hasCheckedCloudSoulOnConnect = true
             await syncCloudSoulIfNeeded(observedRevision: latest.soulRevision, forcePull: forceSoulPull)
             await refreshCloudAgents()
+            await refreshCloudConfig()
+            _ = await pollCloudDialogueEvents()
             await refreshActiveCloudTasks()
             startCloudTaskPollingIfNeeded()
+            startCloudDialoguePollingIfNeeded()
             await refreshSchedules()
             await refreshBoard()
             if latest.device.pushRegistered {
@@ -535,6 +540,7 @@ final class MacGatewayStore {
         cloudImporting = false
         cloudImportKeyChanged = false
         pendingImportOperation = IOSCloudPendingOperation()
+        cloudDialogueTransportState = .unknown
         hasCheckedCloudSoulOnConnect = false
         isReachable = nil
         pushError = nil

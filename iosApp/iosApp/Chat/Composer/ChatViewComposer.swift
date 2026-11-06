@@ -164,7 +164,6 @@ extension ChatView {
                             VStack(alignment: .leading, spacing: 18) {
                                 if composerState.activeDuetTab == .tasks {
                                     AmberDuetTaskCenterCard(
-                                        conversationSegments: currentConversationTaskSegments(),
                                         gateway: MacGatewayStore.shared,
                                         subAgentStore: activityStore,
                                         hubStore: AmberHubStore.shared,
@@ -172,9 +171,9 @@ extension ChatView {
                                             composerState.activeDuetTab = .chat
                                             router.navigate(to: .macTasks)
                                         },
-                                        onSelectTool: { tool in
+                                        onOpenTask: { task in
                                             composerState.activeDuetTab = .chat
-                                            duetSelectedToolTarget = ToolDetailTarget(tool: tool)
+                                            openUnifiedTask(task)
                                         },
                                         onFollowupTask: { task in
                                             withAnimation(.snappy(duration: 0.22)) {
@@ -191,7 +190,6 @@ extension ChatView {
                                     AmberDuetHubsCard(
                                         hubStore: AmberHubStore.shared,
                                         conversationStore: conversationStore,
-                                        conversationSegments: currentConversationTaskSegments(),
                                         gateway: MacGatewayStore.shared,
                                         subAgentStore: activityStore,
                                         onSelectHub: { _ in
@@ -524,20 +522,43 @@ extension ChatView {
     }
 
     var duetActiveTaskCount: Int {
-        let localRunning = activityStore.items.filter { $0.status == .running || $0.status == .queued }.count
-        let cloudRunning = MacGatewayStore.shared.cloudTasks.filter { $0.workItemId != nil && !$0.isTerminal }.count
-        return max(localRunning + cloudRunning, chatListSummary.inChatActiveTaskCount)
+        unifiedTaskGroups.activeCount
     }
 
     var duetNeedsAttentionCount: Int {
-        let pendingGate = viewModel.hasPendingUserGate ? 1 : 0
-        let cloudFailed = MacGatewayStore.shared.cloudTasks.filter { $0.state == .failed || $0.needsSubmissionRetry }.count
-        let gatewayNeedsYou = MacGatewayStore.shared.needsYouItems.count
-        return chatListSummary.inChatNeedsAttentionCount + pendingGate + cloudFailed + gatewayNeedsYou
+        unifiedTaskGroups.needsAttention.count
+    }
+
+    /// The panel's own aggregation, so the badge and the list can never disagree.
+    var unifiedTaskGroups: AmberUnifiedTaskBuilder.Groups {
+        AmberUnifiedTaskBuilder.buildTasks(
+            gateway: MacGatewayStore.shared,
+            subAgentStore: activityStore,
+            hubStore: AmberHubStore.shared
+        )
     }
 
     func currentConversationTaskSegments() -> [ChatTaskRunSegment] {
         taskCountCache.taskSegments(messages: viewModel.messages, isGenerationActive: viewModel.isGenerationActive)
+    }
+
+    /// A task card always opens the surface that already owns that work: the
+    /// child transcript, the execution record, or the Mac board. Never a chat
+    /// invented for it.
+    @MainActor
+    func openUnifiedTask(_ task: AmberUnifiedTaskItem) {
+        switch task.destination {
+        case .subAgentConversation(let conversationId):
+            router.navigate(to: .subAgentConversation(id: conversationId))
+        case .wakeConversation(let conversationId):
+            router.navigate(to: .subAgentConversation(id: conversationId))
+        case .executionRecord(let recordId):
+            router.navigate(to: .executionTask(id: recordId))
+        case .macBoard:
+            router.navigate(to: .macTasks)
+        case .cloudTaskDetail, .none:
+            break
+        }
     }
 
     var isCloudMainDialogueActive: Bool {

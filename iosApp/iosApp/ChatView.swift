@@ -185,7 +185,11 @@ struct ChatView: View {
         .onGeometryChange(for: CGSize.self) { proxy in
             CGSize(width: proxy.size.width,
                    height: proxy.size.height + proxy.safeAreaInsets.top + proxy.safeAreaInsets.bottom)
-        } action: { chatSize = $0 }
+        } action: { newSize in
+            if abs(chatSize.width - newSize.width) > 0.5 || abs(chatSize.height - newSize.height) > 0.5 {
+                chatSize = newSize
+            }
+        }
         .animation(browserTaskVisibilityAnimation, value: compactWebMountSession?.id)
         .onChange(of: displayedWebMountSession?.ownerRunId) { _, _ in
             browserState.expandedWebMountSessionId = nil
@@ -351,11 +355,10 @@ struct ChatView: View {
         }
         .sheet(isPresented: $isPresentingDuetTasks) {
             AmberDuetTaskCenterSheet(
-                conversationSegments: currentConversationTaskSegments(),
                 gateway: MacGatewayStore.shared,
                 subAgentStore: activityStore,
                 onOpenFullTaskBoard: { router.navigate(to: .macTasks) },
-                onSelectTool: { tool in duetSelectedToolTarget = ToolDetailTarget(tool: tool) }
+                onOpenTask: { task in openUnifiedTask(task) }
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -398,7 +401,7 @@ struct ChatView: View {
             AmberPersonaStudioSheet(
                 sharedSettings: sharedSettings
             )
-            .presentationDetents([.medium, .large])
+            .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $isPresentingCloudGatewaySettings) {

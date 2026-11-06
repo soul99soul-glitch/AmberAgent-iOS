@@ -470,6 +470,58 @@ final class IOSCloudConfigTests: XCTestCase {
                           "成功 receipt 后同内容的新提交也是新操作新 id")
     }
 
+    func testModelOnlyDraftAndBlockedSummariesSeparatePrimaryModelFromSearchAndGroupReasons() throws {
+        let store = makeStore()
+        let activeProvider = store.addProvider(IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "ActiveOpenAI", apiKey: "sk-active", baseUrl: "https://active.example/v1",
+            modelName: "GPT-5", modelId: "gpt-5"
+        ))
+        let activeModel = try XCTUnwrap(activeProvider.models.first)
+        store.setCurrentChatModelId(activeModel.id.description())
+
+        _ = store.addProvider(IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "NoKeyProvider", apiKey: "", baseUrl: "https://nokey.example/v1",
+            modelName: "ModelNoKey", modelId: "model-nokey"
+        ))
+        let codexProvider = store.addProvider(IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "CodexAccount", apiKey: "sk-codex", baseUrl: "https://chatgpt.com/backend-api/codex",
+            modelName: "Codex", modelId: "gpt-5-codex"
+        ))
+        _ = store.setOpenAIAuthMode(providerId: codexProvider.id.description(), authMode: OpenAIAuthMode.codexOauth)
+        _ = store.addProvider(IosSettingsMutations.shared.buildGoogleProvider(
+            name: "GeminiLocal", apiKey: "gemini-secret-key", baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+            modelName: "Gemini", modelId: "gemini-2.5-pro"
+        ))
+        store.addSearchProvider(name: "ExaConfigured", apiKey: "exa-secret", serviceType: "exa")
+        store.addSearchProvider(name: "TavilyUnsupported", apiKey: "tvly-secret", serviceType: "tavily")
+
+        let draft = IOSCloudImportDraft.make(from: store)
+
+        // Primary model-only draft only patches model and never bundles search services
+        let modelOnly = draft.modelOnlyDraft
+        let modelOnlyBundle = modelOnly.bundle(using: store)
+        XCTAssertEqual(modelOnlyBundle.model?.providerKind, "openai")
+        XCTAssertEqual(modelOnlyBundle.model?.modelId, "gpt-5")
+        XCTAssertTrue(modelOnlyBundle.search.isEmpty, "主任务直接切换云端模型时不得夹带搜索源")
+        XCTAssertNil(modelOnlyBundle.configurationPatch?.search)
+
+        // Exportable lists only include items ready to export
+        XCTAssertTrue(draft.exportableProviders.allSatisfy(\.isExportable))
+        XCTAssertTrue(draft.exportableSearches.allSatisfy(\.isExportable))
+
+        // Blocked items are grouped by category without duplicating or echoing secrets
+        let summaries = draft.blockedSummaries
+        let categories = Set(summaries.map(\.category))
+        XCTAssertTrue(categories.contains(.missingApiKey))
+        XCTAssertTrue(categories.contains(.oauthNotExportable))
+        XCTAssertTrue(categories.contains(.unsupportedProtocol))
+
+        let joinedSummaryText = summaries.map { "\($0.title) \($0.explanation) \($0.itemNames.joined(separator: ","))" }.joined(separator: " | ")
+        XCTAssertFalse(joinedSummaryText.contains("sk-codex"))
+        XCTAssertFalse(joinedSummaryText.contains("gemini-secret-key"))
+        XCTAssertFalse(joinedSummaryText.contains("tvly-secret"))
+    }
+
     // ---- helpers ----
 
     private func makeStore() -> IOSSharedSettingsStore {

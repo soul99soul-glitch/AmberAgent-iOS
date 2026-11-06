@@ -110,19 +110,30 @@ struct AmberHostSwitcherPill: View {
 
     private var iconColor: Color {
         if isCloudSelected {
-            return isCloudReachable ? AmberTheme.accent : AmberTheme.muted
+            return gateway.cloudDialogueSessionHealth.isReady ? AmberTheme.accent : AmberTheme.foreground2
         }
         return isPaired ? AmberTheme.foreground2 : AmberTheme.muted
     }
 
     private var statusDotColor: Color? {
-        if isCloudSelected {
-            return isCloudReachable ? AmberTheme.accent : AmberTheme.muted.opacity(0.55)
+        guard isPaired else { return nil }
+        let baseColor = gateway.cloudDialogueSessionHealth.semanticDotColor
+        return isCloudSelected ? baseColor : baseColor.opacity(0.8)
+    }
+}
+
+extension MacGatewayCloudDialogueSessionHealth {
+    var semanticDotColor: Color {
+        switch self {
+        case .ready:
+            return AmberTheme.accentGreen
+        case .checking, .actionRequired:
+            return AmberTheme.accentAmber
+        case .unavailable:
+            return AmberTheme.accentRed
+        case .unpaired:
+            return AmberTheme.muted.opacity(0.55)
         }
-        if isPaired {
-            return isCloudReachable ? AmberTheme.accent.opacity(0.72) : AmberTheme.muted.opacity(0.45)
-        }
-        return nil
     }
 }
 
@@ -137,6 +148,10 @@ struct AmberInlineCloudMainDialogueView: View {
         store.cloudDialogueProgressByWorkItem.values.sorted { $0.lastEventSeq > $1.lastEventSeq }
     }
 
+    private var unmergedMainSubmissions: [MacGatewayCloudDialoguePersistedSubmission] {
+        store.unmergedCloudMainSubmissions
+    }
+
     private var unmergedFollowups: [MacGatewayCloudDialogueFollowupRecord] {
         store.cloudDialogueFollowups.filter { record in
             !store.cloudDialogueVisibleEvents.contains(where: { $0.id == record.eventId })
@@ -146,7 +161,8 @@ struct AmberInlineCloudMainDialogueView: View {
     private var scrollTailToken: String {
         let lastEvent = store.cloudDialogueVisibleEvents.last
         let liveSeq = sortedProgressItems.first?.lastEventSeq ?? 0
-        return "\(lastEvent?.id ?? "none"):\(lastEvent?.seq ?? 0):\(unmergedFollowups.count):\(liveSeq)"
+        let pendingMainCount = unmergedMainSubmissions.count
+        return "\(lastEvent?.id ?? "none"):\(lastEvent?.seq ?? 0):\(pendingMainCount):\(unmergedFollowups.count):\(liveSeq):\(store.isAwaitingCloudMainReply)"
     }
 
     var body: some View {
@@ -162,7 +178,10 @@ struct AmberInlineCloudMainDialogueView: View {
                         liveProgressSection
                     }
 
-                    if store.cloudDialogueVisibleEvents.isEmpty && unmergedFollowups.isEmpty && sortedProgressItems.isEmpty {
+                    if store.cloudDialogueVisibleEvents.isEmpty
+                        && unmergedMainSubmissions.isEmpty
+                        && unmergedFollowups.isEmpty
+                        && sortedProgressItems.isEmpty {
                         emptyCloudConversationCard
                     } else {
                         ForEach(store.cloudDialogueVisibleEvents) { event in
@@ -170,9 +189,19 @@ struct AmberInlineCloudMainDialogueView: View {
                                 .id("cloud-event-\(event.id)")
                         }
 
+                        ForEach(unmergedMainSubmissions) { submission in
+                            pendingMainSubmissionBubble(submission)
+                                .id("cloud-main-sub-\(submission.requestId)")
+                        }
+
                         ForEach(unmergedFollowups) { followup in
                             followupBubble(followup)
                                 .id("cloud-followup-\(followup.requestId)")
+                        }
+
+                        if store.isAwaitingCloudMainReply && sortedProgressItems.isEmpty {
+                            awaitingCloudReplyRow
+                                .id("cloud-awaiting-reply")
                         }
                     }
 
@@ -186,6 +215,9 @@ struct AmberInlineCloudMainDialogueView: View {
             .onAppear {
                 store.startCloudDialoguePollingIfNeeded()
                 Task {
+                    if store.cloudConfig == nil {
+                        await store.refreshCloudConfig()
+                    }
                     _ = await store.pollCloudDialogueEvents()
                 }
                 proxy.scrollTo("cloud-dialogue-bottom-anchor", anchor: .bottom)
@@ -200,46 +232,56 @@ struct AmberInlineCloudMainDialogueView: View {
     }
 
     private var cloudHostHeaderBanner: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(store.isReachable != false ? AmberTheme.accent : AmberTheme.muted)
-                .frame(width: 6.5, height: 6.5)
+        let sessionHealth = store.cloudDialogueSessionHealth
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(sessionHealth.semanticDotColor)
+                    .frame(width: 6.5, height: 6.5)
 
-            Text(
-                store.connection.map { "24h 云端真身 · \($0.name)" }
-                    ?? IOSAppLocalization.string("24h 云端真身", defaultValue: "24h 云端真身")
-            )
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(AmberTheme.foreground2)
-            .lineLimit(1)
+                Text(
+                    store.connection.map { "Amber · 云端 · \($0.name)" }
+                        ?? IOSAppLocalization.string("Amber · 云端", defaultValue: "Amber · 云端")
+                )
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AmberTheme.foreground2)
+                .lineLimit(1)
 
-            Spacer(minLength: 6)
+                Spacer(minLength: 6)
 
-            Button {
-                Task {
-                    await store.refresh()
-                    _ = await store.pollCloudDialogueEvents()
+                Button {
+                    Task {
+                        await store.refresh()
+                        _ = await store.pollCloudDialogueEvents()
+                    }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(AmberTheme.muted)
+                        .frame(width: 24, height: 24)
                 }
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(AmberTheme.muted)
-                    .frame(width: 24, height: 24)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(IOSAppLocalization.string("刷新云端对话", defaultValue: "刷新云端对话"))
+                .buttonStyle(.plain)
+                .accessibilityLabel(IOSAppLocalization.string("刷新云端对话", defaultValue: "刷新云端对话"))
 
-            Button {
-                onOpenPairingSettings()
-            } label: {
-                Text(IOSAppLocalization.string("连接设置", defaultValue: "连接设置"))
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(AmberTheme.accent)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(AmberTheme.accent.opacity(0.12), in: Capsule(style: .continuous))
+                Button {
+                    onOpenPairingSettings()
+                } label: {
+                    Text(IOSAppLocalization.string("云端设置", defaultValue: "云端设置"))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(AmberTheme.accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(AmberTheme.accent.opacity(0.12), in: Capsule(style: .continuous))
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
+
+            if !sessionHealth.isReady {
+                Text(verbatim: sessionHealth.statusText)
+                    .font(.caption2)
+                    .foregroundStyle(sessionHealth == .checking ? AmberTheme.muted : AmberTheme.accentAmber)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.horizontal, 13)
         .padding(.vertical, 9)
@@ -305,25 +347,45 @@ struct AmberInlineCloudMainDialogueView: View {
 
     private var emptyCloudConversationCard: some View {
         let soul = AgentSoulStore.shared
+        let health = store.cloudDialogueSessionHealth
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: "icloud.fill")
+                Image(systemName: health.isReady ? "icloud.fill" : "exclamationmark.icloud.fill")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(AmberTheme.accent)
-                Text("\(soul.displayName) · 云端真身在线")
+                    .foregroundStyle(health.semanticDotColor)
+                Text("\(soul.displayName) · \(health.isReady ? macGatewayL("云端真身在线") : health.statusText)")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AmberTheme.foreground)
             }
 
-            Text(
-                IOSAppLocalization.string(
-                    "当前主界面已直连 24h 云端真身，共享同一份形象人设。直接在下方输入框发消息即可交代长任务或连续对话；点按右下角「云端」胶囊可随时一键切回本机。",
-                    defaultValue: "当前主界面已直连 24h 云端真身，共享同一份形象人设。直接在下方输入框发消息即可交代长任务或连续对话；点按右下角「云端」胶囊可随时一键切回本机。"
+            if !health.isReady {
+                Text(verbatim: health.statusText)
+                    .font(.footnote)
+                    .foregroundStyle(AmberTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button {
+                    onOpenPairingSettings()
+                } label: {
+                    Text(macGatewayL("前往云端配置"))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AmberTheme.accent)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(AmberTheme.accent.opacity(0.12), in: Capsule(style: .continuous))
+                }
+                .buttonStyle(.plain)
+            } else {
+                Text(
+                    IOSAppLocalization.string(
+                        "当前主界面已直连 24h 云端真身，共享同一份形象人设。直接在下方输入框发消息即可交代长任务或连续对话；点按右下角「云端」胶囊可随时一键切回本机。",
+                        defaultValue: "当前主界面已直连 24h 云端真身，共享同一份形象人设。直接在下方输入框发消息即可交代长任务或连续对话；点按右下角「云端」胶囊可随时一键切回本机。"
+                    )
                 )
-            )
-            .font(.footnote)
-            .foregroundStyle(AmberTheme.muted)
-            .fixedSize(horizontal: false, vertical: true)
+                .font(.footnote)
+                .foregroundStyle(AmberTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -333,6 +395,46 @@ struct AmberInlineCloudMainDialogueView: View {
                 .stroke(AmberTheme.borderSoft, lineWidth: 0.8)
         }
         .padding(.top, 8)
+    }
+
+    private func pendingMainSubmissionBubble(_ submission: MacGatewayCloudDialoguePersistedSubmission) -> some View {
+        HStack {
+            Spacer(minLength: 48)
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(verbatim: submission.text ?? "")
+                    .font(.body)
+                    .foregroundStyle(AmberTheme.foreground)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(AmberTheme.surfaceElevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .stroke(AmberTheme.borderSoft, lineWidth: 0.75)
+                    }
+
+                Text(verbatim: submission.receipt?.state.displayBadgeText ?? submission.lastError ?? macGatewayL("发送中…"))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(submission.lastError != nil ? AmberTheme.accentRed : AmberTheme.muted)
+            }
+        }
+    }
+
+    private var awaitingCloudReplyRow: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text(macGatewayL("Amber · 云端 正在思考并生成回复…"))
+                .font(.caption)
+                .foregroundStyle(AmberTheme.muted)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.75)
+        }
     }
 
     @ViewBuilder

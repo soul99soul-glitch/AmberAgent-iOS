@@ -53,17 +53,25 @@ struct AmberDuetWorkspaceDrawerSheet: View {
                     .foregroundStyle(AmberTheme.foreground)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(IOSAppLocalization.string("返回对话", defaultValue: "返回对话")) {
+                    Button {
                         dismiss()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                            onNavigate(.settings)
+                        }
+                    } label: {
+                        Text(IOSAppLocalization.string("设置", defaultValue: "设置"))
+                            .font(.subheadline.weight(.semibold))
                     }
-                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AmberTheme.accent)
+                    .accessibilityIdentifier("chat.duet.openSettingsToolbar")
                 }
             }
             .sheet(isPresented: $showingPersonaStudio) {
                 AmberPersonaStudioSheet(
                     sharedSettings: sharedSettings ?? IOSSharedSettingsStore()
                 )
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
         }
     }
@@ -103,7 +111,7 @@ struct AmberDuetWorkspaceDrawerSheet: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Text(gateway.connection != nil ? "已连接 \(gateway.connection?.name ?? "云端/Mac") · 支持后台任务" : "点按头像可生成/上传形象与 Agent 参考图")
+                Text(gateway.connection != nil ? "已连接 \(gateway.connection?.name ?? "Amber · 云端") · 支持后台任务" : "点按头像可生成/上传形象与 Agent 参考图")
                     .font(.caption)
                     .foregroundStyle(AmberTheme.muted)
             }

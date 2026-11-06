@@ -212,6 +212,50 @@ struct MacGatewayCloudDialoguePersistedEnvelope: Codable, Equatable, Sendable {
     var submissions: [MacGatewayCloudDialoguePersistedSubmission]
 }
 
+/// Transport state of the `/v2/dialogue/*` session channel on the paired gateway.
+enum MacGatewayCloudDialogueTransportState: Equatable, Sendable {
+    case unknown
+    case healthy
+    case unsupportedEndpoint
+    case failed(String)
+}
+
+/// Composite health of the cloud main dialogue session across all four layers:
+/// 1) pairing & `/v1/status` reachability
+/// 2) `/v2/dialogue/events` session transport & heartbeat
+/// 3) `/v2/configuration` Agent & model key readiness
+/// 4) pending message enqueue / execution / response status
+enum MacGatewayCloudDialogueSessionHealth: Equatable, Sendable {
+    case unpaired
+    case checking
+    case ready(modelSummary: String?)
+    case actionRequired(reason: String)
+    case unavailable(reason: String)
+
+    var isReady: Bool {
+        if case .ready = self { return true }
+        return false
+    }
+
+    var statusText: String {
+        switch self {
+        case .unpaired:
+            return IOSAppLocalization.string("尚未配对 Amber · 云端", defaultValue: "尚未配对 Amber · 云端")
+        case .checking:
+            return IOSAppLocalization.string("正在连接云端对话通道…", defaultValue: "正在连接云端对话通道…")
+        case .ready(let modelSummary):
+            if let modelSummary, !modelSummary.isEmpty {
+                return IOSAppLocalization.string("云端对话就绪 · \(modelSummary)", defaultValue: "云端对话就绪 · \(modelSummary)")
+            }
+            return IOSAppLocalization.string("云端对话就绪", defaultValue: "云端对话就绪")
+        case .actionRequired(let reason):
+            return reason
+        case .unavailable(let reason):
+            return reason
+        }
+    }
+}
+
 // MARK: - Client Endpoints
 
 extension MacGatewayClient {
@@ -319,6 +363,85 @@ extension MacGatewayStore {
                 return false
             }
             return true
+        }
+    }
+
+    /// Main dialogue messages (`POST /v2/dialogue/messages`) that have been accepted (`.received`)
+    /// or failed locally, and whose user event has not yet been merged into `cloudDialogueVisibleEvents`.
+    var unmergedCloudMainSubmissions: [MacGatewayCloudDialoguePersistedSubmission] {
+        cloudDialogueSubmissions
+            .filter { submission in
+                guard submission.kind == .mainMessage else { return false }
+                if let eventId = submission.receipt?.eventId,
+                   cloudDialogueVisibleEvents.contains(where: { $0.id == eventId }) {
+                    return false
+                }
+                return true
+            }
+            .sorted { $0.updatedAt < $1.updatedAt }
+    }
+
+    /// True while a submitted main dialogue message is still in `.received` state (or currently sending)
+    /// and no assistant reply or terminal task result has arrived after it yet.
+    var isAwaitingCloudMainReply: Bool {
+        if !busyCloudDialogueRequestIds.isEmpty {
+            return true
+        }
+        let mainSubmissions = cloudDialogueSubmissions.filter { $0.kind == .mainMessage }
+        for submission in mainSubmissions {
+            let receiptState = submission.receipt.flatMap { cloudDialogueReceipts[$0.requestId]?.state ?? $0.state }
+            guard receiptState == .received else { continue }
+            if let eventId = submission.receipt?.eventId,
+               let userEvent = cloudDialogueEvents.first(where: { $0.id == eventId }) {
+                let hasReplyAfter = cloudDialogueEvents.contains { candidate in
+                    candidate.seq > userEvent.seq
+                        && candidate.topicId == userEvent.topicId
+                        && (candidate.kind == .assistantReply || candidate.kind == .taskResult)
+                }
+                if !hasReplyAfter {
+                    return true
+                }
+            } else {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Real cloud dialogue session health derived from pairing, `/v1/status` reachability,
+    /// `/v2/dialogue/events` channel status, and `/v2/configuration` model readiness.
+    var cloudDialogueSessionHealth: MacGatewayCloudDialogueSessionHealth {
+        guard connection != nil else {
+            return .unpaired
+        }
+        if isReachable == false {
+            return .unavailable(reason: localized("无法连接已配对节点，请确认网络或守护进程在线"))
+        }
+        switch cloudDialogueTransportState {
+        case .unsupportedEndpoint:
+            return .unavailable(
+                reason: localized("当前已配对节点仅开启状态看板（/v1），未启用云端对话服务（/v2/dialogue）")
+            )
+        case .failed(let message):
+            return .unavailable(reason: message)
+        case .unknown:
+            if isReachable == nil {
+                return .checking
+            }
+            return .checking
+        case .healthy:
+            if let config = cloudConfig {
+                guard let model = config.model,
+                      !model.provider.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      !model.modelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    return .actionRequired(reason: localized("云端尚未选择模型，请前往「云端配置」设置"))
+                }
+                guard model.keyConfigured else {
+                    return .actionRequired(reason: localized("云端模型尚未配置 API Key，请前往「云端配置」补齐"))
+                }
+                return .ready(modelSummary: "\(model.provider) · \(model.modelId)")
+            }
+            return .ready(modelSummary: nil)
         }
     }
 
@@ -448,6 +571,8 @@ extension MacGatewayStore {
         do {
             let receipt = try await client.postDialogueMessage(request)
             guard self.client === client else { return .failure(CancellationError()) }
+            cloudDialogueTransportState = .healthy
+            isReachable = true
             applyReceipt(receipt, kind: .mainMessage, workItemId: receipt.workItemIds.first, text: effectiveText)
             if selectedCloudDialogueWorkItemId == nil, let firstWorkItem = receipt.workItemIds.first {
                 selectedCloudDialogueWorkItemId = firstWorkItem
@@ -459,7 +584,8 @@ extension MacGatewayStore {
             if forgetIfRevoked(error) {
                 return .failure(MacGatewayError.unauthorized)
             }
-            recordSubmissionError(requestId: requestId, error: error.localizedDescription)
+            updateCloudDialogueTransportState(for: error)
+            recordSubmissionError(requestId: requestId, error: cloudDialogueFriendlyErrorMessage(for: error))
             persistCloudDialogueState()
             return .failure(error)
         }
@@ -641,6 +767,8 @@ extension MacGatewayStore {
         do {
             let page = try await client.dialogueEvents(after: currentCursor, limit: limit)
             guard self.client === client else { return .failure(CancellationError()) }
+            cloudDialogueTransportState = .healthy
+            isReachable = true
             if !page.items.isEmpty {
                 ingestCloudDialogueEventsPage(page, requestedAfter: currentCursor)
                 persistCloudDialogueState()
@@ -653,6 +781,7 @@ extension MacGatewayStore {
             if forgetIfRevoked(error) {
                 return .failure(MacGatewayError.unauthorized)
             }
+            updateCloudDialogueTransportState(for: error)
             return .failure(error)
         }
     }
@@ -662,12 +791,15 @@ extension MacGatewayStore {
         guard !page.items.isEmpty else { return }
 
         var eventsById = Dictionary(uniqueKeysWithValues: cloudDialogueEvents.map { ($0.id, $0) })
-        for event in page.items where event.seq > requestedAfter {
+        let newEvents = page.items.filter { $0.seq > requestedAfter }
+        for event in newEvents {
             eventsById[event.id] = event
-            applyCloudDialogueEvent(event)
         }
         cloudDialogueEvents = eventsById.values.sorted { lhs, rhs in
             lhs.seq != rhs.seq ? lhs.seq < rhs.seq : lhs.id < rhs.id
+        }
+        for event in newEvents {
+            applyCloudDialogueEvent(event)
         }
         let maxSeenSeq = page.items.map(\.seq).max() ?? requestedAfter
         cloudDialogueCursor = max(cloudDialogueCursor, max(page.nextCursor, maxSeenSeq))
@@ -713,6 +845,7 @@ extension MacGatewayStore {
             if let workItemId = event.workItemId, current.outcome == .cancelled {
                 markUnconsumedFollowupsCancelled(forWorkItemId: workItemId)
             }
+            markMainMessageReceiptsConsumed(forTopicId: event.topicId, upToSeq: event.seq)
             syncCloudDialogueSoulIfNeeded(for: event)
 
         case .stopRequested:
@@ -757,8 +890,63 @@ extension MacGatewayStore {
             break
 
         case .assistantReply:
+            markMainMessageReceiptsConsumed(forTopicId: event.topicId, upToSeq: event.seq)
             syncCloudDialogueSoulIfNeeded(for: event)
         }
+    }
+
+    private func markMainMessageReceiptsConsumed(forTopicId topicId: String, upToSeq: Int64) {
+        let consumedEventIds = Set(
+            cloudDialogueEvents
+                .filter { $0.kind == .userMessage && $0.topicId == topicId && $0.seq <= upToSeq }
+                .map(\.id)
+        )
+        for (reqId, var receipt) in cloudDialogueReceipts {
+            if receipt.state == .received,
+               (receipt.topicId == topicId || consumedEventIds.contains(receipt.eventId)) {
+                receipt.state = .consumed
+                cloudDialogueReceipts[reqId] = receipt
+            }
+        }
+        for idx in cloudDialogueSubmissions.indices where cloudDialogueSubmissions[idx].kind == .mainMessage {
+            if var receipt = cloudDialogueSubmissions[idx].receipt,
+               receipt.state == .received,
+               (receipt.topicId == topicId || consumedEventIds.contains(receipt.eventId)) {
+                receipt.state = .consumed
+                cloudDialogueSubmissions[idx].receipt = receipt
+            }
+        }
+    }
+
+    private func updateCloudDialogueTransportState(for error: Error) {
+        if case MacGatewayError.unreachable = error {
+            isReachable = false
+            cloudDialogueTransportState = .failed(error.localizedDescription)
+            return
+        }
+        if case MacGatewayError.certificateMismatch = error {
+            isReachable = false
+            cloudDialogueTransportState = .failed(error.localizedDescription)
+            return
+        }
+        if case MacGatewayError.server(let message) = error {
+            let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if normalized == "not found" || normalized == "not_found" || normalized.contains("404") {
+                cloudDialogueTransportState = .unsupportedEndpoint
+                return
+            }
+        }
+        cloudDialogueTransportState = .failed(error.localizedDescription)
+    }
+
+    private func cloudDialogueFriendlyErrorMessage(for error: Error) -> String {
+        if case MacGatewayError.server(let message) = error {
+            let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if normalized == "not found" || normalized == "not_found" || normalized.contains("404") {
+                return localized("当前连接的节点未启用云端对话服务（/v2/dialogue 404）")
+            }
+        }
+        return error.localizedDescription
     }
 
     private func syncCloudDialogueSoulIfNeeded(for event: MacGatewayCloudDialogueEvent) {
@@ -902,12 +1090,12 @@ extension MacGatewayStore {
     func startCloudDialoguePollingIfNeeded() {
         guard cloudDialoguePollTask == nil,
               client != nil,
-              (isCloudMainDialogueSelected || !activeCloudDialogueWorkItemIds.isEmpty) else { return }
+              (isCloudMainDialogueSelected || !activeCloudDialogueWorkItemIds.isEmpty || isAwaitingCloudMainReply) else { return }
         cloudDialoguePollTask = Task { @MainActor [weak self] in
             defer { self?.cloudDialoguePollTask = nil }
             while !Task.isCancelled {
                 guard let self, self.client != nil,
-                      (self.isCloudMainDialogueSelected || !self.activeCloudDialogueWorkItemIds.isEmpty) else { break }
+                      (self.isCloudMainDialogueSelected || !self.activeCloudDialogueWorkItemIds.isEmpty || self.isAwaitingCloudMainReply) else { break }
                 _ = await self.pollCloudDialogueEvents()
                 try? await Task.sleep(for: .seconds(1))
             }

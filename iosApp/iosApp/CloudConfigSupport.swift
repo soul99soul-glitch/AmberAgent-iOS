@@ -205,6 +205,24 @@ struct IOSCloudSearchExportItem: Identifiable, Equatable {
 
 // MARK: - Import draft & preview
 
+/// Grouped summary of local items that cannot be exported to the cloud,
+/// surfaced on demand instead of repeating per-row blocked labels.
+struct IOSCloudBlockedCategorySummary: Equatable, Identifiable, Sendable {
+    enum Category: String, Equatable, Sendable {
+        case missingApiKey
+        case oauthNotExportable
+        case unsupportedProtocol
+        case disabledOrEmpty
+    }
+
+    let category: Category
+    let title: String
+    let itemNames: [String]
+    let explanation: String
+
+    var id: String { category.rawValue }
+}
+
 /// Selection state for "从本机导入". Defaults are deliberately narrow — the
 /// current chat provider/model and the selected search service only — never
 /// every configured account.
@@ -234,8 +252,89 @@ struct IOSCloudImportDraft: Equatable {
         searches.filter { selectedSearchIds.contains($0.serviceId) && $0.isExportable }
     }
 
+    var exportableProviders: [IOSCloudProviderExportItem] {
+        providers.filter(\.isExportable)
+    }
+
+    var exportableSearches: [IOSCloudSearchExportItem] {
+        searches.filter(\.isExportable)
+    }
+
     var hasSelection: Bool {
         selectedProvider != nil || !selectedSearches.isEmpty
+    }
+
+    /// A draft scoped strictly to the chosen provider/model for the primary
+    /// "选择当前云端模型" action, leaving search services untouched.
+    var modelOnlyDraft: IOSCloudImportDraft {
+        var copy = self
+        copy.selectedSearchIds = []
+        return copy
+    }
+
+    /// Groups non-exportable local providers and search services by reason so
+    /// the UI can summarize them on demand rather than repeating per-row blocked
+    /// labels across a flat list. Never includes secret material.
+    var blockedSummaries: [IOSCloudBlockedCategorySummary] {
+        var oauthNames: [String] = []
+        var unsupportedNames: [String] = []
+        var missingKeyNames: [String] = []
+        var disabledOrEmptyNames: [String] = []
+
+        for provider in providers where !provider.isExportable {
+            if let auth = provider.managedAuthLabel {
+                oauthNames.append("\(provider.name)（\(auth)）")
+            } else if !provider.kind.isCloudSupported {
+                unsupportedNames.append(provider.name)
+            } else if !provider.enabled || (provider.hasApiKey && provider.chatModels.isEmpty) {
+                disabledOrEmptyNames.append(provider.name)
+            } else if !provider.hasApiKey {
+                missingKeyNames.append(provider.name)
+            }
+        }
+
+        for search in searches where !search.isExportable {
+            if !search.isCloudSupported {
+                unsupportedNames.append(search.name)
+            } else if search.requiresKey && !search.hasApiKey {
+                missingKeyNames.append(search.name)
+            }
+        }
+
+        var result: [IOSCloudBlockedCategorySummary] = []
+        if !missingKeyNames.isEmpty {
+            result.append(IOSCloudBlockedCategorySummary(
+                category: .missingApiKey,
+                title: macGatewayL("缺少 API Key"),
+                itemNames: missingKeyNames,
+                explanation: macGatewayL("本机尚未填写 API Key，可先在本机补齐，或直接在云端配置中手动设置")
+            ))
+        }
+        if !oauthNames.isEmpty {
+            result.append(IOSCloudBlockedCategorySummary(
+                category: .oauthNotExportable,
+                title: macGatewayL("账号登录态仅限本机"),
+                itemNames: oauthNames,
+                explanation: macGatewayL("OAuth 与网页登录态绑定当前设备，不支持导出到云端")
+            ))
+        }
+        if !unsupportedNames.isEmpty {
+            result.append(IOSCloudBlockedCategorySummary(
+                category: .unsupportedProtocol,
+                title: macGatewayL("云端暂不支持该协议"),
+                itemNames: unsupportedNames,
+                explanation: macGatewayL("云端目前支持 OpenAI / Claude 模型协议与 Bing / DuckDuckGo / Exa / Brave 搜索源")
+            ))
+        }
+        if !disabledOrEmptyNames.isEmpty {
+            result.append(IOSCloudBlockedCategorySummary(
+                category: .disabledOrEmpty,
+                title: macGatewayL("已停用或未添加模型"),
+                itemNames: disabledOrEmptyNames,
+                explanation: macGatewayL("在本机启用服务商并添加聊天模型后即可导入")
+            ))
+        }
+        return result
     }
 
     /// Builds the draft from the shared settings snapshot. Secret values are

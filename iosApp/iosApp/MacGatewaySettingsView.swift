@@ -63,7 +63,7 @@ struct MacGatewaySettingsView: View {
                 dismiss()
             }
             Spacer(minLength: 0)
-            Text(verbatim: "Mac Gateway")
+            Text(L("Amber · 云端"))
                 .font(.title2.weight(.bold))
                 .foregroundStyle(AmberTheme.foreground)
                 .multilineTextAlignment(.center)
@@ -130,7 +130,7 @@ struct MacGatewaySettingsView: View {
 
     private func macSection(_ connection: MacGatewayConnection) -> some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: "Mac")
+            AmberSectionLabel(text: "Amber · 云端")
             AmberFormGroup {
                 MacGatewayRow(icon: "desktopcomputer", title: connection.name, detail: reachabilityText) {
                     Button { Task { await store.refresh() } } label: {
