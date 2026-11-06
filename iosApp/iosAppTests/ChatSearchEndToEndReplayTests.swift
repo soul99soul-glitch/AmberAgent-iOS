@@ -57,7 +57,9 @@ final class ChatSearchEndToEndReplayTests: ChatNativeTimelineReplayTestCase {
         var acknowledgedAt: TimeInterval?
         let feedback = ChatCompletionFeedback { acknowledgedAt = ProcessInfo.processInfo.systemUptime }
         feedback.setForegroundVisible(true)
-        let fixture = makeFixture { $0.completionFeedback = feedback }
+        // Replace the test app's root while measuring; a second window leaves
+        // the hidden welcome page's TimelineView rendering behind the replay.
+        let fixture = makeFixture(exclusiveWindow: true) { $0.completionFeedback = feedback }
         defer { fixture.tearDown() }
         fixture.model.messages = Array(messages.prefix(firstUser))
         fixture.model.send(.initialLoad)
@@ -68,6 +70,15 @@ final class ChatSearchEndToEndReplayTests: ChatNativeTimelineReplayTestCase {
         let memory = ChatReplayMemoryProbe()
         let frameCPU = ChatReplayFrameCPUProbe()
         let gaps = DisplayLinkGapProbe()
+        let profileArm = artifact.appendingPathComponent("profile-send.arm")
+        if FileManager.default.fileExists(atPath: profileArm.path) {
+            try FileManager.default.removeItem(at: profileArm)
+            try JSONSerialization.data(withJSONObject: ["pid": getpid()])
+                .write(to: artifact.appendingPathComponent("profile-send-ready.json"))
+            XCTAssertTrue(pumpUntil(timeout: 15) {
+                FileManager.default.fileExists(atPath: artifact.appendingPathComponent("profile-send-go").path)
+            })
+        }
         memory.start()
         frameCPU.start()
         gaps.start()

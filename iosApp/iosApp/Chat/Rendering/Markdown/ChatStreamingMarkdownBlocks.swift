@@ -37,10 +37,9 @@ struct ChatStreamingBlockMarkdownView: View {
             liveStreaming: liveStreaming,
             renderCacheNamespace: renderCacheNamespace
         )
-            .transformPreference(ChatStreamingRevealProgressKey.self) { progress in
-                // Keep the old blocks pending until the final cumulative snapshot is parsed.
-                progress.hasPendingReveal = progress.hasPendingReveal || controller.parsedText != text
-            }
+            // Keep old blocks pending until the final cumulative snapshot is parsed.
+            .modifier(ChatStreamingRevealProgressModifier(progress: .init(
+                hasPendingReveal: controller.parsedText != text)))
             .task(id: ChatStreamingMarkdownBlockParseKey(
                 text: text,
                 includeTrailingPartialTableRow: !liveStreaming

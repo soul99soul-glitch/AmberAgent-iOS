@@ -101,6 +101,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
         let model: HarnessModel
         let window: UIWindow
         let host: UIHostingController<Harness>
+        var restoreWindow: (() -> Void)? = nil
 
         var scrollView: UIScrollView? {
             Self.findScrollView(in: host.view)
@@ -115,6 +116,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
         }
 
         func tearDown() {
+            if let restoreWindow { restoreWindow(); return }
             window.isHidden = true
             window.rootViewController = nil
         }
@@ -342,6 +344,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
     }
 
     func makeFixture(
+        exclusiveWindow: Bool = false,
         configure: (HarnessModel) -> Void = { _ in }
     ) -> Fixture {
         let sharedSettings = IOSSharedSettingsStore(
@@ -361,9 +364,17 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
             workspaceStore: workspaceStore
         ))
         let window: UIWindow
+        var restoreWindow: (() -> Void)?
         if let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene }).first {
-            window = UIWindow(windowScene: scene)
+            if exclusiveWindow, let existing = scene.windows.first(where: \.isKeyWindow) {
+                let root = existing.rootViewController
+                let frame = existing.frame
+                window = existing
+                restoreWindow = { existing.rootViewController = root; existing.frame = frame }
+            } else {
+                window = UIWindow(windowScene: scene)
+            }
             window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
         } else {
             window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
@@ -371,7 +382,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
         window.rootViewController = host
         window.makeKeyAndVisible()
         window.layoutIfNeeded()
-        return Fixture(model: model, window: window, host: host)
+        return Fixture(model: model, window: window, host: host, restoreWindow: restoreWindow)
     }
 
     // MARK: - Fixture content

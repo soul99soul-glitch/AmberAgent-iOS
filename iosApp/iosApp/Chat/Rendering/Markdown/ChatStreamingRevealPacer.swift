@@ -36,6 +36,20 @@ struct ChatStreamingRevealProgressKey: PreferenceKey {
     }
 }
 
+/// A value writer keeps an unchanged pending flag stable through token updates.
+/// A background sibling merges with descendant writers via the key's OR reduce.
+struct ChatStreamingRevealProgressModifier: ViewModifier {
+    let progress: ChatStreamingRevealProgress
+
+    func body(content: Content) -> some View {
+        content.background {
+            Color.clear.frame(width: 0, height: 0)
+                .preference(key: ChatStreamingRevealProgressKey.self, value: progress)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
 /// 流式正文的平滑吐字器 + 平滑高度。
 ///
 /// 三个问题一起解决：
@@ -213,10 +227,8 @@ struct ChatStreamingRevealPacer<Content: View>: View {
             .clipped()
             .environment(\.chatPacesStreamingTextBlocks, bypassPacingForTable)
             .environment(\.chatIsActivelyPacingReveal, isActivelyRevealing)
-            .transformPreference(ChatStreamingRevealProgressKey.self) { progress in
-                progress.isMounted = true
-                progress.hasPendingReveal = progress.hasPendingReveal || hasPendingReveal
-            }
+            .modifier(ChatStreamingRevealProgressModifier(progress: .init(
+                isMounted: true, hasPendingReveal: hasPendingReveal)))
             .onPreferenceChange(ChatStreamingRevealProgressKey.self) { progress in
                 guard progress.isMounted, !progress.hasPendingReveal,
                       let messageID else { return }

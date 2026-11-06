@@ -35,9 +35,8 @@ struct ChatStableStreamingMarkdownView: View {
             usesLayerBackedTableAnimation: config.shouldAnimateText,
             usesTextKit1ForAttachmentFreeText: true
         )
-            .transformPreference(ChatStreamingRevealProgressKey.self) { progress in
-                progress.hasPendingReveal = progress.hasPendingReveal || !controller.hasRendered(text)
-            }
+            .modifier(ChatStreamingRevealProgressModifier(progress: .init(
+                hasPendingReveal: !controller.hasRendered(text))))
             .task(id: ChatStableStreamingMarkdownParseKey(
                 text: text,
                 animate: config.shouldAnimateText,

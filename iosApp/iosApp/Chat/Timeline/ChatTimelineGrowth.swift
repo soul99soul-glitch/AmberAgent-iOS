@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import UIKit
 
 /// The timeline takes its natural height immediately. Only its presentation
 /// transform interpolates, keeping bottom-anchored text moving at the old pace.
@@ -7,6 +8,8 @@ import Combine
 final class ChatTimelineGrowth: ObservableObject {
     @Published private(set) var totalGrowth: CGFloat = 0
     private var enabled = false
+    private weak var presentationLayer: CALayer?
+    private static let animationKey = "amber.timeline-growth"
 
     func setEnabled(_ enabled: Bool) {
         self.enabled = enabled
@@ -14,6 +17,7 @@ final class ChatTimelineGrowth: ObservableObject {
 
     func reset() {
         enabled = false
+        presentationLayer?.removeAnimation(forKey: Self.animationKey)
         guard totalGrowth != 0 else { return }
         var transaction = Transaction()
         transaction.disablesAnimations = true
@@ -26,9 +30,23 @@ final class ChatTimelineGrowth: ObservableObject {
         ChatRenderProbe.record("growth-transform")
         ChatRenderProbe.record("growth-add")
         #endif
-        withAnimation(.linear(duration: ChatStreamingRevealTiming.heightSettleSeconds)) {
-            totalGrowth += delta
-        }
+        totalGrowth += delta
+        guard let layer = presentationLayer else { return }
+        let previous = (layer.presentation()?.transform.m42 ?? layer.transform.m42) - layer.transform.m42
+        let animation = CABasicAnimation(keyPath: "transform.translation.y")
+        animation.isAdditive = true
+        animation.fromValue = previous + delta
+        animation.toValue = 0
+        animation.duration = ChatStreamingRevealTiming.heightSettleSeconds
+        animation.timingFunction = CAMediaTimingFunction(name: .linear)
+        animation.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+        layer.add(animation, forKey: Self.animationKey)
+    }
+
+    func attachPresentationLayer(_ layer: CALayer?) {
+        guard presentationLayer !== layer else { return }
+        presentationLayer?.removeAnimation(forKey: Self.animationKey)
+        presentationLayer = layer
     }
 }
 
@@ -44,19 +62,51 @@ extension EnvironmentValues {
 }
 
 struct ChatTimelineGrowthModifier: ViewModifier {
-    @ObservedObject var growth: ChatTimelineGrowth
+    let growth: ChatTimelineGrowth
 
     func body(content: Content) -> some View {
-        // Layout has already grown. Apply that compensation immediately, then
-        // let the native offset animation interpolate back at the display rate.
-        // Keeping both operations as built-in effects avoids a custom SwiftUI
-        // GeometryEffect evaluation for every presentation frame.
-        content
-            .offset(y: growth.totalGrowth)
-            .transaction { $0.animation = nil }
-            // Prevent coalescing the immediate compensation with its animated
-            // inverse; otherwise the first line jumps instead of moving up.
-            .geometryGroup()
-            .offset(y: -growth.totalGrowth)
+        content.background(ChatTimelineGrowthLayerBridge(growth: growth))
+    }
+}
+
+/// Resolves just the scrolling content container. The additive animation does
+/// not write UIScrollView offsets, content size or any model-layer transform.
+private struct ChatTimelineGrowthLayerBridge: UIViewRepresentable {
+    let growth: ChatTimelineGrowth
+
+    func makeUIView(context: Context) -> Probe {
+        let view = Probe()
+        view.isHidden = true
+        view.isUserInteractionEnabled = false
+        view.growth = growth
+        return view
+    }
+
+    func updateUIView(_ view: Probe, context: Context) {
+        view.growth = growth
+        view.resolve()
+    }
+
+    static func dismantleUIView(_ view: Probe, coordinator: ()) {
+        view.growth?.attachPresentationLayer(nil)
+    }
+
+    final class Probe: UIView {
+        weak var growth: ChatTimelineGrowth?
+        override func didMoveToWindow() { super.didMoveToWindow(); resolve() }
+        override func didMoveToSuperview() { super.didMoveToSuperview(); resolve() }
+        override func layoutSubviews() { super.layoutSubviews(); resolve() }
+
+        func resolve() {
+            guard window != nil else { return }
+            var candidate: UIView = self
+            while let parent = candidate.superview {
+                if parent is UIScrollView {
+                    growth?.attachPresentationLayer(candidate.layer)
+                    return
+                }
+                candidate = parent
+            }
+        }
     }
 }
