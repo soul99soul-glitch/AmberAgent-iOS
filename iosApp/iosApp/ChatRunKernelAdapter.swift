@@ -305,10 +305,8 @@ final class ChatRunKernelAdapter {
                     return controller.handoffState(runID: runID) != nil
                         && controller.hasRequestedSession(runID: runID)
                 },
-                // 重组闭包经 SE-0420 继承 MainActor 隔离(参数类型非 @Sendable),
-                // 运行时由引擎线程同步执行——与后台协调器 :1260 的 executorRebuilder
-                // 同一模式(纯装配读取,不触碰可变 UI 状态)。切勿在此
-                // assumeIsolated:引擎跑在协作线程池,运行期断言必陷阱。
+                // 工具工厂读取 MainActor runtime；引擎按这个隔离签名 await
+                // 重建，不能把闭包当作普通同步函数在协作线程池直接调用。
                 executorRebuilder: { newParams in
                     let rebuilt = Self.buildExecutors(
                         runtime: toolRuntime,

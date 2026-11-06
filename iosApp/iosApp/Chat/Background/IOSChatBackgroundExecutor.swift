@@ -190,7 +190,7 @@ extension IOSChatBackgroundGenerationCoordinator {
         )
 
         let presentationEvents = AsyncStream<AgentActivityPresentation>.makeStream()
-        func makeExecutors(_ params: TextGenerationParams) -> [String: any IOSToolExecutor] {
+        @MainActor func makeExecutors(_ params: TextGenerationParams) -> [String: any IOSToolExecutor] {
             let executors = job.toolRuntime.backgroundToolExecutors(
                 providerSetting: requestProvider,
                 params: params,

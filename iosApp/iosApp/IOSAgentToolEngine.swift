@@ -40,7 +40,13 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
     /// M2: rebuilds `executors` from a params snapshot (same registration entry
     /// point the caller used at init — see the background coordinator). Nil
     /// keeps the frozen-table behavior for every existing caller.
-    private let executorRebuilder: ((TextGenerationParams) -> [String: any IOSToolExecutor])?
+    private let executorRebuilder: (@MainActor (TextGenerationParams) -> [String: any IOSToolExecutor])?
+    /// The factory hands the registry back to this run's single owner. Executor
+    /// calls keep their own async isolation; the protocol existential itself
+    /// does not declare Sendable, so only this ownership transfer is boxed.
+    private struct RebuiltExecutors: @unchecked Sendable {
+        let value: [String: any IOSToolExecutor]
+    }
     private let configuration: Configuration
     private var batchExecutor: IOSAgentToolBatchExecutor {
         IOSAgentToolBatchExecutor(executors: executors, ledger: ledger, ledgerRunId: ledgerRunId)
@@ -67,7 +73,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         ledgerRunId: String? = nil,
         phoneAutomaticReasoning: Bool = false,
         phoneSessionIsActive: (@MainActor @Sendable (String) -> Bool)? = nil,
-        executorRebuilder: ((TextGenerationParams) -> [String: any IOSToolExecutor])? = nil
+        executorRebuilder: (@MainActor (TextGenerationParams) -> [String: any IOSToolExecutor])? = nil
     ) {
         self.providerStep = IOSAgentProviderStep(provider: provider)
         self.executors = executors
@@ -763,7 +769,13 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 // the round's params/bridge captured inside the closures).
                 // Without a rebuilder the table stays frozen (SubAgent/Novel).
                 if let executorRebuilder {
-                    executors = executorRebuilder(effectiveParams)
+                    // Both foreground and background factories read a
+                    // MainActor-owned ChatToolRuntime. Preserve that executor
+                    // boundary when the model loop resumes on a worker thread.
+                    let rebuilt = await MainActor.run { [params = effectiveParams] in
+                        RebuiltExecutors(value: executorRebuilder(params))
+                    }
+                    executors = rebuilt.value
                 }
             }
 

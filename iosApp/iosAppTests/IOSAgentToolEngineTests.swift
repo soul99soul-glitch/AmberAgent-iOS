@@ -588,6 +588,7 @@ final class IOSAgentToolEngineTests: IOSAgentToolEngineTestCase {
     /// 每轮刷新 params 后命中工具「可声明不可执行」（[engine] no executor registered）。
     /// 修复后：传了 toolExposureBridge + executorRebuilder 的路径每轮重建表，
     /// mock 宿主断言第二轮 wm_type 真实被调用。
+    @MainActor
     func testExposedToolGetsExecutorOnNextRoundViaRebuilder() async {
         let declarations = fullIosDeclarations()
         let bridge = IosToolExposureBridge(tools: declarations)
@@ -602,7 +603,7 @@ final class IOSAgentToolEngineTests: IOSAgentToolEngineTestCase {
         ])
         let wmTypeExecutor = RecordingExecutor(.filled("{\"ok\":true,\"typed\":true}"))
         // 与后台协调器同构的注册入口：按当轮 params.tools 注册（闭包捕获当轮 params）。
-        let rebuilder: (TextGenerationParams) -> [String: any IOSToolExecutor] = { params in
+        let rebuilder: @MainActor (TextGenerationParams) -> [String: any IOSToolExecutor] = { params in
             var executors: [String: any IOSToolExecutor] = [:]
             for tool in params.tools {
                 if tool.name == "tool_search" {
@@ -641,7 +642,11 @@ final class IOSAgentToolEngineTests: IOSAgentToolEngineTestCase {
             provider: provider,
             executors: rebuilder(initialParams),
             configuration: .init(maxSteps: 6, honorApprovalPause: false),
-            executorRebuilder: rebuilder
+            executorRebuilder: { params in
+                XCTAssertTrue(Thread.isMainThread,
+                              "工具工厂捕获 MainActor runtime；后台引擎重建前必须切回其执行器")
+                return rebuilder(params)
+            }
         )
 
         let result = await engine.run(
