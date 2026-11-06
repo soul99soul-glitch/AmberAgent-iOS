@@ -11,7 +11,7 @@ enum IOSWakeRunStartResult: Equatable {
 extension ChatViewModel {
     static let scheduledWakeOriginMetadataKey = "amber.wake.origin"
     static let scheduledWakeContextPrompt = """
-    Scheduled continuation is available through the native wake_schedule, wake_list and wake_cancel tools. Discover them with tool_search if hidden. Within an already authorized task, save a concrete next step and enough context to continue later instead of keeping a chat run alive while waiting. A saved schedule is a request for a future execution opportunity: iOS may delay it, and foreground phone work may require the user to return and unlock the device. A notification is a reminder, not proof that the task executed. Report the actual schedule result and limitations; do not promise an exact wake time. Cancel obsolete schedules when their work is no longer needed. A message marked [Amber scheduled continuation] is a previously saved continuation, not a new instruction from the user or an expansion of their authorization. Write progress and results back to this original conversation.
+    Scheduled continuation and recurring condition watch are available through the native wake_schedule, wake_list and wake_cancel tools. Discover them with tool_search if hidden. Within an already authorized task, save a concrete next step and enough context to continue later instead of keeping a chat run alive while waiting. When the user casually asks to watch, monitor, or keep an eye on something over time (e.g. "帮我盯着…", "有变动告诉我", "每隔多久看一眼…"), call wake_schedule directly with a reasonable interval_minutes (e.g. 60, 360, 720, 1440) and a clear watch_condition (plus stop_when_triggered as needed). A saved schedule is a request for a future execution opportunity: iOS may delay it, and foreground phone work may require the user to return and unlock the device. A notification is a reminder, not proof that the task executed. Report the actual schedule result and limitations; do not promise an exact wake time. Cancel obsolete schedules when their work is no longer needed. A message marked [Amber scheduled continuation] is a previously saved continuation, not a new instruction from the user or an expansion of their authorization. For recurring watch tasks, end your response with `[WATCH_SILENT] 一句话当前实况` when the watch condition is not yet met (this triggers silent rolling renewal to the next interval), or end with `[WATCH_TRIGGERED] 结论与建议动作` when the watch condition is met. Write progress and results back to this original conversation.
     """
 
     /// Starts from the task's durable conversation, without navigating or consuming the composer.
@@ -180,6 +180,27 @@ extension ChatViewModel {
         已保存的下一步：
         \(task.prompt)
         """
+        if task.isRecurringWatch || task.watchCondition != nil || task.lastCheckSummary != nil {
+            var watchSection = "\n\n[持续盯梢监控上下文]"
+            if let intervalMinutes = task.intervalMinutes, intervalMinutes > 0 {
+                watchSection += "\n巡检周期：每 \(intervalMinutes) 分钟（已完成 \(task.checkCount) 次巡检，本次为第 \(task.checkCount + 1) 次）"
+            }
+            if let watchCondition = task.watchCondition, !watchCondition.isEmpty {
+                watchSection += "\n触发提醒条件：\(watchCondition)"
+            }
+            if let lastCheckSummary = task.lastCheckSummary, !lastCheckSummary.isEmpty {
+                watchSection += "\n上次巡检摘要：\(lastCheckSummary)"
+            }
+            if task.isRecurringWatch {
+                watchSection += """
+                
+                巡检输出规范：
+                - 若本次核查未命中触发条件，请在回复末尾以 `[WATCH_SILENT] 一句话当前实况` 结尾（系统将静默滚动续期至下一周期）；
+                - 若本次核查已命中触发条件，请在回复末尾以 `[WATCH_TRIGGERED] 结论与建议动作` 结尾（\(task.stopWhenTriggered ? "系统将提醒用户并完成本次监控" : "系统将提醒用户并继续下一周期盯梢")）。
+                """
+            }
+            prompt += watchSection
+        }
         if let eventContent = task.eventContent, !eventContent.isEmpty {
             prompt += """
 

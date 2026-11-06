@@ -78,8 +78,24 @@ struct IOSWakeTasksSection: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(task.title).font(.subheadline.weight(.medium)).foregroundStyle(AmberTheme.foreground)
             Text(task.status.title).font(.caption).foregroundStyle(AmberTheme.accent)
+            if let intervalMinutes = task.intervalMinutes, intervalMinutes > 0 {
+                Text("监控周期：\(formattedInterval(intervalMinutes))（\(task.stopWhenTriggered ? "命中后停止" : "命中后继续监控")）")
+                    .font(.caption).foregroundStyle(AmberTheme.muted)
+            }
+            if let watchCondition = task.watchCondition, !watchCondition.isEmpty {
+                Text("盯梢条件：\(watchCondition)")
+                    .font(.caption).foregroundStyle(AmberTheme.muted)
+            }
+            if task.isRecurringWatch || task.checkCount > 0 {
+                Text("已巡检次数：\(task.checkCount) 次")
+                    .font(.caption).foregroundStyle(AmberTheme.muted)
+            }
+            if let lastCheckSummary = task.lastCheckSummary, !lastCheckSummary.isEmpty {
+                Text("最近巡检：\(lastCheckSummary)")
+                    .font(.caption).foregroundStyle(AmberTheme.muted)
+            }
             if let fireAt = task.fireAt {
-                Text("最早执行：\(fireAt.formatted(date: .abbreviated, time: .shortened))")
+                Text("\(task.isRecurringWatch ? "下次巡检" : "最早执行")：\(fireAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(.caption).foregroundStyle(AmberTheme.muted)
             }
             if let event = task.event {
@@ -88,7 +104,7 @@ struct IOSWakeTasksSection: View {
             if task.requiresForeground {
                 Text("需要前台执行").font(.caption).foregroundStyle(AmberTheme.muted)
             }
-            if let message = task.lastMessage {
+            if let message = task.lastMessage, message != task.lastCheckSummary {
                 Text(message).font(.caption).foregroundStyle(AmberTheme.muted)
             }
             ViewThatFits(in: .horizontal) {
@@ -96,6 +112,18 @@ struct IOSWakeTasksSection: View {
                 VStack(alignment: .leading, spacing: 10) { taskActions(task) }
             }
         }
+    }
+
+    private func formattedInterval(_ minutes: Int) -> String {
+        if minutes % 1440 == 0 {
+            let days = minutes / 1440
+            return days == 1 ? "每天巡检一次" : "每 \(days) 天巡检一次"
+        }
+        if minutes % 60 == 0 {
+            let hours = minutes / 60
+            return "每 \(hours) 小时巡检一次"
+        }
+        return "每 \(minutes) 分钟巡检一次"
     }
 
     @ViewBuilder
