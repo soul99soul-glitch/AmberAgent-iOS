@@ -250,7 +250,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         // Reuse the DAO built once at init (backs durableRunStore/toolLedger)
         // instead of opening a second Room database + migration chain here.
         let rows: [WatchDurableRunProjection] = await withCheckedContinuation { continuation in
-            agentRuntimeDao.listAllRuns { result, _ in
+            agentRuntimeDao.listRunSummaries { result, _ in
                 let projections = (result ?? []).compactMap { row -> WatchDurableRunProjection? in
                     guard !row.runId.isEmpty else { return nil }
                     let isOutcomeUnknown = row.status == AgentRunStatus.outcomeUnknown.wireName

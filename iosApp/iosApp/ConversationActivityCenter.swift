@@ -156,7 +156,7 @@ final class ConversationActivityCenter {
         guard refreshTask == nil else { return }
         refreshTask = Task { [weak self] in
             guard let self else { return }
-            // 合并通知并串行读取；只有账本通知才查询全部运行记录。
+            // 合并通知并串行读取；只有账本通知才查询运行状态投影。
             while self.needsRunRefresh || self.needsStoreRefresh {
                 let shouldReadRuns = self.needsRunRefresh
                 let shouldRecompute = self.needsStoreRefresh || shouldReadRuns
@@ -172,7 +172,7 @@ final class ConversationActivityCenter {
     private func refreshRunEvents() async {
         do {
             let events: [RunEvent] = try await withCheckedThrowingContinuation { continuation in
-                dao.listAllRuns { values, error in
+                dao.listRunNoticeSummaries { values, error in
                     if let error { continuation.resume(throwing: error); return }
                     continuation.resume(returning: (values ?? []).compactMap { run in
                         guard IOSDurableRunStore.Descriptor.chatRecoveryAliases.contains(run.agentDescriptorId),

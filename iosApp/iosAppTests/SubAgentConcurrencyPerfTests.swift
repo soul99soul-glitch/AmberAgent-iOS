@@ -245,9 +245,10 @@ final class SubAgentConcurrencyPerfTests: XCTestCase {
     /// 会话 id（喂给 `ConversationActivityCenter` 做 preview 查找），其余用随机
     /// id（只走读取 + 过滤，不命中 preview 分支）。
     private func seedHistoricalRuns(
-        dao: AgentRuntimeDao, count: Int, matchedConversationIds: [String]
+        dao: AgentRuntimeDao, count: Int, matchedConversationIds: [String], capabilityPayloadBytes: Int = 0
     ) async throws {
         let now = Int64(Date().timeIntervalSince1970 * 1_000)
+        let capabilityPayload = capabilityPayloadBytes > 0 ? String(repeating: "x", count: capabilityPayloadBytes) : nil
         for index in 0..<count {
             let conversationId = index < matchedConversationIds.count
                 ? matchedConversationIds[index]
@@ -275,7 +276,7 @@ final class SubAgentConcurrencyPerfTests: XCTestCase {
                 modelId: nil,
                 promptVersion: nil,
                 toolCatalogVersion: nil,
-                capabilitySnapshot: nil
+                capabilitySnapshot: capabilityPayload
             )
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 dao.insertRunIfAbsent(run: run) { _, error in
@@ -286,13 +287,13 @@ final class SubAgentConcurrencyPerfTests: XCTestCase {
     }
 
     /// `IOSSubAgentActivityStore.loadRuns` 注入点：复刻生产 `loadDurableActivities`
-    /// 的 `listAllRuns` 读取 + 逐行映射（复用生产 `durableStatus`），但跳过
+    /// 的 `listRunSummaries` 读取 + 逐行映射（复用生产 `durableStatus`），但跳过
     /// `threadEdgeDao().allEdges` 的父子会话 join——独立 Room 库没有那张表的数据，
     /// 且本轮压测目标是「数百条历史行」本身的读取/映射成本，不是 join 语义。
     private func makeDurableLoadRuns(dao: AgentRuntimeDao) -> (@MainActor () async throws -> [IOSSubAgentActivity]) {
         { @MainActor in
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[IOSSubAgentActivity], Error>) in
-                dao.listAllRuns { values, error in
+                dao.listRunSummaries { values, error in
                     if let error { continuation.resume(throwing: error); return }
                     let activities: [IOSSubAgentActivity] = (values ?? []).compactMap { run in
                         guard IOSDurableRunStore.Descriptor.chatRecoveryAliases.contains(run.agentDescriptorId),
@@ -417,6 +418,65 @@ final class SubAgentConcurrencyPerfTests: XCTestCase {
     /// 稳定阈值来自实测：纯流式、无工具调用场景下 p95 恒为一帧（约 16.67ms）。
     /// 34ms（约两帧）留足模拟器噪声余量。
     private let framePacingP95ThresholdMs: Double = 34
+
+    func testRunSummaryProjectionCostOnLargeUnconsumedPayload() async throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("RunProjection-\(UUID().uuidString).db").path
+        let db = IosDatabaseFactory.shared.createDatabase(atFilePath: path)
+        let dao = db.agentRuntimeDao()
+        defer { db.close() }
+        try await seedHistoricalRuns(dao: dao, count: 300, matchedConversationIds: [], capabilityPayloadBytes: 64 * 1_024)
+        func readIDs(summary: Bool) async throws -> [String] {
+            try await withCheckedThrowingContinuation { continuation in
+                if summary {
+                    dao.listRunSummaries { rows, error in
+                        if let error { continuation.resume(throwing: error); return }
+                        continuation.resume(returning: (rows ?? []).map(\.runId))
+                    }
+                } else {
+                    dao.listAllRuns { rows, error in
+                        if let error { continuation.resume(throwing: error); return }
+                        continuation.resume(returning: (rows ?? []).map(\.runId))
+                    }
+                }
+            }
+        }
+        let expected = try await readIDs(summary: false)
+        XCTAssertEqual(expected.count, 300)
+        let projected = try await readIDs(summary: true)
+        XCTAssertEqual(projected, expected)
+        func cpuSeconds() -> Double {
+            var usage = rusage()
+            guard getrusage(RUSAGE_SELF, &usage) == 0 else { return 0 }
+            return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec)
+                + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1e6
+        }
+        func measure(summary: Bool) async throws -> [String: Any] {
+            let memory = ChatReplayMemoryProbe()
+            memory.start()
+            let wall = ProcessInfo.processInfo.systemUptime
+            let cpu = cpuSeconds()
+            for _ in 0..<3 {
+                let ids = try await readIDs(summary: summary)
+                XCTAssertEqual(ids, expected)
+            }
+            let usedCPU = cpuSeconds() - cpu
+            let elapsed = ProcessInfo.processInfo.systemUptime - wall
+            var result = memory.stop()
+            result["processCPUSeconds"] = usedCPU
+            result["wallSeconds"] = elapsed
+            return result
+        }
+        let full = try await measure(summary: false)
+        let summary = try await measure(summary: true)
+        let artifact = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("build/StreamingPerfEvidence/promotion-120/run-query-projection.json")
+        try JSONSerialization.data(withJSONObject: [
+            "rows": 300, "unusedPayloadBytesPerRow": 64 * 1_024, "readsPerVariant": 3,
+            "full": full, "summary": summary, "rowIDsAndOrderEqual": true
+        ], options: [.prettyPrinted, .sortedKeys]).write(to: artifact)
+        print("[PERF-RUN-PROJECTION] full=\(full) summary=\(summary)")
+    }
 
     func testMeasureConcurrency8LargeOutputDurable300() async throws {
         _ = try await runConcurrencyDurable(8, outputBytes: 8 * 1_024, historicalRunCount: 300)

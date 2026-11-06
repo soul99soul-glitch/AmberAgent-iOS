@@ -345,7 +345,7 @@ final class IOSSubAgentActivityStore {
         let lookup = byChild
         guard !lookup.isEmpty else { return [] }
         let activities: [IOSSubAgentActivity] = try await withCheckedThrowingContinuation { continuation in
-            db.agentRuntimeDao().listAllRuns { @Sendable values, error in
+            db.agentRuntimeDao().listRunSummaries { @Sendable values, error in
                 if let error { continuation.resume(throwing: error); return }
                 let activities = (values ?? []).compactMap { run -> IOSSubAgentActivity? in
                     guard IOSDurableRunStore.Descriptor.chatRecoveryAliases.contains(run.agentDescriptorId),

@@ -443,7 +443,7 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
 
     private func runCandidates(conversationId: String) async -> [RunCandidate] {
         await withCheckedContinuation { continuation in
-            dao.listAllRuns { rows, _ in
+            dao.listRunSummaries { rows, _ in
                 let candidates = (rows ?? []).compactMap { run -> RunCandidate? in
                     guard IOSDurableRunStore.Descriptor.chatRecoveryAliases.contains(run.agentDescriptorId),
                           run.conversationId?.caseInsensitiveCompare(conversationId) == .orderedSame else {

@@ -845,7 +845,7 @@ final class ChatViewModel {
 
     private func latestChatRun(conversationId: String) async -> AgentActivityDurableRunIdentity? {
         await withCheckedContinuation { continuation in
-            agentRuntimeDao.listAllRuns { result, _ in
+            agentRuntimeDao.listRunSummaries { result, _ in
                 let latest = (result ?? [])
                     .filter {
                         IOSDurableRunStore.Descriptor.chatRecoveryAliases.contains($0.agentDescriptorId)
