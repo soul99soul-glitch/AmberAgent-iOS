@@ -82,3 +82,19 @@ bash iosApp/scripts/perf/run-structural-phase.sh <新的唯一阶段名>
 有限维护性检查仅修正了引用回调的清理、独立装饰块 ID 和活动轮次失效；未做第二轮架构审查。最终源码包含 `46071c9b` 震动修复，设置开关与前台排空等待未被修改。
 
 09:32 读取指定设备状态：UDID `00008160-001939111420000A`、paired，但 tunnelState 为 unavailable，ddiServicesAvailable 为 false。按最新授权停止装机尝试，准备签名包；手机当前已安装的仍是 P0+P3 `edde3c5c` / databaseSequenceNumber **2736**，本轮未卸载、清数据或重配对。
+
+## 第二轮 review 修复
+
+在已推送的 `dd45deaa` 上修正三处可达问题：
+
+- 流式行首次测量（包括切走后重挂载）仅建立自然高度基准，不把已有全文高度计入渲染层增长；后续新增高度仍使用原 0.14s 动画。
+- 仅在既有 viewport 策略判定内容可滚动时启用增长位移。新会话短回复仍按自然高度布局，超过视口后恢复平滑贴底。
+- 帧驱动只有流式贴底时请求 60Hz；键盘、主动回底与终态收敛请求 120Hz，已有 display link 也同步更新。实际设备刷新率仍由系统决定。
+
+`ChatTimelineReviewRegressionTests` 覆盖重挂载、短回复跨越视口、运行中帧率切换三处。修复前重挂载和帧率用例失败；短回复输入起初用 Markdown 软换行，未产生目标高度增长，已改为真实段落换行。修正后此用例同时验证未满屏无位移、超过视口后恢复位移。
+
+只运行扇出及受影响的 `ChatStreamingRevealPacerTests`、`NativeTimelineScrollCoreTests`、`ChatSwiftUIStreamReplayTests`，没有重跑三轮 e2e。`review-focused.xcresult` 初次 75 通过、2 失败；修正测试输入后的 `review-short-reply.xcresult` 定点通过，合计 **76 通过、1 项既有失败**。保留的失败为 `testLongProseViewportFollowStaysLineSizedAtTwentyFourKB`（已有基线同类显示字数未排空），没有新增产品行为失败。首两行实际 presentation 连续性 canary 通过。
+
+`review-fanout-raw.json` / `review-fanout-summary.json`：token 历史判等 0、工具 12、进度 6；历史 body / sizeThatFits / placeSubviews 均为 0。当前行单字/换行测量为 22/62；这不是三轮端到端重测，不能用来更新此前整轮性能验收结论。
+
+本次仅做一次限定 diff 的维护性检查；`NativeChatTimelineView.swift` 为 1461 行。完成震动开关、前台排空与匀速吐字实现没有改变。设备检查仍为 unavailable，构建签名包留待连接后覆盖安装；本轮最新发布和安装状态以云端 `daily/2026-11-06-ios-streaming-perf.md` 的「review 修复」节为准。

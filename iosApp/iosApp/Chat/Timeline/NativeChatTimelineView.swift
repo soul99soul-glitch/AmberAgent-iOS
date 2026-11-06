@@ -1258,11 +1258,12 @@ struct NativeChatTimelineView: View {
     }
 
     private func updateGrowthFollowState(viewport: ChatViewportState? = nil) {
+        let currentViewport = viewport ?? viewportState
         let layoutPinsBottom = !nativeUserScrollActive &&
             Self.shouldPinBottomOnSizeChanges(followGeneration: followGeneration,
-                viewportState: viewport ?? viewportState,
+                viewportState: currentViewport,
                 driverPausedForUser: isNativeScrollDriverActive && scrollDriver.isPausedForUser)
-        timelineGrowth.setEnabled(!reduceMotion && layoutPinsBottom)
+        timelineGrowth.setEnabled(!reduceMotion && layoutPinsBottom && currentViewport.isContentScrollable)
         scrollDriver.setLayoutBottomPinEnabled(layoutPinsBottom)
     }
 

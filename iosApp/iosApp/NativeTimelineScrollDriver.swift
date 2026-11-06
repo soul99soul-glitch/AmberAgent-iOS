@@ -17,8 +17,13 @@ final class NativeTimelineScrollDriver: NSObject {
     private var activeKeyboardAnimation: ActiveKeyboardAnimation?
     private var automaticFollowEnabled = true
     private var layoutPinsBottom = false
+    private var isStreamingFollow = false
     private var fallbackReason: NativeTimelineScrollFallbackReason?
     private var horizontalOffsetDriftClampUsed = false
+
+    #if DEBUG
+    var frameDriverRateForTesting: CAFrameRateRange? { displayLink?.preferredFrameRateRange }
+    #endif
 
     private struct ActiveKeyboardAnimation {
         let duration: TimeInterval
@@ -36,6 +41,7 @@ final class NativeTimelineScrollDriver: NSObject {
             cancelProgrammaticMotion()
             stopFrameDriver()
             state = .idle
+            isStreamingFollow = false
         }
         self.scrollView = scrollView
         lastViewportMetrics = ViewportMetrics(scrollView)
@@ -51,6 +57,7 @@ final class NativeTimelineScrollDriver: NSObject {
         generation &+= 1
         stopFrameDriver()
         state = .idle
+        isStreamingFollow = false
         scrollView = nil
         lastViewportMetrics = nil
         wasNearBottomAtLastSample = false
@@ -80,6 +87,7 @@ final class NativeTimelineScrollDriver: NSObject {
     func setAutomaticFollowEnabled(_ enabled: Bool) {
         guard automaticFollowEnabled != enabled else { return }
         automaticFollowEnabled = enabled
+        isStreamingFollow = false
         generation &+= 1
         stopFrameDriver()
         state = .idle
@@ -100,6 +108,14 @@ final class NativeTimelineScrollDriver: NSObject {
         }
         generation &+= 1
         let token = generation
+        switch intent {
+        case .streamContentGrew:
+            isStreamingFollow = true
+        case .explicitBottom, .generationTerminated, .conversationReset, .userDragBegan:
+            isStreamingFollow = false
+        default:
+            break
+        }
         if case .userDragBegan = intent {
             cancelProgrammaticMotion()
         }
@@ -223,6 +239,7 @@ final class NativeTimelineScrollDriver: NSObject {
 
     private func perform(_ actions: [NativeTimelineScrollAction], token: UInt64) {
         guard fallbackReason == nil else { return }
+        defer { updateFrameDriverRate() }
         for action in actions {
             switch action {
             case let .requestBottomAnchor(animated, _):
@@ -348,6 +365,7 @@ final class NativeTimelineScrollDriver: NSObject {
             completion: { [weak self] _ in
                 guard let self else { return }
                 self.programmaticBottomAnimationCount = max(0, self.programmaticBottomAnimationCount - 1)
+                self.updateFrameDriverRate()
             }
         )
         wasNearBottomAtLastSample = true
@@ -372,6 +390,7 @@ final class NativeTimelineScrollDriver: NSObject {
 
     func handleKeyboardWillChangeFrame(duration: TimeInterval, curveRaw: UInt) {
         guard fallbackReason == nil, automaticFollowEnabled, let scrollView else { return }
+        defer { updateFrameDriverRate() }
         let shouldFollow = !isPausedForUser &&
             !isUIKitUserInteracting &&
             (isFollowingBottomOrKeyboardFocus ||
@@ -400,12 +419,27 @@ final class NativeTimelineScrollDriver: NSObject {
     }
 
     private func startFrameDriver() {
-        guard displayLink == nil else { return }
+        guard displayLink == nil else { updateFrameDriverRate(); return }
         lastDisplayLinkTimestamp = nil
         let link = CADisplayLink(target: self, selector: #selector(displayLinkTick(_:)))
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
-        link.add(to: .main, forMode: .common)
         displayLink = link
+        updateFrameDriverRate()
+        link.add(to: .main, forMode: .common)
+    }
+
+    private func updateFrameDriverRate() {
+        guard let displayLink else { return }
+        let preferred: Float
+        if isStreamingFollow, case .followingBottom = state,
+           programmaticBottomAnimationCount == 0, currentKeyboardAnimation() == nil {
+            preferred = 60
+        } else {
+            preferred = 120
+        }
+        guard displayLink.preferredFrameRateRange.preferred != preferred else { return }
+        displayLink.preferredFrameRateRange = CAFrameRateRange(
+            minimum: 30, maximum: preferred, preferred: preferred
+        )
     }
 
     private func stopFrameDriver() {

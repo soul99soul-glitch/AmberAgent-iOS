@@ -140,9 +140,9 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                     #endif
                     let previous = pacerBox.naturalHeight
                     pacerBox.naturalHeight = height
-                    let prefilledFirstFrame = previous == 0 && initiallyRevealedUTF16Count != nil &&
-                        revealedUTF16Count >= text.utf16.count
-                    if heightTransitionActive && !prefilledFirstFrame {
+                    // A remounted live row already contains visible text. Its first
+                    // measurement establishes the baseline, not new content growth.
+                    if heightTransitionActive && previous > 0 {
                         timelineGrowth.contentGrew(by: height - previous)
                     }
                     return
