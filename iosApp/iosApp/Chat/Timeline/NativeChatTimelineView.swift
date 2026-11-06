@@ -198,6 +198,7 @@ struct NativeChatTimelineView: View {
                 }
             }
             .modifier(ChatSizeChangesPinModifier(
+                preservesScrollIdentity: followGeneration && messageAnchor == nil,
                 // 流式贴底与底部键盘高度变化时把底部锚点交给 SwiftUI 自身的 .sizeChanges；
                 // 用户上滑进入历史阅读态时关闭，防止键盘弹起/收起把历史位置强行拉回底部。
                 enabled: Self.shouldPinBottomOnSizeChanges(
@@ -1471,10 +1472,15 @@ private enum ChatListSnapshotBuilder {
 /// 按「跟随生成」偏好开关 `.sizeChanges` 底锚,与小说创作统一。
 /// 行锚定位置(用户上滑浏览历史)不会被它拽走(探针已实证)。
 private struct ChatSizeChangesPinModifier: ViewModifier {
+    let preservesScrollIdentity: Bool
     let enabled: Bool
 
     func body(content: Content) -> some View {
-        if enabled {
+        if preservesScrollIdentity {
+            // Normal viewport changes keep the mounted scroll view. Explicit
+            // message navigation retains its existing anchor-resolution path.
+            content.defaultScrollAnchor(enabled ? .bottom : nil, for: .sizeChanges)
+        } else if enabled {
             content.defaultScrollAnchor(.bottom, for: .sizeChanges)
         } else {
             content

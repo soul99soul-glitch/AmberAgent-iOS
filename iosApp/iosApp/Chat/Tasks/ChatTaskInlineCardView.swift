@@ -183,9 +183,8 @@ struct ChatTaskProgressDot: View {
                 } else if let timeOverride {
                     dotsRow(at: timeOverride)
                 } else {
-                    TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: isUnderlyingSheetPresented)) { context in
-                        dotsRow(at: context.date.timeIntervalSinceReferenceDate)
-                    }
+                    ChatTaskWaveLayers(tint: tint, paused: isUnderlyingSheetPresented)
+                        .frame(width: 22.6, height: 16)
                 }
             } else {
                 Circle()
@@ -235,9 +234,12 @@ struct ChatTaskProgressTextShimmer: ViewModifier {
             if let timeOverride {
                 shimmered(content: content, time: timeOverride)
             } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: isUnderlyingSheetPresented)) { context in
-                    shimmered(content: content, time: context.date.timeIntervalSinceReferenceDate)
-                }
+                content.opacity(0.84)
+                    .overlay {
+                        ChatTaskShimmerLayers(accent: accentColor, paused: isUnderlyingSheetPresented)
+                            .mask(content)
+                            .allowsHitTesting(false)
+                    }
             }
         } else {
             content

@@ -32,7 +32,20 @@ final class ChatSearchEndToEndReplayTests: ChatNativeTimelineReplayTestCase {
         XCTAssertEqual(rounds.count, 3)
     }
 
-    private func runRound(_ round: Int, records: [[String: Any]], firstUser: Int) throws -> [String: Any] {
+    func testEveningCapturedRoundThroughVisibleCompletion() throws {
+        let folder = artifact.appendingPathComponent("evening-2115")
+        let input = folder.appendingPathComponent("replay-2115-private.json")
+        guard FileManager.default.fileExists(atPath: input.path) else { throw XCTSkip("Local evening capture required") }
+        let records = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: input)) as? [[String: Any]])
+        let firstUser = try XCTUnwrap(records.firstIndex {
+            ($0["createdAt"] as? String ?? "") >= "2026-11-06T21:15:37"
+        })
+        let result = try autoreleasepool { try runRound(1, records: records, firstUser: firstUser, expectedTurns: 1) }
+        try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
+            .write(to: folder.appendingPathComponent("evening-e2e-after.json"))
+    }
+
+    private func runRound(_ round: Int, records: [[String: Any]], firstUser: Int, expectedTurns: Int = 2) throws -> [String: Any] {
         let messages = try records.map { record -> UIMessage in
             let data = try JSONSerialization.data(withJSONObject: record["parts"] ?? [])
             let parts = try IosToolOutputJsonBridge.shared.decode(json: String(decoding: data, as: UTF8.self))
@@ -178,7 +191,7 @@ final class ChatSearchEndToEndReplayTests: ChatNativeTimelineReplayTestCase {
         ]
         result.merge(memoryResult) { _, new in new }
         XCTAssertEqual(fixture.model.messages.last?.toText(), messages.last?.toText())
-        XCTAssertEqual(turns.count, 2)
+        XCTAssertEqual(turns.count, expectedTurns)
         XCTAssertTrue(turns.allSatisfy { $0["completed"] as? Bool == true }, "Visible completion or actual bottom settling timed out")
         print("[E2E] round=\(round) total=\(wall) mainCPU=\(mainCPUMs) peak=\(memoryResult["sampledPeakFootprintBytes"] ?? 0)")
         return result
