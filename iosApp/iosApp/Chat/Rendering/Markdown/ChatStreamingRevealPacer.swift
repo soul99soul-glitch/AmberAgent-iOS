@@ -46,6 +46,9 @@ struct ChatStreamingRevealProgressKey: PreferenceKey {
 ///    每帧只长高一点点，配合底部锚点（`.sizeChanges` 或原生贴底）同帧上移同样的量：
 ///    底边不动，已有文字与上方历史平滑上浮，新增的一行从底边缓缓露出，
 ///    而不是整屏 0ms 瞬移一行。
+// Native timeline supplies a growth owner: the layout remains natural-sized and
+// the content layer performs the same 0.14s movement. Other hosts keep the
+// existing local-height transition until they opt into that owner.
 struct ChatStreamingRevealPacer<Content: View>: View {
     /// 上游已到达的全部文本。
     let text: String
@@ -61,6 +64,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
     private let textPartIndex: Int
     @ViewBuilder let content: (String) -> Content
 
+    @Environment(\.chatTimelineGrowth) private var timelineGrowth
     @State private var revealedUTF16Count = 0
     /// 是否处于需要逐字推进或收尾排空的会话期。
     /// 历史非流式行在 `init` 时直接为 `false`，首帧即直接渲染完整 `text`，
@@ -130,6 +134,16 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                 activePacing && !bypassPacingForTable ? proxy.size.height : 0
             } action: { height in
                 guard activePacing && !bypassPacingForTable else { return }
+                if let timelineGrowth {
+                    let previous = pacerBox.naturalHeight
+                    pacerBox.naturalHeight = height
+                    let prefilledFirstFrame = previous == 0 && initiallyRevealedUTF16Count != nil &&
+                        revealedUTF16Count >= text.utf16.count
+                    if heightTransitionActive && !prefilledFirstFrame {
+                        timelineGrowth.contentGrew(by: height - previous)
+                    }
+                    return
+                }
                 let isFirstMeasurement = contentHeight == 0
                 contentHeight = height
                 if isFirstMeasurement,
@@ -141,7 +155,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                 }
             }
             .frame(
-                height: heightTransitionActive && (initiallyRevealedUTF16Count == nil || contentHeight > 0 || revealedUTF16Count < text.utf16.count)
+                height: timelineGrowth == nil && heightTransitionActive && (initiallyRevealedUTF16Count == nil || contentHeight > 0 || revealedUTF16Count < text.utf16.count)
                     ? displayedHeight : nil,
                 alignment: .top
             )
@@ -247,6 +261,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
 }
 
 private final class ChatStreamingRevealPacerBox {
+    var naturalHeight: CGFloat = 0
     private var tableDetector = ChatStreamingTableDetectionState()
 
     func containsTable(in text: String) -> Bool {
