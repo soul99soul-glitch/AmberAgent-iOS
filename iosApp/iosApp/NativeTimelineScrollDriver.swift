@@ -182,6 +182,8 @@ final class NativeTimelineScrollDriver: NSObject {
         return distanceToBottom(in: scrollView)
     }
 
+    var verticalOffsetNow: CGFloat? { scrollView?.contentOffset.y }
+
     var isAttached: Bool {
         scrollView != nil && fallbackReason == nil
     }

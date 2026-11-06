@@ -5,6 +5,60 @@ import XCTest
 
 @MainActor
 final class ChatTimelineReviewRegressionTests: ChatNativeTimelineReplayTestCase {
+    func testReturnToBottomPreservesTheDirectionOfTheUsersDrag() {
+        XCTAssertFalse(NativeTimelineScrollReturnPolicy.returnedToBottom(
+            liveDistanceToBottom: 52, cachedNearBottom: true, threshold: 96, draggedAwayFromBottom: true),
+            "从底部拖开52pt是在查看历史，不是回到底部")
+        XCTAssertFalse(NativeTimelineScrollReturnPolicy.returnedToBottom(
+            liveDistanceToBottom: 30, cachedNearBottom: true, threshold: 96, draggedAwayFromBottom: true),
+            "几何回调也不能在48pt附近绕过用户的暂停")
+        XCTAssertTrue(NativeTimelineScrollReturnPolicy.returnedToBottom(
+            liveDistanceToBottom: 24, cachedNearBottom: false, threshold: 96, draggedAwayFromBottom: false),
+            "从历史向底部返回时仍保留原来的恢复容差")
+        XCTAssertTrue(NativeTimelineScrollReturnPolicy.returnedToBottom(
+            liveDistanceToBottom: 0, cachedNearBottom: false, threshold: 96, draggedAwayFromBottom: true))
+    }
+
+    /// The diagnostic drives a real Simulator pan from outside the test host.
+    /// No contentOffset write stands in for the gesture being tested.
+    func testFirstHistoryDragKeepsUserOwnership() throws {
+        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("build/StreamingPerfEvidence/first-history-drag")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        guard FileManager.default.fileExists(atPath: folder.appendingPathComponent("armed").path) else {
+            throw XCTSkip("Opt-in real Simulator pan diagnostic")
+        }
+        try FileManager.default.removeItem(at: folder.appendingPathComponent("armed"))
+        let ready = folder.appendingPathComponent("ready.json")
+        try? FileManager.default.removeItem(at: ready)
+        let fixture = makeFixture { model in
+            model.messages = longConversation(turns: 12)
+            model.isGenerationActive = true
+            model.send(.initialLoad)
+        }
+        defer { fixture.tearDown() }
+        XCTAssertTrue(pumpUntil(timeout: 5) { fixture.model.latestViewport.isAtBottom })
+        pump(seconds: 1)
+        let scroll = try XCTUnwrap(fixture.scrollView)
+        let start = scroll.contentOffset.y
+        try JSONSerialization.data(withJSONObject: ["startOffset": start, "pid": getpid()])
+            .write(to: ready)
+        let historyStart = fixture.model.viewportHistory.count
+        let touched = pumpUntil(timeout: 30) {
+            fixture.model.viewportHistory.dropFirst(historyStart).contains { $0.userDragging }
+        }
+        XCTAssertTrue(touched, "A real Simulator gesture is required")
+        guard touched else { return }
+        pump(seconds: 2)
+        let distance = scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom - scroll.contentOffset.y
+        try JSONSerialization.data(withJSONObject: [
+            "startOffset": start, "endOffset": scroll.contentOffset.y,
+            "distanceToBottom": distance, "followPaused": fixture.model.latestViewport.followPaused
+        ], options: [.prettyPrinted, .sortedKeys]).write(to: folder.appendingPathComponent("result.json"))
+        XCTAssertGreaterThan(distance, 20, "第一次查看历史的短拖动不能被拉回底部")
+        XCTAssertTrue(fixture.model.latestViewport.followPaused)
+    }
+
     func testIndependentTaskModeDoesNotRebuildUnrelatedHistory() throws {
         let history = longConversation(turns: 12)
         let historicalIDs = Set(history.dropLast().map { $0.id.toHexDashString() })

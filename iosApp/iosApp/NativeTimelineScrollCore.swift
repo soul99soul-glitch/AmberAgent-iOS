@@ -5,10 +5,16 @@ enum NativeTimelineScrollReturnPolicy {
     static func returnedToBottom(
         liveDistanceToBottom: CGFloat?,
         cachedNearBottom: Bool,
-        threshold: CGFloat
+        threshold: CGFloat,
+        draggedAwayFromBottom: Bool = false
     ) -> Bool {
         guard let liveDistanceToBottom, liveDistanceToBottom.isFinite else {
             return cachedNearBottom
+        }
+        // A short history drag can end inside the return tolerance. Distance
+        // alone must not turn that deliberate movement into a return to bottom.
+        if draggedAwayFromBottom, liveDistanceToBottom > NativeTimelineScrollCore.arrivalEpsilon {
+            return false
         }
         return liveDistanceToBottom <= threshold
     }

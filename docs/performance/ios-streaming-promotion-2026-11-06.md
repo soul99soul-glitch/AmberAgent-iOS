@@ -75,3 +75,11 @@ xcodebuild -quiet -project iosApp/AmberAgent.xcodeproj -scheme iosApp \
 Apple 原始资料：[ProMotion 帧率提示与系统调度](https://developer.apple.com/documentation/quartzcore/optimizing-iphone-and-ipad-apps-to-support-promotion-displays)、[geometryGroup 的几何边界](https://developer.apple.com/documentation/swiftui/view/geometrygroup())。
 
 交付边界：本次不再安装、采样或导出真机。手机仍为 349128d5 / databaseSequenceNumber 2872，含 46071c9b 震动修复；新性能改动的真机 120Hz 呈现、实际调研全流程和关闭完成震动后无震动，均待用户重新授权连接后验收。下一步应针对仍存在的尾行 4 次测量和换行布局遍历取得同场景呈现/CPU 证据，不能把此次局部改善记成全部完成。
+
+## 首滑查看历史的所有权修复（2026-11-07）
+
+真实 Simulator pan（170,610→170,675，800ms）：原版已离底 52pt，仍被96pt返回容差重新开启贴底，followPaused=false，定点失败。修复后相同手势离底54.33pt、followPaused=true，单次真实pan用例通过。这个静态输入对照验证了错误恢复状态，未把它说成已录到用户完整弹回过程。
+
+手指落下时记录现有UIScrollView的纵向位置；释放和后续几何恢复均检查实际滚动方向。离开底部的拖动保留暂停，真实回到物理底部仍可恢复；从历史向底部返回保留原96pt容差。判断不使用内容增长导致的距底变化，以免正在生成的回复反向污染用户拖动方向。没有新增偏移写入。共享策略新增参数默认false，其他现有消费者保持旧行为。
+
+新方向边界及原NativeTimelineScrollCoreTests共61项通过；额外真实pan通过1项。一次中间运行因未及时注入外部手势而失败，不计通过；随后test-without-building及时注入相同手势通过。手势诊断仅显式armed时运行，普通测试自动skip，不依赖用户配合。pin modifier移到已有ChatTimelinePolicies.swift以保持主文件1486行，行为未改。没有真机连接操作。核心性能目标仍待继续处理。

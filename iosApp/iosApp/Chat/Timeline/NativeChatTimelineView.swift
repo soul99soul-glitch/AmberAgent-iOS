@@ -51,6 +51,7 @@ struct NativeChatTimelineView: View {
     @State private var nativeUserScrollActive = false
     @State private var nativeTouchStartedWhileFollowing = false
     @State private var nativeDragPhaseOccurredDuringTouch = false
+    @State private var nativeTouchStartOffsetY: CGFloat?
     @State private var nativeScrollFallbackReason: NativeTimelineScrollFallbackReason?
     @State private var nativeScrollFallbackShouldReplayBottom = false
     @State private var nativeScrollFallbackReplayToken: UInt64 = 0
@@ -242,6 +243,7 @@ struct NativeChatTimelineView: View {
                         // 重置（interacting 会在一次拖拽中反复触发，不能在分支里
                         // 无条件清零），否则首次真实拖拽后轻点恢复永久失效。
                         nativeDragPhaseOccurredDuringTouch = false
+                        nativeTouchStartOffsetY = scrollDriver.verticalOffsetNow
                     }
                     if phase == .interacting {
                         // SwiftUI 把「移动已开始的主动拖拽」归入 interacting；
@@ -271,7 +273,8 @@ struct NativeChatTimelineView: View {
                         let returnedToBottom = NativeTimelineScrollReturnPolicy.returnedToBottom(
                             liveDistanceToBottom: scrollDriver.distanceToBottomNow(),
                             cachedNearBottom: viewportState.isAtBottom,
-                            threshold: ChatLayout.nearBottomResumeThreshold
+                            threshold: ChatLayout.nearBottomResumeThreshold,
+                            draggedAwayFromBottom: nativeUserDraggedAwayFromBottom
                         )
                         scrollDriver.submit(.userDragEnded(isAtBottom: returnedToBottom))
                         if returnedToBottom {
@@ -1169,6 +1172,14 @@ struct NativeChatTimelineView: View {
         )
     }
 
+    private var nativeUserDraggedAwayFromBottom: Bool {
+        // Content growth also increases distance-to-bottom. Compare the user's
+        // scroll position instead so a growing reply doesn't reverse drag intent.
+        guard nativeDragPhaseOccurredDuringTouch, let start = nativeTouchStartOffsetY,
+              let current = scrollDriver.verticalOffsetNow else { return false }
+        return current < start - NativeTimelineScrollCore.arrivalEpsilon
+    }
+
     private func resumeNativeBottomFollowFromGeometryIfNeeded(
         geometry: ChatSwiftUIScrollGeometry,
         viewportState: ChatViewportState,
@@ -1179,6 +1190,10 @@ struct NativeChatTimelineView: View {
               !nativeUserScrollActive,
               isGenerationActive || isLoading,
               isNativeMeasuredNearBottom(geometry),
+              NativeTimelineScrollReturnPolicy.returnedToBottom(
+                liveDistanceToBottom: scrollDriver.distanceToBottomNow(), cachedNearBottom: viewportState.isAtBottom,
+                threshold: ChatLayout.nearBottomResumeThreshold,
+                draggedAwayFromBottom: nativeUserDraggedAwayFromBottom),
               scrollDriver.isPausedForUser || viewportState.followPaused || viewportState.liveRenderingFarFromBottom
         else { return }
         scrollDriver.submit(.userDragEnded(isAtBottom: true))
@@ -1467,24 +1482,5 @@ private enum ChatListSnapshotBuilder {
 
     static func renderIdentityForRow(_ row: ChatMessageRowModel, renderState: ChatRenderState) -> String {
         row.messageId
-    }
-}
-
-/// 按「跟随生成」偏好开关 `.sizeChanges` 底锚,与小说创作统一。
-/// 行锚定位置(用户上滑浏览历史)不会被它拽走(探针已实证)。
-private struct ChatSizeChangesPinModifier: ViewModifier {
-    let preservesScrollIdentity: Bool
-    let enabled: Bool
-
-    func body(content: Content) -> some View {
-        if preservesScrollIdentity {
-            // Normal viewport changes keep the mounted scroll view. Explicit
-            // message navigation retains its existing anchor-resolution path.
-            content.defaultScrollAnchor(enabled ? .bottom : nil, for: .sizeChanges)
-        } else if enabled {
-            content.defaultScrollAnchor(.bottom, for: .sizeChanges)
-        } else {
-            content
-        }
     }
 }
