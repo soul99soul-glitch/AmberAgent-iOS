@@ -48,6 +48,11 @@ final class ChatTimelineUpdatesTests: ChatNativeTimelineReplayTestCase {
                 chunk.entries.map { ($0.id, chunk.id) }
             })
         }
+        let decorations = NativeTimelineProjector.build(messages: messages, event: .conversationLoaded,
+            isRecognizingImages: true,
+            contextCompactState: .init(status: .compacting, summary: "pending", updatedAt: Date()))
+        let decorationChunks = NativeTimelineChunk.group(decorations.entries)
+        XCTAssertEqual(Set(decorationChunks.map(\.id)).count, decorationChunks.count)
         let original = membership(short), larger = membership(expanded)
         for (row, chunk) in original { XCTAssertEqual(larger[row], chunk) }
         XCTAssertEqual(Set(NativeTimelineChunk.group(expanded.entries).map(\.id)).count,

@@ -16,6 +16,7 @@ final class NativeTimelineScrollDriver: NSObject {
     private var isObservingKeyboardWillChange = false
     private var activeKeyboardAnimation: ActiveKeyboardAnimation?
     private var automaticFollowEnabled = true
+    private var layoutPinsBottom = false
     private var fallbackReason: NativeTimelineScrollFallbackReason?
     private var horizontalOffsetDriftClampUsed = false
 
@@ -65,6 +66,15 @@ final class NativeTimelineScrollDriver: NSObject {
         }
         fallbackReason = nil
         horizontalOffsetDriftClampUsed = false
+    }
+
+    /// SwiftUI owns live size-change anchoring. The frame driver still owns
+    /// keyboard transitions and post-terminal convergence.
+    func setLayoutBottomPinEnabled(_ enabled: Bool) {
+        layoutPinsBottom = enabled
+        if enabled, case .followingBottom = state, currentKeyboardAnimation() == nil {
+            stopFrameDriver()
+        }
     }
 
     func setAutomaticFollowEnabled(_ enabled: Bool) {
@@ -220,7 +230,11 @@ final class NativeTimelineScrollDriver: NSObject {
             case let .writeOffsetY(offsetY):
                 writeOffsetY(offsetY)
             case .startFrameDriver:
-                startFrameDriver()
+                if layoutPinsBottom, case .followingBottom = state, currentKeyboardAnimation() == nil {
+                    stopFrameDriver()
+                } else {
+                    startFrameDriver()
+                }
             case .stopFrameDriver:
                 stopFrameDriver()
             case .markKeyboardFocusComplete:
@@ -389,7 +403,7 @@ final class NativeTimelineScrollDriver: NSObject {
         guard displayLink == nil else { return }
         lastDisplayLinkTimestamp = nil
         let link = CADisplayLink(target: self, selector: #selector(displayLinkTick(_:)))
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
         link.add(to: .main, forMode: .common)
         displayLink = link
     }

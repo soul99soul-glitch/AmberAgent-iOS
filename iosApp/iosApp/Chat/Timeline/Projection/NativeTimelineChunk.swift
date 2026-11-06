@@ -17,7 +17,8 @@ struct NativeTimelineChunk: Identifiable {
             if let index = entry.index {
                 block = "chunk-\(index / 10)"
                 previousMessageBlock = block
-            } else if entry.kind == .contextMarker, let previousMessageBlock {
+            } else if entry.kind == .contextMarker, let previousMessageBlock,
+                      groups.last?.0 == previousMessageBlock {
                 block = previousMessageBlock
             } else {
                 block = "decoration-\(entry.id)"

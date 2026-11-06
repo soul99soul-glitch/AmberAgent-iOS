@@ -316,7 +316,6 @@ struct NativeChatTimelineView: View {
                     }
                     return liveDistance
                 }()
-                let messages = messagesProvider()
                 let rawViewportState = NativeStaticTimelineViewportPolicy.state(
                     distanceToBottom: effectiveDistanceToBottom,
                     visibleHeight: geometry.visibleHeight,
@@ -326,13 +325,16 @@ struct NativeChatTimelineView: View {
                     driverPausedForUser: isNativeScrollDriverActive && scrollDriver.isPausedForUser
                 )
                 let nextViewportState = rawViewportState
+                let viewportChanged = nextViewportState != viewportState
                 publishViewportState(nextViewportState)
-                unfreezeVisibleLiveTailIfNeeded(messages: messages, viewportState: nextViewportState)
-                resumeNativeBottomFollowFromGeometryIfNeeded(
-                    geometry: geometry,
-                    viewportState: nextViewportState,
-                    messages: messages
-                )
+                // Actual visibility and signal changes have their own update paths.
+                // Pixel-by-pixel bottom tracking must not bridge/copy all messages.
+                if viewportChanged || scrollDriver.isPausedForUser {
+                    let latestMessages = messagesProvider()
+                    unfreezeVisibleLiveTailIfNeeded(messages: latestMessages, viewportState: nextViewportState)
+                    resumeNativeBottomFollowFromGeometryIfNeeded(geometry: geometry,
+                        viewportState: nextViewportState, messages: latestMessages)
+                }
                 reanchorAfterViewportShrinkIfNeeded(
                     previous: previousGeometry,
                     current: geometry,
@@ -1251,10 +1253,12 @@ struct NativeChatTimelineView: View {
     }
 
     private func updateGrowthFollowState(viewport: ChatViewportState? = nil) {
-        timelineGrowth.setEnabled(!reduceMotion && !nativeUserScrollActive &&
+        let layoutPinsBottom = !nativeUserScrollActive &&
             Self.shouldPinBottomOnSizeChanges(followGeneration: followGeneration,
                 viewportState: viewport ?? viewportState,
-                driverPausedForUser: isNativeScrollDriverActive && scrollDriver.isPausedForUser))
+                driverPausedForUser: isNativeScrollDriverActive && scrollDriver.isPausedForUser)
+        timelineGrowth.setEnabled(!reduceMotion && layoutPinsBottom)
+        scrollDriver.setLayoutBottomPinEnabled(layoutPinsBottom)
     }
 
     private func publishViewportState(_ next: ChatViewportState) {
