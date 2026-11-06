@@ -747,6 +747,11 @@ struct NativeChatTimelineView: View {
         hash.combine(reasoningLevelLabel); hash.combine(reduceMotion)
         hash.combine(viewportState.liveRenderingFarFromBottom)
         hash.combine(ObjectIdentifier(workspaceStore))
+        if let activity, chunk.messageIDs.contains(activity.anchorMessageID) {
+            // The task slot is a stable reference; its round changes independently
+            // of activity equality and controls whether progress sits below text.
+            hash.combine(activity.taskSlot?.currentRoundAssistantMessageId)
+        }
         for entry in chunk.entries {
             hash.combine(entry.id == firstEntryID)
             hash.combine(entry.id == firstHistoryEntryID || historyBoundaryIDs.contains(entry.id))
