@@ -1,4 +1,5 @@
 import XCTest
+import Observation
 import Shared
 @testable import iosApp
 
@@ -57,5 +58,39 @@ final class ChatTimelineUpdatesTests: ChatNativeTimelineReplayTestCase {
         for (row, chunk) in original { XCTAssertEqual(larger[row], chunk) }
         XCTAssertEqual(Set(NativeTimelineChunk.group(expanded.entries).map(\.id)).count,
                        NativeTimelineChunk.group(expanded.entries).count)
+    }
+
+    func testContextSnapshotDoesNotSubscribeToStreamingMessageMutations() {
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(),
+            autoGenerateResponses: false
+        )
+        let id = KotlinUuid.companion.random()
+        viewModel.messages = [makeAssistantMessage(id: id, text: "hello", finished: false)]
+        viewModel.bumpMessageRevision(reason: .initialLoad)
+
+        nonisolated(unsafe) var didChangeOnStreamDelta = false
+        _ = withObservationTracking {
+            viewModel.contextSnapshot
+        } onChange: {
+            didChangeOnStreamDelta = true
+        }
+
+        viewModel.messages = [makeAssistantMessage(id: id, text: "hello world", finished: false)]
+        viewModel.bumpMessageRevision(reason: .streamDelta)
+        XCTAssertFalse(
+            didChangeOnStreamDelta,
+            "contextSnapshot must not subscribe ChatContextControl to per-delta state.messages writes"
+        )
+
+        nonisolated(unsafe) var didChangeOnStreamClosed = false
+        _ = withObservationTracking {
+            viewModel.contextSnapshot
+        } onChange: {
+            didChangeOnStreamClosed = true
+        }
+        viewModel.messages = [makeAssistantMessage(id: id, text: "hello world!", finished: true)]
+        viewModel.bumpMessageRevision(reason: .assistantStreamClosed)
+        XCTAssertTrue(didChangeOnStreamClosed)
     }
 }

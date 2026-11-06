@@ -11,7 +11,7 @@ final class ChatTimelineUpdates {
     private(set) var structuralMessages: [UIMessage] = []
     private(set) var latestSignal = ChatMessageUpdateSignal()
     private var sourceIdentities: [ChatMessageContentIdentity] = []
-    private var tailMetadata: [ChatMessageContentIdentity.Metadata?] = []
+    private var tailHasBodyText = false
     private var consumerOwner: UUID?
     private var consume: ((UIMessage, ChatMessageUpdateSignal) -> Bool)?
 
@@ -34,28 +34,35 @@ final class ChatTimelineUpdates {
         defer { signals.send(signal) }
         if signal.event == .assistantStreamDelta,
            let tail = messages.last,
-           canUpdateOnlyTail(messages), consume?(tail, signal) == true {
-            sourceIdentities[sourceIdentities.count - 1] = ChatMessageContentIdentity(tail)
-            tailMetadata = ChatMessageContentIdentity.metadata(in: tail.parts)
+           let previousTailIdentity = sourceIdentities.last,
+           canUpdateOnlyTail(messages, previousTailIdentity: previousTailIdentity),
+           consume?(tail, signal) == true {
+            sourceIdentities[sourceIdentities.count - 1] = ChatMessageContentIdentity(
+                reusingMetadataFrom: previousTailIdentity,
+                message: tail
+            )
             return false
         }
         structuralMessages = messages
         sourceIdentities = messages.map { ChatMessageContentIdentity($0) }
-        tailMetadata = messages.last.map { ChatMessageContentIdentity.metadata(in: $0.parts) } ?? []
+        tailHasBodyText = messages.last.map(Self.hasBodyText) ?? false
         return true
     }
 
-    private func canUpdateOnlyTail(_ messages: [UIMessage]) -> Bool {
+    private func canUpdateOnlyTail(
+        _ messages: [UIMessage],
+        previousTailIdentity: ChatMessageContentIdentity
+    ) -> Bool {
+        let previous = previousTailIdentity.message
         guard sourceIdentities.count == messages.count,
-              let previous = sourceIdentities.last?.message, let current = messages.last,
+              let current = messages.last,
               previous.id == current.id, current.role == .assistant,
               (previous.finishedAt == nil) == (current.finishedAt == nil),
               previous.parts.count == current.parts.count,
               previous.annotations == current.annotations,
               previous.modelId == current.modelId, previous.translation == current.translation,
-              Self.hasBodyText(previous) == Self.hasBodyText(current),
-              ChatMessageContentIdentity.sameMetadata(tailMetadata,
-                  ChatMessageContentIdentity.metadata(in: current.parts)),
+              tailHasBodyText == Self.hasBodyText(current),
+              previousTailIdentity.hasSameMetadata(as: current.parts),
               zip(sourceIdentities.dropLast(), messages.dropLast()).allSatisfy({ $0.matches($1) })
         else { return false }
         return zip(previous.parts, current.parts).allSatisfy { old, new in

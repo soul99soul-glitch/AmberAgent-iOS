@@ -137,9 +137,22 @@ final class ChatViewModel {
     var artifactUpdateSignal = ChatMessageUpdateSignal()
     var artifactUpdateWasRunning = false
     /// token 聚合只在结构性消息事件后重算；流式 delta 不改 usage，跳过 O(n) 扫描。
-    @ObservationIgnored var tokenRevision: Int = 0
+    /// 作为 @Observable 属性暴露给 `contextSnapshot`，使 `ChatContextControl` 只订阅结构性
+    /// tokenRevision 而不订阅逐拍变化的 `currentRun.state.messages`。
+    var tokenRevision: Int = 0
     @ObservationIgnored private var cachedTokenSnapshot: ChatContextSnapshot?
     @ObservationIgnored private var cachedTokenRevision: Int = -1
+    @ObservationIgnored private var cachedTokenMessageCount: Int = -1
+    @ObservationIgnored private var cachedOccupancyEntry: (key: OccupancyCacheKey, tokens: Int)?
+
+    private struct OccupancyCacheKey: Equatable {
+        let tokenRevision: Int
+        let messageCount: Int
+        let conversationId: String?
+        let draftText: String
+        let extraWeightedChars: Int
+        let systemOverheadText: String
+    }
     @ObservationIgnored private var imageGenerationResumeCache: [String: ImageGenerationResumeCacheEntry] = [:]
     @ObservationIgnored private var imageGenerationResumeCacheStoreID: ObjectIdentifier?
     @ObservationIgnored private var retryingFailedRunIds: Set<String> = []
@@ -426,18 +439,25 @@ final class ChatViewModel {
     }
 
     var contextSnapshot: ChatContextSnapshot {
-        // O(n) token 聚合按 tokenRevision 缓存：流式 delta 不改 usage，跳过重算。
+        // O(n) token 聚合与占用估算按 tokenRevision 缓存：流式 delta 不改 usage，跳过重算，
+        // 且通过 `untrackedMessages` 避免把 `ChatContextControl` 订阅到逐拍变化的 `state.messages`。
         // 廉价字段（modelId、filePreview）每次 live 读取，不进缓存。
+        let revision = tokenRevision
+        let currentMessages = currentRun.state.untrackedMessages
+        let messageCount = currentMessages.count
         let cached: ChatContextSnapshot
-        if let hit = cachedTokenSnapshot, cachedTokenRevision == tokenRevision {
+        if let hit = cachedTokenSnapshot,
+           cachedTokenRevision == revision,
+           cachedTokenMessageCount == messageCount {
             cached = hit
         } else {
-            cached = Self.snapshot(from: ChatContextUsageMetrics.lastAssistantTurn(in: messages))
+            cached = Self.snapshot(from: ChatContextUsageMetrics.lastAssistantTurn(in: currentMessages))
             cachedTokenSnapshot = cached
-            cachedTokenRevision = tokenRevision
+            cachedTokenRevision = revision
+            cachedTokenMessageCount = messageCount
         }
         return ChatContextSnapshot(
-            messageCount: messages.count,
+            messageCount: messageCount,
             modelId: currentModelId,
             supportsReasoning: currentModelSupportsReasoning,
             pendingSelectedFileName: pendingSelectedFilePreview?.fileName,
@@ -451,18 +471,33 @@ final class ChatViewModel {
                 modelWindow: currentModel?.contextWindowTokens.map { Int(truncating: $0) },
                 modelId: currentModelId
             ),
-            currentContextTokens: occupancyTokens()
+            currentContextTokens: occupancyTokens(messages: currentMessages, revision: revision)
         )
     }
 
-    private func occupancyTokens() -> Int {
-        IOSContextCompactionCoordinator.shared.nextTurnOccupancyTokens(
+    private func occupancyTokens(messages: [UIMessage], revision: Int) -> Int {
+        let extra = occupancyExtraWeightedChars
+        let overhead = occupancySystemOverheadText
+        let key = OccupancyCacheKey(
+            tokenRevision: revision,
+            messageCount: messages.count,
+            conversationId: currentConversationId?.toHexDashString(),
+            draftText: inputText,
+            extraWeightedChars: extra,
+            systemOverheadText: overhead
+        )
+        if let hit = cachedOccupancyEntry, hit.key == key {
+            return hit.tokens
+        }
+        let tokens = IOSContextCompactionCoordinator.shared.nextTurnOccupancyTokens(
             messages: messages,
             conversationId: currentConversationId,
             draftText: inputText,
-            extraWeightedChars: occupancyExtraWeightedChars,
-            systemOverheadText: occupancySystemOverheadText
+            extraWeightedChars: extra,
+            systemOverheadText: overhead
         )
+        cachedOccupancyEntry = (key, tokens)
+        return tokens
     }
 
     private var occupancyExtraWeightedChars: Int {

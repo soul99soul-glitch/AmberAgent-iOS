@@ -26,12 +26,23 @@ struct ChatMessageContentIdentity {
         }
     }
 
+    init(reusingMetadataFrom previous: ChatMessageContentIdentity, message: UIMessage) {
+        self.message = message
+        self.index = previous.index
+        self.metadata = previous.metadata
+        self.hasNonNilMetadata = previous.hasNonNilMetadata
+    }
+
     func matches(_ message: UIMessage) -> Bool {
         guard self.message === message else { return false }
+        return hasSameMetadata(as: message.parts)
+    }
+
+    func hasSameMetadata(as parts: [UIMessagePart]) -> Bool {
         if !hasNonNilMetadata {
-            return !Self.containsNonNilMetadata(in: message.parts)
+            return !Self.containsNonNilMetadata(in: parts)
         }
-        return Self.sameMetadata(metadata, Self.metadata(in: message.parts))
+        return Self.sameMetadata(metadata, Self.metadata(in: parts))
     }
 
     static func containsNonNilMetadata(in parts: [UIMessagePart]) -> Bool {
@@ -74,11 +85,21 @@ final class ChatRowContentHashCache {
     private(set) var partHashComputationCount = 0
 
     private func partEntry(_ part: UIMessagePart, cached: PartEntry?) -> PartEntry {
-        let metadata = ChatMessageContentIdentity.metadata(in: [part])
-        if let cached, cached.part === part,
-           ChatMessageContentIdentity.sameMetadata(cached.metadata, metadata) {
-            return cached
+        if let cached, cached.part === part {
+            if cached.metadata.isEmpty {
+                if !ChatMessageContentIdentity.containsNonNilMetadata(in: [part]) {
+                    return cached
+                }
+            } else if ChatMessageContentIdentity.sameMetadata(
+                cached.metadata,
+                ChatMessageContentIdentity.metadata(in: [part])
+            ) {
+                return cached
+            }
         }
+        let metadata = ChatMessageContentIdentity.containsNonNilMetadata(in: [part])
+            ? ChatMessageContentIdentity.metadata(in: [part])
+            : []
         // Never `String(describing: part)`: Kotlin toString() of a phone tool part
         // serializes its base64 screenshots (100–200 KB each, MBs per row).
         // ChatPartSignature keeps tool payloads bounded and text parts exact.

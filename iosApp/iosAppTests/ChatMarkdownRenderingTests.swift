@@ -684,4 +684,26 @@ final class ChatMarkdownRenderingTests: ChatMessageProjectionTestCase {
         XCTAssertTrue(reusedTextKit1.usesTextKit1)
         ParagraphUIViewCache.shared.recycle(reusedTextKit1)
     }
+
+    func testRenderableDocumentReusesUnchangedListItemPrefixObjects() async {
+        let parser = MarkdownParserImpl()
+        let initial = await parser.parse(text: "1. First item\n2. Second item")
+        let updated = await parser.parse(text: "1. First item\n2. Second item grows")
+        let initialRenderable = await RenderableDocument(document: initial, config: .default)
+        let converted = await RenderableDocument(document: updated, config: .default)
+        let updatedRenderable = converted.reusingUnchangedPrefix(from: initialRenderable)
+
+        guard case let .orderedList(_, initialItems) = initialRenderable.renderables[0],
+              case let .orderedList(_, updatedItems) = updatedRenderable.renderables[0],
+              case let .paragraph(_, initialFirst) = initialItems[0].children[0],
+              case let .paragraph(_, updatedFirst) = updatedItems[0].children[0],
+              case let .paragraph(_, initialSecond) = initialItems[1].children[0],
+              case let .paragraph(_, updatedSecond) = updatedItems[1].children[0] else {
+            return XCTFail("Expected ordered list with two paragraph items")
+        }
+
+        XCTAssertTrue(initialFirst === updatedFirst)
+        XCTAssertFalse(initialSecond === updatedSecond)
+        XCTAssertEqual(updatedSecond.string, "Second item grows")
+    }
 }

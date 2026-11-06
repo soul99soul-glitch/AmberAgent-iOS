@@ -14,7 +14,10 @@ struct PendingAssistantRegeneration {
 final class ChatConversationRunState {
     let conversationId: KotlinUuid?
     @ObservationIgnored let completionFeedback = ChatCompletionFeedback()
-    var messages: [UIMessage] = []
+    var messages: [UIMessage] = [] {
+        didSet { untrackedMessages = messages }
+    }
+    @ObservationIgnored private(set) var untrackedMessages: [UIMessage] = []
     var isLoading = false
     var pendingMemoryApproval: MemoryToolApprovalRequest?
     var pendingSearchApproval: SearchToolApprovalRequest?

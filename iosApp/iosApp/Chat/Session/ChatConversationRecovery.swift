@@ -94,6 +94,7 @@ extension ChatViewModel {
             conversationId: currentConversationId, messages: messages
         )
         contextCompactBoundaries = compactBoundaries + episodeBoundaries
+        tokenRevision &+= 1
     }
 
     private func messagesByTerminatingStaleSearches(

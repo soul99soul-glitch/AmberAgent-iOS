@@ -59,6 +59,17 @@ class ParagraphUIView: UITextView {
   /// path can leave it nil even after a stable layout, so it cannot be used as
   /// the per-pass invalidation sentinel.
   private var lastLaidOutWidth: CGFloat?
+  private var customAccessibilityLabel: String?
+
+  override var accessibilityLabel: String? {
+    get {
+      customAccessibilityLabel ?? textStorage.string
+    }
+    set {
+      customAccessibilityLabel = newValue
+      super.accessibilityLabel = newValue
+    }
+  }
 
   var textContextMenu: TextContextMenu?
   var markdownController: MarkdownController?
@@ -347,6 +358,9 @@ class ParagraphUIView: UITextView {
     // This runs on the main thread so it's safe to read traitCollection here.
     InlineCitationAttachment.updateInterfaceStyle(traitCollection.userInterfaceStyle)
 
+    if paragraphContents === newContents, self.lineSpacing == lineSpacing {
+      return
+    }
     guard paragraphContents != newContents || self.lineSpacing != lineSpacing else {
       return
     }
@@ -379,10 +393,14 @@ class ParagraphUIView: UITextView {
       textStorage.endEditing()
       intrinsicContentSizeSuppressionDepth -= 1
       // TextKit 1 is selected only for attachment-free paragraphs. Avoid a
-      // full attributed-range scan on every append when no citation action can
-      // exist on this path.
-      accessibilityLabel = textStorage.string
-      accessibilityCustomActions = nil
+      // full attributed-range scan or full-string copy on every append; our
+      // `accessibilityLabel` override resolves `textStorage.string` lazily.
+      if customAccessibilityLabel != nil {
+        accessibilityLabel = nil
+      }
+      if accessibilityCustomActions != nil {
+        accessibilityCustomActions = nil
+      }
       if animatedByWord {
         appendFadeAnimations(in: appendedRange, asUnit: appendsTailFadeAsUnit)
       }
@@ -583,9 +601,14 @@ class ParagraphUIView: UITextView {
 
   /// Generate accessibility label and actions in a single pass (optimized)
   private func generateAccessibilityContent(from attributedString: NSAttributedString) -> AccessibilityContent? {
+    let fullRange = NSRange(location: 0, length: attributedString.length)
+    guard !usesTextKit1,
+          fullRange.length > 0,
+          attributedString.containsAttachments(in: fullRange) else {
+      return nil
+    }
     var labelComponents: [String] = []
     var actions: [UIAccessibilityCustomAction] = []
-    let fullRange = NSRange(location: 0, length: attributedString.length)
 
     attributedString.enumerateAttributes(in: fullRange, options: []) { attrs, range, _ in
       // Handle citation attachments
@@ -624,9 +647,13 @@ class ParagraphUIView: UITextView {
       accessibilityLabel = accessibilityContent.label
       accessibilityCustomActions = accessibilityContent.actions
     } else {
-      // No citations found, just use the plain text
-      accessibilityLabel = attributedString.string
-      accessibilityCustomActions = nil
+      // No citations found; `accessibilityLabel` getter lazily returns `textStorage.string`.
+      if customAccessibilityLabel != nil {
+        accessibilityLabel = nil
+      }
+      if accessibilityCustomActions != nil {
+        accessibilityCustomActions = nil
+      }
     }
   }
 
@@ -729,6 +756,12 @@ class ParagraphUIView: UITextView {
     lastReportedFittingSize = nil
     invalidateCachedSize()
     lastLaidOutWidth = nil
+    if customAccessibilityLabel != nil {
+      accessibilityLabel = nil
+    }
+    if accessibilityCustomActions != nil {
+      accessibilityCustomActions = nil
+    }
     // Vendored fix (AmberAgent): also drop the previous context's frame. A
     // recycled view keeps its old bounds (e.g. a wide table cell); with valid
     // bounds, `intrinsicContentSize` trusts them and advertises the stale wide

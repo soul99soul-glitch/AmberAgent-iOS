@@ -142,18 +142,32 @@ public struct RenderableDocument: Equatable, Sendable {
   /// document; this only keeps stable SwiftUI/TextKit subtrees from receiving
   /// freshly allocated attributed strings on every streamed suffix.
   public func reusingUnchangedPrefix(from previous: RenderableDocument) -> RenderableDocument {
-    var merged = renderables
-    let sharedCount = min(merged.count, previous.renderables.count)
+    let (merged, reusedAll) = Self.reusingUnchangedPrefix(
+      in: renderables,
+      from: previous.renderables
+    )
+    if reusedAll {
+      return previous
+    }
+    return RenderableDocument(renderables: merged)
+  }
+
+  private static func reusingUnchangedPrefix(
+    in current: [MarkdownRenderable],
+    from previous: [MarkdownRenderable]
+  ) -> (renderables: [MarkdownRenderable], reusedAll: Bool) {
+    var merged = current
+    let sharedCount = min(merged.count, previous.count)
     var index = 0
     while index < sharedCount,
-          merged[index].id == previous.renderables[index].id {
-      if merged[index] == previous.renderables[index] {
-        merged[index] = previous.renderables[index]
+          merged[index].id == previous[index].id {
+      if merged[index] == previous[index] {
+        merged[index] = previous[index]
         index += 1
         continue
       }
-      if case let .table(id, headers, rows, rawMarkdown) = merged[index],
-         case let .table(_, prevHeaders, prevRows, _) = previous.renderables[index] {
+      switch (merged[index], previous[index]) {
+      case let (.table(id, headers, rows, rawMarkdown), .table(_, prevHeaders, prevRows, _)):
         let reusedHeaders = headers == prevHeaders ? prevHeaders : headers
         var reusedRows = rows
         let sharedRows = min(rows.count, prevRows.count)
@@ -166,13 +180,53 @@ public struct RenderableDocument: Equatable, Sendable {
           rows: reusedRows,
           rawMarkdown: rawMarkdown
         )
+      case let (.orderedList(id, items), .orderedList(_, prevItems)):
+        merged[index] = .orderedList(
+          id: id,
+          items: reusingUnchangedListItems(in: items, from: prevItems)
+        )
+      case let (.unorderedList(id, items, nestedLevel), .unorderedList(_, prevItems, prevNestedLevel))
+        where nestedLevel == prevNestedLevel:
+        merged[index] = .unorderedList(
+          id: id,
+          items: reusingUnchangedListItems(in: items, from: prevItems),
+          nestedLevel: nestedLevel
+        )
+      default:
+        break
       }
       break
     }
-    if index == merged.count, merged.count == previous.renderables.count {
-      return previous
+    let reusedAll = index == merged.count && merged.count == previous.count
+    return (merged, reusedAll)
+  }
+
+  private static func reusingUnchangedListItems(
+    in current: [MarkdownListItem],
+    from previous: [MarkdownListItem]
+  ) -> [MarkdownListItem] {
+    var merged = current
+    let sharedCount = min(merged.count, previous.count)
+    var itemIndex = 0
+    while itemIndex < sharedCount {
+      if merged[itemIndex] == previous[itemIndex] {
+        merged[itemIndex] = previous[itemIndex]
+        itemIndex += 1
+        continue
+      }
+      if merged[itemIndex].startsWithBold == previous[itemIndex].startsWithBold {
+        let (reusedChildren, _) = reusingUnchangedPrefix(
+          in: merged[itemIndex].children,
+          from: previous[itemIndex].children
+        )
+        merged[itemIndex] = MarkdownListItem(
+          children: reusedChildren,
+          startsWithBold: merged[itemIndex].startsWithBold
+        )
+      }
+      break
     }
-    return RenderableDocument(renderables: merged)
+    return merged
   }
 
 }

@@ -336,7 +336,6 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
             renderableDocument = renderable
             renderedSignature = signature
             restoredFromCache = cached != nil
-            Self.storeCachedRenderable(renderable, for: text, config: config)
             if let cacheIdentity {
                 Self.storeIdentityRenderable(
                     renderable,
@@ -344,6 +343,11 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
                     text: text,
                     signature: signature
                 )
+                if !config.shouldAnimateText {
+                    Self.storeCachedRenderable(renderable, for: text, config: config)
+                }
+            } else {
+                Self.storeCachedRenderable(renderable, for: text, config: config)
             }
             revision &+= 1
         }
