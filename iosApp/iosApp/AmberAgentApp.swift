@@ -6,6 +6,10 @@ struct AmberAgentApp: App {
     @State private var settingsStore = SettingsStore()
 
     init() {
+        #if DEBUG
+        ChatRenderProbe.enabled = true
+        AmberLivePerfFlightRecorder.shared.start()
+        #endif
         IOSAppLanguagePreference.normalize()
         // Explicit device acceptance uses the normal new-conversation/model/tool path.
         if ProcessInfo.processInfo.arguments.contains("-amber-phone-popup-close-inspection-once") {

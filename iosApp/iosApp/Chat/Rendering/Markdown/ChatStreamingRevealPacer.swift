@@ -347,6 +347,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                 nextUTF16 = min(candidate, totalUTF16)
             }
             revealedUTF16Count = nextUTF16
+            ChatRenderProbe.record("pacer-tick")
             if revealedUTF16Count >= totalUTF16 {
                 pacerBox.lastTickUptime = nil
                 break

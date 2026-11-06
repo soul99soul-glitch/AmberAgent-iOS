@@ -56,7 +56,8 @@ extension ChatView {
     }
 
     var inputBar: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let _ = ChatRenderProbe.record("composer-body")
+        return VStack(alignment: .leading, spacing: 6) {
             Group {
                 if viewModel.hasPendingUserGate {
                     pendingUserGateCards

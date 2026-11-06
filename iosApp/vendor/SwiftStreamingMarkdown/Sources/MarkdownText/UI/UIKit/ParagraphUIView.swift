@@ -240,6 +240,9 @@ class ParagraphUIView: UITextView {
   }
 
   override func sizeThatFits(_ size: CGSize) -> CGSize {
+    #if DEBUG
+    ParagraphUIViewLiveProbe.onRecord?("para-size")
+    #endif
     guard usesTextKit1, size.width > 0, size.width.isFinite else {
       return super.sizeThatFits(size)
     }
@@ -364,6 +367,9 @@ class ParagraphUIView: UITextView {
     guard paragraphContents != newContents || self.lineSpacing != lineSpacing else {
       return
     }
+    #if DEBUG
+    ParagraphUIViewLiveProbe.onRecord?("para-set")
+    #endif
 
     // Streaming publishes on the TextKit 1 path almost always extend the
     // previous contents. Appending only the new tail keeps TextKit's layout
@@ -377,6 +383,7 @@ class ParagraphUIView: UITextView {
        let appendedRange = paragraphContents.appendedTailRange(toBecome: newContents) {
       #if DEBUG
       ParagraphUIViewAppendPathTestHook.recordHit()
+      ParagraphUIViewLiveProbe.onRecord?("para-set:append")
       #endif
       self.paragraphContents = newContents
       let suffix = NSMutableAttributedString(
@@ -426,6 +433,7 @@ class ParagraphUIView: UITextView {
     }
 
     #if DEBUG
+    ParagraphUIViewLiveProbe.onRecord?("para-set:full")
     if !usesTextKit1 {
       ParagraphUIViewAppendPathTestHook.recordMiss("textKit2")
     } else if self.lineSpacing != lineSpacing {
@@ -849,6 +857,10 @@ enum ParagraphUIViewAppendPathTestHook {
     fallbackMissCount += 1
     missReasonCounts[reason, default: 0] += 1
   }
+}
+
+public enum ParagraphUIViewLiveProbe {
+  public nonisolated(unsafe) static var onRecord: ((String) -> Void)?
 }
 
 extension NSAttributedString {

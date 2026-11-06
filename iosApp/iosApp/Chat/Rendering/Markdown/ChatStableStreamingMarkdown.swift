@@ -195,6 +195,7 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
         config: SwiftStreamingMarkdown.MarkdownRenderConfig,
         cacheIdentity: String? = nil
     ) {
+        ChatRenderProbe.record("md-schedule")
         pendingParse = (text, config, cacheIdentity)
         if !config.shouldAnimateText {
             // Wake any throttle sleep immediately when transitioning to non-animated
@@ -274,6 +275,15 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
         return 0.5
     }
 
+    private static func parseDurationBucket(_ ms: Double) -> String {
+        if ms < 1.0 { return "md-parse-ms:<1" }
+        if ms < 4.0 { return "md-parse-ms:1-4" }
+        if ms < 8.0 { return "md-parse-ms:4-8" }
+        if ms < 16.0 { return "md-parse-ms:8-16" }
+        if ms < 32.0 { return "md-parse-ms:16-32" }
+        return "md-parse-ms:>=32"
+    }
+
     private func parseNow(
         text: String,
         config: SwiftStreamingMarkdown.MarkdownRenderConfig,
@@ -298,9 +308,11 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
             ? renderableDocument
             : nil
         let renderable: SwiftStreamingMarkdown.RenderableDocument
+        let parseStartWall = CACurrentMediaTime()
         if let cached {
             renderable = cached
             ChatPerfTrace.event("MarkdownCacheHit")
+            ChatRenderProbe.record("md-parse-ms:cache-hit")
         } else {
             renderable = await Task.detached(priority: .userInitiated) {
                 let parser = SwiftStreamingMarkdown.MarkdownParserImpl()
@@ -322,6 +334,8 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
                 guard let previousRenderable else { return converted }
                 return converted.reusingUnchangedPrefix(from: previousRenderable)
             }.value
+            let parseElapsedMs = (CACurrentMediaTime() - parseStartWall) * 1000.0
+            ChatRenderProbe.record(Self.parseDurationBucket(parseElapsedMs))
         }
         guard !Task.isCancelled else { return }
         guard renderedText != text || renderedSignature != signature || renderableDocument != renderable else {

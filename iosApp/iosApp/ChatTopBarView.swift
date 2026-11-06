@@ -98,6 +98,7 @@ struct ChatTopBarView: View {
     }
 
     var body: some View {
+        let _ = ChatRenderProbe.record("top-bar-body")
         let activeArrival = arrivalState.arrival
         return GeometryReader { geometry in
             ZStack(alignment: .top) {

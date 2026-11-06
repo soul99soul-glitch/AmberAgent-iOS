@@ -455,6 +455,7 @@ struct ChatView: View {
     }
 
     var body: some View {
+        let _ = ChatRenderProbe.record("chat-view-body")
         chatContent
             .environment(\.amberIsUnderlyingSheetPresented, isAnyFloatingSheetPresented)
         // Measure the parent's proposal, before the bottom inset can grow to its ideal height.

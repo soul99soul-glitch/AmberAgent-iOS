@@ -123,6 +123,7 @@ final class NativeTimelineScrollDriver: NSObject {
     }
 
     func handleLayoutMetricsChanged() {
+        ChatRenderProbe.record("scroll-metrics")
         guard fallbackReason == nil else { return }
         guard let scrollView else { return }
         guard validateScrollViewHealth() else { return }

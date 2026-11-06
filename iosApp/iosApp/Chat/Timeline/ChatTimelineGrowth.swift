@@ -24,6 +24,7 @@ final class ChatTimelineGrowth: ObservableObject {
         guard enabled, delta > 0 else { return }
         #if DEBUG
         ChatRenderProbe.record("growth-transform")
+        ChatRenderProbe.record("growth-add")
         #endif
         withAnimation(.linear(duration: ChatStreamingRevealTiming.heightSettleSeconds)) {
             totalGrowth += delta

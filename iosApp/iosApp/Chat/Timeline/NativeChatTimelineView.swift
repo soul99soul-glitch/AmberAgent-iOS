@@ -1092,13 +1092,35 @@ struct NativeChatTimelineView: View {
 
     private func consumeTimelineStream(_ message: UIMessage, signal: ChatMessageUpdateSignal) -> Bool {
         let id = ChatMessageProjector.messageId(for: message)
-        guard streamedMessageIDs.contains(id),
-              !usesIndependentTasks || liveTaskTailIDs.contains(id),
-              let model = renderStateStore.existingLiveTailModel(messageID: id),
-              model.renderState.hasEverStreamed, model.renderState.liveRenderingEnabled,
-              NativeTimelineStreamingTailUpdatePolicy.shouldUpdate(messageID: id,
-                  isFarFromBottom: viewportState.liveRenderingFarFromBottom,
-                  visibility: nativeStreamingTailVisibility) else { return false }
+        guard streamedMessageIDs.contains(id) else {
+            ChatRenderProbe.record("consume-stream:fail-not-in-streamedMessageIDs")
+            return false
+        }
+        guard !usesIndependentTasks || liveTaskTailIDs.contains(id) else {
+            ChatRenderProbe.record("consume-stream:fail-usesIndependentTasks")
+            return false
+        }
+        guard let model = renderStateStore.existingLiveTailModel(messageID: id) else {
+            ChatRenderProbe.record("consume-stream:fail-liveTailModel-nil")
+            return false
+        }
+        guard model.renderState.hasEverStreamed else {
+            ChatRenderProbe.record("consume-stream:fail-not-hasEverStreamed")
+            return false
+        }
+        guard model.renderState.liveRenderingEnabled else {
+            ChatRenderProbe.record("consume-stream:fail-liveRenderingDisabled")
+            return false
+        }
+        guard NativeTimelineStreamingTailUpdatePolicy.shouldUpdate(
+            messageID: id,
+            isFarFromBottom: viewportState.liveRenderingFarFromBottom,
+            visibility: nativeStreamingTailVisibility
+        ) else {
+            ChatRenderProbe.record("consume-stream:fail-shouldUpdate-false")
+            return false
+        }
+        ChatRenderProbe.record("consume-stream:hit")
         model.update(message: message, isGenerationActive: isGenerationActive,
                      renderState: model.renderState, sourceRevision: signal.revision)
         submitNativeScrollIntent(for: signal.event, lagAllowance: signal.lagAllowance)

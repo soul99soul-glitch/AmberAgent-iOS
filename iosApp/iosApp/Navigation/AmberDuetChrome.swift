@@ -94,6 +94,7 @@ struct AmberDuetBottomSwitcher: View {
     }
 
     var body: some View {
+        let _ = ChatRenderProbe.record("duet-chrome-body")
         AmberGlassGroup(spacing: 8) {
             HStack(spacing: 8) {
                 // Left (3): Native Liquid Glass segmented pill (对话 | 任务 [N] | 中心)
