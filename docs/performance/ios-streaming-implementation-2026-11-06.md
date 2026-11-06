@@ -1,6 +1,6 @@
 # iOS 流式结构优化实施记录
 
-基线 `bfe85cc3`；方案来源为 Opus 的 `docs/perf/structural-plan.md` 第 0、4 节。只在当前分支实现、逐步提交，不推送、不装真机，完成后交给 Opus review。
+基线 `bfe85cc3`；方案来源为 Opus 的 `docs/perf/structural-plan.md` 第 0、4 节。只在当前分支实现、逐步提交，不推送。按最新授权，P0+P3 和最终版各保数据装机，review 并行。
 
 顺序：P0+P3 设置整数签名/Markdown 连续 UTF-8 → P1 渲染层高度过渡 → P2 尾行独立发布 → P4 历史分块；P5 只在此前结果不达标且有证据时处理 S4/S5/S6。S7/S8 和按真实时间计算吐字节拍不做。
 
@@ -16,4 +16,15 @@ P0+P3：设置签名按不可变 KMP 对象引用缓存为 Int，行比较和投
 
 安装授权已更新：P0+P3 与最终版各通过 iosAppExperimentalGPL / app.amber.ios 保数据覆盖指定 iPhone 18 Pro，允许无线，锁屏/不可达时停止安装并回报。基线包含 `46071c9b` 的设置开关与前台排空后震动修复；本阶段未改这条链路。
 
-每个阶段提交后运行 `bash iosApp/scripts/perf/run-structural-phase.sh <唯一阶段名>`，归档同场景数据。最后一次运行六组行为回归。
+按 09:00 最新提速要求：P1/P2/P4 每步仅快速 fanout；全部完成后统一三轮 e2e 与六组行为回归。P0+P3 不追加三轮回放。
+
+P0+P3 已于 09:04 无线覆盖并成功启动：`edde3c5c23c941438c1ec8c6afa02632744634a0`，databaseSequenceNumber **2736**。签名及安装证据为本地 `p03-device-manifest.json`、`p03-device-install.json`、`p03-device-launch.json`。
+
+| 定点阶段 | token 历史判等 / timeline body | 工具历史判等 | 进度历史判等 | 当前行测量：单字 / 换行 | token窗口主线程 CPU ms |
+|---|---|---|---|---|---|
+| 基线 | 569 / 1 | 1138 | 569 | 21 / 81 | 见 fanout-06 |
+| P1 `5a505c13` | 569 / 1 | 1138 | 569 | 20 / 63 | 145.93 |
+| P2 `e8714fa1` | 0 / 0 | 1138 | 569 | 24 / 85 | 94.85 |
+| P4 | 0 / 0 | 12（另28次块比较） | 6（另14次块比较） | 23 / 86 | 87.36 |
+
+三类事件的历史行 body / sizeThatFits / placeSubviews 始终为 0。P2 阻断了 token 到时间线的广播；P4 把结构事件限制在受影响的块。P1 当前行测量目标尚未达到；3 次自然高度变化仍对应 86 次测量，不能把 body 隔离误报为布局已解决。所有计数保留在 `p1/p2/p4-fanout-raw.json` 与相应 xcresult。

@@ -36,6 +36,7 @@ struct NativeChatTimelineView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    @State private var chunkCallbacks = ChatTimelineChunkCallbacks()
     @State private var timelineStreamOwner = UUID()
     @State private var viewportState = ChatViewportState()
     @State private var scrollPosition = ScrollPosition()
@@ -123,6 +124,16 @@ struct NativeChatTimelineView: View {
         let hasActivityAnchor = activity.map { status in
             projection.entries.contains { $0.messageId == status.anchorMessageID }
         } ?? true
+        let _ = chunkCallbacks.action = onAction
+        let _ = chunkCallbacks.boundary = { id, previous, current in
+            guard id == firstHistoryEntryID, let previous, let current,
+                  previous < 0, current >= 0,
+                  !(historyResetRevision != signal.revision &&
+                    (signal.event == .conversationLoaded || signal.event == .conversationSwitched ||
+                     signal.event == .branchChanged)),
+                  messageAnchor == nil || messageAnchor == consumedMessageAnchor else { return }
+            loadEarlierMessages(position: UnitPoint(x: 0.5, y: current))
+        }
         ScrollViewReader { historyScrollProxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -137,65 +148,23 @@ struct NativeChatTimelineView: View {
                     }
                     // Only materialize the loaded history window. Its eager height model
                     // keeps the existing live-tail and bottom-follow geometry stable.
-                    ForEach(projection.entries) { entry in
-                        let isHistoryBoundary = entry.id == firstHistoryEntryID || historyBoundaryIDs.contains(entry.id)
-                        let activityHere = entry.messageId != nil && entry.messageId == activity?.anchorMessageID
-                        let statusReplacesEntry = activityHere && entry.isGlobalStatusOnly
-                        let isHiddenStatus = (entry.isGlobalStatusOnly && !statusReplacesEntry) || entry.kind == .pendingAssistant ||
-                            entry.kind == .visionRecognition ||
-                            (entry.kind == .contextMarker &&
-                             (entry.compactState ?? contextCompactState).status != .completed)
-                        // Hidden status-only entries must not leave per-task gaps in the timeline.
-                        let topSpacing: CGFloat = entry.id == projection.entries.first?.id ||
-                            isHiddenStatus ? 0 : (
-                            entry.isAssistantContinuation ? ChatLayout.assistantPartSpacing : 14
-                        )
-                        if isHistoryBoundary {
-                            Color.clear
-                                .frame(height: 0)
-                                .id("history-boundary-" + entry.id)
-                                .accessibilityHidden(true)
-                                .onGeometryChange(for: CGFloat?.self) { proxy in
-                                    guard let viewport = proxy.bounds(of: .scrollView),
-                                          viewport.height > 0 else { return nil }
-                                    return -viewport.minY / viewport.height
-                                } action: { previous, current in
-                                    guard entry.id == firstHistoryEntryID else { return }
-                                    // Only an upward crossing into the viewport reveals a page.
-                                    // Initial layout, bottom entry and the prepend itself don't.
-                                    guard let previous, let current,
-                                          previous < 0, current >= 0,
-                                          !(historyResetRevision != signal.revision &&
-                                            (signal.event == .conversationLoaded || signal.event == .conversationSwitched ||
-                                             signal.event == .branchChanged)),
-                                          messageAnchor == nil || messageAnchor == consumedMessageAnchor else { return }
-                                    loadEarlierMessages(position: UnitPoint(x: 0.5, y: current))
-                                }
-                                .padding(.top, topSpacing)
+                    ForEach(NativeTimelineChunk.group(projection.entries)) { chunk in
+                        let chunkActivity = activity.flatMap { value in
+                            chunk.messageIDs.contains(value.anchorMessageID) ||
+                                (!hasActivityAnchor && chunk.entries.contains { $0.kind == .bottomAnchor }) ? value : nil
                         }
-                        if entry.kind == .bottomAnchor, let activity, !hasActivityAnchor {
-                            ChatTimelineActivityRowView(activity: activity, showAgentName: true, onAction: onAction)
-                                .padding(.top, ChatLayout.assistantPartSpacing)
-                        }
-                        Group {
-                            if let activity, statusReplacesEntry {
-                                ChatTimelineActivityRowView(activity: activity, showAgentName: !entry.isAssistantContinuation, onAction: onAction)
-                                    .id(entry.id)
-                            } else {
-                                entryView(
-                                    entry,
-                                    displaySettingSignature: displaySettingSignature,
-                                    generativeUiSettingSignature: generativeUiSettingSignature
-                                )
-                            }
-                        }
-                        .padding(.top, isHistoryBoundary ? 0 : topSpacing)
-                        if let activity, activityHere, !statusReplacesEntry, activity.shouldDisplayBelow(entry) {
-                            // 仅当当前轮气泡正在吐正文时收起进度行（防流式结束 28pt 下坠）；工具执行与次轮思考仍展示在首轮气泡下方。
-                            let isAfterUserMessage = entry.role == MessageRole.user
-                            ChatTimelineActivityRowView(activity: activity, showAgentName: isAfterUserMessage, onAction: onAction)
-                                .padding(.top, isAfterUserMessage ? 14 : ChatLayout.assistantPartSpacing)
-                        }
+                        ChatTimelineChunkView(
+                            chunk: chunk,
+                            presentationSignature: chunkPresentationSignature(chunk, firstEntryID: projection.entries.first?.id,
+                                firstHistoryEntryID: firstHistoryEntryID, display: displaySettingSignature,
+                                generative: generativeUiSettingSignature),
+                            firstEntryID: projection.entries.first?.id, firstHistoryEntryID: firstHistoryEntryID,
+                            historyBoundaryIDs: historyBoundaryIDs, activity: chunkActivity,
+                            hasActivityAnchor: hasActivityAnchor, contextCompactState: contextCompactState,
+                            callbacks: chunkCallbacks,
+                            entryView: { entryView($0, displaySettingSignature: displaySettingSignature,
+                                                  generativeUiSettingSignature: generativeUiSettingSignature) }
+                        ).equatable()
                     }
                 }
                 .padding(.horizontal, 16)
@@ -391,6 +360,8 @@ struct NativeChatTimelineView: View {
                 isNativeScrollSurfaceVisible = false
                 timelineGrowth.setEnabled(false)
                 timelineUpdates?.detach(owner: timelineStreamOwner)
+                chunkCallbacks.boundary = { _, _, _ in }
+                chunkCallbacks.action = { _ in }
                 historyRevealAnchor = nil
                 nativeUserScrollActive = false
                 scrollDriver.invalidate()
@@ -766,6 +737,40 @@ struct NativeChatTimelineView: View {
         }
     }
 
+    private func chunkPresentationSignature(_ chunk: NativeTimelineChunk, firstEntryID: String?,
+                                            firstHistoryEntryID: String?, display: Int, generative: Int) -> Int {
+        var hash = Hasher()
+        hash.combine(display); hash.combine(generative)
+        hash.combine(isGenerationActive); hash.combine(usesIndependentTasks)
+        hash.combine(reasoningLevelLabel); hash.combine(reduceMotion)
+        hash.combine(viewportState.liveRenderingFarFromBottom)
+        hash.combine(ObjectIdentifier(workspaceStore))
+        for entry in chunk.entries {
+            hash.combine(entry.id == firstEntryID)
+            hash.combine(entry.id == firstHistoryEntryID || historyBoundaryIDs.contains(entry.id))
+            let messageID = entry.messageId
+            let highlighted = highlightedMessageAnchor?.conversationID == currentConversationID &&
+                highlightedMessageAnchor?.messageID == messageID
+            hash.combine(highlighted)
+            if messageID != nil, islandToolHighlight?.messageID == messageID {
+                hash.combine(islandToolHighlight?.toolCallID)
+                hash.combine(islandToolHighlight?.requestToken)
+            }
+            if messageID != nil, consumedMessageAnchor?.messageID == messageID {
+                hash.combine(imageAccessibilityFocusToolCallID)
+            }
+            if case .configurationIssue = entry.kind {
+                hash.combine(configurationIssue?.title); hash.combine(configurationIssue?.message)
+            }
+            if entry.kind == .contextMarker, entry.compactState == nil {
+                hash.combine(String(describing: contextCompactState.status))
+                hash.combine(contextCompactState.summary); hash.combine(contextCompactState.updatedAt)
+                hash.combine(contextCompactState.customCompletedTitle)
+            }
+        }
+        return hash.finalize()
+    }
+
     @ViewBuilder
     private func entryView(
         _ entry: NativeTimelineEntry,
@@ -827,7 +832,7 @@ struct NativeChatTimelineView: View {
                     reasoningLevelLabel: reasoningLevelLabel,
                     imageAccessibilityFocusToolCallID: consumedMessageAnchor?.messageID == messageId
                         ? imageAccessibilityFocusToolCallID : nil,
-                    onAction: onAction
+                    onAction: { chunkCallbacks.action($0) }
                 )
                 .equatable()
                 .environment(
@@ -923,7 +928,7 @@ struct NativeChatTimelineView: View {
         let liveTailModel = nativeLiveTailModelIfNeeded(row: row, renderState: renderState)
         return ChatListMessageRenderModel(
             row: row,
-            variantInfo: variantInfoProvider(index),
+            variantInfo: entry.variantInfo.map { .init(variantCount: $0.variantCount, selectedIndex: $0.selectedIndex) },
             renderState: renderState,
             isGenerationActive: isGenerationActive,
             renderIdentity: ChatListSnapshotBuilder.renderIdentityForRow(row, renderState: renderState),
