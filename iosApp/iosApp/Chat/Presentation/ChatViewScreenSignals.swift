@@ -539,10 +539,10 @@ extension ChatView {
     }
 
     func dismissKeyboard() {
-        composerState.isInputFocused = false
-        UIApplication.shared.sendAction(
-            #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil
-        )
+        _ = composerInputController.resignFirstResponderIfNeeded()
+        if composerState.isInputFocused {
+            composerState.isInputFocused = false
+        }
     }
 
     func applyCollectionViewportState(_ newState: ChatViewportState) {

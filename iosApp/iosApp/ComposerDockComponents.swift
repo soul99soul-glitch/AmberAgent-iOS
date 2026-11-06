@@ -195,6 +195,16 @@ final class ComposerInputController {
         textView.unmarkText()
         return textView.text
     }
+
+    @discardableResult
+    func resignFirstResponderIfNeeded() -> Bool {
+        if let textView, textView.isFirstResponder {
+            return textView.resignFirstResponder()
+        }
+        return UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil
+        )
+    }
 }
 
 struct ComposerPlaceholderText: View {

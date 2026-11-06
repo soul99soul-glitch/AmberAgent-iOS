@@ -297,24 +297,27 @@ struct NativeChatTimelineView: View {
                     scrollToMessageAnchorIfAvailable()
                 }
                 .background {
-                    if nativeScrollDriverDesired {
-                        NativeTimelineScrollViewResolver(
-                            onResolve: { scrollView in
-                                handleNativeScrollViewResolved(scrollView)
-                            },
-                            onMetricsChanged: {
-                                guard isNativeScrollDriverActive else { return }
-                                scrollDriver.handleLayoutMetricsChanged()
-                            }
-                        )
-                    }
+                    NativeTimelineScrollViewResolver(
+                        onResolve: { scrollView in
+                            guard nativeScrollDriverDesired else { return }
+                            handleNativeScrollViewResolved(scrollView)
+                        },
+                        onMetricsChanged: {
+                            guard isNativeScrollDriverActive else { return }
+                            scrollDriver.handleLayoutMetricsChanged()
+                        },
+                        onDismissKeyboard: handleTimelineTapToDismiss
+                    )
                 }
             }
             .modifier(ChatSizeChangesPinModifier(
-                // 流式贴底时把底部锚点交给 SwiftUI 自身的 .sizeChanges：它在布局阶段
-                // 就完成「高度增量 ↔ 滚动偏移」的抵消，与出字同一帧生效，不经显示链路
-                // 事后追赶。native driver 仍负责用户拖拽、磁吸与终态收口。
-                enabled: followGeneration
+                // 流式贴底与底部键盘高度变化时把底部锚点交给 SwiftUI 自身的 .sizeChanges；
+                // 用户上滑进入历史阅读态时关闭，防止键盘弹起/收起把历史位置强行拉回底部。
+                enabled: Self.shouldPinBottomOnSizeChanges(
+                    followGeneration: followGeneration,
+                    viewportState: viewportState,
+                    driverPausedForUser: isNativeScrollDriverActive && scrollDriver.isPausedForUser
+                )
             ))
             .nativeTimelineScrollPosition($scrollPosition)
             .scrollEdgeEffectStyle(.soft, for: .top)
@@ -333,11 +336,6 @@ struct NativeChatTimelineView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .contentShape(Rectangle())
-            .simultaneousGesture(
-                TapGesture().onEnded {
-                    onDismissKeyboard()
-                }
-            )
             .onScrollPhaseChange { _, phase in
                 guard isNativeScrollDriverActive else {
                     handleNativeFallbackScrollPhase(phase)
@@ -362,8 +360,8 @@ struct NativeChatTimelineView: View {
                         nativeDragPhaseOccurredDuringTouch = true
                     }
                     nativeUserScrollActive = true
-                    nativeTouchStartedWhileFollowing = scrollDriver.isFollowingBottomOrKeyboardFocus
-                    onDismissKeyboard()
+                    nativeTouchStartedWhileFollowing = scrollDriver.isFollowingBottomOrKeyboardFocus ||
+                        (!viewportState.followPaused && viewportState.isAtBottom)
                     scrollDriver.submit(.userDragBegan)
                 case .idle:
                     let endedUserScroll = nativeUserScrollActive
@@ -414,17 +412,24 @@ struct NativeChatTimelineView: View {
                     bottomInset: geo.contentInsets.bottom
                 )
             } action: { previousGeometry, geometry in
-                if isNativeScrollDriverActive && (
-                    previousGeometry.visibleHeight != geometry.visibleHeight ||
+                let wasAtBottom = viewportState.isAtBottom && !viewportState.followPaused
+                let viewportDimensionsChanged = previousGeometry.visibleHeight != geometry.visibleHeight ||
                     previousGeometry.topInset != geometry.topInset ||
                     previousGeometry.bottomInset != geometry.bottomInset
-                ) {
+                if isNativeScrollDriverActive && viewportDimensionsChanged {
                     scrollDriver.handleLayoutMetricsChanged()
                 }
-                let wasAtBottom = viewportState.isAtBottom
+                let effectiveDistanceToBottom: CGFloat = {
+                    guard isNativeScrollDriverActive,
+                          viewportDimensionsChanged,
+                          let liveDistance = scrollDriver.distanceToBottomNow() else {
+                        return geometry.distanceToBottom
+                    }
+                    return liveDistance
+                }()
                 let messages = messagesProvider()
                 let rawViewportState = NativeStaticTimelineViewportPolicy.state(
-                    distanceToBottom: geometry.distanceToBottom,
+                    distanceToBottom: effectiveDistanceToBottom,
                     visibleHeight: geometry.visibleHeight,
                     contentHeight: geometry.contentHeight,
                     hasMessages: !messages.isEmpty,
@@ -581,14 +586,8 @@ struct NativeChatTimelineView: View {
         historyRevealAnchor = nil
     }
 
-    static func shouldBeginNativeUserDrag(
-        phase: ScrollPhase,
-        isUIKitUserInteracting: Bool
-    ) -> Bool {
-        NativeTimelineUserDragPolicy.shouldBegin(
-            phase: phase,
-            isUIKitUserInteracting: isUIKitUserInteracting
-        )
+    static func shouldBeginNativeUserDrag(phase: ScrollPhase, isUIKitUserInteracting: Bool) -> Bool {
+        NativeTimelineUserDragPolicy.shouldBegin(phase: phase, isUIKitUserInteracting: isUIKitUserInteracting)
     }
 
     /// 轻点误伤恢复：触碰（.tracking）即暂停跟随防打架是有意的所有权设计，
@@ -596,16 +595,27 @@ struct NativeChatTimelineView: View {
     /// 恢复阈值，静止判定会漏恢复。仅当按下时确在跟随、期间无拖拽相位、
     /// 生成仍在进行时恢复跟随。
     static func shouldRestoreFollowAfterAccidentalTap(
-        wasFollowingAtTouchDown: Bool,
-        dragPhaseOccurred: Bool,
-        generationActive: Bool
+        wasFollowingAtTouchDown: Bool, dragPhaseOccurred: Bool, generationActive: Bool
     ) -> Bool {
         wasFollowingAtTouchDown && !dragPhaseOccurred && generationActive
     }
 
+    static func shouldPinBottomOnSizeChanges(
+        followGeneration: Bool, viewportState: ChatViewportState, driverPausedForUser: Bool
+    ) -> Bool {
+        followGeneration && viewportState.isAtBottom && !viewportState.followPaused && !driverPausedForUser
+    }
+
+    private func handleTimelineTapToDismiss() {
+        if isNativeScrollDriverActive, nativeUserScrollActive,
+           !nativeDragPhaseOccurredDuringTouch, nativeTouchStartedWhileFollowing {
+            scrollDriver.submit(.userDragEnded(isAtBottom: true))
+        }
+        onDismissKeyboard()
+    }
+
     private var isNativeScrollDriverDesired: Bool {
-        nativeScrollFallbackReason == nil &&
-            isNativeScrollSurfaceVisible
+        nativeScrollFallbackReason == nil && isNativeScrollSurfaceVisible
     }
 
     private func handleNativeScrollViewResolved(_ scrollView: UIScrollView) {
@@ -809,20 +819,11 @@ struct NativeChatTimelineView: View {
             return nil
         }
         if tool.output.contains(where: { $0 is UIMessagePart.Image }) {
-            return IOSAppLocalization.string(
-                "已定位到生成图片",
-                defaultValue: "已定位到生成图片"
-            )
+            return IOSAppLocalization.string("已定位到生成图片", defaultValue: "已定位到生成图片")
         }
         return tool.output.isEmpty
-            ? IOSAppLocalization.string(
-                "已定位到正在生成的图片",
-                defaultValue: "已定位到正在生成的图片"
-            )
-            : IOSAppLocalization.string(
-                "已定位到图片生成失败结果",
-                defaultValue: "已定位到图片生成失败结果"
-            )
+            ? IOSAppLocalization.string("已定位到正在生成的图片", defaultValue: "已定位到正在生成的图片")
+            : IOSAppLocalization.string("已定位到图片生成失败结果", defaultValue: "已定位到图片生成失败结果")
     }
 
     private var shouldSettleNativeScrollAfterAttach: Bool {
@@ -1230,6 +1231,7 @@ struct NativeChatTimelineView: View {
         wasAtBottom: Bool
     ) {
         guard wasAtBottom,
+              !viewportState.followPaused,
               previous.visibleHeight - current.visibleHeight > 2,
               current.contentHeight > current.visibleHeight + ChatLayout.bottomStickThreshold else { return }
         guard !isNativeScrollDriverActive else { return }
@@ -1242,6 +1244,12 @@ struct NativeChatTimelineView: View {
         let currentTrigger = trigger ?? scrollToBottomTrigger
         guard currentTrigger != lastScrollToBottomTrigger else { return }
         lastScrollToBottomTrigger = currentTrigger
+        if scrollToBottomSource == .composerFocus {
+            let isPausedInHistory = viewportState.followPaused ||
+                !viewportState.isAtBottom ||
+                (isNativeScrollDriverActive && (scrollDriver.isPausedForUser || !scrollDriver.isAtBottomNow()))
+            guard !isPausedInHistory else { return }
+        }
         var next = viewportState
         next.followPaused = false
         next.userDragging = false
@@ -1318,7 +1326,6 @@ struct NativeChatTimelineView: View {
         case .tracking, .interacting:
             nativeScrollFallbackReplayToken &+= 1
             nativeUserScrollActive = true
-            onDismissKeyboard()
         case .idle:
             nativeUserScrollActive = false
         case .animating, .decelerating:

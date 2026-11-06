@@ -96,7 +96,8 @@ struct ChatView: View {
                 AmberInlineCloudMainDialogueView(
                     store: MacGatewayStore.shared,
                     topInset: ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight,
-                    onOpenPairingSettings: { isPresentingCloudGatewaySettings = true }
+                    onOpenPairingSettings: { isPresentingCloudGatewaySettings = true },
+                    onDismissKeyboard: dismissKeyboard
                 )
                 .opacity(composerState.activeDuetTab == .chat ? 1 : 0)
                 .allowsHitTesting(composerState.activeDuetTab == .chat)
@@ -185,7 +186,11 @@ struct ChatView: View {
         .onGeometryChange(for: CGSize.self) { proxy in
             CGSize(width: proxy.size.width,
                    height: proxy.size.height + proxy.safeAreaInsets.top + proxy.safeAreaInsets.bottom)
-        } action: { chatSize = $0 }
+        } action: { newSize in
+            if abs(chatSize.width - newSize.width) > 0.5 || abs(chatSize.height - newSize.height) > 0.5 {
+                chatSize = newSize
+            }
+        }
         .animation(browserTaskVisibilityAnimation, value: compactWebMountSession?.id)
         .onChange(of: displayedWebMountSession?.ownerRunId) { _, _ in
             browserState.expandedWebMountSessionId = nil
@@ -351,11 +356,10 @@ struct ChatView: View {
         }
         .sheet(isPresented: $isPresentingDuetTasks) {
             AmberDuetTaskCenterSheet(
-                conversationSegments: currentConversationTaskSegments(),
                 gateway: MacGatewayStore.shared,
                 subAgentStore: activityStore,
                 onOpenFullTaskBoard: { router.navigate(to: .macTasks) },
-                onSelectTool: { tool in duetSelectedToolTarget = ToolDetailTarget(tool: tool) }
+                onOpenTask: { task in openUnifiedTask(task) }
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -398,7 +402,7 @@ struct ChatView: View {
             AmberPersonaStudioSheet(
                 sharedSettings: sharedSettings
             )
-            .presentationDetents([.medium, .large])
+            .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $isPresentingCloudGatewaySettings) {
@@ -422,10 +426,7 @@ struct ChatView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            chatContent
-                .frame(width: proxy.size.width, height: proxy.size.height)
-        }
+        chatContent
         // Measure the parent's proposal, before the bottom inset can grow to its ideal height.
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
             if abs(composerState.approvalContainerHeight - height) > 0.5 { composerState.approvalContainerHeight = height }
@@ -668,11 +669,13 @@ struct ChatView: View {
     }
 
     private func handleComposerFocusStarted() {
-        // Composer focus is a direct navigation intent: the user is preparing to type
-        // at the tail. Do not depend on ChatListSummary here; during first session
-        // entry that summary can lag behind the message list by one render pass.
+        guard Self.shouldFollowBottomOnComposerFocus(viewportState: viewportState) else { return }
         scrollToBottomSource = .composerFocus
         scrollToBottomTrigger &+= 1
+    }
+
+    static func shouldFollowBottomOnComposerFocus(viewportState: ChatViewportState) -> Bool {
+        viewportState.isAtBottom && !viewportState.followPaused
     }
 
     private func handleSharedSettingsRevisionChange() {

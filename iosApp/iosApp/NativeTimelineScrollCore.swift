@@ -75,6 +75,7 @@ struct NativeTimelineScrollGeometry: Equatable {
     var adjustedInsetBottom: CGFloat
     var distanceToBottom: CGFloat
     var userInteracting: Bool
+    var wasNearBottomBeforeViewportChange: Bool = false
 
     var bottomTarget: CGFloat {
         max(
@@ -138,9 +139,9 @@ enum NativeTimelineScrollCore {
     ) -> (state: NativeTimelineScrollState, actions: [NativeTimelineScrollAction]) {
         if geometry.userInteracting {
             switch intent {
-            case .explicitBottom,
-                 .userDragEnded,
-                 .conversationReset:
+            case let .explicitBottom(source, _, _) where source != .composerFocus:
+                break
+            case .userDragEnded, .conversationReset:
                 break
             default:
                 return (.pausedForUser, stopFrameDriverIfNeeded(from: state))
@@ -149,6 +150,9 @@ enum NativeTimelineScrollCore {
 
         switch intent {
         case let .explicitBottom(source, animated, keyboardToken):
+            if source == .composerFocus, state == .pausedForUser {
+                return (.pausedForUser, [])
+            }
             let nextState: NativeTimelineScrollState
             if source == .composerFocus {
                 nextState = .keyboardFocus(
@@ -258,9 +262,14 @@ enum NativeTimelineScrollCore {
                 )
             case .idle:
                 // 终态 settle 交还所有权后，晚到的布局（终态重测二 pass、渲染态
-                // 延迟刷新）仍可能移动底部；近底时重新收锚一次，收敛后照常交还
-                // 所有权。远底（用户在阅读历史）不打扰。
-                guard geometry.isNearBottom else { return (state, []) }
+                // 延迟刷新）或键盘弹起/收起仍可能移动底部；近底或视口缩放前原本近底时
+                // 重新收锚，远底（用户在阅读历史）不打扰。
+                guard geometry.isNearBottom || geometry.wasNearBottomBeforeViewportChange else {
+                    return (state, [])
+                }
+                guard abs(geometry.offsetY - geometry.bottomTarget) >= arrivalEpsilon else {
+                    return (.idle, [])
+                }
                 return (
                     .settlingAfterTerminal(
                         virtualOffset: min(geometry.offsetY, geometry.bottomTarget),

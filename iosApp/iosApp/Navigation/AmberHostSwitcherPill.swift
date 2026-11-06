@@ -132,6 +132,7 @@ struct AmberInlineCloudMainDialogueView: View {
     let store: MacGatewayStore
     let topInset: CGFloat
     let onOpenPairingSettings: () -> Void
+    var onDismissKeyboard: (() -> Void)? = nil
 
     private var sortedProgressItems: [MacGatewayCloudDialogueWorkItemProgress] {
         store.cloudDialogueProgressByWorkItem.values.sorted { $0.lastEventSeq > $1.lastEventSeq }
@@ -181,8 +182,21 @@ struct AmberInlineCloudMainDialogueView: View {
                         .id("cloud-dialogue-bottom-anchor")
                 }
                 .padding(.horizontal, ChatLayout.contentHorizontalInset)
+                .background {
+                    NativeTimelineScrollViewResolver(
+                        onResolve: { _ in },
+                        onMetricsChanged: {},
+                        onDismissKeyboard: onDismissKeyboard
+                    )
+                }
             }
             .scrollDismissesKeyboard(.interactively)
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    onDismissKeyboard?()
+                }
+            )
             .onAppear {
                 store.startCloudDialoguePollingIfNeeded()
                 Task {

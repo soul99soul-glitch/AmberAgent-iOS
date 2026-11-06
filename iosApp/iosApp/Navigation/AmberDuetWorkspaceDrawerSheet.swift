@@ -64,6 +64,8 @@ struct AmberDuetWorkspaceDrawerSheet: View {
                 AmberPersonaStudioSheet(
                     sharedSettings: sharedSettings ?? IOSSharedSettingsStore()
                 )
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
         }
     }
