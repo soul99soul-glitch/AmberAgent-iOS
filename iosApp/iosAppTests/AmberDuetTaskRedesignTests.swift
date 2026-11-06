@@ -1236,4 +1236,159 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         XCTAssertIdentical(childVC.contentScrollView(for: .top), scrollView)
         XCTAssertIdentical(navVC.contentScrollView(for: .top), scrollView)
     }
+
+    @MainActor
+    func testNeedsDecisionClassificationAndStructuredDeliverableExtraction() throws {
+        let suite = "AmberTaskDecisionDeliverableTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        // 1. Verify extractDeliverableSummary strips internal headers, extracts 1-3 bullets, and captures decisionPrompt.
+        let markdownWithDecision = """
+        # Settlement Report
+        ## 核心结论
+        京都大德寺下午步行路线已筛查完毕，推荐主走高桐院与龙源院。
+
+        - **14:00 龙源院 & 高桐院**：枯山水与枫竹参道最清静，避开旅行团高峰
+        - **15:30 今宫神社东门**：顺路品尝百年烤麻薯
+        - **伴手礼动线**：返程经寺町通一保堂本店采购罐装玉露
+        - **备选支线**：紫野和果子老铺
+
+        [待拍板] 晚间餐食要预订怀石料理（需押金）还是先留白去鸭川居酒屋？
+        """
+        let extracted = AmberUnifiedTaskBuilder.extractDeliverableSummary(from: markdownWithDecision)
+        XCTAssertTrue(extracted.needsDecision)
+        XCTAssertEqual(extracted.headline, "京都大德寺下午步行路线已筛查完毕，推荐主走高桐院与龙源院。")
+        XCTAssertEqual(extracted.bullets.count, 3, "Deliverable bullets must be capped at 1-3 key points")
+        XCTAssertEqual(extracted.bullets.first, "14:00 龙源院 & 高桐院：枯山水与枫竹参道最清静，避开旅行团高峰")
+        XCTAssertEqual(extracted.decisionPrompt, "晚间餐食要预订怀石料理（需押金）还是先留白去鸭川居酒屋？")
+        XCTAssertEqual(
+            AmberUnifiedTaskBuilder.resultPreview(from: markdownWithDecision),
+            "京都大德寺下午步行路线已筛查完毕，推荐主走高桐院与龙源院。"
+        )
+
+        // 2. Verify buildTasks distinguishes 等我拍板 / 待你确认 / 执行失败 in needsAttention,
+        // and surfaces usable deliverable conclusions for completed tasks in recent.
+        let hubStore = AmberHubStore(defaults: defaults)
+        let tasksStore = IOSAdvancedTaskStore(userDefaults: defaults)
+        let subAgentStore = IOSSubAgentActivityStore(
+            tasks: tasksStore,
+            defaults: defaults,
+            launchedAt: Date(),
+            loadRuns: { [] }
+        )
+        let wakeStore = IOSWakeTaskStore(fileURL: directory.appendingPathComponent("wake-decision.json"))
+
+        // 2a. SubAgent that finished phase 1 and awaits user decision ([待拍板]) -> needsAttention ("等我拍板")
+        let decisionSubAgentRecord = tasksStore.startTask(
+            id: "thread:conv-kyoto-route",
+            kind: .subAgent,
+            title: "筛选京都大德寺步行与晚餐方案",
+            objective: "完成步行路线初筛并确认晚餐预订"
+        )
+        _ = tasksStore.updateTask(
+            id: decisionSubAgentRecord.id,
+            status: .completed,
+            resultSummary: markdownWithDecision,
+            now: Date().addingTimeInterval(30)
+        )
+        let updatedDecisionRecord = try XCTUnwrap(tasksStore.task(id: decisionSubAgentRecord.id))
+
+        // 2b. SubAgent waiting for tool approval -> needsAttention ("待你确认")
+        let approvalSubAgentRecord = tasksStore.startTask(
+            id: "thread:conv-ssh-approval",
+            kind: .subAgent,
+            title: "生产机防火墙规则变更",
+            objective: "等待授权执行 ufw allow"
+        )
+        _ = tasksStore.updateTask(
+            id: approvalSubAgentRecord.id,
+            status: .approvalRequired,
+            now: Date().addingTimeInterval(20)
+        )
+        let updatedApprovalRecord = try XCTUnwrap(tasksStore.task(id: approvalSubAgentRecord.id))
+
+        // 2c. Advanced remote command that failed and is retryable -> needsAttention ("执行失败")
+        let failedExecRecord = tasksStore.startTask(
+            id: "exec-ssh-jump",
+            kind: .remoteCommand,
+            title: "同步跳板机日志归档",
+            objective: "拉取最近 24h nginx 日志"
+        )
+        _ = tasksStore.updateTask(
+            id: failedExecRecord.id,
+            status: .failed,
+            error: "SSH 私钥格式校验未通过",
+            retryable: true,
+            now: Date().addingTimeInterval(10)
+        )
+
+        // 2d. Completed SubAgent with clean Markdown deliverable -> recent ("已完成" + usable conclusion & bullets)
+        let completedDeliverableMarkdown = """
+        # Settlement Report
+        ## 交付结论
+        已生成机房闪烁异常轻量检测方案，帧间差分过滤可省去 85% 无效算力。
+        1. 预处理：采用 L1 帧间差分阈值 0.04 剔除静止监控片段
+        2. 模型结构：MobileNetV3-Small + 3D 时序卷积头，参数量 1.8M
+        3. 部署方式：导出 CoreML INT8 权重，单帧推理耗时 4.2ms
+        """
+        let completedSubAgentRecord = tasksStore.startTask(
+            id: "thread:conv-video-model",
+            kind: .subAgent,
+            title: "整理机房闪烁检测模型方案",
+            objective: "输出轻量训练与部署参数"
+        )
+        _ = tasksStore.updateTask(
+            id: completedSubAgentRecord.id,
+            status: .completed,
+            resultSummary: completedDeliverableMarkdown,
+            now: Date().addingTimeInterval(5)
+        )
+        let updatedCompletedRecord = try XCTUnwrap(tasksStore.task(id: completedSubAgentRecord.id))
+
+        subAgentStore.reconcile([
+            try XCTUnwrap(IOSSubAgentActivityStore.activity(updatedDecisionRecord)),
+            try XCTUnwrap(IOSSubAgentActivityStore.activity(updatedApprovalRecord)),
+            try XCTUnwrap(IOSSubAgentActivityStore.activity(updatedCompletedRecord))
+        ])
+
+        let groups = AmberUnifiedTaskBuilder.buildTasks(
+            gateway: MacGatewayStore.shared,
+            subAgentStore: subAgentStore,
+            taskStore: tasksStore,
+            wakeStore: wakeStore,
+            hubStore: hubStore
+        )
+
+        let decisionItem = try XCTUnwrap(groups.needsAttention.first { $0.title == "筛选京都大德寺步行与晚餐方案" })
+        XCTAssertEqual(decisionItem.statusText, "等我拍板")
+        XCTAssertTrue(decisionItem.isNeedsDecision)
+        XCTAssertEqual(decisionItem.decisionPrompt, "晚间餐食要预订怀石料理（需押金）还是先留白去鸭川居酒屋？")
+        XCTAssertEqual(decisionItem.deliverableBullets.count, 3)
+        XCTAssertEqual(decisionItem.quickActions.map(\.title), ["拍板继续", "调整方向"])
+        let continuedItem = decisionItem.applyingQuickDecision(decisionItem.quickActions[0])
+        XCTAssertEqual(continuedItem.actionTitle, "拍板继续，按当前前序结论推进下一步")
+
+        let approvalItem = try XCTUnwrap(groups.needsAttention.first { $0.title == "生产机防火墙规则变更" })
+        XCTAssertEqual(approvalItem.statusText, "待你确认")
+        XCTAssertEqual(approvalItem.quickActions.first?.title, "去确认")
+
+        let failedItem = try XCTUnwrap(groups.needsAttention.first { $0.title == "同步跳板机日志归档" })
+        XCTAssertEqual(failedItem.statusText, "执行失败")
+        XCTAssertEqual(failedItem.quickActions.first?.title, "重试")
+
+        let completedItem = try XCTUnwrap(groups.recent.first { $0.title == "整理机房闪烁检测模型方案" })
+        XCTAssertEqual(completedItem.statusText, "已完成")
+        XCTAssertEqual(completedItem.resultText, "已生成机房闪烁异常轻量检测方案，帧间差分过滤可省去 85% 无效算力。")
+        XCTAssertEqual(completedItem.subtitle, "已生成机房闪烁异常轻量检测方案，帧间差分过滤可省去 85% 无效算力。")
+        XCTAssertNotEqual(completedItem.subtitle, "本机后台 · 已完成")
+        XCTAssertEqual(completedItem.deliverableBullets.count, 3)
+        XCTAssertTrue(completedItem.hasDeliverablePreview)
+        XCTAssertEqual(AmberDuetTaskCenterCard.initialRecentPreviewCount, 3)
+    }
 }

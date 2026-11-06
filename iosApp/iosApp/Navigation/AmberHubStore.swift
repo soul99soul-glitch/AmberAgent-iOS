@@ -186,6 +186,56 @@ struct AmberUnifiedTaskFollowup: Equatable, Sendable {
     let cloudRequestId: String?
 }
 
+/// An in-place decision or recovery action offered on a task card in `等你处理`.
+struct AmberTaskQuickDecision: Identifiable, Equatable, Sendable {
+    enum Kind: String, Equatable, Sendable {
+        case approveAndContinue
+        case adjustDirection
+        case confirmApproval
+        case retry
+        case openDetail
+    }
+
+    let id: String
+    let title: String
+    let kind: Kind
+    /// Concrete follow-up instruction passed to the chat composer when selected.
+    let followupInstruction: String?
+
+    init(
+        id: String? = nil,
+        title: String,
+        kind: Kind,
+        followupInstruction: String? = nil
+    ) {
+        self.id = id ?? "\(kind.rawValue):\(title)"
+        self.title = title
+        self.kind = kind
+        self.followupInstruction = followupInstruction
+    }
+
+    var isPrimary: Bool {
+        switch kind {
+        case .approveAndContinue, .confirmApproval, .retry:
+            return true
+        case .adjustDirection, .openDetail:
+            return false
+        }
+    }
+}
+
+/// Structured deliverable summary extracted from a sub-agent or background task's Markdown output.
+struct AmberDeliverableSummary: Equatable, Sendable {
+    /// Clean single-sentence conclusion stripped of internal headers (`# Settlement Report`, etc.).
+    let headline: String?
+    /// 1–3 structured key takeaway bullets ready for direct scanning in the task panel.
+    let bullets: [String]
+    /// Specific question or stage checkpoint awaiting the user's decision, when present.
+    let decisionPrompt: String?
+    /// True when the output explicitly marks a decision checkpoint (`[待拍板]`, `等待拍板`, `needs_decision`, etc.).
+    let needsDecision: Bool
+}
+
 struct AmberUnifiedTaskItem: Identifiable, Equatable {
     enum SourceKind: Equatable {
         case cloudTask(String)
@@ -209,12 +259,52 @@ struct AmberUnifiedTaskItem: Identifiable, Equatable {
     let updatedAt: Date
     /// The most recent real conclusion the owner holds, nil when it has none yet.
     let resultText: String?
+    /// Concrete checkpoint question or prior-stage summary awaiting the user's decision.
+    let decisionPrompt: String?
+    /// Quick decision options offered inline when the task is waiting on the user.
+    let quickActions: [AmberTaskQuickDecision]
+    /// 1–3 structured deliverable takeaways extracted from the result Markdown/summary.
+    let deliverableBullets: [String]
+    /// Full raw Markdown report when available, for the single-layer deliverable preview.
+    let rawResultMarkdown: String?
     let nextRunAt: Date?
     let destination: AmberTaskDestination
     let source: SourceKind
 
     var statusBadgeText: String { statusText }
     var actionTitle: String? { actionButtonTitle }
+
+    var isNeedsDecision: Bool {
+        statusText == "等我拍板" || (decisionPrompt?.isEmpty == false)
+    }
+
+    var hasDeliverablePreview: Bool {
+        (resultText?.isEmpty == false)
+            || !deliverableBullets.isEmpty
+            || (rawResultMarkdown?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+    }
+
+    func applyingQuickDecision(_ decision: AmberTaskQuickDecision) -> AmberUnifiedTaskItem {
+        AmberUnifiedTaskItem(
+            id: id,
+            title: title,
+            subtitle: subtitle,
+            statusText: statusText,
+            actionButtonTitle: decision.followupInstruction ?? decision.title,
+            phase: phase,
+            ownership: ownership,
+            hubId: hubId,
+            updatedAt: updatedAt,
+            resultText: resultText,
+            decisionPrompt: decisionPrompt,
+            quickActions: quickActions,
+            deliverableBullets: deliverableBullets,
+            rawResultMarkdown: rawResultMarkdown,
+            nextRunAt: nextRunAt,
+            destination: destination,
+            source: source
+        )
+    }
 
     init(
         id: String,
@@ -227,6 +317,10 @@ struct AmberUnifiedTaskItem: Identifiable, Equatable {
         hubId: String? = nil,
         updatedAt: Date = Date(),
         resultText: String? = nil,
+        decisionPrompt: String? = nil,
+        quickActions: [AmberTaskQuickDecision] = [],
+        deliverableBullets: [String] = [],
+        rawResultMarkdown: String? = nil,
         nextRunAt: Date? = nil,
         destination: AmberTaskDestination = .none,
         source: SourceKind
@@ -241,6 +335,10 @@ struct AmberUnifiedTaskItem: Identifiable, Equatable {
         self.hubId = hubId
         self.updatedAt = updatedAt
         self.resultText = resultText
+        self.decisionPrompt = decisionPrompt
+        self.quickActions = quickActions
+        self.deliverableBullets = deliverableBullets
+        self.rawResultMarkdown = rawResultMarkdown
         self.nextRunAt = nextRunAt
         self.destination = destination
         self.source = source
@@ -605,22 +703,50 @@ enum AmberUnifiedTaskBuilder {
 
         // 1. Cloud work items the user explicitly handed off (/v2/work-items).
         for record in gateway.cloudTasks {
+            let rawMarkdown = record.detail?.resultMarkdown
+            let progressText = record.effectiveWorkItem?.progress
+            let summary = Self.extractDeliverableSummary(from: rawMarkdown ?? progressText)
+            let progressDecision = Self.extractDeliverableSummary(from: progressText)
+            let isAwaitingDecision = record.state == .waiting
+                || summary.needsDecision
+                || progressDecision.needsDecision
+
             let phase: AmberUnifiedTaskPhase
             let statusText: String
             let subtitle: String
             var actionTitle: String? = nil
+            var decisionPrompt: String? = nil
+            var quickActions: [AmberTaskQuickDecision] = []
 
             if record.needsSubmissionRetry {
                 phase = .needsAttention
                 statusText = "提交未完成"
                 subtitle = (record.lastError ?? "网络超时，请求 ID 已保留") + " · 云端"
                 actionTitle = "重试"
+                quickActions = Self.failureQuickActions(primaryTitle: "重试")
             } else if record.state == .failed {
                 phase = .needsAttention
                 statusText = "执行失败"
                 let reason = Self.compactReason(record.detail?.failure ?? record.lastError ?? "云端执行异常")
                 subtitle = "\(reason) · 云端"
-                actionTitle = Self.suggestedActionButtonTitle(for: record.displayTitle, reason: reason)
+                let suggested = Self.suggestedActionButtonTitle(for: record.displayTitle, reason: reason)
+                actionTitle = suggested
+                quickActions = Self.failureQuickActions(primaryTitle: suggested)
+            } else if isAwaitingDecision && record.state != .cancelled {
+                phase = .needsAttention
+                statusText = "等我拍板"
+                decisionPrompt = summary.decisionPrompt
+                    ?? progressDecision.decisionPrompt
+                    ?? summary.headline
+                    ?? progressDecision.headline
+                    ?? "前序步骤已完成，等待拍板"
+                let stageSummary = summary.headline
+                    ?? progressDecision.headline
+                    ?? progressText
+                    ?? "前序阶段已就绪"
+                subtitle = "\(stageSummary) · 云端"
+                actionTitle = "拍板继续"
+                quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
             } else if record.state == .cancelled {
                 phase = .cancelled
                 statusText = "已取消"
@@ -628,7 +754,11 @@ enum AmberUnifiedTaskBuilder {
             } else if record.state == .completed {
                 phase = .completed
                 statusText = "已完成"
-                subtitle = "云端后台 · 已完成"
+                if let headline = summary.headline, !headline.isEmpty {
+                    subtitle = headline
+                } else {
+                    subtitle = "云端后台 · 已完成"
+                }
             } else if gateway.busyCloudTaskIds.contains(record.requestId) {
                 phase = .running
                 statusText = "停止请求中"
@@ -640,7 +770,7 @@ enum AmberUnifiedTaskBuilder {
             } else {
                 phase = .running
                 statusText = "运行中"
-                if let progress = record.effectiveWorkItem?.progress, !progress.isEmpty {
+                if let progress = progressText, !progress.isEmpty {
                     subtitle = "云端后台 · \(progress)"
                 } else {
                     subtitle = "云端后台 · \(record.state?.displayTitle ?? "执行中")"
@@ -660,7 +790,11 @@ enum AmberUnifiedTaskBuilder {
                     ownership: .delegated,
                     hubId: matchedHubId,
                     updatedAt: record.updatedAt,
-                    resultText: Self.resultPreview(from: record.detail?.resultMarkdown),
+                    resultText: summary.headline ?? Self.resultPreview(from: rawMarkdown),
+                    decisionPrompt: decisionPrompt,
+                    quickActions: quickActions,
+                    deliverableBullets: summary.bullets,
+                    rawResultMarkdown: rawMarkdown,
                     destination: .cloudTaskDetail(requestId: record.requestId),
                     source: .cloudTask(record.requestId)
                 )
@@ -674,24 +808,79 @@ enum AmberUnifiedTaskBuilder {
             let resolvedTitle = backingRecord?.title.trimmingCharacters(in: .whitespacesAndNewlines)
             let displayTitle = (resolvedTitle?.isEmpty == false) ? resolvedTitle! : item.title
             guard seenTitles.insert(displayTitle).inserted else { continue }
+
+            let outcome = backingRecord.flatMap { $0.resultSummary.isEmpty ? nil : $0.resultSummary }
+                ?? backingRecord.flatMap { $0.logTail.isEmpty ? nil : $0.logTail }
+            let summary = Self.extractDeliverableSummary(from: outcome ?? item.statusDetail)
+            let detailSummary = Self.extractDeliverableSummary(from: item.statusDetail)
+            let metadataDecision = backingRecord?.metadata["decision_prompt"]
+                ?? backingRecord?.metadata["checkpoint"]
+            let metadataNeedsDecision = (backingRecord?.metadata["needs_decision"]?.lowercased() == "true")
+                || (metadataDecision?.isEmpty == false)
+            let hasDecisionCheckpoint = metadataNeedsDecision
+                || summary.needsDecision
+                || detailSummary.needsDecision
+
             let phase: AmberUnifiedTaskPhase
             let statusText: String
             var actionTitle: String? = nil
+            var decisionPrompt: String? = nil
+            var quickActions: [AmberTaskQuickDecision] = []
+
             switch item.status {
             case .queued:
-                phase = .running
-                statusText = "已受理"
+                if hasDecisionCheckpoint {
+                    phase = .needsAttention
+                    statusText = "等我拍板"
+                    actionTitle = "拍板继续"
+                } else {
+                    phase = .running
+                    statusText = "已受理"
+                }
             case .running:
-                phase = .running
-                statusText = "运行中"
+                if hasDecisionCheckpoint {
+                    phase = .needsAttention
+                    statusText = "等我拍板"
+                    actionTitle = "拍板继续"
+                } else {
+                    phase = .running
+                    statusText = "运行中"
+                }
             case .approvalRequired:
                 phase = .needsAttention
-                statusText = "待你确认"
-                actionTitle = "去确认"
+                if hasDecisionCheckpoint {
+                    statusText = "等我拍板"
+                    actionTitle = "拍板继续"
+                } else {
+                    statusText = "待你确认"
+                    actionTitle = "去确认"
+                    quickActions = Self.approvalQuickActions()
+                }
+            case .interrupted:
+                phase = .needsAttention
+                statusText = "等我拍板"
+                actionTitle = "拍板继续"
             case .completed:
-                phase = .completed
-                statusText = "已完成"
-            case .failed, .timedOut, .interrupted:
+                if hasDecisionCheckpoint {
+                    phase = .needsAttention
+                    statusText = "等我拍板"
+                    actionTitle = "拍板继续"
+                } else {
+                    phase = .completed
+                    statusText = "已完成"
+                }
+            case .failed:
+                if backingRecord?.retryable == true {
+                    phase = .needsAttention
+                    statusText = "执行失败"
+                    actionTitle = "重试"
+                    quickActions = Self.failureQuickActions(primaryTitle: "重试")
+                } else {
+                    phase = .timedOutOrFailedTerminal
+                    statusText = "执行失败"
+                    actionTitle = "重试"
+                }
+            case .timedOut:
                 phase = .timedOutOrFailedTerminal
                 statusText = item.statusTitle
                 actionTitle = "重试"
@@ -699,8 +888,32 @@ enum AmberUnifiedTaskBuilder {
                 phase = .cancelled
                 statusText = "已取消"
             }
+
+            if statusText == "等我拍板" {
+                decisionPrompt = metadataDecision
+                    ?? summary.decisionPrompt
+                    ?? detailSummary.decisionPrompt
+                    ?? summary.headline
+                    ?? detailSummary.headline
+                    ?? backingRecord?.objective
+                    ?? "前序步骤已完成，等待拍板"
+                quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
+            }
+
             let subagentSubtitle: String
-            if let detail = item.statusDetail, !detail.isEmpty {
+            if statusText == "等我拍板" {
+                if let headline = summary.headline, !headline.isEmpty, headline != decisionPrompt {
+                    subagentSubtitle = headline
+                } else if let objective = backingRecord?.objective.trimmingCharacters(in: .whitespacesAndNewlines),
+                          !objective.isEmpty,
+                          objective != displayTitle {
+                    subagentSubtitle = "\(objective) · 本机后台"
+                } else {
+                    subagentSubtitle = "前序步骤已就绪 · 本机后台"
+                }
+            } else if phase == .completed, let headline = summary.headline, !headline.isEmpty {
+                subagentSubtitle = headline
+            } else if let detail = item.statusDetail, !detail.isEmpty {
                 subagentSubtitle = detail
             } else if let objective = backingRecord?.objective.trimmingCharacters(in: .whitespacesAndNewlines),
                       !objective.isEmpty,
@@ -709,7 +922,7 @@ enum AmberUnifiedTaskBuilder {
             } else {
                 subagentSubtitle = "本机后台 · \(item.statusTitle)"
             }
-            let outcome = backingRecord.flatMap { $0.resultSummary.isEmpty ? nil : $0.resultSummary }
+
             all.append(
                 AmberUnifiedTaskItem(
                     id: "subagent:\(item.id)",
@@ -721,7 +934,11 @@ enum AmberUnifiedTaskBuilder {
                     ownership: .backgroundRun,
                     hubId: defaultHubId,
                     updatedAt: item.endedAt ?? item.startedAt,
-                    resultText: Self.resultPreview(from: outcome ?? backingRecord?.error),
+                    resultText: summary.headline ?? Self.resultPreview(from: outcome ?? backingRecord?.error),
+                    decisionPrompt: decisionPrompt,
+                    quickActions: quickActions,
+                    deliverableBullets: summary.bullets,
+                    rawResultMarkdown: outcome,
                     destination: Self.subAgentDestination(taskId: item.taskId),
                     source: .localSubAgent(item.id)
                 )
@@ -734,29 +951,106 @@ enum AmberUnifiedTaskBuilder {
         for record in taskStore.tasks
         where record.kind != .subAgent && record.kind != .toolApproval {
             guard seenTitles.insert(record.title).inserted else { continue }
+            let outcome = record.resultSummary.isEmpty ? (record.logTail.isEmpty ? nil : record.logTail) : record.resultSummary
+            let summary = Self.extractDeliverableSummary(from: outcome)
+            let metadataDecision = record.metadata["decision_prompt"] ?? record.metadata["checkpoint"]
+            let hasDecisionCheckpoint = (record.metadata["needs_decision"]?.lowercased() == "true")
+                || (metadataDecision?.isEmpty == false)
+                || summary.needsDecision
+
             let phase: AmberUnifiedTaskPhase
+            let statusText: String
+            var actionTitle: String? = record.canRetry ? "重试" : nil
+            var decisionPrompt: String? = nil
+            var quickActions: [AmberTaskQuickDecision] = []
+
             switch record.status {
-            case .queued: phase = .running
-            case .running: phase = .running
-            case .approvalRequired: phase = .needsAttention
-            case .completed: phase = .completed
-            case .failed, .timedOut: phase = .timedOutOrFailedTerminal
-            case .interrupted: phase = .needsAttention
-            case .cancelled: phase = .cancelled
+            case .queued, .running:
+                if hasDecisionCheckpoint {
+                    phase = .needsAttention
+                    statusText = "等我拍板"
+                    actionTitle = "拍板继续"
+                } else {
+                    phase = .running
+                    statusText = record.status.title
+                }
+            case .approvalRequired:
+                phase = .needsAttention
+                if hasDecisionCheckpoint {
+                    statusText = "等我拍板"
+                    actionTitle = "拍板继续"
+                } else {
+                    statusText = "待你确认"
+                    actionTitle = "去确认"
+                    quickActions = Self.approvalQuickActions()
+                }
+            case .interrupted:
+                phase = .needsAttention
+                statusText = "等我拍板"
+                actionTitle = "拍板继续"
+            case .completed:
+                if hasDecisionCheckpoint {
+                    phase = .needsAttention
+                    statusText = "等我拍板"
+                    actionTitle = "拍板继续"
+                } else {
+                    phase = .completed
+                    statusText = "已完成"
+                }
+            case .failed:
+                if record.retryable {
+                    phase = .needsAttention
+                    statusText = "执行失败"
+                    actionTitle = "重试"
+                    quickActions = Self.failureQuickActions(primaryTitle: "重试")
+                } else {
+                    phase = .timedOutOrFailedTerminal
+                    statusText = "执行失败"
+                }
+            case .timedOut:
+                phase = .timedOutOrFailedTerminal
+                statusText = record.status.title
+            case .cancelled:
+                phase = .cancelled
+                statusText = "已取消"
             }
-            let outcome = record.resultSummary.isEmpty ? nil : record.resultSummary
+
+            if statusText == "等我拍板" {
+                decisionPrompt = metadataDecision
+                    ?? summary.decisionPrompt
+                    ?? summary.headline
+                    ?? (record.objective.isEmpty ? nil : record.objective)
+                    ?? "前序步骤已完成，等待拍板"
+                quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
+            }
+
+            let execSubtitle: String
+            if phase == .completed, let headline = summary.headline, !headline.isEmpty {
+                execSubtitle = headline
+            } else if statusText == "等我拍板", let headline = summary.headline, !headline.isEmpty, headline != decisionPrompt {
+                execSubtitle = "\(record.kind.title) · \(headline)"
+            } else if statusText == "执行失败", !record.error.isEmpty {
+                execSubtitle = "\(Self.compactReason(record.error)) · \(record.kind.title)"
+            } else {
+                execSubtitle = "\(record.kind.title) · \(record.status.title)"
+            }
+
             all.append(
                 AmberUnifiedTaskItem(
                     id: "exec:\(record.id)",
                     title: record.title,
-                    subtitle: "\(record.kind.title) · \(record.status.title)",
-                    statusText: record.status.title,
-                    actionButtonTitle: record.canRetry ? "重试" : nil,
+                    subtitle: execSubtitle,
+                    statusText: statusText,
+                    actionButtonTitle: actionTitle,
                     phase: phase,
                     ownership: .backgroundRun,
                     hubId: defaultHubId,
                     updatedAt: record.updatedAt,
-                    resultText: Self.resultPreview(from: outcome ?? record.error),
+                    resultText: summary.headline ?? Self.resultPreview(from: outcome ?? record.error),
+                    decisionPrompt: decisionPrompt,
+                    quickActions: quickActions,
+                    deliverableBullets: summary.bullets,
+                    rawResultMarkdown: outcome,
                     destination: .executionRecord(recordId: record.id),
                     source: .executionRecord(record.id)
                 )
@@ -765,18 +1059,66 @@ enum AmberUnifiedTaskBuilder {
 
         // 4. iOS-local scheduled and event-driven monitoring work.
         for task in wakeStore.tasks {
-            let phase: AmberUnifiedTaskPhase
-            switch task.status {
-            case .scheduled: phase = .scheduled
-            case .running: phase = .running
-            case .completed: phase = .completed
-            case .failed: phase = .timedOutOrFailedTerminal
-            case .cancelled: phase = .cancelled
-            case .interrupted: phase = .needsAttention
-            }
             let detail = task.lastMessage ?? task.resultText
+            let summary = Self.extractDeliverableSummary(from: task.resultText ?? task.lastMessage)
+            let hasDecisionCheckpoint = summary.needsDecision
+
+            let phase: AmberUnifiedTaskPhase
+            let statusText: String
+            var actionTitle: String? = nil
+            var decisionPrompt: String? = nil
+            var quickActions: [AmberTaskQuickDecision] = []
+
+            switch task.status {
+            case .scheduled:
+                phase = .scheduled
+                statusText = task.status.title
+            case .running:
+                if hasDecisionCheckpoint {
+                    phase = .needsAttention
+                    statusText = "等我拍板"
+                    actionTitle = "拍板继续"
+                } else {
+                    phase = .running
+                    statusText = task.status.title
+                }
+            case .completed:
+                if hasDecisionCheckpoint {
+                    phase = .needsAttention
+                    statusText = "等我拍板"
+                    actionTitle = "拍板继续"
+                } else {
+                    phase = .completed
+                    statusText = "已完成"
+                }
+            case .failed:
+                phase = .timedOutOrFailedTerminal
+                statusText = "执行失败"
+                actionTitle = "重试"
+            case .cancelled:
+                phase = .cancelled
+                statusText = "已取消"
+            case .interrupted:
+                phase = .needsAttention
+                statusText = "等我拍板"
+                actionTitle = hasDecisionCheckpoint ? "拍板继续" : "重新安排"
+            }
+
+            if statusText == "等我拍板" {
+                decisionPrompt = summary.decisionPrompt
+                    ?? summary.headline
+                    ?? detail
+                    ?? "定时任务中断或跑完前序步骤，等待拍板"
+                quickActions = Self.decisionQuickActions(
+                    decisionPrompt: decisionPrompt,
+                    primaryTitle: actionTitle ?? "拍板继续"
+                )
+            }
+
             let subtitle: String
-            if let detail, !detail.isEmpty {
+            if phase == .completed, let headline = summary.headline, !headline.isEmpty {
+                subtitle = headline
+            } else if let detail, !detail.isEmpty {
                 subtitle = "\(Self.compactReason(detail)) · 本机定时"
             } else if task.event != nil {
                 subtitle = "等待「\(task.event!)」触发 · 本机定时"
@@ -789,13 +1131,17 @@ enum AmberUnifiedTaskBuilder {
                     id: "wake:\(task.id)",
                     title: task.title,
                     subtitle: subtitle,
-                    statusText: task.status.title,
-                    actionButtonTitle: phase == .needsAttention ? "重新安排" : nil,
+                    statusText: statusText,
+                    actionButtonTitle: actionTitle,
                     phase: phase,
                     ownership: .scheduledMonitor,
                     hubId: defaultHubId,
                     updatedAt: task.finishedAt ?? task.startedAt ?? task.createdAt,
-                    resultText: Self.resultPreview(from: task.resultText),
+                    resultText: summary.headline ?? Self.resultPreview(from: task.resultText),
+                    decisionPrompt: decisionPrompt,
+                    quickActions: quickActions,
+                    deliverableBullets: summary.bullets,
+                    rawResultMarkdown: task.resultText,
                     nextRunAt: phase == .scheduled ? task.fireAt : nil,
                     destination: .wakeConversation(conversationId: task.conversationID),
                     source: .wakeTask(task.id)
@@ -808,6 +1154,7 @@ enum AmberUnifiedTaskBuilder {
         for schedule in gateway.schedules ?? [] {
             let phase: AmberUnifiedTaskPhase = schedule.running ? .running
                 : (schedule.enabled ? .scheduled : .cancelled)
+            let summary = Self.extractDeliverableSummary(from: schedule.lastStatus)
             seenTitles.insert(schedule.name)
             all.append(
                 AmberUnifiedTaskItem(
@@ -820,7 +1167,9 @@ enum AmberUnifiedTaskBuilder {
                     ownership: .scheduledMonitor,
                     hubId: defaultHubId,
                     updatedAt: schedule.lastRunAt ?? schedule.nextRunAt ?? Date(timeIntervalSince1970: 0),
-                    resultText: schedule.lastStatus,
+                    resultText: summary.headline ?? schedule.lastStatus,
+                    deliverableBullets: summary.bullets,
+                    rawResultMarkdown: schedule.lastStatus,
                     nextRunAt: schedule.enabled ? schedule.nextRunAt : nil,
                     destination: .macBoard,
                     source: .gatewaySchedule(schedule.id)
@@ -831,16 +1180,38 @@ enum AmberUnifiedTaskBuilder {
         // 6. Mac board runs and agent sessions.
         for boardItem in gateway.boardItems where boardItem.kind != .schedule {
             guard seenTitles.insert(boardItem.title).inserted else { continue }
+            let summary = Self.extractDeliverableSummary(from: boardItem.detail)
             let phase: AmberUnifiedTaskPhase
             switch boardItem.column {
             case .needsYou: phase = .needsAttention
-            case .running: phase = .running
+            case .running: phase = summary.needsDecision ? .needsAttention : .running
             case .scheduled: phase = .scheduled
-            case .done: phase = boardItem.failed ? .timedOutOrFailedTerminal : .completed
+            case .done:
+                if boardItem.failed {
+                    phase = .timedOutOrFailedTerminal
+                } else if summary.needsDecision {
+                    phase = .needsAttention
+                } else {
+                    phase = .completed
+                }
             }
             let statusText: String
+            var decisionPrompt: String? = nil
+            var quickActions: [AmberTaskQuickDecision] = []
+            var actionTitle: String? = nil
+
             switch phase {
-            case .needsAttention: statusText = boardItem.approval != nil ? "待你确认" : "待你处理"
+            case .needsAttention:
+                if boardItem.approval != nil {
+                    statusText = "待你确认"
+                    actionTitle = "去确认"
+                    quickActions = Self.approvalQuickActions()
+                } else {
+                    statusText = "等我拍板"
+                    actionTitle = "拍板继续"
+                    decisionPrompt = summary.decisionPrompt ?? summary.headline ?? (boardItem.detail.isEmpty ? nil : boardItem.detail)
+                    quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
+                }
             case .running: statusText = "运行中"
             case .scheduled: statusText = "已排定"
             case .completed: statusText = "已完成"
@@ -853,11 +1224,16 @@ enum AmberUnifiedTaskBuilder {
                     title: boardItem.title,
                     subtitle: boardItem.detail.isEmpty ? "Mac" : "\(boardItem.detail) · Mac",
                     statusText: statusText,
-                    actionButtonTitle: phase == .needsAttention ? "去处理" : nil,
+                    actionButtonTitle: actionTitle,
                     phase: phase,
                     ownership: .backgroundRun,
                     hubId: defaultHubId,
                     updatedAt: boardItem.updatedAt,
+                    resultText: phase == .completed ? summary.headline : nil,
+                    decisionPrompt: decisionPrompt,
+                    quickActions: quickActions,
+                    deliverableBullets: summary.bullets,
+                    rawResultMarkdown: boardItem.detail.isEmpty ? nil : boardItem.detail,
                     nextRunAt: boardItem.nextRunAt,
                     destination: .macBoard,
                     source: .gatewayBoardItem(boardItem.id)
@@ -898,6 +1274,7 @@ enum AmberUnifiedTaskBuilder {
 
     static let recentLimit = 8
     static let resultPreviewLimit = 90
+    static let deliverableBulletLimit = 3
 
     /// Status colour carries meaning only: accent for live work, amber for a
     /// wait on the user, red for a real failure, green for a finished result.
@@ -919,18 +1296,294 @@ enum AmberUnifiedTaskBuilder {
         }
     }
 
-    /// The first real line of a stored result, or nil when there is nothing yet.
-    static func resultPreview(from raw: String?) -> String? {
-        guard let raw else { return nil }
-        for line in raw.split(whereSeparator: \.isNewline) {
-            let trimmed = line
-                .replacingOccurrences(of: "#", with: "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty || trimmed.hasPrefix("Settlement Report") { continue }
-            return trimmed.count > resultPreviewLimit
-                ? String(trimmed.prefix(resultPreviewLimit)) + "…" : trimmed
+    @MainActor
+    static func statusColor(for item: AmberUnifiedTaskItem) -> Color {
+        if item.phase == .needsAttention && item.statusText == "执行失败" {
+            return AmberTheme.accentRed
         }
-        return nil
+        return statusColor(for: item.phase)
+    }
+
+    /// Extracts a structured deliverable summary (clean headline, 1–3 takeaway bullets,
+    /// and any checkpoint decision prompt) from a sub-agent or background task's Markdown output.
+    static func extractDeliverableSummary(from raw: String?) -> AmberDeliverableSummary {
+        guard let raw else {
+            return AmberDeliverableSummary(headline: nil, bullets: [], decisionPrompt: nil, needsDecision: false)
+        }
+        let trimmedRaw = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedRaw.isEmpty else {
+            return AmberDeliverableSummary(headline: nil, bullets: [], decisionPrompt: nil, needsDecision: false)
+        }
+
+        let overallNeedsDecision = containsDecisionMarker(trimmedRaw)
+        var headline: String? = nil
+        var explicitBullets: [String] = []
+        var paragraphSentences: [String] = []
+        var decisionPrompt: String? = nil
+        var fallbackHeading: String? = nil
+        var inCodeBlock = false
+
+        for rawLine in trimmedRaw.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix("```") {
+                inCodeBlock.toggle()
+                continue
+            }
+            if inCodeBlock || line.isEmpty { continue }
+            if isHorizontalRule(line) || isInternalHeaderLine(line) { continue }
+
+            let isHeading = line.hasPrefix("#")
+            let isBullet = isMarkdownBulletLine(line)
+            let lineHasDecisionMarker = containsDecisionMarker(line)
+            let cleaned = cleanMarkdownLine(line)
+            guard !cleaned.isEmpty else { continue }
+
+            if lineHasDecisionMarker {
+                let strippedDecision = stripDecisionPrefix(from: cleaned)
+                if !strippedDecision.isEmpty && !isGenericSectionHeading(strippedDecision) {
+                    if decisionPrompt == nil {
+                        decisionPrompt = truncateText(strippedDecision, limit: resultPreviewLimit)
+                    }
+                    continue
+                }
+            }
+
+            if isHeading {
+                if !isGenericSectionHeading(cleaned) && fallbackHeading == nil {
+                    fallbackHeading = truncateText(cleaned, limit: resultPreviewLimit)
+                }
+                continue
+            }
+
+            if isBullet {
+                let itemText = truncateText(cleaned, limit: resultPreviewLimit)
+                if !itemText.isEmpty && !explicitBullets.contains(itemText) {
+                    explicitBullets.append(itemText)
+                }
+                continue
+            }
+
+            if overallNeedsDecision && decisionPrompt == nil && (cleaned.hasSuffix("？") || cleaned.hasSuffix("?")) {
+                decisionPrompt = truncateText(cleaned, limit: resultPreviewLimit)
+                continue
+            }
+
+            if headline == nil {
+                headline = truncateText(cleaned, limit: resultPreviewLimit)
+            }
+            for clause in splitIntoReadablePoints(cleaned) {
+                let point = truncateText(clause, limit: resultPreviewLimit)
+                if !point.isEmpty && !paragraphSentences.contains(point) {
+                    paragraphSentences.append(point)
+                }
+            }
+        }
+
+        let resolvedHeadline = headline
+            ?? explicitBullets.first
+            ?? fallbackHeading
+            ?? decisionPrompt
+
+        var resolvedBullets: [String] = []
+        if !explicitBullets.isEmpty {
+            resolvedBullets = Array(explicitBullets.prefix(deliverableBulletLimit))
+        } else if paragraphSentences.count > 1 {
+            resolvedBullets = Array(paragraphSentences.prefix(deliverableBulletLimit))
+        } else if let firstParagraph = paragraphSentences.first {
+            resolvedBullets = [firstParagraph]
+        } else if let resolvedHeadline {
+            resolvedBullets = [resolvedHeadline]
+        }
+
+        return AmberDeliverableSummary(
+            headline: resolvedHeadline,
+            bullets: resolvedBullets,
+            decisionPrompt: decisionPrompt,
+            needsDecision: overallNeedsDecision
+        )
+    }
+
+    /// The first real conclusion line of a stored result, or nil when there is nothing yet.
+    static func resultPreview(from raw: String?) -> String? {
+        extractDeliverableSummary(from: raw).headline
+    }
+
+    static func containsDecisionMarker(_ text: String?) -> Bool {
+        guard let text, !text.isEmpty else { return false }
+        let lower = text.lowercased()
+        let markers = [
+            "[待拍板]",
+            "【待拍板】",
+            "等待拍板",
+            "等我拍板",
+            "等你拍板",
+            "待你拍板",
+            "请拍板",
+            "需要拍板",
+            "需你拍板",
+            "待拍板：",
+            "待拍板:",
+            "needs_decision",
+            "[needs_decision]",
+            "awaiting_decision",
+            "[checkpoint]",
+            "checkpoint:",
+            "前序阶段完成",
+            "前序阶段已完成",
+            "前序步骤已完成",
+            "阶段完成待确认"
+        ]
+        return markers.contains { lower.contains($0) }
+    }
+
+    static func decisionQuickActions(
+        decisionPrompt: String?,
+        primaryTitle: String = "拍板继续"
+    ) -> [AmberTaskQuickDecision] {
+        [
+            AmberTaskQuickDecision(
+                title: primaryTitle,
+                kind: .approveAndContinue,
+                followupInstruction: "拍板继续，按当前前序结论推进下一步"
+            ),
+            AmberTaskQuickDecision(
+                title: "调整方向",
+                kind: .adjustDirection,
+                followupInstruction: "调整方向，先按以下补充要求修改"
+            )
+        ]
+    }
+
+    static func approvalQuickActions() -> [AmberTaskQuickDecision] {
+        [
+            AmberTaskQuickDecision(
+                title: "去确认",
+                kind: .confirmApproval,
+                followupInstruction: "确认授权并继续执行"
+            ),
+            AmberTaskQuickDecision(
+                title: "调整方向",
+                kind: .adjustDirection,
+                followupInstruction: "暂不授权，先调整执行方向"
+            )
+        ]
+    }
+
+    static func failureQuickActions(primaryTitle: String) -> [AmberTaskQuickDecision] {
+        [
+            AmberTaskQuickDecision(
+                title: primaryTitle,
+                kind: .retry,
+                followupInstruction: primaryTitle
+            ),
+            AmberTaskQuickDecision(
+                title: "调整方向",
+                kind: .adjustDirection,
+                followupInstruction: "换一种方案处理"
+            )
+        ]
+    }
+
+    private static func isHorizontalRule(_ line: String) -> Bool {
+        let stripped = line.replacingOccurrences(of: " ", with: "")
+        return stripped == "---" || stripped == "***" || stripped == "___"
+    }
+
+    private static func isInternalHeaderLine(_ line: String) -> Bool {
+        let cleaned = line
+            .replacingOccurrences(of: "#", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return cleaned.hasPrefix("settlement report")
+            || cleaned == "subagent report"
+            || cleaned == "task report"
+            || cleaned.hasPrefix("[subagent")
+            || cleaned.hasPrefix("<amber-")
+    }
+
+    private static func isGenericSectionHeading(_ text: String) -> Bool {
+        let normalized = text
+            .trimmingCharacters(in: CharacterSet(charactersIn: "：: \t"))
+            .lowercased()
+        let genericHeadings: Set<String> = [
+            "核心结论", "结论", "结论摘要", "交付结论", "交付要点", "核心要点",
+            "执行结果", "任务结果", "总结", "摘要", "待拍板", "等我拍板",
+            "需要拍板", "下一步", "summary", "conclusion", "deliverables", "key findings"
+        ]
+        return genericHeadings.contains(normalized)
+    }
+
+    private static func isMarkdownBulletLine(_ line: String) -> Bool {
+        if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("• ") || line.hasPrefix("+ ") {
+            return true
+        }
+        guard let firstSpace = line.firstIndex(of: " ") else { return false }
+        let prefix = line[..<firstSpace]
+        guard prefix.hasSuffix(".") || prefix.hasSuffix(")") || prefix.hasSuffix("、") else {
+            return false
+        }
+        let digits = prefix.dropLast()
+        return !digits.isEmpty && digits.allSatisfy(\.isNumber)
+    }
+
+    private static func cleanMarkdownLine(_ line: String) -> String {
+        var text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        while text.hasPrefix("#") || text.hasPrefix(">") {
+            text = String(text.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if text.hasPrefix("- [ ] ") || text.hasPrefix("- [x] ") || text.hasPrefix("- [X] ") {
+            text = String(text.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if text.hasPrefix("- ") || text.hasPrefix("* ") || text.hasPrefix("• ") || text.hasPrefix("+ ") {
+            text = String(text.dropFirst(2)).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if let firstSpace = text.firstIndex(of: " ") {
+            let prefix = text[..<firstSpace]
+            if (prefix.hasSuffix(".") || prefix.hasSuffix(")") || prefix.hasSuffix("、")),
+               !prefix.dropLast().isEmpty,
+               prefix.dropLast().allSatisfy(\.isNumber) {
+                text = String(text[text.index(after: firstSpace)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        text = text
+            .replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "__", with: "")
+            .replacingOccurrences(of: "`", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return text
+    }
+
+    private static func stripDecisionPrefix(from text: String) -> String {
+        var result = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefixes = [
+            "[待拍板]", "【待拍板】", "[等我拍板]", "【等我拍板】",
+            "[needs_decision]", "[NEEDS_DECISION]", "[checkpoint]", "[CHECKPOINT]",
+            "待拍板：", "待拍板:", "等我拍板：", "等我拍板:", "等待拍板：", "等待拍板:",
+            "请拍板：", "请拍板:", "需要拍板：", "需要拍板:", "需你拍板：", "需你拍板:",
+            "needs_decision:", "NEEDS_DECISION:", "checkpoint:", "Checkpoint:"
+        ]
+        var changed = true
+        while changed {
+            changed = false
+            for prefix in prefixes where result.lowercased().hasPrefix(prefix.lowercased()) {
+                result = String(result.dropFirst(prefix.count))
+                    .trimmingCharacters(in: CharacterSet(charactersIn: " ：:·-—\t"))
+                changed = true
+            }
+        }
+        return result
+    }
+
+    private static func splitIntoReadablePoints(_ line: String) -> [String] {
+        let clauses = line
+            .split(whereSeparator: { $0 == "；" || $0 == ";" || $0 == "。" })
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return clauses.isEmpty ? [line] : clauses
+    }
+
+    private static func truncateText(_ text: String, limit: Int) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > limit else { return trimmed }
+        return String(trimmed.prefix(limit)) + "…"
     }
 
     static func recentSummaryText(_ recent: [AmberUnifiedTaskItem]) -> String {

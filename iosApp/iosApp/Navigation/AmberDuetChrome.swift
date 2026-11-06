@@ -498,14 +498,19 @@ struct AmberDuetTaskCenterCard: View {
     var taskStore: IOSAdvancedTaskStore = .shared
     var wakeStore: IOSWakeTaskStore = .shared
     var hubStore: AmberHubStore = .shared
+    var isEmbeddedInModalSheet: Bool = false
     let onOpenFullTaskBoard: () -> Void
     var onOpenTask: ((AmberUnifiedTaskItem) -> Void)? = nil
     var onFollowupTask: ((AmberUnifiedTaskItem) -> Void)? = nil
     var onDismissPanel: (() -> Void)? = nil
 
+    static let initialRecentPreviewCount = 3
+
     @State private var selectedHubFilterId: String? = nil
     @State private var isRecentExpanded: Bool = false
     @State private var selectedCloudTask: AmberCloudTaskSelection? = nil
+    @State private var selectedDeliverableTask: AmberUnifiedTaskItem? = nil
+    @State private var inlineDeliverableTask: AmberUnifiedTaskItem? = nil
 
     private var groups: AmberUnifiedTaskBuilder.Groups {
         AmberUnifiedTaskBuilder.buildTasks(
@@ -531,7 +536,24 @@ struct AmberDuetTaskCenterCard: View {
         VStack(alignment: .leading, spacing: 20) {
             header
 
-            if current.isEmpty {
+            if let inlineTask = inlineDeliverableTask {
+                AmberTaskDeliverablePreviewContent(
+                    item: inlineTask,
+                    onBack: {
+                        withAnimation(.snappy(duration: 0.2)) {
+                            inlineDeliverableTask = nil
+                        }
+                    },
+                    onOpenDestination: { task in
+                        inlineDeliverableTask = nil
+                        openDestinationDirectly(task)
+                    },
+                    onQuickDecision: { task, decision in
+                        inlineDeliverableTask = nil
+                        handleQuickDecision(decision, for: task)
+                    }
+                )
+            } else if current.isEmpty {
                 emptyState
             } else {
                 VStack(alignment: .leading, spacing: 18) {
@@ -563,6 +585,18 @@ struct AmberDuetTaskCenterCard: View {
         .accessibilityIdentifier("chat.duet.tasksPanel")
         .sheet(item: $selectedCloudTask) { selection in
             MacGatewayCloudTaskDetailSheet(store: gateway, requestId: selection.requestId)
+        }
+        .sheet(item: $selectedDeliverableTask) { deliverable in
+            AmberTaskDeliverablePreviewSheet(
+                item: deliverable,
+                onOpenDestination: { task in
+                    openDestinationDirectly(task)
+                },
+                onQuickDecision: { task, decision in
+                    handleQuickDecision(decision, for: task)
+                }
+            )
+            .amberFloatingSheet(detents: [.medium, .large])
         }
     }
 
@@ -678,59 +712,143 @@ struct AmberDuetTaskCenterCard: View {
     }
 
     private func taskRow(_ item: AmberUnifiedTaskItem) -> some View {
-        Button {
-            open(item)
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
-                Circle()
-                    .fill(AmberUnifiedTaskBuilder.statusColor(for: item.phase))
-                    .frame(width: 6, height: 6)
-                    .padding(.top, 6)
-                    .accessibilityHidden(true)
+        let statusColor = AmberUnifiedTaskBuilder.statusColor(for: item)
+        let stageLine = rowStageLine(item)
+        let distinctBullets = distinctDeliverableBullets(for: item, stageLine: stageLine)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(item.title)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(AmberTheme.foreground)
-                        .lineLimit(1)
+        return VStack(alignment: .leading, spacing: 8) {
+            Button {
+                if item.phase == .needsAttention && item.hasDeliverablePreview {
+                    presentDeliverablePreview(item)
+                } else {
+                    open(item)
+                }
+            } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 6, height: 6)
+                        .padding(.top, 6)
+                        .accessibilityHidden(true)
 
-                    Text(rowStageLine(item))
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(AmberTheme.muted)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.title)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(AmberTheme.foreground)
+                            .lineLimit(1)
 
-                    if let actionTitle = item.actionTitle {
-                        Button {
-                            if let onFollowupTask {
-                                onDismissPanel?()
-                                onFollowupTask(item)
-                            } else {
-                                open(item)
+                        Text(stageLine)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(AmberTheme.muted)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        if item.phase == .needsAttention && !distinctBullets.isEmpty {
+                            VStack(alignment: .leading, spacing: 3) {
+                                ForEach(Array(distinctBullets.prefix(2).enumerated()), id: \.offset) { _, bullet in
+                                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                        Text("·")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundStyle(AmberTheme.muted)
+                                        Text(bullet)
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(AmberTheme.foreground2)
+                                            .lineLimit(1)
+                                    }
+                                }
                             }
+                            .padding(.top, 2)
+                        }
+
+                        if item.phase == .needsAttention,
+                           let decisionPrompt = item.decisionPrompt,
+                           !decisionPrompt.isEmpty,
+                           decisionPrompt != stageLine {
+                            HStack(alignment: .top, spacing: 8) {
+                                RoundedRectangle(cornerRadius: 1, style: .continuous)
+                                    .fill(AmberTheme.accentAmber)
+                                    .frame(width: 2)
+                                    .padding(.vertical, 2)
+
+                                Text(decisionPrompt)
+                                    .font(.system(size: 12.5, weight: .medium))
+                                    .foregroundStyle(AmberTheme.foreground)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(.top, 2)
+                        }
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Text(item.statusText)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(statusColor)
+                        .padding(.top, 2)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if !item.quickActions.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(item.quickActions) { decision in
+                        Button {
+                            handleQuickDecision(decision, for: item)
                         } label: {
-                            Text(actionTitle)
+                            Text(decision.title)
                                 .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(AmberTheme.accent)
-                                .padding(.top, 2)
+                                .foregroundStyle(decision.isPrimary ? AmberTheme.accent : AmberTheme.foreground2)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(
+                                    decision.isPrimary
+                                        ? AmberTheme.accent.opacity(0.12)
+                                        : AmberTheme.surface2,
+                                    in: Capsule(style: .continuous)
+                                )
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("chat.duet.tasks.quickAction.\(item.id).\(decision.kind.rawValue)")
+                    }
+
+                    if item.hasDeliverablePreview {
+                        Button {
+                            presentDeliverablePreview(item)
+                        } label: {
+                            Text(IOSAppLocalization.string("查看结论", defaultValue: "查看结论"))
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(AmberTheme.muted)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 5)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("chat.duet.tasks.preview.\(item.id)")
                     }
                 }
-
-                Spacer(minLength: 8)
-
-                Text(item.statusText)
-                    .font(.system(size: 11.5, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(AmberUnifiedTaskBuilder.statusColor(for: item.phase))
-                    .padding(.top, 2)
+                .padding(.leading, 16)
+            } else if let actionTitle = item.actionTitle {
+                Button {
+                    if let onFollowupTask {
+                        onDismissPanel?()
+                        onFollowupTask(item)
+                    } else {
+                        open(item)
+                    }
+                } label: {
+                    Text(actionTitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AmberTheme.accent)
+                        .padding(.leading, 16)
+                }
+                .buttonStyle(.plain)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat.duet.tasks.row.\(item.id)")
     }
 
@@ -738,7 +856,11 @@ struct AmberDuetTaskCenterCard: View {
     /// percentage. A task with no outcome yet simply does not show one.
     private func rowStageLine(_ item: AmberUnifiedTaskItem) -> String {
         var parts: [String] = [item.subtitle]
-        if let result = item.resultText, !result.isEmpty {
+        if let result = item.resultText,
+           !result.isEmpty,
+           result != item.subtitle,
+           !item.subtitle.contains(result),
+           result != item.decisionPrompt {
             parts.append(result)
         }
         if item.phase == .scheduled, let nextRunAt = item.nextRunAt {
@@ -748,7 +870,52 @@ struct AmberDuetTaskCenterCard: View {
         return parts.joined(separator: " · ")
     }
 
+    private func distinctDeliverableBullets(for item: AmberUnifiedTaskItem, stageLine: String) -> [String] {
+        item.deliverableBullets.filter { bullet in
+            bullet != item.resultText
+                && bullet != item.subtitle
+                && bullet != item.decisionPrompt
+                && !stageLine.contains(bullet)
+        }
+    }
+
+    private func handleQuickDecision(_ decision: AmberTaskQuickDecision, for item: AmberUnifiedTaskItem) {
+        if decision.kind == .openDetail {
+            openDestinationDirectly(item)
+            return
+        }
+        let updated = item.applyingQuickDecision(decision)
+        if let onFollowupTask {
+            onDismissPanel?()
+            onFollowupTask(updated)
+        } else {
+            openDestinationDirectly(updated)
+        }
+    }
+
+    private func presentDeliverablePreview(_ item: AmberUnifiedTaskItem) {
+        if case .cloudTaskDetail(let requestId) = item.destination, !item.hasDeliverablePreview {
+            selectedCloudTask = AmberCloudTaskSelection(requestId: requestId)
+            return
+        }
+        if isEmbeddedInModalSheet {
+            withAnimation(.snappy(duration: 0.2)) {
+                inlineDeliverableTask = item
+            }
+        } else {
+            selectedDeliverableTask = item
+        }
+    }
+
     private func open(_ item: AmberUnifiedTaskItem) {
+        if item.phase == .completed && item.hasDeliverablePreview {
+            presentDeliverablePreview(item)
+            return
+        }
+        openDestinationDirectly(item)
+    }
+
+    private func openDestinationDirectly(_ item: AmberUnifiedTaskItem) {
         switch item.destination {
         case .cloudTaskDetail(let requestId):
             selectedCloudTask = AmberCloudTaskSelection(requestId: requestId)
@@ -767,14 +934,19 @@ struct AmberDuetTaskCenterCard: View {
 
     private func recentSection(_ recentItems: [AmberUnifiedTaskItem]) -> some View {
         let summaryText = AmberUnifiedTaskBuilder.recentSummaryText(recentItems)
+        let visibleItems = isRecentExpanded
+            ? recentItems
+            : Array(recentItems.prefix(Self.initialRecentPreviewCount))
+        let hiddenCount = max(0, recentItems.count - Self.initialRecentPreviewCount)
+
         return VStack(alignment: .leading, spacing: 8) {
             Button {
                 withAnimation(.snappy(duration: 0.2)) {
                     isRecentExpanded.toggle()
                 }
             } label: {
-                HStack(spacing: 8) {
-                    Text(IOSAppLocalization.string("最近结果", defaultValue: "最近结果"))
+                HStack(spacing: 6) {
+                    Text(IOSAppLocalization.string("近期交付", defaultValue: "近期交付"))
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(AmberTheme.muted)
 
@@ -787,7 +959,9 @@ struct AmberDuetTaskCenterCard: View {
 
                     Text(isRecentExpanded
                         ? IOSAppLocalization.string("收起", defaultValue: "收起")
-                        : IOSAppLocalization.string("展开", defaultValue: "展开"))
+                        : (hiddenCount > 0
+                            ? "展开其余 \(hiddenCount) 项"
+                            : IOSAppLocalization.string("展开", defaultValue: "展开")))
                         .font(.system(size: 12))
                         .foregroundStyle(AmberTheme.muted)
 
@@ -795,53 +969,30 @@ struct AmberDuetTaskCenterCard: View {
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(AmberTheme.muted2)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(AmberTheme.border, lineWidth: 0.6)
-                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("chat.duet.tasks.recentSummaryBar")
 
-            if isRecentExpanded {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(recentItems) { item in
-                        Button {
-                            open(item)
-                        } label: {
-                            HStack(spacing: 10) {
-                                Text(item.title)
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(AmberTheme.foreground2)
-                                    .lineLimit(1)
-                                Spacer(minLength: 8)
-                                Text(item.statusText)
-                                    .font(.system(size: 11.5))
-                                    .foregroundStyle(AmberTheme.muted)
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-
-                        if item.id != recentItems.last?.id {
-                            Divider()
-                                .overlay(AmberTheme.border.opacity(0.6))
-                                .padding(.leading, 16)
-                        }
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
+                    if index > 0 {
+                        Divider()
+                            .overlay(AmberTheme.border.opacity(0.6))
+                            .padding(.leading, 16)
                     }
+                    recentDeliverableRow(item)
                 }
-                .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(AmberTheme.border, lineWidth: 0.6)
-                }
+            }
+            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(AmberTheme.border, lineWidth: 0.6)
+            }
 
+            if isRecentExpanded {
                 Button {
                     onDismissPanel?()
                     onOpenFullTaskBoard()
@@ -855,6 +1006,93 @@ struct AmberDuetTaskCenterCard: View {
             }
         }
     }
+
+    private func recentDeliverableRow(_ item: AmberUnifiedTaskItem) -> some View {
+        let statusColor = AmberUnifiedTaskBuilder.statusColor(for: item)
+        let primarySummary = (item.resultText?.isEmpty == false) ? item.resultText! : item.subtitle
+        let bullets = item.deliverableBullets.filter { $0 != primarySummary }
+
+        return VStack(alignment: .leading, spacing: 6) {
+            Button {
+                open(item)
+            } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 6, height: 6)
+                        .padding(.top, 6)
+                        .accessibilityHidden(true)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.title)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(AmberTheme.foreground)
+                            .lineLimit(1)
+
+                        Text(primarySummary)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(item.phase == .completed ? AmberTheme.foreground2 : AmberTheme.muted)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        if !bullets.isEmpty {
+                            VStack(alignment: .leading, spacing: 3) {
+                                ForEach(Array(bullets.prefix(2).enumerated()), id: \.offset) { _, bullet in
+                                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                        Text("·")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundStyle(AmberTheme.muted)
+                                        Text(bullet)
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(AmberTheme.muted)
+                                            .lineLimit(1)
+                                    }
+                                }
+                            }
+                            .padding(.top, 1)
+                        }
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Text(item.statusText)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(statusColor)
+                        .padding(.top, 2)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if item.hasDeliverablePreview && item.destination != .none {
+                HStack(spacing: 12) {
+                    Button {
+                        presentDeliverablePreview(item)
+                    } label: {
+                        Text(IOSAppLocalization.string("查看结论", defaultValue: "查看结论"))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(AmberTheme.accent)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        openDestinationDirectly(item)
+                    } label: {
+                        Text(IOSAppLocalization.string("打开会话", defaultValue: "打开会话"))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(AmberTheme.muted)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.leading, 16)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chat.duet.tasks.recentRow.\(item.id)")
+    }
 }
 
 struct AmberDuetTaskCenterSheet: View {
@@ -865,6 +1103,7 @@ struct AmberDuetTaskCenterSheet: View {
     var hubStore: AmberHubStore = .shared
     let onOpenFullTaskBoard: () -> Void
     var onOpenTask: ((AmberUnifiedTaskItem) -> Void)? = nil
+    var onFollowupTask: ((AmberUnifiedTaskItem) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
 
@@ -877,8 +1116,10 @@ struct AmberDuetTaskCenterSheet: View {
                     taskStore: taskStore,
                     wakeStore: wakeStore,
                     hubStore: hubStore,
+                    isEmbeddedInModalSheet: true,
                     onOpenFullTaskBoard: onOpenFullTaskBoard,
                     onOpenTask: onOpenTask,
+                    onFollowupTask: onFollowupTask,
                     onDismissPanel: { dismiss() }
                 )
                 .padding(.vertical, 12)
