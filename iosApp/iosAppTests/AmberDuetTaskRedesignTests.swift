@@ -1263,6 +1263,9 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         """
         let extracted = AmberUnifiedTaskBuilder.extractDeliverableSummary(from: markdownWithDecision)
         XCTAssertTrue(extracted.needsDecision)
+        let confirmed = markdownWithDecision.replacingOccurrences(of: "[待拍板]", with: "[已确认]")
+        XCTAssertFalse(AmberUnifiedTaskBuilder.extractDeliverableSummary(from: confirmed).needsDecision)
+        XCTAssertEqual(AmberUnifiedTaskBuilder.extractDeliverableSummary(from: markdownWithDecision), extracted)
         XCTAssertEqual(extracted.headline, "京都大德寺下午步行路线已筛查完毕，推荐主走高桐院与龙源院。")
         XCTAssertEqual(extracted.bullets.count, 3, "Deliverable bullets must be capped at 1-3 key points")
         XCTAssertEqual(extracted.bullets.first, "14:00 龙源院 & 高桐院：枯山水与枫竹参道最清静，避开旅行团高峰")
@@ -1364,6 +1367,28 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             wakeStore: wakeStore,
             hubStore: hubStore
         )
+
+        // Repeated bottom-badge reads must not rescan the same completed output.
+        let previouslyEnabled = ChatRenderProbe.enabled
+        ChatRenderProbe.enabled = true
+        ChatRenderProbe.reset()
+        let cpuStart = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+        let wallStart = ProcessInfo.processInfo.systemUptime
+        for _ in 0..<20 {
+            let repeated = AmberUnifiedTaskBuilder.buildTasks(gateway: MacGatewayStore.shared,
+                subAgentStore: subAgentStore, taskStore: tasksStore, wakeStore: wakeStore, hubStore: hubStore)
+            XCTAssertEqual(repeated, groups)
+        }
+        let cpuMs = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - cpuStart) / 1e6
+        let wallMs = (ProcessInfo.processInfo.systemUptime - wallStart) * 1_000
+        let parses = ChatRenderProbe.counts["task-summary-parse"]?.values.reduce(0, +) ?? 0
+        ChatRenderProbe.enabled = previouslyEnabled
+        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("build/StreamingPerfEvidence/promotion-120")
+        try JSONSerialization.data(withJSONObject: ["repeatedReads": 20, "mainCPUMs": cpuMs,
+            "wallMs": wallMs, "summaryParses": parses, "sameGroups": true], options: .prettyPrinted)
+            .write(to: folder.appendingPathComponent("task-badge-repeated-reads.json"))
+        XCTAssertEqual(parses, 0, "不变任务结果的徽标刷新不应反复扫描Markdown正文")
 
         let decisionItem = try XCTUnwrap(groups.needsAttention.first { $0.title == "筛选京都大德寺步行与晚餐方案" })
         XCTAssertEqual(decisionItem.statusText, "等我拍板")
