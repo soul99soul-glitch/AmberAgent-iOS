@@ -221,7 +221,10 @@ final class ChatSwiftUIStreamReplayTests: ChatNativeTimelineReplayTestCase {
         guard let scrollView = fixture.scrollView else {
             return XCTFail("Expected the default Native timeline scroll view")
         }
-        let probe = ScrollFrameProbe(scrollView: scrollView, rootView: fixture.host.view)
+        let anchor = try XCTUnwrap(ScrollFrameProbe.paragraph(in: fixture.host.view, withPrefix: "回答 7:"))
+        XCTAssertNotNil(ScrollFrameProbe.presentationY(anchor))
+        let probe = ScrollFrameProbe(scrollView: scrollView, rootView: fixture.host.view,
+                                     presentationAnchor: anchor)
         let gapProbe = DisplayLinkGapProbe()
         probe.start()
         gapProbe.start()
@@ -240,6 +243,7 @@ final class ChatSwiftUIStreamReplayTests: ChatNativeTimelineReplayTestCase {
         ) {
             let initialContentHeight = scrollView.contentSize.height
             let initialOffsetY = scrollView.contentOffset.y
+            let initialPresentationY = ScrollFrameProbe.presentationY(anchor)
             let sampleStart = probe.samples.count
             let gapStart = gapProbe.gaps.count
             let message = makeAssistantMessage(id: assistantID, text: text, finished: false)
@@ -258,10 +262,13 @@ final class ChatSwiftUIStreamReplayTests: ChatNativeTimelineReplayTestCase {
 
             let finalContentHeight = scrollView.contentSize.height
             let finalOffsetY = scrollView.contentOffset.y
+            let finalPresentationY = ScrollFrameProbe.presentationY(anchor)
+            XCTAssertNotNil(initialPresentationY)
+            XCTAssertNotNil(finalPresentationY)
             let intermediateOffsets = Set(probe.samples.dropFirst(sampleStart).compactMap { sample -> Int? in
-                guard sample.contentOffsetY > initialOffsetY + 0.5,
-                      sample.contentOffsetY < finalOffsetY - 0.5 else { return nil }
-                return Int((sample.contentOffsetY * 10).rounded())
+                guard let initialPresentationY, let finalPresentationY, let y = sample.presentationAnchorY,
+                      y < initialPresentationY - 0.5, y > finalPresentationY + 0.5 else { return nil }
+                return Int((y * 10).rounded())
             })
             return (
                 contentGrew: finalContentHeight > initialContentHeight + 1,
