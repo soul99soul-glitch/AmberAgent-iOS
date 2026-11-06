@@ -984,7 +984,7 @@ extension UIColor {
     }
 }
 
-enum AmberHapticEvent {
+enum AmberHapticEvent: Equatable {
     case lightImpact
     case mediumImpact
     case rigidImpact
@@ -1000,9 +1000,33 @@ enum AmberHaptics {
     /// （用户曾报告完成时物理振动与代码振源不对应的未结之谜）。
     private static let logger = os.Logger(subsystem: "app.amber.ios", category: "amber-haptic")
 
+    /// 测试观测钩子：供单测验证触感实际触发与开关门控。
+    @MainActor
+    static var onTriggerForTesting: ((AmberHapticEvent) -> Void)?
+
+    /// 实时读取「显示与字体 → 生成完成振动」开关（默认开启 `true`）。
+    static func isCompletionHapticEnabled(defaults: UserDefaults = .standard) -> Bool {
+        let key = IOSDisplayPreferenceKeys.completionHaptic
+        guard defaults.object(forKey: key) != nil else { return true }
+        return defaults.bool(forKey: key)
+    }
+
+    /// 统一门控生成完成相关触感：开关关闭时所有生成完成路径均不触发，开启时保持原行为。
+    @MainActor
+    @discardableResult
+    static func triggerCompletion(
+        _ event: AmberHapticEvent = .rigidImpact,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        guard isCompletionHapticEnabled(defaults: defaults) else { return false }
+        trigger(event)
+        return true
+    }
+
     @MainActor
     static func trigger(_ event: AmberHapticEvent) {
         logger.info("haptic \(String(describing: event), privacy: .public)")
+        onTriggerForTesting?(event)
         switch event {
         case .lightImpact:
             UIImpactFeedbackGenerator(style: .light).impactOccurred()

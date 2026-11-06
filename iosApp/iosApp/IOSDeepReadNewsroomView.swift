@@ -141,6 +141,7 @@ struct IOSDeepReadPressMoment: View {
     let caption: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
+    @AppStorage(IOSDisplayPreferenceKeys.completionHaptic) private var completionHaptic = true
     @State private var fire = 0
     @State private var captionShown = false
 
@@ -174,7 +175,7 @@ struct IOSDeepReadPressMoment: View {
                     .offset(y: captionShown ? 0 : 8)
             }
         }
-        .sensoryFeedback(.impact(weight: .heavy), trigger: fire)
+        .sensoryFeedback(.impact(weight: .heavy), trigger: fire) { _, _ in completionHaptic }
         .onAppear {
             fire += 1
             withAnimation(.easeOut(duration: 0.4).delay(0.3)) { captionShown = true }

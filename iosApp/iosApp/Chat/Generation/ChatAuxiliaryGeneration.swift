@@ -61,8 +61,13 @@ extension ChatViewModel {
 
         syncSoulFromCompletedTurnIfNeeded(messages: state.messages)
 
-        // 生成完成不再自动震动：该振动对用户不可控（开关藏得深、且每次回复都触发），
-        // 已被明确要求移除。触感只在用户主动点击控件时触发。
+        // 完成触觉：统一由「显示与字体 → 生成完成振动」（默认开）实时门控；
+        // 仅在当前可见主会话最终回复完成时触发，等待子代理的前台让出或子代理会话不触发。
+        if isCurrentConversation(state.conversationId),
+           !state.isOrchestratedChild,
+           state.waitingForChildRunId == nil {
+            AmberHaptics.triggerCompletion(.rigidImpact)
+        }
 
         if isCurrentConversation(state.conversationId) { generateChatSuggestions() }
         let userMessageCount = state.messages.filter { $0.role == MessageRole.user }.count

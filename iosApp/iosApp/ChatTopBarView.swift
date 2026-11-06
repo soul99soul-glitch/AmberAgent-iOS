@@ -221,7 +221,7 @@ struct ChatTopBarView: View {
             if notice.kind == .awaitingUser {
                 UINotificationFeedbackGenerator().notificationOccurred(.warning)
             } else if notice.kind == .completed {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                AmberHaptics.triggerCompletion(.lightImpact)
             }
             if arrivalState.announcement != nil {
                 UIAccessibility.post(notification: .announcement,
