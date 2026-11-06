@@ -177,7 +177,7 @@ final class DesktopPluginWebViewCoordinator: NSObject, WKScriptMessageHandler, W
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.name == "amberBridge",
+        guard message.frameInfo.isMainFrame, message.name == "amberBridge",
               let body = message.body as? [String: Any],
               let requestId = body["requestId"] as? String,
               let namespace = body["namespace"] as? String,
@@ -265,7 +265,9 @@ extension DesktopPluginStore {
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let effectiveRelative = trimmed.isEmpty ? "index.html" : trimmed
 
-        let pluginRoot = directory.appendingPathComponent(plugin.id, isDirectory: true)
+        let pluginRoot = plugin.isBuiltIn && plugin.id == "memory_hub"
+            ? try Self.memoryHubResourceDirectory()
+            : directory.appendingPathComponent(plugin.id, isDirectory: true)
         let fileURL = try Self.resolveAuthorizedWorkspaceFileURL(
             rootDirectory: pluginRoot,
             relativePath: effectiveRelative,

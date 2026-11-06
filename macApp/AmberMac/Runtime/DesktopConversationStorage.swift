@@ -16,6 +16,14 @@ import Foundation
         try DesktopJSON.decode([DesktopConversationSummary].self, from: await repository.listSummaries())
     }
 
+    func pollutedConversations() async throws -> [DesktopConversationSummary] {
+        try DesktopJSON.decode([DesktopConversationSummary].self, from: await repository.pollutedConversations())
+    }
+
+    func clearPollutedConversation(_ id: UUID) async throws -> Bool {
+        try await repository.clearPollutedConversation(id: id.uuidString).boolValue
+    }
+
     func search(_ query: String) async throws -> [DesktopConversationSearchResult] {
         try DesktopJSON.decode([DesktopStoredConversationSearchHit].self, from: await repository.search(query: query))
             .map { $0.presentation(query: query) }

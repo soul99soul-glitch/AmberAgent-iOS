@@ -425,6 +425,14 @@ class JsonConversationStorage(
             true
         }
 
+    /** Reset only a still-polluted conversation; stale UI must not enable a disabled one. */
+    suspend fun clearPollutedMemoryMode(id: Uuid): Boolean = operationMutex.withLock {
+        val current = loadConversationUnlocked(id) ?: return@withLock false
+        if (current.memoryMode != ConversationMemoryMode.POLLUTED) return@withLock false
+        saveConversationReplacingAllFieldsLocked(current.copy(memoryMode = ConversationMemoryMode.ENABLED))
+        true
+    }
+
     // ---- 内部：index 维护 ----
 
     private fun readIndex(): List<ConversationSummary>? {

@@ -1,0 +1,13 @@
+{
+  "schema": "amber.plugin.v3",
+  "manifest_version": 3,
+  "id": "memory_hub",
+  "name": "记忆中心",
+  "version": "3.0.0",
+  "description": "管理跨设备研发记忆与 Amber 本机对话记忆。",
+  "icon": "brain.head.profile",
+  "main": "main.js",
+  "permissions": ["ui.views"],
+  "capabilities": {"networkDomains": [], "workspaceReadPrefixes": [], "workspaceWritePrefixes": []},
+  "ui": {"views": [{"id": "memory_hub_main", "title": "记忆中心", "slot": "workspace", "symbol": "brain.head.profile", "subtitle": "跨设备记忆与本机对话记忆", "entry": "index.html"}]}
+}

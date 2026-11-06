@@ -551,6 +551,18 @@ class DesktopConversationRepository(directory: String) {
     }
 
     @Throws(Throwable::class)
+    suspend fun pollutedConversations(): String = withContext(Dispatchers.Default) {
+        desktopJson.encodeToString(storage.listSummaries()
+            .filter { it.memoryMode == app.amber.core.model.ConversationMemoryMode.POLLUTED }
+            .map { it.desktopSummary() })
+    }
+
+    @Throws(Throwable::class)
+    suspend fun clearPollutedConversation(id: String): Boolean = withContext(Dispatchers.Default) {
+        storage.clearPollutedMemoryMode(Uuid.parse(id))
+    }
+
+    @Throws(Throwable::class)
     suspend fun search(query: String): String = withContext(Dispatchers.Default) {
         desktopJson.encodeToString(desktopSearch(storage, query))
     }

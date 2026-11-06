@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>记忆中心 · Amber</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="hub.js"></script>
+</head>
+<body>
+  <div class="app">
+    <aside class="rail" data-od-id="memory-navigation">
+      <div class="brand"><span class="brand-mark">A</span><span>Amber<small>记忆中心</small></span></div>
+      <p class="nav-label">记忆空间</p>
+      <nav aria-label="记忆中心导航">
+        <button type="button" class="nav active" data-view="pages">研发记忆</button>
+        <button type="button" class="nav" data-view="handoffs">交接队列</button>
+        <button type="button" class="nav" data-view="timeline">会话时间线</button>
+        <button type="button" class="nav" data-view="local">本机对话记忆</button>
+      </nav>
+      <div class="rail-note">记忆来自真实存储。<br>更改会影响所选项目。</div>
+    </aside>
+    <main class="main" data-od-id="memory-main">
+      <header class="topbar" data-od-id="memory-header">
+        <div><p class="eyebrow" id="eyebrow">CROSS-DEVICE MEMORY</p><h1 id="title">研发记忆</h1><p id="subtitle">查看、编辑并整理跨设备共享的知识。</p></div>
+        <button type="button" class="primary" id="create" data-od-id="create-memory">新建页面</button>
+      </header>
+      <section class="scope-bar" id="scope-bar" data-od-id="scope-bar">
+        <label>工作区<input id="workspace" value="default" autocomplete="off"></label>
+        <span class="slash" aria-hidden="true">/</span>
+        <label>项目<input id="project" value="amber" autocomplete="off"></label>
+        <label>范围<select id="scope"><option value="project">项目</option><option value="profile">Profile</option></select></label>
+        <button type="button" id="switch">切换</button>
+      </section>
+      <div id="status" role="status" aria-live="polite"></div>
+      <section id="content" data-od-id="memory-content" aria-live="polite"></section>
+    </main>
+  </div>
+  <dialog id="editor" aria-labelledby="editor-title">
+    <form id="editor-form">
+      <header class="dialog-head"><div><p class="eyebrow" id="editor-kicker">MEMORY</p><h2 id="editor-title">编辑记忆</h2></div><button type="button" class="close" id="close-editor" aria-label="关闭">×</button></header>
+      <div id="editor-fields"></div>
+      <p id="editor-error" class="error" role="alert"></p>
+      <footer class="dialog-actions"><button type="button" id="cancel-editor">取消</button><button type="submit" class="primary">保存</button></footer>
+    </form>
+  </dialog>
+</body>
+</html>

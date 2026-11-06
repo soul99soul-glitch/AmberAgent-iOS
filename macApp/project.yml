@@ -34,6 +34,10 @@ targets:
         excludes:
           - Info.plist
           - Amber.entitlements
+          - MemoryHub
+      - path: AmberMac/MemoryHub
+        type: folder
+        buildPhase: resources
       - path: AmberMac/LaunchAgents
         buildPhase:
           copyFiles:
@@ -158,6 +162,7 @@ targets:
         excludes:
           - Info.plist
           - AmberMacApp.swift
+          - MemoryHub
           - Runtime/DesktopProvider.swift
           - Runtime/DesktopAgentProvider.swift
           - Runtime/DesktopConversationStorage.swift
@@ -167,6 +172,9 @@ targets:
           - Runtime/DesktopSearchTransport.swift
           - Runtime/DesktopAgentProvider.swift
           - Runtime/DesktopEngineLedger.swift
+      - path: AmberMac/MemoryHub
+        type: folder
+        buildPhase: resources
       - path: Preview
         excludes:
           - Info.plist

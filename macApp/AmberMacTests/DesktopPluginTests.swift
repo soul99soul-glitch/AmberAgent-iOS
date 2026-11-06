@@ -94,8 +94,8 @@ final class DesktopPluginTests: XCTestCase {
             referenceDateProvider: { now }
         )
 
-        // P3 added two more built-in plugins; the Feishu suite keeps its own projections unchanged.
-        XCTAssertEqual(store.plugins.map(\.id), ["feishu_calendar", "apple_schedule", "watchtower"])
+        // The Feishu suite keeps its own projections with the built-in memory hub present.
+        XCTAssertEqual(store.plugins.map(\.id), ["feishu_calendar", "apple_schedule", "watchtower", "memory_hub"])
         XCTAssertEqual(store.plugins.first?.manifest.name, "飞书")
         XCTAssertEqual(store.calendarEvents.count, 3)
         XCTAssertEqual(store.botActivities.count, 2)

@@ -90,11 +90,11 @@ final class DesktopPluginInstallToolsTests: XCTestCase {
             credentials: credentials
         )
 
-        // 1. Initial plugin_list contains the 3 built-in plugins:
+        // 1. Initial plugin_list contains the 4 built-in plugins:
         let initialListRaw = try store.executePluginList()
         let initialList = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(initialListRaw.utf8)) as? [String: Any])
         XCTAssertEqual(initialList["ok"] as? Bool, true)
-        XCTAssertEqual(initialList["count"] as? Int, 3)
+        XCTAssertEqual(initialList["count"] as? Int, 4)
 
         // 2. Write a v1.0.0 plugin inside the conversation workspace:
         let pluginFolder = workspaceDir.appendingPathComponent("drafts/summary_helper", isDirectory: true)
@@ -166,7 +166,7 @@ final class DesktopPluginInstallToolsTests: XCTestCase {
 
         // Verify via plugin_list and tool execution:
         let afterInstallList = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(store.executePluginList().utf8)) as? [String: Any])
-        XCTAssertEqual(afterInstallList["count"] as? Int, 4)
+        XCTAssertEqual(afterInstallList["count"] as? Int, 5)
         let pluginsArray = try XCTUnwrap(afterInstallList["plugins"] as? [[String: Any]])
         let listedSummary = try XCTUnwrap(pluginsArray.first { ($0["id"] as? String) == "summary_helper" })
         XCTAssertEqual(listedSummary["version"] as? String, "1.0.0")

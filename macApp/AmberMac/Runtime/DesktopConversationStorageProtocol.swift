@@ -3,6 +3,8 @@ import Foundation
 @MainActor protocol DesktopConversationStorage {
     func loadAll() async throws -> [DesktopConversation]
     func listSummaries() async throws -> [DesktopConversationSummary]
+    func pollutedConversations() async throws -> [DesktopConversationSummary]
+    func clearPollutedConversation(_ id: UUID) async throws -> Bool
     func search(_ query: String) async throws -> [DesktopConversationSearchResult]
     func load(_ id: UUID) async throws -> DesktopConversation?
     func save(_ conversation: DesktopConversation) async throws -> DesktopConversation
@@ -18,6 +20,13 @@ import Foundation
 }
 
 extension DesktopConversationStorage {
+    func pollutedConversations() async throws -> [DesktopConversationSummary] {
+        throw DesktopRuntimeError.message("当前存储不支持读取会话污染状态。")
+    }
+    func clearPollutedConversation(_ id: UUID) async throws -> Bool {
+        throw DesktopRuntimeError.message("当前存储不支持清理会话污染状态。")
+    }
+
     func listSummaries() async throws -> [DesktopConversationSummary] {
         DesktopConversationSummary.ordered(try await loadAll().map(DesktopConversationSummary.init))
     }

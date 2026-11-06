@@ -364,6 +364,10 @@ final class DesktopWorkspace {
                 messages: recent
             )
         }
+        let memoryHub = DesktopMemoryHubService(knowledge: self.knowledge, storage: self.storage)
+        self.plugins.memoryHubHandler = { [weak plugins = self.plugins] method, arguments in
+            try await memoryHub.perform(method: method, arguments: arguments, confirm: plugins?.onConfirmRequest)
+        }
         self.plugins.onInsertToComposerRequest = { [weak self] text in
             guard let self else { return }
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

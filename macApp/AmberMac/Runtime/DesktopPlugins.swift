@@ -210,8 +210,9 @@ final class DesktopPluginStore {
     @ObservationIgnored var conversationSnapshotProvider: (() -> DesktopPluginConversationSnapshot)?
     @ObservationIgnored var onInsertToComposerRequest: ((String) -> Void)?
     @ObservationIgnored var onOpenPluginViewRequest: ((String, String) -> Void)?
-    @ObservationIgnored var onConfirmRequest: ((String, String) async -> Bool)?
+    @ObservationIgnored var onConfirmRequest: (@MainActor (String, String) async -> Bool)?
     @ObservationIgnored var onStateChanged: (() -> Void)?
+    @ObservationIgnored var memoryHubHandler: (@MainActor (String, [String: Any]) async throws -> String)?
 
     nonisolated static let injectedSandboxAPIs: Set<String> = [
         "amber.settings.get",
@@ -311,13 +312,14 @@ final class DesktopPluginStore {
             let builtInFeishu = Self.makeBuiltInFeishuPlugin(enabled: !disabledIDs.contains("feishu_calendar"))
             let builtInApple = Self.makeBuiltInAppleSchedulePlugin(enabled: !disabledIDs.contains(DesktopAppleScheduleTools.pluginID))
             let builtInWatchtower = DesktopWatchtower.makeBuiltInPlugin(enabled: !disabledIDs.contains(DesktopWatchtower.pluginID))
-            var loaded: [DesktopInstalledPlugin] = [builtInFeishu, builtInApple, builtInWatchtower]
+            let memoryHub = try Self.makeBuiltInMemoryHub(enabled: !disabledIDs.contains("memory_hub"))
+            var loaded: [DesktopInstalledPlugin] = [builtInFeishu, builtInApple, builtInWatchtower, memoryHub]
 
             let entries = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
             for folder in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
                 let name = folder.lastPathComponent
                 let isBuiltInID = name == "feishu_calendar" || name == DesktopAppleScheduleTools.pluginID
-                    || name == DesktopWatchtower.pluginID
+                    || name == DesktopWatchtower.pluginID || name == "memory_hub"
                 guard !name.hasPrefix("."), !isBuiltInID else { continue }
                 let manifestURL = folder.appendingPathComponent("plugin.json")
                 guard FileManager.default.fileExists(atPath: manifestURL.path) else { continue }

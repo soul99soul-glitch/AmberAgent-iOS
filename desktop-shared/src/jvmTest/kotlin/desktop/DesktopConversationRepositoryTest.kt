@@ -7,6 +7,7 @@ import app.amber.ai.core.MessageRole
 import kotlin.io.encoding.Base64
 import app.amber.core.agent.utils.JsonInstant
 import app.amber.core.model.Conversation
+import app.amber.core.model.ConversationMemoryMode
 import kotlinx.serialization.encodeToString
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -24,6 +25,29 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class DesktopConversationRepositoryTest {
+    @Test
+    fun pollutedConversationsAreListedAndResetWithoutEnablingDisabledConversations(): Unit = runBlocking {
+        val directory = Files.createTempDirectory("amber-desktop-pollution").toFile()
+        try {
+            val repository = DesktopConversationRepository(directory.path)
+            val polluted = canonicalConversationFixture().copy(memoryMode = ConversationMemoryMode.POLLUTED)
+            val disabled = polluted.copy(id = Uuid.random(), memoryMode = ConversationMemoryMode.DISABLED)
+            for (conversation in listOf(polluted, disabled)) {
+                repository.save(repository.normalizeImport(JsonInstant.encodeToString(conversation)))
+            }
+            val listed = Json.parseToJsonElement(repository.pollutedConversations()).jsonArray
+            assertEquals(listOf(polluted.id.toString()), listed.map { it.jsonObject.getValue("id").jsonPrimitive.content })
+            assertFalse(repository.clearPollutedConversation(disabled.id.toString()))
+            assertTrue(repository.clearPollutedConversation(polluted.id.toString()))
+            assertFalse(repository.clearPollutedConversation(polluted.id.toString()))
+            val restored = Json.decodeFromString<DesktopConversation>(repository.load(polluted.id.toString())!!)
+            assertEquals(polluted.copy(memoryMode = ConversationMemoryMode.ENABLED),
+                JsonInstant.decodeFromString<Conversation>(restored.canonicalJSON!!))
+            val unchanged = Json.decodeFromString<DesktopConversation>(repository.load(disabled.id.toString())!!)
+            assertEquals(disabled, JsonInstant.decodeFromString<Conversation>(unchanged.canonicalJSON!!))
+        } finally { directory.deleteRecursively() }
+    }
+
     @Test
     fun backupMemoryRemappingCoversHiddenVariantsAndNestedPartsWithoutChangingIdentity(): Unit = runBlocking {
         val directory = Files.createTempDirectory("amber-desktop-memory-remap").toFile()

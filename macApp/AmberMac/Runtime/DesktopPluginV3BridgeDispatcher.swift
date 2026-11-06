@@ -221,6 +221,7 @@ enum DesktopPluginWebViewBridgeScript {
 
             window.amber = Object.freeze({
                 pluginId: '\(pluginID)',
+                memoryHub: Object.freeze({ call: function(method, args) { return rpc('memoryHub', String(method), [args || {}]); } }),
                 viewId: '\(viewID)',
                 settings: Object.freeze({
                     get: function(key) { return rpc('settings', 'get', [String(key)]); },
@@ -329,6 +330,14 @@ extension DesktopPluginStore {
         }
         guard plugin.enabled else {
             throw DesktopRuntimeError.message("插件 \(plugin.manifest.name) 当前已停用。")
+        }
+
+        if namespace == "memoryHub" {
+            guard plugin.isBuiltIn, plugin.id == "memory_hub", viewID == "memory_hub_main",
+                  let handler = memoryHubHandler, let arguments = args.first as? [String: Any] else {
+                throw DesktopRuntimeError.message("此插件不能访问记忆中心。")
+            }
+            return try await handler(method, arguments)
         }
 
         let targetWorkspace = workspaceDirectory ?? self.workspaceDirectory
