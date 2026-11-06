@@ -419,13 +419,13 @@ final class SubAgentConcurrencyPerfTests: XCTestCase {
     /// 34ms（约两帧）留足模拟器噪声余量。
     private let framePacingP95ThresholdMs: Double = 34
 
-    func testRunSummaryProjectionCostOnLargeUnconsumedPayload() async throws {
+    func testRunSummaryProjectionCostOnCapturedDatabaseShape() async throws {
         let path = FileManager.default.temporaryDirectory
             .appendingPathComponent("RunProjection-\(UUID().uuidString).db").path
         let db = IosDatabaseFactory.shared.createDatabase(atFilePath: path)
         let dao = db.agentRuntimeDao()
         defer { db.close() }
-        try await seedHistoricalRuns(dao: dao, count: 300, matchedConversationIds: [], capabilityPayloadBytes: 64 * 1_024)
+        try await seedHistoricalRuns(dao: dao, count: 1_683, matchedConversationIds: [], capabilityPayloadBytes: 3_316)
         func readIDs(summary: Bool) async throws -> [String] {
             try await withCheckedThrowingContinuation { continuation in
                 if summary {
@@ -442,7 +442,7 @@ final class SubAgentConcurrencyPerfTests: XCTestCase {
             }
         }
         let expected = try await readIDs(summary: false)
-        XCTAssertEqual(expected.count, 300)
+        XCTAssertEqual(expected.count, 1_683)
         let projected = try await readIDs(summary: true)
         XCTAssertEqual(projected, expected)
         func cpuSeconds() -> Double {
@@ -470,9 +470,9 @@ final class SubAgentConcurrencyPerfTests: XCTestCase {
         let full = try await measure(summary: false)
         let summary = try await measure(summary: true)
         let artifact = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("build/StreamingPerfEvidence/promotion-120/run-query-projection.json")
+            .deletingLastPathComponent().appendingPathComponent("build/StreamingPerfEvidence/promotion-120/run-query-projection-device-shape.json")
         try JSONSerialization.data(withJSONObject: [
-            "rows": 300, "unusedPayloadBytesPerRow": 64 * 1_024, "readsPerVariant": 3,
+            "rows": 1_683, "unusedPayloadBytesPerRow": 3_316, "readsPerVariant": 3,
             "full": full, "summary": summary, "rowIDsAndOrderEqual": true
         ], options: [.prettyPrinted, .sortedKeys]).write(to: artifact)
         print("[PERF-RUN-PROJECTION] full=\(full) summary=\(summary)")

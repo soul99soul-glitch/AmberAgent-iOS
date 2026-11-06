@@ -1,0 +1,131 @@
+{
+  "productHead": "3bc7fa40cedeacca3da4b867526d1472aa96f27b",
+  "goalAchieved": false,
+  "deviceOperations": false,
+  "installedHead": "349128d5",
+  "installedDatabaseSequenceNumber": 2872,
+  "e2e": {
+    "beforeExclusive": {
+      "endToEndSeconds": 13.199233333114535,
+      "mainCPUPercent": 45.00253170839568,
+      "mainCPUMs": 5939.989166,
+      "processCPUSeconds": 7.193036999999999,
+      "maxFrameGapMs": 207.0210832171142,
+      "frameGapsOver50ms": 7,
+      "sampledPeakFootprintBytes": 236325840,
+      "baselineFootprintBytes": 199887824
+    },
+    "finalRequiredProcess": {
+      "endToEndSeconds": 13.167304958216846,
+      "mainCPUPercent": 40.380495605382,
+      "mainCPUMs": 5317.023,
+      "processCPUSeconds": 6.161609999999996,
+      "maxFrameGapMs": 163.23258308693767,
+      "frameGapsOver50ms": 4,
+      "sampledPeakFootprintBytes": 235457656,
+      "baselineFootprintBytes": 202607736
+    },
+    "finalTurn": {
+      "bottomSettledSeconds": 13.166672291699797,
+      "completed": true,
+      "lastTextVisibleSeconds": 12.12009191699326,
+      "renderAcknowledgedSeconds": 12.094090291764587,
+      "settleConfirmationSeconds": 1,
+      "sourceClosedSeconds": 6.183197500184178,
+      "textUTF16Count": 1928,
+      "turn": 1
+    }
+  },
+  "runQueryDeviceShape": {
+    "full": {
+      "memorySampleCount": 468,
+      "memorySampleFailures": 0,
+      "memorySamplePeriodMs": 10,
+      "processCPUSeconds": 6.031090999999996,
+      "sampledPeakFootprintBytes": 182619256,
+      "sampledPeakResidentBytes": 916766720,
+      "wallSeconds": 4.65729191666469
+    },
+    "readsPerVariant": 3,
+    "rowIDsAndOrderEqual": true,
+    "rows": 1683,
+    "summary": {
+      "memorySampleCount": 21,
+      "memorySampleFailures": 0,
+      "memorySamplePeriodMs": 10,
+      "processCPUSeconds": 0.24117599999999584,
+      "sampledPeakFootprintBytes": 182520952,
+      "sampledPeakResidentBytes": 916127744,
+      "wallSeconds": 0.18417820846661925
+    },
+    "unusedPayloadBytesPerRow": 3316
+  },
+  "fanout": [
+    {
+      "event": "idle",
+      "mountedHistoricalRows": 95,
+      "historicalRowBodies": 0,
+      "historicalLayoutRequests": 0,
+      "historicalMeasurements": 0,
+      "historicalPlacements": 0
+    },
+    {
+      "event": "progress-change",
+      "mountedHistoricalRows": 95,
+      "historicalRowBodies": 0,
+      "historicalLayoutRequests": 0,
+      "historicalMeasurements": 0,
+      "historicalPlacements": 0
+    },
+    {
+      "event": "idle-with-live-tail",
+      "mountedHistoricalRows": 95,
+      "historicalRowBodies": 0,
+      "historicalLayoutRequests": 0,
+      "historicalMeasurements": 0,
+      "historicalPlacements": 0
+    },
+    {
+      "event": "single-token-update",
+      "mountedHistoricalRows": 95,
+      "historicalRowBodies": 0,
+      "historicalLayoutRequests": 0,
+      "historicalMeasurements": 0,
+      "historicalPlacements": 0
+    },
+    {
+      "event": "stream-chunk-height-growth",
+      "mountedHistoricalRows": 95,
+      "historicalRowBodies": 0,
+      "historicalLayoutRequests": 0,
+      "historicalMeasurements": 0,
+      "historicalPlacements": 0
+    },
+    {
+      "event": "single-tool-event",
+      "mountedHistoricalRows": 95,
+      "historicalRowBodies": 0,
+      "historicalLayoutRequests": 0,
+      "historicalMeasurements": 0,
+      "historicalPlacements": 0
+    }
+  ],
+  "regression": {
+    "passed": 106,
+    "failed": 6,
+    "knownFailures": [
+      "ChatNativeTimelineReplayHistoryTests/testAssistantContinuationHasNoRepeatedHeaderGap()",
+      "ChatNativeTimelineReplayHistoryTests/testCapsuleSpacingDoesNotChangeAcrossToolRounds()",
+      "ChatSwiftUIStreamReplayTests/testLongProseViewportFollowStaysLineSizedAtTwentyFourKB()",
+      "ChatNativeTimelineReplayCompletionTests/testLongReasoningStreamThroughNativeTimelineKeepsLatestTextAndCompletes()",
+      "ChatNativeTimelineReplayCompletionTests/testScrolledAwayLiveTailUnfreezesKeepingBlockIdentity()",
+      "ChatNativeTimelineReplayCompletionTests/testTerminalWithReasoningCollapseSettlesMonotonically()"
+    ]
+  },
+  "evidenceSHA256": {
+    "e2e-baseline-exclusive.json": "d52bd6a4d51d309eaa4b6e5dd64a8be91e75d7fe138d96ef1faa784fe6addbd3",
+    "e2e-final-required-process.json": "d5aca04b3b4839a80b3b8806863b3457028f94da526cb7aa2622299885724969",
+    "run-query-projection-device-shape.json": "0ad7e1c5ea06ec2db9ae663c85eb49ef7f6acbb052e632f63d6ca538ba66e02d",
+    "final-native-ca-required-summary.json": "771d049b72151aebe13dfb5b1918faea00ef5299a9a1706df5979fc3f46760f6"
+  }
+}
