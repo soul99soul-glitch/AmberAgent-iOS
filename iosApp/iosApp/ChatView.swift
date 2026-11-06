@@ -351,11 +351,10 @@ struct ChatView: View {
         }
         .sheet(isPresented: $isPresentingDuetTasks) {
             AmberDuetTaskCenterSheet(
-                conversationSegments: currentConversationTaskSegments(),
                 gateway: MacGatewayStore.shared,
                 subAgentStore: activityStore,
                 onOpenFullTaskBoard: { router.navigate(to: .macTasks) },
-                onSelectTool: { tool in duetSelectedToolTarget = ToolDetailTarget(tool: tool) }
+                onOpenTask: { task in openUnifiedTask(task) }
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)

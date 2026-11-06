@@ -249,12 +249,12 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             id: "ssh-fail-1",
             title: "配置 SSH 跳板机与目标机",
             subtitle: "私钥校验未通过 · 本机",
-            category: .needsAttention,
-            statusBadgeText: "4 次失败",
-            actionTitle: "补充密钥",
+            statusText: "4 次失败",
+            actionButtonTitle: "补充密钥",
+            phase: .needsAttention,
+            ownership: .delegated,
             hubId: "hub-amber-core",
-            underlyingSegment: nil,
-            cloudTaskId: nil
+            source: .cloudTask("ssh-fail-1")
         )
 
         state.enterBackgroundHandoffMode(followupTask: failedTask)
@@ -364,8 +364,11 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
     func testHubStoreSmartCollectionPromotionAndUnifiedTaskGrouping() throws {
         let suite = "AmberHubStoreTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer {
             defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
         }
 
         // Production store starts empty with zero fabricated hubs or collections
@@ -389,7 +392,8 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         XCTAssertEqual(hubStore.hubs.count, 4)
         XCTAssertEqual(hubStore.smartCollections.count, 1)
 
-        // Build unified tasks grouped by goal/status (needsAttention, running, recent)
+        // An ordinary multi-tool assistant turn must contribute nothing to the
+        // task panel: those steps stay as the conversation's own progress line.
         let failOutput = #"{"ok":false,"status":"failed","error":"私钥校验未通过"}"#
         let doneOutput = #"{"ok":true,"status":"completed","summary":"完成"}"#
         let failMsg = makeAssistantMessage(parts: [
@@ -405,7 +409,7 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             makeTool(id: "check-1", name: "terminal_execute", input: #"{"command":"echo ok"}"#, outputJSON: doneOutput)
         ])
 
-        let segs = [
+        let inChatSegments = [
             ChatTaskStreamGrouping.segments(for: failMsg, messageID: "m1", isGeneratingTail: false),
             ChatTaskStreamGrouping.segments(for: runningMsg, messageID: "m2", isGeneratingTail: true),
             ChatTaskStreamGrouping.segments(for: doneMsg, messageID: "m3", isGeneratingTail: false)
@@ -413,6 +417,7 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             if case .taskGroup(let g) = seg { return g }
             return nil
         }
+        XCTAssertEqual(inChatSegments.count, 3, "the stream still groups tool runs for the inline progress line")
 
         let tasksStore = IOSAdvancedTaskStore(userDefaults: defaults)
         let subAgentStore = IOSSubAgentActivityStore(
@@ -421,18 +426,89 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             launchedAt: Date(),
             loadRuns: { [] }
         )
-        let grouped = AmberUnifiedTaskBuilder.buildTasks(
-            conversationSegments: segs,
+
+        let emptyGroups = AmberUnifiedTaskBuilder.buildTasks(
             gateway: MacGatewayStore.shared,
             subAgentStore: subAgentStore,
+            taskStore: tasksStore,
+            wakeStore: IOSWakeTaskStore(fileURL: directory.appendingPathComponent("wake-empty.json")),
             hubStore: hubStore
         )
-        XCTAssertEqual(grouped.needsAttention.count, 1)
-        XCTAssertEqual(grouped.needsAttention.first?.statusBadgeText, "4 次失败")
-        XCTAssertEqual(grouped.needsAttention.first?.actionTitle, "补充密钥")
-        XCTAssertEqual(grouped.running.count, 1)
-        XCTAssertEqual(grouped.running.first?.title, "训练视频闪烁检测模型")
-        XCTAssertEqual(grouped.recent.count, 1)
+        XCTAssertTrue(emptyGroups.isEmpty,
+                      "tool calls that only exist in the transcript must not become task cards")
+
+        // A real durable background execution does appear, with its own status.
+        let record = tasksStore.startTask(
+            kind: .subAgent,
+            title: "训练视频闪烁检测模型",
+            objective: "帧差特征 + 时序轻量网络",
+            metadata: ["source_conversation_id": "hub-amber-core"]
+        )
+        subAgentStore.reconcile(subAgentStore.items + [try XCTUnwrap(IOSSubAgentActivityStore.activity(record))])
+        let withRun = AmberUnifiedTaskBuilder.buildTasks(
+            gateway: MacGatewayStore.shared,
+            subAgentStore: subAgentStore,
+            taskStore: tasksStore,
+            wakeStore: IOSWakeTaskStore(fileURL: directory.appendingPathComponent("wake-empty.json")),
+            hubStore: hubStore
+        )
+        XCTAssertEqual(withRun.running.count, 1)
+        XCTAssertEqual(withRun.running.first?.title, "训练视频闪烁检测模型")
+        XCTAssertEqual(withRun.running.first?.ownership, .backgroundRun)
+        XCTAssertEqual(withRun.running.first?.statusBadgeText, "运行中")
+    }
+
+    /// Scheduled and monitoring work is its own honest group, and a stored result
+    /// is the only thing that may be shown as a conclusion. Nothing is invented.
+    func testScheduledWakeTasksFormTheirOwnGroupAndNeverFakeProgress() async throws {
+        let suite = "AmberWakeTaskGrouping.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let hubStore = AmberHubStore(defaults: defaults)
+        let tasksStore = IOSAdvancedTaskStore(userDefaults: defaults)
+        let subAgentStore = IOSSubAgentActivityStore(
+            tasks: tasksStore,
+            defaults: defaults,
+            launchedAt: Date(),
+            loadRuns: { [] }
+        )
+        let conversationID = UUID().uuidString.lowercased()
+        let wakeStore = IOSWakeTaskStore(fileURL: directory.appendingPathComponent("wake.json"))
+        _ = try wakeStore.schedule(
+            conversationID: conversationID,
+            sourceRunID: "run-source",
+            origin: IOSWakeOrigin(userMessageID: "msg-1", userText: "盯一下岚山小火车余票"),
+            title: "盯岚山小火车余票",
+            prompt: "查询余票并汇报",
+            fireAt: Date().addingTimeInterval(3_600),
+            event: nil,
+            requiresForeground: false,
+            requestID: "req-1"
+        )
+
+        let groups = AmberUnifiedTaskBuilder.buildTasks(
+            gateway: MacGatewayStore.shared,
+            subAgentStore: subAgentStore,
+            taskStore: tasksStore,
+            wakeStore: wakeStore,
+            hubStore: hubStore
+        )
+        XCTAssertEqual(groups.scheduled.count, 1)
+        XCTAssertEqual(groups.running.count, 0, "a plan that has not fired is not running work")
+        let row = try XCTUnwrap(groups.scheduled.first)
+        XCTAssertEqual(row.ownership, .scheduledMonitor)
+        XCTAssertEqual(row.statusText, "等待触发")
+        XCTAssertNil(row.resultText, "no conclusion exists before the task has run")
+        XCTAssertEqual(row.destination,
+                       .wakeConversation(conversationId: conversationID),
+                       "tapping opens the conversation that will actually run the task")
+        XCTAssertNotNil(row.nextRunAt)
     }
 
     /// Renders and exports high-resolution PNG screenshots for the 3 required Duet states
