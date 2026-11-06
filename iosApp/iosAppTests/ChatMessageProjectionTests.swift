@@ -22,7 +22,7 @@ final class ChatMessageProjectionTests: ChatMessageProjectionTestCase {
             cache.projection(messages: messages, event: .assistantStreamDelta, sourceRevision: 1,
                 startIndex: 0, configurationIssue: nil, isGenerationActive: true, isLoading: true,
                 isRecognizingImages: false, contextCompactState: .idle, contextCompactBoundaries: [],
-                viewportState: ChatViewportState(), displaySettingSignature: "", generativeUiSettingSignature: "",
+                viewportState: ChatViewportState(), displaySettingSignature: 0, generativeUiSettingSignature: 0,
                 renderStateRevision: 0, reasoningLevelLabel: nil, streamedMessageIDs: [idA, idB],
                 liveTaskTailIDs: live, renderStateStore: store, variantInfoProvider: { _ in nil },
                 contentHashProvider: { _, _ in 0 })
@@ -58,7 +58,7 @@ final class ChatMessageProjectionTests: ChatMessageProjectionTestCase {
                 startIndex: 0, configurationIssue: nil, isGenerationActive: true,
                 isLoading: false, isRecognizingImages: false, contextCompactState: .idle,
                 contextCompactBoundaries: [boundary], viewportState: ChatViewportState(),
-                displaySettingSignature: display, generativeUiSettingSignature: "",
+                displaySettingSignature: display.isEmpty ? 0 : display.hashValue, generativeUiSettingSignature: 0,
                 renderStateRevision: 0, reasoningLevelLabel: nil, streamedMessageIDs: streamed,
                 renderStateStore: renderStore, variantInfoProvider: { index in
                     requested.append(index); return nil
@@ -642,8 +642,8 @@ final class ChatMessageProjectionTests: ChatMessageProjectionTestCase {
         let projection = NativeTimelineProjector.build(
             messages: [user],
             event: .conversationLoaded,
-            displaySettingSignature: "display",
-            generativeUiSettingSignature: "generative",
+            displaySettingSignature: "display".hashValue,
+            generativeUiSettingSignature: "generative".hashValue,
             variantInfoProvider: { index in
                 index == 0
                     ? IOSConversationStore.VariantInfo(variantCount: 3, selectedIndex: 1)

@@ -168,7 +168,7 @@ final class ChatAssistantTurnProgressTests: ChatNativeTimelineReplayTestCase {
             return cache.projection(messages: messages, event: .toolResultAppended, sourceRevision: revision,
                 startIndex: 0, configurationIssue: nil, isGenerationActive: false, isLoading: false,
                 isRecognizingImages: false, contextCompactState: .idle, contextCompactBoundaries: [],
-                viewportState: ChatViewportState(), displaySettingSignature: "", generativeUiSettingSignature: "",
+                viewportState: ChatViewportState(), displaySettingSignature: 0, generativeUiSettingSignature: 0,
                 renderStateRevision: 0, reasoningLevelLabel: nil, streamedMessageIDs: [],
                 renderStateStore: renderStore, variantInfoProvider: { _ in nil },
                 contentHashProvider: { row, streaming in

@@ -190,7 +190,7 @@ final class ChatPhoneToolGroupingTests: XCTestCase {
                 startIndex: 0, configurationIssue: nil, isGenerationActive: true,
                 isLoading: false, isRecognizingImages: false, contextCompactState: .idle,
                 contextCompactBoundaries: [], viewportState: ChatViewportState(),
-                displaySettingSignature: "", generativeUiSettingSignature: "",
+                displaySettingSignature: 0, generativeUiSettingSignature: 0,
                 renderStateRevision: 0, reasoningLevelLabel: nil, streamedMessageIDs: [],
                 renderStateStore: renderStore, variantInfoProvider: { _ in nil },
                 contentHashProvider: { row, streaming in
@@ -341,7 +341,7 @@ final class ChatPhoneToolGroupingTests: XCTestCase {
                 startIndex: 0, configurationIssue: nil, isGenerationActive: false,
                 isLoading: false, isRecognizingImages: false, contextCompactState: .idle,
                 contextCompactBoundaries: [], viewportState: ChatViewportState(),
-                displaySettingSignature: "", generativeUiSettingSignature: "",
+                displaySettingSignature: 0, generativeUiSettingSignature: 0,
                 renderStateRevision: 0, reasoningLevelLabel: nil, streamedMessageIDs: [],
                 renderStateStore: ChatRenderStateStore(), variantInfoProvider: { _ in nil },
                 expandedPhoneToolGroupIDs: expanded, contentHashProvider: { _, _ in 0 })

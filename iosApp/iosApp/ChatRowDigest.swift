@@ -18,10 +18,11 @@ enum ChatRowDigests {
         renderState: ChatRenderState,
         contentHash: Int,
         isGenerationActive: Bool,
-        displaySettingSignature: String,
-        generativeUiSettingSignature: String,
+        displaySettingSignature: some Hashable,
+        generativeUiSettingSignature: some Hashable,
         hasMultipleVariants: Bool,
-        reasoningLevelLabel: String?
+        reasoningLevelLabel: String?,
+        renderStateRevision: UInt64 = 0
     ) -> ChatRowDigest {
         var layout = Hasher()
         layout.combine(row.messageId)
@@ -39,6 +40,7 @@ enum ChatRowDigests {
         layout.combine(renderState.liveRenderingEnabled)
         layout.combine(displaySettingSignature)
         layout.combine(generativeUiSettingSignature)
+        layout.combine(renderStateRevision)
         // variantSwitcher 是整行内嵌控件,单变体→多变体切换会让整行多出/少出
         // 一整条控件,直接改变行高;不能只留在 presentation 侧。
         layout.combine(hasMultipleVariants)

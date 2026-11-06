@@ -91,8 +91,8 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
     let model: ChatListMessageRenderModel
     let displaySetting: DisplaySetting
     let generativeUiSetting: GenerativeUiSetting
-    let displaySettingSignature: String
-    let generativeUiSettingSignature: String
+    let displaySettingSignature: Int
+    let generativeUiSettingSignature: Int
     let reasoningLevelLabel: String?
     let imageAccessibilityFocusToolCallID: String?
     let onAction: (ChatListAction) -> Void

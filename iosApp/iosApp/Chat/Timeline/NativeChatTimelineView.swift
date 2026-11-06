@@ -166,8 +166,8 @@ struct NativeChatTimelineView: View {
         let messages = messagesProvider()
         let startIndex = resolvedHistoryStartIndex(messages: messages)
         let nativeScrollDriverDesired = isNativeScrollDriverDesired
-        let displaySettingSignature = "\(String(describing: displaySetting))|scale:\(IOSChatFont.clampedScale(fontScale))|font:\(chatFont)|agentName:\(agentName)"
-        let generativeUiSettingSignature = String(describing: generativeUiSetting)
+        let displaySettingSignature = projectionCache.settings.display(displaySetting, fontScale: fontScale, chatFont: chatFont, agentName: agentName)
+        let generativeUiSettingSignature = projectionCache.settings.generative(generativeUiSetting)
         let effectiveStreamedMessageIDs = effectiveStreamedMessageIDsForRender(
             event: signal.event,
             messages: messages
@@ -847,8 +847,8 @@ struct NativeChatTimelineView: View {
     @ViewBuilder
     private func entryView(
         _ entry: NativeTimelineEntry,
-        displaySettingSignature: String,
-        generativeUiSettingSignature: String
+        displaySettingSignature: Int,
+        generativeUiSettingSignature: Int
     ) -> some View {
         switch entry.kind {
         case .emptyState:

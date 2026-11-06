@@ -7,7 +7,8 @@ import Combine
 @MainActor
 final class NativeTimelineProjectionCache {
     private var cachedProjection: NativeTimelineProjection?
-    private var structuralKey = ""
+    private var structuralKey: Int?
+    let settings = NativeTimelineSettingsCache()
     private var messageCount = 0
     private var lastMessageID: String?
     private var sourceRevision: Int?
@@ -30,8 +31,8 @@ final class NativeTimelineProjectionCache {
         contextCompactState: ChatContextCompactState,
         contextCompactBoundaries: [ChatContextCompactBoundary],
         viewportState: ChatViewportState,
-        displaySettingSignature: String,
-        generativeUiSettingSignature: String,
+        displaySettingSignature: Int,
+        generativeUiSettingSignature: Int,
         renderStateRevision: UInt64,
         reasoningLevelLabel: String?,
         streamedMessageIDs: Set<String>,
@@ -227,7 +228,7 @@ final class NativeTimelineProjectionCache {
 
     func reset() {
         cachedProjection = nil
-        structuralKey = ""
+        structuralKey = nil
         messageCount = 0
         lastMessageID = nil
         sourceRevision = nil
@@ -245,23 +246,27 @@ final class NativeTimelineProjectionCache {
         isRecognizingImages: Bool,
         contextCompactState: ChatContextCompactState,
         contextCompactBoundaries: [ChatContextCompactBoundary],
-        displaySettingSignature: String,
-        generativeUiSettingSignature: String,
+        displaySettingSignature: Int,
+        generativeUiSettingSignature: Int,
         reasoningLevelLabel: String?
-    ) -> String {
-        [
-            configurationIssue.map { "\($0.title)|\($0.message)" } ?? "no-issue",
-            "generation=\(isGenerationActive)",
-            "loading=\(isLoading)",
-            "vision=\(isRecognizingImages)",
-            "context=\(String(describing: contextCompactState.status)):\(contextCompactState.updatedAt.timeIntervalSince1970):\(contextCompactState.summary)",
-            "boundaries=\(contextCompactBoundaries.map { $0.id + "@" + $0.afterMessageId }.joined(separator: ","))",
-            "display=\(displaySettingSignature)",
-            "generative=\(generativeUiSettingSignature)",
-            "reasoning=\(reasoningLevelLabel ?? "")",
-            // Expanding/collapsing a phone-step group legitimately changes row content once.
-            "phoneGroups=\(expandedPhoneToolGroupIDs.sorted().joined(separator: ","))"
-        ].joined(separator: "||")
+    ) -> Int {
+        var key = Hasher()
+        key.combine(configurationIssue?.title)
+        key.combine(configurationIssue?.message)
+        key.combine(isGenerationActive)
+        key.combine(isLoading)
+        key.combine(isRecognizingImages)
+        key.combine(String(describing: contextCompactState.status))
+        key.combine(contextCompactState.updatedAt)
+        key.combine(contextCompactState.summary)
+        for boundary in contextCompactBoundaries {
+            key.combine(boundary.id)
+            key.combine(boundary.afterMessageId)
+        }
+        key.combine(displaySettingSignature)
+        key.combine(generativeUiSettingSignature)
+        key.combine(reasoningLevelLabel)
+        key.combine(expandedPhoneToolGroupIDs)
+        return key.finalize()
     }
 }
-

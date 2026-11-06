@@ -14,6 +14,7 @@ enum MarkdownStyle {
 }
 
 private struct AmberMarkdownParseResult {
+    let source: String
     let children: [PackedAstNode]
     let failed: Bool
 }
@@ -41,13 +42,15 @@ private final class AmberMarkdownAstCache: @unchecked Sendable {
             return cached.value
         }
 
+        var source = markdown
+        source.makeContiguousUTF8()
         let result: AmberMarkdownParseResult
-        if let data = MarkdownBridge.parse(markdown),
+        if let data = MarkdownBridge.parse(source),
            let reader = PackedAstReader(data: data),
            let root = reader.root() {
-            result = AmberMarkdownParseResult(children: root.children, failed: false)
+            result = AmberMarkdownParseResult(source: source, children: root.children, failed: false)
         } else {
-            result = AmberMarkdownParseResult(children: [], failed: true)
+            result = AmberMarkdownParseResult(source: source, children: [], failed: true)
         }
         cache.setObject(AmberMarkdownParseResultBox(result), forKey: key)
         return result
@@ -73,6 +76,10 @@ enum AmberMarkdownMath {
 
     private static func sliceSource(_ source: String, start: Int, end: Int) -> String {
         guard start < end else { return "" }
+        // Cached render sources are already native UTF-8; standalone math callers
+        // may still provide an NSString-backed value. Conversion is a no-op once native.
+        var source = source
+        source.makeContiguousUTF8()
         guard let startIndex = source.utf8.index(
             source.utf8.startIndex,
             offsetBy: start,
@@ -243,7 +250,7 @@ struct AmberMarkdownView: View {
             if resolved.failed || resolved.children.isEmpty {
                 Text(markdown)
             } else {
-                blockStack(resolved.children, source: markdown)
+                blockStack(resolved.children, source: resolved.source)
             }
         }
         .font(selectedFont.font(size: bodyFontSize))
@@ -466,6 +473,8 @@ struct AmberMarkdownView: View {
         hasher.combine(legibilityWeight)
         hasher.combine(boundedScale)
         hasher.combine(chatFont)
+        var source = source
+        source.makeContiguousUTF8()
         let utf8 = source.utf8
         if let lower = utf8.index(utf8.startIndex, offsetBy: node.startOffset, limitedBy: utf8.endIndex),
            let upper = utf8.index(utf8.startIndex, offsetBy: node.endOffset, limitedBy: utf8.endIndex),
@@ -804,6 +813,10 @@ struct AmberMarkdownView: View {
     /// Slice the source string using UTF-8 byte offsets from the AST.
     private func sliceSource(_ source: String, start: Int, end: Int) -> String {
         guard start < end else { return "" }
+        // Cached render sources are already native UTF-8; standalone math callers
+        // may still provide an NSString-backed value. Conversion is a no-op once native.
+        var source = source
+        source.makeContiguousUTF8()
         guard let startIdx = source.utf8.index(
             source.utf8.startIndex, offsetBy: start, limitedBy: source.utf8.endIndex
         ), let endIdx = source.utf8.index(

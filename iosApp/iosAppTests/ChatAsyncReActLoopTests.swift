@@ -396,7 +396,7 @@ final class ChatAsyncReActLoopTests: XCTestCase {
             return projectionCache.projection(messages: messages, event: event, sourceRevision: revision,
                 startIndex: 0, configurationIssue: nil, isGenerationActive: true, isLoading: false,
                 isRecognizingImages: false, contextCompactState: .idle, contextCompactBoundaries: [],
-                viewportState: ChatViewportState(), displaySettingSignature: "", generativeUiSettingSignature: "",
+                viewportState: ChatViewportState(), displaySettingSignature: 0, generativeUiSettingSignature: 0,
                 renderStateRevision: 0, reasoningLevelLabel: nil, streamedMessageIDs: [laterID],
                 renderStateStore: renderStore, variantInfoProvider: { requestedRows.append($0); return nil },
                 contentHashProvider: { _, _ in 0 })

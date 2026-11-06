@@ -106,8 +106,8 @@ enum NativeTimelineProjector {
         contextCompactState: ChatContextCompactState = .idle,
         contextCompactBoundaries: [ChatContextCompactBoundary] = [],
         viewportState: ChatViewportState = ChatViewportState(),
-        displaySettingSignature: String = "",
-        generativeUiSettingSignature: String = "",
+        displaySettingSignature: Int = 0,
+        generativeUiSettingSignature: Int = 0,
         renderStateRevision: UInt64 = 0,
         reasoningLevelLabel: String? = nil,
         streamedMessageIDs: Set<String> = [],
@@ -266,8 +266,8 @@ enum NativeTimelineProjector {
         event: ChatEvent,
         isGenerationActive: Bool,
         viewportState: ChatViewportState,
-        displaySettingSignature: String = "",
-        generativeUiSettingSignature: String = "",
+        displaySettingSignature: Int = 0,
+        generativeUiSettingSignature: Int = 0,
         renderStateRevision: UInt64 = 0,
         reasoningLevelLabel: String? = nil,
         streamedMessageIDs: Set<String> = [],
@@ -323,9 +323,10 @@ enum NativeTimelineProjector {
             contentHash: contentHash,
             isGenerationActive: isGenerationActive,
             displaySettingSignature: displaySettingSignature,
-            generativeUiSettingSignature: "\(generativeUiSettingSignature):renderState=\(renderStateRevision)",
+            generativeUiSettingSignature: generativeUiSettingSignature,
             hasMultipleVariants: variantInfo?.hasMultipleVariants == true,
-            reasoningLevelLabel: reasoningLevelLabel
+            reasoningLevelLabel: reasoningLevelLabel,
+            renderStateRevision: renderStateRevision
         )
 
         var entries = previous.entries
@@ -374,7 +375,7 @@ enum NativeTimelineProjector {
         in previous: NativeTimelineProjection,
         messages: [UIMessage], event: ChatEvent, startIndex: Int, unchangedMessageIDs: Set<String>,
         isGenerationActive: Bool, viewportState: ChatViewportState,
-        displaySettingSignature: String, generativeUiSettingSignature: String,
+        displaySettingSignature: Int, generativeUiSettingSignature: Int,
         renderStateRevision: UInt64, reasoningLevelLabel: String?,
         streamedMessageIDs: Set<String>, renderStateStore: ChatRenderStateStore,
         variantInfoProvider: (Int) -> IOSConversationStore.VariantInfo?,
@@ -446,8 +447,8 @@ enum NativeTimelineProjector {
         for entry: ChatTimelineEntry,
         isGenerationActive: Bool = false,
         viewportState: ChatViewportState = ChatViewportState(),
-        displaySettingSignature: String = "",
-        generativeUiSettingSignature: String = "",
+        displaySettingSignature: Int = 0,
+        generativeUiSettingSignature: Int = 0,
         renderStateRevision: UInt64 = 0,
         reasoningLevelLabel: String? = nil,
         renderStateStore: ChatRenderStateStore? = nil,
@@ -477,11 +478,10 @@ enum NativeTimelineProjector {
                 contentHash: contentHash,
                 isGenerationActive: isGenerationActive,
                 displaySettingSignature: displaySettingSignature,
-                generativeUiSettingSignature: row.isLast && row.role == MessageRole.assistant
-                    ? "\(generativeUiSettingSignature):renderState=\(renderStateRevision)"
-                    : generativeUiSettingSignature,
+                generativeUiSettingSignature: generativeUiSettingSignature,
                 hasMultipleVariants: variantInfo?.hasMultipleVariants == true,
-                reasoningLevelLabel: reasoningLevelLabel
+                reasoningLevelLabel: reasoningLevelLabel,
+                renderStateRevision: row.isLast && row.role == MessageRole.assistant ? renderStateRevision : 0
             )
             return NativeTimelineEntry(
                 id: message.id,
