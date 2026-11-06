@@ -280,11 +280,13 @@ struct AmberAgentPersonaMedallionView: View {
     var reduceMotionOverride: Bool? = nil
 
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    @Environment(\.amberIsUnderlyingSheetPresented) private var isUnderlyingSheetPresented
 
     private var store: AmberPersonaStore { storeOverride ?? AmberPersonaStore.shared }
 
     private var effectiveReduceMotion: Bool {
-        reduceMotionOverride ?? systemReduceMotion
+        if let reduceMotionOverride { return reduceMotionOverride }
+        return systemReduceMotion || isUnderlyingSheetPresented
     }
 
     private var activePreset: AmberPersonaPreset {
@@ -346,12 +348,16 @@ struct AmberAgentPersonaMedallionView: View {
     }
 
     var body: some View {
-        ZStack {
-            personaBackdropGlass
-            content
-        }
-        .frame(width: diameter, height: diameter)
-        .accessibilityHidden(true)
+        content
+            .frame(width: diameter, height: diameter)
+            .modifier(
+                PersonaMedallionBackdropGlass(
+                    diameter: diameter,
+                    mood: mood,
+                    accentColor: accentColor
+                )
+            )
+            .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -418,11 +424,21 @@ struct AmberAgentPersonaMedallionView: View {
             .frame(width: max(1, diameter - 2), height: max(1, diameter - 2))
             .clipShape(Circle())
     }
+}
 
-    @ViewBuilder
-    private var personaBackdropGlass: some View {
-        let baseCircle = Circle()
-            .fill(AmberTheme.glass.opacity(0.18))
+/// Applies the medallion glass/material backdrop strictly behind the foreground avatar content (`content`),
+/// preventing a sibling `Circle().glassEffect(...)` from compositing in front of and blurring the avatar.
+private struct PersonaMedallionBackdropGlass: ViewModifier {
+    let diameter: CGFloat
+    let mood: AmberAgentPersonaMood
+    let accentColor: Color
+
+    private var baseBackdrop: some View {
+        Circle()
+            .fill(.ultraThinMaterial)
+            .overlay {
+                Circle().fill(AmberTheme.glass.opacity(0.18))
+            }
             .overlay {
                 RadialGradient(
                     colors: [
@@ -435,18 +451,28 @@ struct AmberAgentPersonaMedallionView: View {
                 )
                 .clipShape(Circle())
             }
-            .overlay {
-                Circle()
-                    .strokeBorder(
-                        mood == .blocked ? AmberTheme.accentRed.opacity(0.45) : AmberTheme.border.opacity(0.32),
-                        lineWidth: 0.75
-                    )
-            }
+    }
+
+    private var borderOverlay: some View {
+        Circle()
+            .strokeBorder(
+                mood == .blocked ? AmberTheme.accentRed.opacity(0.45) : AmberTheme.border.opacity(0.32),
+                lineWidth: 0.75
+            )
+            .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
-            baseCircle.glassEffect(.regular, in: Circle())
+            content
+                .background { baseBackdrop }
+                .glassEffect(.regular, in: Circle())
+                .overlay { borderOverlay }
         } else {
-            baseCircle
-                .background(Circle().fill(.ultraThinMaterial))
+            content
+                .background { baseBackdrop }
+                .overlay { borderOverlay }
                 .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 3)
         }
     }

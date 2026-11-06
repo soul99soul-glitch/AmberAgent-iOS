@@ -56,89 +56,191 @@ enum AmberHandoffExecutionTarget: String, CaseIterable, Identifiable {
 
 struct AmberDuetBottomSwitcher: View {
     var selectedTab: AmberDuetModeTab = .chat
-    let activeTaskCount: Int
-    let needsAttentionCount: Int
+    var activeTaskCount: Int = 0
+    var needsAttentionCount: Int = 0
     var gateway: MacGatewayStore = .shared
+    var subAgentStore: IOSSubAgentActivityStore? = nil
+    var hubStore: AmberHubStore? = nil
     var onSelectTab: ((AmberDuetModeTab) -> Void)? = nil
     let onOpenTasks: () -> Void
     let onOpenWorkspace: () -> Void
     var onSelectHost: ((Bool) -> Void)? = nil
     var onOpenCloudPairingSettings: (() -> Void)? = nil
 
+    @Namespace private var glassNamespace
+    @State private var tabFrames: [AmberDuetModeTab: CGRect] = [:]
+    @State private var dragLocationX: CGFloat? = nil
+    @State private var dragVelocityX: CGFloat = 0
+
+    private var resolvedTaskCounts: (active: Int, needsAttention: Int) {
+        if let subAgentStore {
+            let groups = AmberUnifiedTaskBuilder.buildTasks(
+                gateway: gateway,
+                subAgentStore: subAgentStore,
+                hubStore: hubStore ?? .shared
+            )
+            return (groups.activeCount, groups.needsAttention.count)
+        }
+        return (activeTaskCount, needsAttentionCount)
+    }
+
     private var badgeCount: Int {
-        needsAttentionCount + activeTaskCount
+        let counts = resolvedTaskCounts
+        return counts.needsAttention + counts.active
     }
 
     private var badgeColor: Color {
-        needsAttentionCount > 0 ? AmberTheme.accentRed : AmberTheme.accent
+        resolvedTaskCounts.needsAttention > 0 ? AmberTheme.accentRed : AmberTheme.accent
     }
 
     var body: some View {
-        HStack(spacing: 8) {
-            // Left (3): Pure-typography segmented pill (对话 | 任务 [N] | 中心)
-            HStack(spacing: 2) {
-                modeButton(
-                    tab: .chat,
-                    isSelected: selectedTab == .chat,
-                    badgeCount: 0,
-                    badgeColor: AmberTheme.accent
-                ) {
-                    if let onSelectTab {
-                        onSelectTab(.chat)
-                    }
-                }
+        AmberGlassGroup(spacing: 8) {
+            HStack(spacing: 8) {
+                // Left (3): Native Liquid Glass segmented pill (对话 | 任务 [N] | 中心)
+                modeSegmentedTrack
 
-                modeButton(
-                    tab: .tasks,
-                    isSelected: selectedTab == .tasks,
-                    badgeCount: badgeCount,
-                    badgeColor: badgeColor
-                ) {
-                    if let onSelectTab {
-                        onSelectTab(selectedTab == .tasks ? .chat : .tasks)
-                    } else {
-                        onOpenTasks()
-                    }
-                }
+                Spacer(minLength: 4)
 
-                modeButton(
-                    tab: .hubs,
-                    isSelected: selectedTab == .hubs,
-                    badgeCount: 0,
-                    badgeColor: AmberTheme.accent
-                ) {
-                    if let onSelectTab {
-                        onSelectTab(selectedTab == .hubs ? .chat : .hubs)
-                    } else {
-                        onOpenWorkspace()
-                    }
-                }
-            }
-            .padding(3.5)
-            .modifier(DuetBottomCapsuleGlass(isHighlighted: false))
-
-            Spacer(minLength: 4)
-
-            // Right (+1): 本机 ⇄ 云端 宿主切换胶囊（短按一键直切，长按快捷菜单）
-            AmberHostSwitcherPill(
-                gateway: gateway,
-                onSelectHost: { useCloud in
-                    if let onSelectHost {
-                        onSelectHost(useCloud)
-                    } else {
-                        gateway.setCloudMainDialogueSelected(useCloud)
-                        if selectedTab != .chat {
-                            onSelectTab?(.chat)
+                // Right (+1): 本机 ⇄ 云端 宿主切换胶囊（短按一键直切，长按快捷菜单）
+                AmberHostSwitcherPill(
+                    gateway: gateway,
+                    onSelectHost: { useCloud in
+                        if let onSelectHost {
+                            onSelectHost(useCloud)
+                        } else {
+                            gateway.setCloudMainDialogueSelected(useCloud)
+                            if selectedTab != .chat {
+                                onSelectTab?(.chat)
+                            }
                         }
+                    },
+                    onOpenPairingSettings: {
+                        onOpenCloudPairingSettings?()
                     }
-                },
-                onOpenPairingSettings: {
-                    onOpenCloudPairingSettings?()
-                }
-            )
+                )
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chat.duet.bottomSwitcher")
+    }
+
+    private var modeSegmentedTrack: some View {
+        HStack(spacing: 2) {
+            modeButton(
+                tab: .chat,
+                isSelected: selectedTab == .chat,
+                badgeCount: 0,
+                badgeColor: AmberTheme.accent
+            ) {
+                if let onSelectTab {
+                    onSelectTab(.chat)
+                }
+            }
+
+            modeButton(
+                tab: .tasks,
+                isSelected: selectedTab == .tasks,
+                badgeCount: badgeCount,
+                badgeColor: badgeColor
+            ) {
+                if let onSelectTab {
+                    onSelectTab(selectedTab == .tasks ? .chat : .tasks)
+                } else {
+                    onOpenTasks()
+                }
+            }
+
+            modeButton(
+                tab: .hubs,
+                isSelected: selectedTab == .hubs,
+                badgeCount: 0,
+                badgeColor: AmberTheme.accent
+            ) {
+                if let onSelectTab {
+                    onSelectTab(selectedTab == .hubs ? .chat : .hubs)
+                } else {
+                    onOpenWorkspace()
+                }
+            }
+        }
+        .padding(3.5)
+        .modifier(DuetBottomTrackWellSurface())
+        .contentShape(Capsule(style: .continuous))
+        .highPriorityGesture(modeScrubGesture)
+        .coordinateSpace(name: "duetModeTrack")
+    }
+
+    private func scrubLensDeformation(for tab: AmberDuetModeTab, isSelected: Bool) -> (offsetX: CGFloat, scaleX: CGFloat, scaleY: CGFloat) {
+        guard isSelected, let locationX = dragLocationX, let frame = tabFrames[tab], frame.width > 0 else {
+            return (0, 1, 1)
+        }
+        let rawDelta = locationX - frame.midX
+        let clampedOffset = min(max(rawDelta * 0.45, -10), 10)
+        let edgeStretch = min(abs(rawDelta) / max(1, frame.width * 0.5), 1.0) * 0.05
+        let speedFactor = min(abs(dragVelocityX) / 900.0, 1.0)
+        let scaleX = 1.0 + edgeStretch + 0.06 * speedFactor
+        let scaleY = 1.03 - 0.02 * speedFactor
+        return (clampedOffset, scaleX, scaleY)
+    }
+
+    private var modeScrubGesture: some Gesture {
+        DragGesture(minimumDistance: 8, coordinateSpace: .named("duetModeTrack"))
+            .onChanged { value in
+                guard abs(value.translation.width) >= abs(value.translation.height) else { return }
+                dragLocationX = value.location.x
+                dragVelocityX = value.velocity.width
+                if let hoveredTab = resolvedTab(at: value.location.x), hoveredTab != selectedTab {
+                    withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.82)) {
+                        activateTabFromScrub(hoveredTab)
+                    }
+                }
+            }
+            .onEnded { value in
+                defer {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
+                        dragLocationX = nil
+                        dragVelocityX = 0
+                    }
+                }
+                guard abs(value.translation.width) >= abs(value.translation.height) else { return }
+                if let finalTab = resolvedTab(at: value.location.x), finalTab != selectedTab {
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.80)) {
+                        activateTabFromScrub(finalTab)
+                    }
+                }
+            }
+    }
+
+    private func resolvedTab(at x: CGFloat) -> AmberDuetModeTab? {
+        var bestTab: AmberDuetModeTab?
+        var bestDistance = CGFloat.greatestFiniteMagnitude
+        for tab in AmberDuetModeTab.allCases {
+            guard let frame = tabFrames[tab], frame.width > 0 else { continue }
+            if x >= frame.minX && x <= frame.maxX {
+                return tab
+            }
+            let distance = abs(frame.midX - x)
+            if distance < bestDistance {
+                bestDistance = distance
+                bestTab = tab
+            }
+        }
+        return bestTab
+    }
+
+    private func activateTabFromScrub(_ tab: AmberDuetModeTab) {
+        if let onSelectTab {
+            onSelectTab(tab)
+        } else {
+            switch tab {
+            case .chat:
+                break
+            case .tasks:
+                onOpenTasks()
+            case .hubs:
+                onOpenWorkspace()
+            }
+        }
     }
 
     private func modeButton(
@@ -148,7 +250,8 @@ struct AmberDuetBottomSwitcher: View {
         badgeColor: Color,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        let deformation = scrubLensDeformation(for: tab, isSelected: isSelected)
+        return Button(action: action) {
             HStack(spacing: 4) {
                 Text(tab.title)
                     .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
@@ -165,20 +268,105 @@ struct AmberDuetBottomSwitcher: View {
                 }
             }
             .fixedSize(horizontal: true, vertical: false)
-            .foregroundStyle(isSelected ? AmberTheme.foreground : AmberTheme.muted)
+            .foregroundStyle(isSelected ? AmberTheme.foreground : AmberTheme.foreground2)
             .padding(.horizontal, tab == .tasks ? 13 : 14)
             .padding(.vertical, 6)
-            .background {
-                if isSelected {
-                    Capsule(style: .continuous)
-                        .fill(AmberTheme.surfaceElevated)
-                        .shadow(color: Color.black.opacity(0.06), radius: 2.5, x: 0, y: 1)
-                }
-            }
+            .modifier(
+                DuetActiveModeLensModifier(
+                    namespace: isSelected ? glassNamespace : nil,
+                    isActive: isSelected
+                )
+            )
+            .scaleEffect(x: deformation.scaleX, y: deformation.scaleY)
+            .offset(x: deformation.offsetX)
             .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(.plain)
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .named("duetModeTrack"))
+        } action: { rect in
+            if tabFrames[tab] != rect {
+                tabFrames[tab] = rect
+            }
+        }
         .accessibilityIdentifier("chat.duet.tab.\(tab.rawValue)")
+    }
+}
+
+/// Recessed translucent capsule track well for the 3-tab mode switcher.
+/// Keeping the outer well on `.ultraThinMaterial` + subtle glass pad avoids iOS 26
+/// nested `.glassEffect` SDF union, allowing the active Liquid Glass lens inside to
+/// refract, deform, and glide across `对话 | 任务 | 中心` as a distinct lens.
+private struct DuetBottomTrackWellSurface: ViewModifier {
+    func body(content: Content) -> some View {
+        let shape = Capsule(style: .continuous)
+        content
+            .background {
+                shape
+                    .fill(.ultraThinMaterial)
+                    .overlay {
+                        shape.fill(AmberTheme.glass.opacity(0.24))
+                    }
+                    .overlay {
+                        shape.strokeBorder(AmberTheme.border.opacity(0.34), lineWidth: 0.6)
+                    }
+            }
+            .shadow(color: .black.opacity(0.05), radius: 8, y: 3)
+    }
+}
+
+/// Native iOS 26 Liquid Glass selection lens modifier for the active mode tab (`对话 | 任务 | 中心`).
+/// Applied directly to the tab label so the label text is rendered on top of the `.glassEffect`
+/// backdrop layer rather than occluded behind it.
+private struct DuetActiveModeLensModifier: ViewModifier {
+    var namespace: Namespace.ID?
+    var isActive: Bool = true
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if !isActive {
+            content
+        } else {
+            let shape = Capsule(style: .continuous)
+            let backed = content
+                .background {
+                    shape
+                        .fill(AmberTheme.surfaceElevated.opacity(0.56))
+                        .shadow(color: Color.black.opacity(0.07), radius: 3, x: 0, y: 1)
+                }
+                .overlay {
+                    shape
+                        .strokeBorder(AmberTheme.homeGlassHighlight.opacity(0.72), lineWidth: 0.6)
+                        .allowsHitTesting(false)
+                }
+
+            if #available(iOS 26.0, *) {
+                if let namespace {
+                    backed
+                        .glassEffect(
+                            .regular.tint(AmberTheme.surfaceElevated.opacity(0.38)).interactive(),
+                            in: shape
+                        )
+                        .glassEffectID("duetActiveTabLens", in: namespace)
+                        .glassEffectTransition(.matchedGeometry)
+                } else {
+                    backed
+                        .glassEffect(
+                            .regular.tint(AmberTheme.surfaceElevated.opacity(0.38)).interactive(),
+                            in: shape
+                        )
+                }
+            } else {
+                if let namespace {
+                    backed
+                        .background(.thinMaterial, in: shape)
+                        .matchedGeometryEffect(id: "duetActiveTabLens", in: namespace)
+                } else {
+                    backed
+                        .background(.thinMaterial, in: shape)
+                }
+            }
+        }
     }
 }
 
@@ -190,8 +378,14 @@ struct DuetBottomCapsuleGlass: ViewModifier {
         let shape = Capsule(style: .continuous)
         if #available(iOS 26.0, *) {
             content
-                .background(AmberTheme.glass.opacity(0.16), in: shape)
-                .glassEffect(.regular, in: shape)
+                .background {
+                    shape
+                        .fill(.ultraThinMaterial)
+                        .overlay {
+                            shape.fill(AmberTheme.glass.opacity(0.16))
+                        }
+                }
+                .glassEffect(.regular.interactive(), in: shape)
                 .overlay {
                     shape
                         .strokeBorder(
@@ -216,27 +410,37 @@ struct DuetBottomCapsuleGlass: ViewModifier {
     }
 }
 
-// MARK: - 02 Argon Tasks Panel Card & Sheet (Goal/Status Grouped + Collapsed History)
+// MARK: - 02 Argon Tasks Panel (Real Delegated / Background / Scheduled Work)
+
+/// The panel lists only work a durable owner actually holds. A normal assistant
+/// turn that happens to call several tools keeps its single progress line inside
+/// the conversation and never appears here.
+private struct AmberCloudTaskSelection: Identifiable, Equatable {
+    let requestId: String
+    var id: String { requestId }
+}
 
 struct AmberDuetTaskCenterCard: View {
-    let conversationSegments: [ChatTaskRunSegment]
     let gateway: MacGatewayStore
     var subAgentStore: IOSSubAgentActivityStore = .shared
+    var taskStore: IOSAdvancedTaskStore = .shared
+    var wakeStore: IOSWakeTaskStore = .shared
     var hubStore: AmberHubStore = .shared
     let onOpenFullTaskBoard: () -> Void
-    let onSelectTool: (UIMessagePart.Tool) -> Void
+    var onOpenTask: ((AmberUnifiedTaskItem) -> Void)? = nil
     var onFollowupTask: ((AmberUnifiedTaskItem) -> Void)? = nil
     var onDismissPanel: (() -> Void)? = nil
 
     @State private var selectedHubFilterId: String? = nil
     @State private var isRecentExpanded: Bool = false
-    @State private var selectedSegment: ChatTaskRunSegment? = nil
+    @State private var selectedCloudTask: AmberCloudTaskSelection? = nil
 
-    private var groupedTasks: (needsAttention: [AmberUnifiedTaskItem], running: [AmberUnifiedTaskItem], recent: [AmberUnifiedTaskItem]) {
+    private var groups: AmberUnifiedTaskBuilder.Groups {
         AmberUnifiedTaskBuilder.buildTasks(
-            conversationSegments: conversationSegments,
             gateway: gateway,
             subAgentStore: subAgentStore,
+            taskStore: taskStore,
+            wakeStore: wakeStore,
             hubStore: hubStore,
             filterHubId: selectedHubFilterId
         )
@@ -251,220 +455,245 @@ struct AmberDuetTaskCenterCard: View {
     }
 
     var body: some View {
-        let groups = groupedTasks
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(spacing: 12) {
-                // Drag indicator
-                HStack {
-                    Spacer()
-                    Capsule()
-                        .fill(AmberTheme.border)
-                        .frame(width: 36, height: 4)
-                    Spacer()
+        let current = groups
+        VStack(alignment: .leading, spacing: 20) {
+            header
+
+            if current.isEmpty {
+                emptyState
+            } else {
+                VStack(alignment: .leading, spacing: 18) {
+                    if !current.needsAttention.isEmpty {
+                        section(
+                            title: IOSAppLocalization.string("等你处理", defaultValue: "等你处理"),
+                            items: current.needsAttention
+                        )
+                    }
+                    if !current.running.isEmpty {
+                        section(
+                            title: IOSAppLocalization.string("进行中", defaultValue: "进行中"),
+                            items: current.running
+                        )
+                    }
+                    if !current.scheduled.isEmpty {
+                        section(
+                            title: IOSAppLocalization.string("已排定", defaultValue: "已排定"),
+                            items: current.scheduled
+                        )
+                    }
+                    if !current.recent.isEmpty {
+                        recentSection(current.recent)
+                    }
                 }
-                .padding(.top, 10)
+            }
+        }
+        .padding(.horizontal, 20)
+        .accessibilityIdentifier("chat.duet.tasksPanel")
+        .sheet(item: $selectedCloudTask) { selection in
+            MacGatewayCloudTaskDetailSheet(store: gateway, requestId: selection.requestId)
+        }
+    }
 
-                // Header: 任务 + 全部中心 ⌄
-                HStack(alignment: .center) {
-                    Text(IOSAppLocalization.string("任务", defaultValue: "任务"))
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(AmberTheme.foreground)
+    private var header: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Spacer()
+                Capsule()
+                    .fill(AmberTheme.border)
+                    .frame(width: 36, height: 4)
+                Spacer()
+            }
+            .padding(.top, 10)
 
-                    Spacer()
+            HStack(alignment: .center) {
+                Text(IOSAppLocalization.string("任务", defaultValue: "任务"))
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(AmberTheme.foreground)
 
-                    Menu {
+                Spacer()
+
+                Menu {
+                    Button {
+                        selectedHubFilterId = nil
+                    } label: {
+                        HStack {
+                            Text(IOSAppLocalization.string("全部中心", defaultValue: "全部中心"))
+                            if selectedHubFilterId == nil {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                    ForEach(hubStore.hubs) { hub in
                         Button {
-                            selectedHubFilterId = nil
+                            selectedHubFilterId = hub.id
                         } label: {
                             HStack {
-                                Text(IOSAppLocalization.string("全部中心", defaultValue: "全部中心"))
-                                if selectedHubFilterId == nil {
+                                Text(hub.title)
+                                if selectedHubFilterId == hub.id {
                                     Image(systemName: "checkmark")
                                 }
                             }
                         }
-                        ForEach(hubStore.hubs) { hub in
-                            Button {
-                                selectedHubFilterId = hub.id
-                            } label: {
-                                HStack {
-                                    Text(hub.title)
-                                    if selectedHubFilterId == hub.id {
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(filterHubTitle)
-                                .font(.system(size: 12, weight: .medium))
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 9, weight: .semibold))
-                        }
-                        .foregroundStyle(AmberTheme.muted)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 5.5)
-                        .background(AmberTheme.surface, in: Capsule(style: .continuous))
                     }
-                    .accessibilityIdentifier("chat.duet.tasks.hubFilter")
-                }
-            }
-            .padding(.horizontal, 20)
-
-            VStack(alignment: .leading, spacing: 10) {
-                // 1. Needs-Attention / Failed Tasks (Top Priority, No Warning Icon)
-                ForEach(groups.needsAttention) { item in
-                    needsAttentionCard(item)
-                }
-
-                // 2. Active / Running Tasks
-                ForEach(groups.running) { item in
-                    runningTaskCard(item)
-                }
-
-                if groups.needsAttention.isEmpty && groups.running.isEmpty && groups.recent.isEmpty {
-                    Text(IOSAppLocalization.string("当前暂无运行中或待处理的任务", defaultValue: "当前暂无运行中或待处理的任务"))
-                        .font(.subheadline)
-                        .foregroundStyle(AmberTheme.muted)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(16)
-                        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
-
-                // 3. Collapsed Recent Terminal Results Summary Bar (No Clock Icon)
-                if !groups.recent.isEmpty {
-                    recentResultsSection(groups.recent)
-                }
-            }
-            .padding(.horizontal, 20)
-        }
-        .accessibilityIdentifier("chat.duet.tasksPanel")
-        .sheet(item: $selectedSegment) { segment in
-            ChatTaskGroupDetailSheet(
-                segment: segment,
-                onSelectTool: { tool in
-                    selectedSegment = nil
-                    onDismissPanel?()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-                        onSelectTool(tool)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(filterHubTitle)
+                            .font(.system(size: 12, weight: .medium))
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
                     }
+                    .foregroundStyle(AmberTheme.muted)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(AmberTheme.surface, in: Capsule(style: .continuous))
                 }
-            )
+                .accessibilityIdentifier("chat.duet.tasks.hubFilter")
+            }
         }
     }
 
-    private func needsAttentionCard(_ item: AmberUnifiedTaskItem) -> some View {
-        Button {
-            if let seg = item.underlyingSegment {
-                selectedSegment = seg
-            } else {
-                onFollowupTask?(item)
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(IOSAppLocalization.string("暂时没有交办事项", defaultValue: "暂时没有交办事项"))
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(AmberTheme.foreground)
+
+            Text(IOSAppLocalization.string(
+                "把一件事交给后台或定时执行，它就会出现在这里；对话里的普通查询和工具步骤只在对话流内显示",
+                defaultValue: "把一件事交给后台或定时执行，它就会出现在这里；对话里的普通查询和工具步骤只在对话流内显示"
+            ))
+            .font(.system(size: 12.5))
+            .foregroundStyle(AmberTheme.muted)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func section(
+        title: String,
+        items: [AmberUnifiedTaskItem]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AmberTheme.muted)
+                Text("\(items.count)")
+                    .font(.system(size: 12, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(AmberTheme.muted2)
             }
+            .padding(.leading, 4)
+
+            VStack(spacing: 0) {
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    if index > 0 {
+                        Divider()
+                            .overlay(AmberTheme.border.opacity(0.6))
+                            .padding(.leading, 16)
+                    }
+                    taskRow(item)
+                }
+            }
+            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(AmberTheme.border, lineWidth: 0.6)
+            }
+        }
+    }
+
+    private func taskRow(_ item: AmberUnifiedTaskItem) -> some View {
+        Button {
+            open(item)
         } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
+            HStack(alignment: .top, spacing: 10) {
+                Circle()
+                    .fill(AmberUnifiedTaskBuilder.statusColor(for: item.phase))
+                    .frame(width: 6, height: 6)
+                    .padding(.top, 6)
+                    .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 4) {
                     Text(item.title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 14, weight: .medium))
                         .foregroundStyle(AmberTheme.foreground)
                         .lineLimit(1)
 
-                    Spacer(minLength: 8)
-
-                    Text(item.statusBadgeText)
-                        .font(.system(size: 11.2, weight: .semibold))
-                        .foregroundStyle(AmberTheme.accentRed)
-                }
-
-                HStack(alignment: .center) {
-                    Text(item.subtitle)
-                        .font(.system(size: 12.2))
+                    Text(rowStageLine(item))
+                        .font(.system(size: 12.5))
                         .foregroundStyle(AmberTheme.muted)
-                        .lineLimit(1)
-
-                    Spacer(minLength: 8)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
 
                     if let actionTitle = item.actionTitle {
                         Button {
                             if let onFollowupTask {
+                                onDismissPanel?()
                                 onFollowupTask(item)
-                            } else if let seg = item.underlyingSegment {
-                                selectedSegment = seg
+                            } else {
+                                open(item)
                             }
                         } label: {
                             Text(actionTitle)
-                                .font(.system(size: 11.5, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 5)
-                                .background(AmberTheme.accentRed, in: Capsule(style: .continuous))
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(AmberTheme.accent)
+                                .padding(.top, 2)
                         }
                         .buttonStyle(.plain)
                     }
                 }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-            .background(AmberTheme.accentRed.opacity(0.045), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(AmberTheme.accentRed.opacity(0.24), lineWidth: 0.85)
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func runningTaskCard(_ item: AmberUnifiedTaskItem) -> some View {
-        Button {
-            if let seg = item.underlyingSegment {
-                selectedSegment = seg
-            } else if let onFollowupTask {
-                onFollowupTask(item)
-            }
-        } label: {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(item.title)
-                        .font(.system(size: 13.8, weight: .semibold))
-                        .foregroundStyle(AmberTheme.foreground)
-                        .lineLimit(1)
-
-                    Text(item.subtitle)
-                        .font(.system(size: 12))
-                        .foregroundStyle(AmberTheme.muted)
-                        .lineLimit(1)
-                }
 
                 Spacer(minLength: 8)
 
-                HStack(spacing: 4.5) {
-                    Circle()
-                        .fill(AmberTheme.accent)
-                        .frame(width: 5, height: 5)
-                    Text(item.statusBadgeText)
-                        .font(.system(size: 11.2, weight: .medium))
-                        .foregroundStyle(AmberTheme.accent)
-                }
-                .padding(.horizontal, 8.5)
-                .padding(.vertical, 3.5)
-                .background(AmberTheme.accent.opacity(0.09), in: Capsule(style: .continuous))
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(AmberTheme.muted2)
+                Text(item.statusText)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(AmberUnifiedTaskBuilder.statusColor(for: item.phase))
+                    .padding(.top, 2)
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(AmberTheme.surfaceElevated, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .stroke(AmberTheme.border, lineWidth: 0.75)
-            }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("chat.duet.tasks.row.\(item.id)")
     }
 
-    private func recentResultsSection(_ recentItems: [AmberUnifiedTaskItem]) -> some View {
+    /// Stage, most recent real conclusion and next step — never an invented
+    /// percentage. A task with no outcome yet simply does not show one.
+    private func rowStageLine(_ item: AmberUnifiedTaskItem) -> String {
+        var parts: [String] = [item.subtitle]
+        if let result = item.resultText, !result.isEmpty {
+            parts.append(result)
+        }
+        if item.phase == .scheduled, let nextRunAt = item.nextRunAt {
+            parts.append(IOSAppLocalization.string("下次", defaultValue: "下次") + " "
+                         + nextRunAt.formatted(.relative(presentation: .named)))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func open(_ item: AmberUnifiedTaskItem) {
+        switch item.destination {
+        case .cloudTaskDetail(let requestId):
+            selectedCloudTask = AmberCloudTaskSelection(requestId: requestId)
+        case .subAgentConversation, .executionRecord, .wakeConversation, .macBoard:
+            onDismissPanel?()
+            onOpenTask?(item)
+        case .none:
+            onDismissPanel?()
+            if let onFollowupTask {
+                onFollowupTask(item)
+            } else {
+                onOpenTask?(item)
+            }
+        }
+    }
+
+    private func recentSection(_ recentItems: [AmberUnifiedTaskItem]) -> some View {
         let summaryText = AmberUnifiedTaskBuilder.recentSummaryText(recentItems)
         return VStack(alignment: .leading, spacing: 8) {
             Button {
@@ -472,70 +701,83 @@ struct AmberDuetTaskCenterCard: View {
                     isRecentExpanded.toggle()
                 }
             } label: {
-                HStack(spacing: 6) {
-                    Text("最近结果 · \(recentItems.count) 项")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(AmberTheme.foreground2)
+                HStack(spacing: 8) {
+                    Text(IOSAppLocalization.string("最近结果", defaultValue: "最近结果"))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AmberTheme.muted)
 
                     Text(summaryText)
                         .font(.system(size: 12))
-                        .foregroundStyle(AmberTheme.muted)
+                        .foregroundStyle(AmberTheme.muted2)
                         .lineLimit(1)
 
-                    Spacer(minLength: 6)
+                    Spacer(minLength: 8)
 
-                    Text(isRecentExpanded ? "收起" : "展开")
-                        .font(.system(size: 11.5, weight: .medium))
+                    Text(isRecentExpanded
+                        ? IOSAppLocalization.string("收起", defaultValue: "收起")
+                        : IOSAppLocalization.string("展开", defaultValue: "展开"))
+                        .font(.system(size: 12))
                         .foregroundStyle(AmberTheme.muted)
 
                     Image(systemName: isRecentExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 9.5, weight: .semibold))
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(AmberTheme.muted2)
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 16)
                 .padding(.vertical, 12)
                 .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(AmberTheme.border, lineWidth: 0.6)
+                }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("chat.duet.tasks.recentSummaryBar")
 
             if isRecentExpanded {
-                ForEach(recentItems.prefix(6)) { item in
-                    Button {
-                        if let seg = item.underlyingSegment {
-                            selectedSegment = seg
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(recentItems) { item in
+                        Button {
+                            open(item)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Text(item.title)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(AmberTheme.foreground2)
+                                    .lineLimit(1)
+                                Spacer(minLength: 8)
+                                Text(item.statusText)
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(AmberTheme.muted)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .contentShape(Rectangle())
                         }
-                    } label: {
-                        HStack {
-                            Text(item.title)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(AmberTheme.foreground)
-                                .lineLimit(1)
-                            Spacer()
-                            Text(item.statusBadgeText)
-                                .font(.caption2)
-                                .foregroundStyle(AmberTheme.muted)
+                        .buttonStyle(.plain)
+
+                        if item.id != recentItems.last?.id {
+                            Divider()
+                                .overlay(AmberTheme.border.opacity(0.6))
+                                .padding(.leading, 16)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
-                    .buttonStyle(.plain)
+                }
+                .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(AmberTheme.border, lineWidth: 0.6)
                 }
 
                 Button {
                     onDismissPanel?()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                        onOpenFullTaskBoard()
-                    }
+                    onOpenFullTaskBoard()
                 } label: {
-                    HStack(spacing: 4) {
-                        Text(IOSAppLocalization.string("打开完整任务与定时看板", defaultValue: "打开完整任务与定时看板"))
-                        Image(systemName: "arrow.up.right")
-                    }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(AmberTheme.accent)
-                    .padding(.top, 2)
+                    Text(IOSAppLocalization.string("打开完整任务与定时看板", defaultValue: "打开完整任务与定时看板"))
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(AmberTheme.accent)
+                        .padding(.leading, 4)
                 }
                 .buttonStyle(.plain)
             }
@@ -544,31 +786,30 @@ struct AmberDuetTaskCenterCard: View {
 }
 
 struct AmberDuetTaskCenterSheet: View {
-    let conversationSegments: [ChatTaskRunSegment]
     let gateway: MacGatewayStore
     var subAgentStore: IOSSubAgentActivityStore = .shared
+    var taskStore: IOSAdvancedTaskStore = .shared
+    var wakeStore: IOSWakeTaskStore = .shared
     var hubStore: AmberHubStore = .shared
     let onOpenFullTaskBoard: () -> Void
-    let onSelectTool: (UIMessagePart.Tool) -> Void
-    var onFollowupTask: ((AmberUnifiedTaskItem) -> Void)? = nil
+    var onOpenTask: ((AmberUnifiedTaskItem) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
+            ScrollView {
                 AmberDuetTaskCenterCard(
-                    conversationSegments: conversationSegments,
                     gateway: gateway,
                     subAgentStore: subAgentStore,
+                    taskStore: taskStore,
+                    wakeStore: wakeStore,
                     hubStore: hubStore,
                     onOpenFullTaskBoard: onOpenFullTaskBoard,
-                    onSelectTool: onSelectTool,
-                    onFollowupTask: onFollowupTask,
+                    onOpenTask: onOpenTask,
                     onDismissPanel: { dismiss() }
                 )
-                .padding(12)
-                Spacer()
+                .padding(.vertical, 12)
             }
             .background(AmberTheme.background.ignoresSafeArea())
             .toolbar {
@@ -576,7 +817,7 @@ struct AmberDuetTaskCenterSheet: View {
                     Button(IOSAppLocalization.string("完成", defaultValue: "完成")) {
                         dismiss()
                     }
-                    .font(.subheadline.weight(.semibold))
+                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(AmberTheme.accent)
                 }
             }
@@ -584,14 +825,16 @@ struct AmberDuetTaskCenterSheet: View {
     }
 }
 
+
 // MARK: - 03 Argon Hubs Panel Card & Sheet (Iconless Typography + Collapsed Smart Collections)
 
 struct AmberDuetHubsCard: View {
     var hubStore: AmberHubStore = .shared
     let conversationStore: IOSConversationStore
-    let conversationSegments: [ChatTaskRunSegment]
     let gateway: MacGatewayStore
     var subAgentStore: IOSSubAgentActivityStore = .shared
+    var taskStore: IOSAdvancedTaskStore = .shared
+    var wakeStore: IOSWakeTaskStore = .shared
     var onSelectHub: ((AmberHubItem) -> Void)? = nil
     var onDismissPanel: (() -> Void)? = nil
 
@@ -602,9 +845,10 @@ struct AmberDuetHubsCard: View {
 
     private var allActiveTasks: [AmberUnifiedTaskItem] {
         let grouped = AmberUnifiedTaskBuilder.buildTasks(
-            conversationSegments: conversationSegments,
             gateway: gateway,
             subAgentStore: subAgentStore,
+            taskStore: taskStore,
+            wakeStore: wakeStore,
             hubStore: hubStore
         )
         return grouped.needsAttention + grouped.running

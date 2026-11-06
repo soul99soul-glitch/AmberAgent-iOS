@@ -1413,3 +1413,47 @@ struct AmberFormRow: View {
         .disabled(action == nil)
     }
 }
+
+// MARK: - Shared Floating Sheet Presentation & Underlying Canvas Quiescence
+
+private struct AmberUnderlyingSheetPresentedKey: EnvironmentKey {
+    static let defaultValue: Bool = false
+}
+
+extension EnvironmentValues {
+    /// True on the presenting surface (e.g. `ChatView`) while a modal floating sheet is presented over it.
+    /// Used to pause background periodic `TimelineView`s and skip per-frame `.global` geometry updates
+    /// during `UISheetPresentationController` pull-down card zoom transitions.
+    var amberIsUnderlyingSheetPresented: Bool {
+        get { self[AmberUnderlyingSheetPresentedKey.self] }
+        set { self[AmberUnderlyingSheetPresentedKey.self] = newValue }
+    }
+}
+
+/// Shared floating sheet presentation modifier across Amber sheets (`AgentEmbodimentHomeSheet`,
+/// `AmberDuetWorkspaceDrawerSheet`, `AmberDuetTaskCenterSheet`, `ComposerModelSheet`, etc.).
+/// Unifies corner radius, drag indicator, detents, and `.scrollBounceBehavior(.basedOnSize)` so
+/// sheets whose content fits or rests at the top hand off downward pan gestures directly to
+/// `UISheetPresentationController` without tug-of-war against `UIScrollView` rubber-band bounce.
+struct AmberFloatingSheetModifier: ViewModifier {
+    let detents: Set<PresentationDetent>
+    var cornerRadius: CGFloat = 28
+
+    func body(content: Content) -> some View {
+        content
+            .scrollBounceBehavior(.basedOnSize)
+            .presentationDetents(detents)
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(cornerRadius)
+            .environment(\.amberIsUnderlyingSheetPresented, false)
+    }
+}
+
+extension View {
+    func amberFloatingSheet(
+        detents: Set<PresentationDetent> = [.large],
+        cornerRadius: CGFloat = 28
+    ) -> some View {
+        modifier(AmberFloatingSheetModifier(detents: detents, cornerRadius: cornerRadius))
+    }
+}

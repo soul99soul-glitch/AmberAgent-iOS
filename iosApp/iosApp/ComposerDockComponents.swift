@@ -7,29 +7,35 @@ extension View {
     /// HDR 高光/透镜响应。低于 iOS 26 时回退到 `.thinMaterial`。
     /// 内部可见(非 private),以便模型议会等其他页面复用同一套原生输入胶囊样式。
     ///
-    /// `glassChrome.quieter` / `.solid` 时垫一层与首页同源的弱底，避免 appWide 网格在
-    /// 输入条下折射发脏；`.standard` 不垫，保持经典包体观感。
+    /// 垫一层与首页同源的轻量半透材质底（`.ultraThinMaterial` + `homeGlassTop`），
+    /// 既防止网格/深色画布折射发脏，也保证从后台切回前台首帧（`CABackdropLayer` 异步重绑窗口期）
+    /// 玻璃胶囊与边框始终连续可见，不出现约 1 秒的无材质空窗。
     @ViewBuilder
     func composerDockGlass(cornerRadius: CGFloat) -> some View {
         let cornerRadius = AmberTheme.controlRadius(cornerRadius)
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        // Matches home `HomeGlassControlModifier`; 0 keeps classic packs unchanged.
         let pad: Double = {
             switch AmberThemeRuntime.shared.glassChrome {
-            case .standard: 0
-            case .quieter: 0.18
+            case .standard: 0.24
+            case .quieter: 0.20
             case .solid: 0.52
             }
         }()
+        let borderWidth = max(0.5, AmberTheme.designBorderWidth)
         if #available(iOS 26.0, *) {
             // 输入框胶囊不启用 `.interactive()`，避免长按输入框时产生轻微放大形变并被父级边界裁切。
-            if pad > 0 {
-                background(AmberTheme.homeGlassTop.opacity(pad), in: shape)
-                    .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
-                    .overlay { shape.strokeBorder(AmberTheme.border, lineWidth: AmberTheme.designBorderWidth).allowsHitTesting(false) }
-            } else {
-                glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
-                    .overlay { shape.strokeBorder(AmberTheme.border, lineWidth: AmberTheme.designBorderWidth).allowsHitTesting(false) }
+            background {
+                shape
+                    .fill(.ultraThinMaterial)
+                    .overlay {
+                        shape.fill(AmberTheme.homeGlassTop.opacity(pad))
+                    }
+            }
+            .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+            .overlay {
+                shape
+                    .strokeBorder(AmberTheme.border.opacity(0.38), lineWidth: borderWidth)
+                    .allowsHitTesting(false)
             }
         } else {
             background(.thinMaterial, in: shape)
@@ -165,17 +171,34 @@ struct ComposerDockCapsuleGlass: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
+        let shape = Capsule(style: .continuous)
         if #available(iOS 26.0, *) {
-            content.glassEffect(.regular.tint(tint).interactive(), in: Capsule(style: .continuous))
+            content
+                .background {
+                    shape
+                        .fill(tint.map { AnyShapeStyle($0.opacity(0.88)) } ?? AnyShapeStyle(.ultraThinMaterial))
+                        .overlay {
+                            if tint == nil {
+                                shape.fill(AmberTheme.glass.opacity(0.16))
+                            }
+                        }
+                }
+                .glassEffect(.regular.tint(tint).interactive(), in: shape)
+                .overlay {
+                    shape
+                        .strokeBorder(
+                            (tint ?? AmberTheme.border).opacity(tint == nil ? 0.36 : 0.48),
+                            lineWidth: 0.5
+                        )
+                        .allowsHitTesting(false)
+                }
         } else {
             content
                 .background {
-                    Capsule(style: .continuous)
-                        .fill(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.thinMaterial))
+                    shape.fill(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.thinMaterial))
                 }
                 .overlay {
-                    Capsule(style: .continuous)
-                        .stroke(AmberTheme.border.opacity(0.42), lineWidth: 0.5)
+                    shape.stroke(AmberTheme.border.opacity(0.42), lineWidth: 0.5)
                 }
                 .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
         }
@@ -387,9 +410,26 @@ struct ComposerDockCircleGlass: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             // 单一 glassEffect 调用 —— 只让可空的 tint 参数在 accent ↔ nil 间变化,保持视图身份
-            // 不变。若按 tint 有无拆成两条分支,SwiftUI 会移除/插入两个不同身份的玻璃视图并做
-            // 交叉淡入,删字回到清玻璃时会闪过一帧发白。
-            content.glassEffect(.regular.tint(tint).interactive(), in: Circle())
+            // 不变。垫上轻量材质底与细边,保证后台回前台首帧(CABackdropLayer 重连前)玻璃圆钮持续可见。
+            content
+                .background {
+                    Circle()
+                        .fill(tint.map { AnyShapeStyle($0.opacity(0.86)) } ?? AnyShapeStyle(.ultraThinMaterial))
+                        .overlay {
+                            if tint == nil {
+                                Circle().fill(AmberTheme.glass.opacity(0.16))
+                            }
+                        }
+                }
+                .glassEffect(.regular.tint(tint).interactive(), in: Circle())
+                .overlay {
+                    Circle()
+                        .strokeBorder(
+                            (tint ?? AmberTheme.border).opacity(tint == nil ? 0.36 : 0.48),
+                            lineWidth: 0.5
+                        )
+                        .allowsHitTesting(false)
+                }
         } else {
             content
                 .background {

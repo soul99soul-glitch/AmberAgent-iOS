@@ -41,21 +41,7 @@ struct ChatArtifactShelfStrip: View {
             .accessibilityIdentifier("chat-artifact-shelf-strip-close")
         }
         .padding(.horizontal, 12)
-        .background {
-            Capsule()
-                .fill(AmberTheme.background)
-                .overlay {
-                    if #available(iOS 26.0, *) {
-                        Capsule().fill(.clear).glassEffect(.regular, in: Capsule())
-                    } else {
-                        Capsule()
-                            .fill(.ultraThinMaterial)
-                            .overlay {
-                                Capsule().stroke(AmberTheme.border.opacity(0.28), lineWidth: 0.5)
-                            }
-                    }
-                }
-        }
+        .modifier(ChatArtifactShelfStripGlass())
         .contentShape(Capsule())
         .gesture(
             DragGesture(minimumDistance: 12)
@@ -66,5 +52,28 @@ struct ChatArtifactShelfStrip: View {
                 }
         )
         .accessibilityElement(children: .contain)
+    }
+}
+
+private struct ChatArtifactShelfStripGlass: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content
+                .background(.ultraThinMaterial, in: Capsule())
+                .background(AmberTheme.glass.opacity(0.18), in: Capsule())
+                .glassEffect(.regular, in: Capsule())
+                .overlay {
+                    Capsule()
+                        .strokeBorder(AmberTheme.border.opacity(0.28), lineWidth: 0.5)
+                        .allowsHitTesting(false)
+                }
+        } else {
+            content
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay {
+                    Capsule().stroke(AmberTheme.border.opacity(0.28), lineWidth: 0.5)
+                }
+        }
     }
 }

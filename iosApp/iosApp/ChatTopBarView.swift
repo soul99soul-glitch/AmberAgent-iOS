@@ -62,6 +62,7 @@ struct ChatTopBarView: View {
     var onAvatarFrameChange: ((CGRect) -> Void)? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.amberIsUnderlyingSheetPresented) private var isUnderlyingSheetPresented
     @State private var pressedPresentation: ChatIslandPresentation?
     @State var panel: ChatTopBarPanel? = nil
     @State var arrivalState = ChatTopBarArrivalState()
@@ -102,8 +103,8 @@ struct ChatTopBarView: View {
                 // Soft top scroll backdrop so scrolling chat text fades cleanly under floating top bar pills.
                 LinearGradient(
                     colors: [
-                        AmberTheme.background,
-                        AmberTheme.background.opacity(0.92),
+                        AmberTheme.background.opacity(0.76),
+                        AmberTheme.background.opacity(0.38),
                         AmberTheme.background.opacity(0)
                     ],
                     startPoint: .top,
@@ -131,13 +132,19 @@ struct ChatTopBarView: View {
                         onExportConversation: onExportConversation
                     )
                     .scaleEffect(reduceMotion ? 1 : dockScale)
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.dock = $0 }
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rect in
+                        guard !isUnderlyingSheetPresented else { return }
+                        tapRegions.dock = rect
+                    }
                 }
                 .padding(.top, 10)
 
                 island(maxWidth: ChatTopBarLayout.availableIslandWidth(in: geometry.size.width))
                     .padding(.top, ChatTopBarLayout.islandTopOffset)
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.island = $0 }
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rect in
+                        guard !isUnderlyingSheetPresented else { return }
+                        tapRegions.island = rect
+                    }
 
                 if flightVisible, !reduceMotion {
                     Circle()

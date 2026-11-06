@@ -118,31 +118,36 @@ struct ChatToolbarIconButton: View {
 
     var body: some View {
         Button(action: action) {
-            ZStack {
-                circleGlass
-
-                Image(systemName: systemImage)
-                    .symbolRenderingMode(.monochrome)
-                    .font(.system(size: symbolSize, weight: .semibold))
-                    .foregroundStyle(tint)
-            }
-            .frame(width: size, height: size)
-            .frame(minWidth: 44, minHeight: 44)
-            .contentShape(Circle())
+            Image(systemName: systemImage)
+                .symbolRenderingMode(.monochrome)
+                .font(.system(size: symbolSize, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: size, height: size)
+                .modifier(ChatToolbarCircleGlass())
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Circle())
         }
         .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.9, haptic: .lightImpact))
         .accessibilityLabel(accessibilityLabel)
     }
+}
 
+private struct ChatToolbarCircleGlass: ViewModifier {
     @ViewBuilder
-    private var circleGlass: some View {
+    func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
-            Circle()
-                .fill(AmberTheme.glass.opacity(0.16))
+            content
+                .background(.ultraThinMaterial, in: Circle())
+                .background(AmberTheme.glass.opacity(0.16), in: Circle())
                 .glassEffect(.regular.interactive(), in: Circle())
+                .overlay {
+                    Circle()
+                        .strokeBorder(AmberTheme.border.opacity(0.32), lineWidth: 0.5)
+                        .allowsHitTesting(false)
+                }
         } else {
-            Circle()
-                .fill(.ultraThinMaterial)
+            content
+                .background(.ultraThinMaterial, in: Circle())
                 .overlay {
                     Circle()
                         .stroke(AmberTheme.border.opacity(0.28), lineWidth: 0.5)

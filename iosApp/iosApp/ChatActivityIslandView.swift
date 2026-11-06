@@ -380,8 +380,13 @@ struct ChatActivityIslandView: View {
             avatarMedallionView
                 .frame(width: ChatTopBarLayout.avatarDiameter, height: ChatTopBarLayout.avatarDiameter)
                 .shadow(color: .black.opacity(0.10), radius: 3.5, x: 0, y: 1.5)
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rect in
-                    onAvatarFrameChange?(rect)
+                .background {
+                    if let onAvatarFrameChange {
+                        Color.clear
+                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rect in
+                                onAvatarFrameChange(rect)
+                            }
+                    }
                 }
                 .frame(width: maxWidth, height: ChatTopBarLayout.avatarDiameter, alignment: .top)
                 .transaction { transaction in
@@ -526,8 +531,14 @@ private struct ChatActivityIslandGlass: ViewModifier {
             // Light glass pad (same recipe as toolbar chips) — full AmberTheme.glass
             // is warm paper at high alpha and reads yellow on cream pages.
             content
+                .background(.ultraThinMaterial, in: Capsule())
                 .background(AmberTheme.glass.opacity(0.16), in: Capsule())
                 .glassEffect(.regular, in: Capsule())
+                .overlay {
+                    Capsule()
+                        .strokeBorder(AmberTheme.border.opacity(0.28), lineWidth: 0.5)
+                        .allowsHitTesting(false)
+                }
         } else {
             content
                 .background {

@@ -179,13 +179,16 @@ struct ChatView: View {
             }
             // 面板需要参与正文区域命中测试，不能挂在仅顶栏高度的 safeAreaBar 内。
             topBar
-                .opacity(composerState.activeDuetTab == .chat ? 1.0 : 0.35)
                 .zIndex(20)
         }
         .onGeometryChange(for: CGSize.self) { proxy in
             CGSize(width: proxy.size.width,
                    height: proxy.size.height + proxy.safeAreaInsets.top + proxy.safeAreaInsets.bottom)
-        } action: { chatSize = $0 }
+        } action: { newSize in
+            if abs(chatSize.width - newSize.width) > 0.5 || abs(chatSize.height - newSize.height) > 0.5 {
+                chatSize = newSize
+            }
+        }
         .animation(browserTaskVisibilityAnimation, value: compactWebMountSession?.id)
         .onChange(of: displayedWebMountSession?.ownerRunId) { _, _ in
             browserState.expandedWebMountSessionId = nil
@@ -244,8 +247,7 @@ struct ChatView: View {
                 viewModel.bumpMessageRevision(reason: .settingsRefresh)
                 composerState.isModelSheetPresented = false
             }
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+            .amberFloatingSheet(detents: [.medium, .large])
         }
         .sheet(item: $messageEditDraft) { draft in
             ChatMessageEditSheet(draft: draft) { messageId, newText in
@@ -254,6 +256,7 @@ struct ChatView: View {
             } onCancel: {
                 messageEditDraft = nil
             }
+            .amberFloatingSheet(detents: [.large])
         }
         .sheet(isPresented: $browserState.showWebMountDesktopBackends, onDismiss: {
             browserState.focusedRemoteWebMountSessionId = nil
@@ -262,8 +265,7 @@ struct ChatView: View {
                 controller: webMountController,
                 focusedSessionId: browserState.focusedRemoteWebMountSessionId
             )
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+            .amberFloatingSheet(detents: [.large])
         }
         .fileImporter(
             isPresented: $attachmentPickerState.isImportingSelectedFile,
@@ -338,8 +340,7 @@ struct ChatView: View {
                 onCancel: { personalContextPicker.cancelActiveRequest() },
                 onConfirm: { personalContextPicker.confirmHandoff() }
             )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+            .amberFloatingSheet(detents: [.medium, .large])
         }
         .fullScreenCover(isPresented: $attachmentPickerState.isCameraPresented) {
             CameraPicker { image in
@@ -351,14 +352,12 @@ struct ChatView: View {
         }
         .sheet(isPresented: $isPresentingDuetTasks) {
             AmberDuetTaskCenterSheet(
-                conversationSegments: currentConversationTaskSegments(),
                 gateway: MacGatewayStore.shared,
                 subAgentStore: activityStore,
                 onOpenFullTaskBoard: { router.navigate(to: .macTasks) },
-                onSelectTool: { tool in duetSelectedToolTarget = ToolDetailTarget(tool: tool) }
+                onOpenTask: { task in openUnifiedTask(task) }
             )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+            .amberFloatingSheet(detents: [.medium, .large])
         }
         .sheet(isPresented: $isPresentingDuetWorkspace) {
             AmberDuetWorkspaceDrawerSheet(
@@ -379,8 +378,7 @@ struct ChatView: View {
                     router.navigate(to: destination)
                 }
             )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+            .amberFloatingSheet(detents: [.medium, .large])
         }
         .sheet(isPresented: $isPresentingEmbodimentHome) {
             // 顶部形象点击 → 形象人设（人设/记忆/灵感）；「更换形象」二级进原有配置页。
@@ -391,22 +389,19 @@ struct ChatView: View {
                     Task { await viewModel.sendMessage() }
                 }
             )
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+            .amberFloatingSheet(detents: [.large])
         }
         .sheet(isPresented: $isPresentingPersonaStudio) {
             AmberPersonaStudioSheet(
                 sharedSettings: sharedSettings
             )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+            .amberFloatingSheet(detents: [.large])
         }
         .sheet(isPresented: $isPresentingCloudGatewaySettings) {
             NavigationStack {
                 MacGatewaySettingsView()
             }
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+            .amberFloatingSheet(detents: [.large])
         }
         .sheet(item: $duetSelectedToolTarget) { target in
             ChatToolDetailSheet(
@@ -418,13 +413,28 @@ struct ChatView: View {
                     router.navigate(to: .subAgentConversation(id: threadId))
                 }
             )
+            .amberFloatingSheet(detents: [.medium, .large])
         }
+    }
+
+    private var isAnyFloatingSheetPresented: Bool {
+        composerState.isModelSheetPresented
+            || messageEditDraft != nil
+            || browserState.showWebMountDesktopBackends
+            || personalContextPreviewBinding.wrappedValue != nil
+            || isPresentingDuetTasks
+            || isPresentingDuetWorkspace
+            || isPresentingEmbodimentHome
+            || isPresentingPersonaStudio
+            || isPresentingCloudGatewaySettings
+            || duetSelectedToolTarget != nil
     }
 
     var body: some View {
         GeometryReader { proxy in
             chatContent
                 .frame(width: proxy.size.width, height: proxy.size.height)
+                .environment(\.amberIsUnderlyingSheetPresented, isAnyFloatingSheetPresented)
         }
         // Measure the parent's proposal, before the bottom inset can grow to its ideal height.
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
@@ -940,7 +950,7 @@ struct ChatView: View {
             onRefreshRecap: requestRecap,
             onLocateRecapNode: locateRecapNode,
             onRecapNextStep: fillRecapNextStep,
-            backgroundRunningCount: duetActiveTaskCount,
+            backgroundRunningCount: viewModel.activeTaskRunIdsForCurrentConversation.count,
             onAvatarTap: {
                 isPresentingEmbodimentHome = true
             }

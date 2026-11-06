@@ -957,10 +957,11 @@ private struct AmberEmptyStateMark: View {
     private static let dotDiameter: CGFloat = 5
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.amberIsUnderlyingSheetPresented) private var isUnderlyingSheetPresented
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            let progress = reduceMotion ? 0 : orbitProgress(at: timeline.date)
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || isUnderlyingSheetPresented)) { timeline in
+            let progress = (reduceMotion || isUnderlyingSheetPresented) ? 0 : orbitProgress(at: timeline.date)
             ZStack {
                 Circle()
                     .fill(
