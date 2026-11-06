@@ -46,6 +46,20 @@ struct NativeTimelineEntry: Identifiable, Equatable {
     var baseRenderDigest: ChatRowDigest? = nil
     var isTaskLive: Bool = false
 
+    /// Completed prose doesn't consume the chat-wide generation flag. Only
+    /// live rows and media with modify controls need that flag to refresh.
+    var observesGenerationState: Bool {
+        if isLastMessage || isTaskLive || isStreaming { return true }
+        return message?.parts.contains { part in
+            if part is UIMessagePart.MiniApp { return true }
+            return (part as? UIMessagePart.Tool)?.toolName == "generate_image"
+        } ?? false
+    }
+
+    /// Task mode changes only the fallback generator on the conversation tail.
+    /// Explicit live-task rows already own their generation state.
+    var observesIndependentTaskMode: Bool { isLastMessage && !isTaskLive }
+
     /// Occupies no space; its group head stands in for it.
     var isCollapsedGroupMember: Bool {
         phoneToolGroup?.isCollapsedMember == true || assistantTurn?.isCollapsedMember == true

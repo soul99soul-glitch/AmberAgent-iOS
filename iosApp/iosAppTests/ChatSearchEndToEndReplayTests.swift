@@ -79,6 +79,16 @@ final class ChatSearchEndToEndReplayTests: ChatNativeTimelineReplayTestCase {
         var currentRun = ""
         var anchor = ""
         var turns: [[String: Any]] = []
+        var phaseMarks: [(name: String, epoch: Double, uptime: Double, cpu: UInt64, counts: [String: Int])] = []
+        let probeWasEnabled = ChatRenderProbe.enabled
+        ChatRenderProbe.reset()
+        ChatRenderProbe.enabled = true
+        defer { ChatRenderProbe.enabled = probeWasEnabled }
+        func markPhase(_ name: String) {
+            phaseMarks.append((name, Date().timeIntervalSince1970, ProcessInfo.processInfo.systemUptime,
+                               clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID),
+                               ChatRenderProbe.counts.mapValues { $0.values.reduce(0, +) }))
+        }
         print("[E2E] round=\(round) pid=\(getpid()) start")
 
         func progress(_ title: String, kind: ChatActivityIslandState.Kind = .tool) -> ChatTimelineActivity {
@@ -90,6 +100,7 @@ final class ChatSearchEndToEndReplayTests: ChatNativeTimelineReplayTestCase {
         for index in firstUser..<messages.count {
             let message = messages[index]
             if message.role == .user {
+                markPhase("user-send-\(index)")
                 acknowledgedAt = nil
                 currentRun = "perf-\(round)-\(index)"
                 feedback.begin(runID: currentRun)
@@ -104,11 +115,13 @@ final class ChatSearchEndToEndReplayTests: ChatNativeTimelineReplayTestCase {
             }
             let text = message.toText()
             if text.isEmpty {
+                markPhase("tool-update-\(index)")
                 fixture.model.messages.append(message)
                 fixture.model.activity = progress(index % 2 == 0 ? "正在核对网页" : "正在思考")
                 fixture.model.send(.toolResultAppended)
                 pump(seconds: 0.15)
             } else {
+                markPhase("text-stream-\(index)")
                 fixture.model.messages.append(makeAssistantMessage(id: message.id, text: "", finished: false))
                 fixture.model.activity = progress("正在整理回复", kind: .generating)
                 let characters = Array(text)
@@ -124,6 +137,7 @@ final class ChatSearchEndToEndReplayTests: ChatNativeTimelineReplayTestCase {
             }
             let closesTurn = index == messages.count - 1 || messages[index + 1].role == .user
             if closesTurn {
+                markPhase("terminal-and-drain-\(index)")
                 let sourceClosed = ProcessInfo.processInfo.systemUptime
                 fixture.model.isGenerationActive = false
                 fixture.model.activity = nil
@@ -173,10 +187,21 @@ final class ChatSearchEndToEndReplayTests: ChatNativeTimelineReplayTestCase {
         let wall = ProcessInfo.processInfo.systemUptime - start
         let mainCPUMs = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - cpu) / 1e6
         let processCPUSeconds = Self.processCPUSeconds() - processCPU
+        markPhase("end")
         gaps.stop()
         frameCPU.stop()
         let memoryResult = memory.stop()
         let endMemory = try XCTUnwrap(ChatReplayMemoryProbe.read())
+        let phaseMetrics = zip(phaseMarks, phaseMarks.dropFirst()).map { first, next -> [String: Any] in
+            let wall = next.uptime - first.uptime
+            let cpuMs = Double(next.cpu - first.cpu) / 1e6
+            let counts = next.counts.reduce(into: [String: Int]()) {
+                $0[$1.key] = $1.value - (first.counts[$1.key] ?? 0)
+            }
+            return ["phase": first.name, "startEpochSeconds": first.epoch,
+                    "startUptime": first.uptime, "wallSeconds": wall,
+                    "mainCPUMs": cpuMs, "mainCPUPercent": cpuMs / (wall * 10), "totals": counts]
+        }
         var result: [String: Any] = [
             "round": round, "pid": getpid(), "startEpochSeconds": epoch,
             "endToEndSeconds": wall, "mainCPUMs": mainCPUMs, "mainCPUPercent": mainCPUMs / (wall * 10),
@@ -185,6 +210,7 @@ final class ChatSearchEndToEndReplayTests: ChatNativeTimelineReplayTestCase {
             "frameGapsOver50ms": gaps.gaps.filter { $0 > 0.05 }.count,
             "frameGapsOver100ms": gaps.gaps.filter { $0 > 0.1 }.count,
             "frames": frameCPU.frames, "turns": turns,
+            "phaseMetrics": phaseMetrics,
             "baselineFootprintBytes": baselineMemory.footprint, "endFootprintBytes": endMemory.footprint,
             "lifetimePeakFootprintBeforeBytes": baselineMemory.lifetimePeakFootprint,
             "lifetimePeakFootprintAfterBytes": endMemory.lifetimePeakFootprint

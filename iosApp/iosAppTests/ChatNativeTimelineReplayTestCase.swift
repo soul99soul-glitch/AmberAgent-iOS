@@ -26,6 +26,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
         @Published var pausesDecorativeTimelines = false
         @Published var signal = ChatMessageUpdateSignal(revision: 0, reason: .initialLoad)
         @Published var isGenerationActive = false
+        @Published var usesIndependentTasks = false
         @Published var followGeneration = true
         @Published var scrollToBottomTrigger = 0
         @Published var messageAnchor: ChatMessageAnchor?
@@ -68,6 +69,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
                 timelineUpdates: model.timelineUpdates,
                 configurationIssue: nil,
                 isGenerationActive: model.isGenerationActive,
+                usesIndependentTasks: model.usesIndependentTasks,
                 activity: model.activity,
                 isLoading: false,
                 isRecognizingImages: false,

@@ -5,6 +5,96 @@ import XCTest
 
 @MainActor
 final class ChatTimelineReviewRegressionTests: ChatNativeTimelineReplayTestCase {
+    func testIndependentTaskModeDoesNotRebuildUnrelatedHistory() throws {
+        let history = longConversation(turns: 12)
+        let historicalIDs = Set(history.dropLast().map { $0.id.toHexDashString() })
+        let fixture = makeFixture { model in
+            model.messages = history
+            model.send(.initialLoad)
+        }
+        defer { fixture.tearDown(); ChatRenderProbe.enabled = false; ChatRenderProbe.reset() }
+        XCTAssertTrue(pumpUntil(timeout: 4) { fixture.model.latestViewport.isAtBottom })
+        pump(seconds: 0.4)
+        ChatRenderProbe.enabled = true
+        for independent in [true, false] {
+            ChatRenderProbe.reset()
+            fixture.model.usesIndependentTasks = independent
+            pump(seconds: 0.3)
+            let bodies = (ChatRenderProbe.counts["row"] ?? [:])
+                .filter { historicalIDs.contains($0.key) }.values.reduce(0, +)
+            XCTAssertEqual(bodies, 0, "任务进入/退出不能重建无关历史行")
+            XCTAssertEqual(ChatRenderProbe.counts["chunk"]?["chunk-0"] ?? 0, 0,
+                           "历史块必须在行判等之前隔离任务模式变化")
+        }
+    }
+
+    func testGenerationStateStillReachesLiveRowsAndMediaModifyControls() throws {
+        func assistant(_ parts: [UIMessagePart]) -> UIMessage {
+            UIMessage(id: KotlinUuid.companion.random(), role: .assistant, parts: parts,
+                      annotations: [], createdAt: chatNowLocalDateTime(), finishedAt: chatNowLocalDateTime(),
+                      modelId: nil, usage: nil, translation: nil)
+        }
+        let prose = assistant([UIMessagePart.Text(text: "已完成的历史正文", metadata: nil)])
+        let image = assistant([UIMessagePart.Tool(
+            toolCallId: "image", toolName: "generate_image", input: "{}",
+            output: [UIMessagePart.Image(url: "https://example.invalid/image.png", metadata: nil)],
+            approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)])
+        let miniApp = assistant([UIMessagePart.MiniApp(
+            appId: "test", title: "应用", description: "测试", iconEmoji: "", category: "tool",
+            permissions: [], htmlHash: "test", version: 1, metadata: nil)])
+        let tail = makeAssistantMessage(id: KotlinUuid.companion.random(), text: "当前回复", finished: false)
+        let projection = NativeTimelineProjector.build(
+            messages: [prose, image, miniApp, makeUserMessage("继续"), tail],
+            event: .toolResultAppended, isGenerationActive: true)
+        func entry(_ message: UIMessage) throws -> NativeTimelineEntry {
+            try XCTUnwrap(projection.messageEntry(for: message.id.toHexDashString()))
+        }
+        XCTAssertFalse(try entry(prose).observesGenerationState)
+        XCTAssertTrue(try entry(image).observesGenerationState, "生成期间历史图片仍须禁用修改")
+        XCTAssertTrue(try entry(miniApp).observesGenerationState, "小程序修改权限仍跟随生成状态")
+        XCTAssertTrue(try entry(tail).observesGenerationState)
+        var independent = try entry(prose)
+        independent.isTaskLive = true
+        XCTAssertTrue(independent.observesGenerationState, "非尾部的并发任务也必须保持实时")
+    }
+
+    func testCompletedProseDoesNotRebuildAtTaskStartOrFinish() throws {
+        let history = longConversation(turns: 12)
+        let historicalIDs = Set(history.dropLast().map { $0.id.toHexDashString() })
+        let fixture = makeFixture { model in
+            model.messages = history
+            model.send(.initialLoad)
+        }
+        defer { fixture.tearDown(); ChatRenderProbe.enabled = false; ChatRenderProbe.reset() }
+        XCTAssertTrue(pumpUntil(timeout: 4) { fixture.model.latestViewport.isAtBottom })
+        pump(seconds: 0.4)
+        func historicalBodies() -> Int {
+            (ChatRenderProbe.counts["row"] ?? [:]).filter { historicalIDs.contains($0.key) }
+                .values.reduce(0, +)
+        }
+        ChatRenderProbe.enabled = true
+        ChatRenderProbe.reset()
+        fixture.model.isGenerationActive = true
+        fixture.model.messages.append(makeUserMessage("请继续调研"))
+        fixture.model.send(.userAppend)
+        pump(seconds: 0.4)
+        XCTAssertEqual(historicalBodies(), 0,
+                       "任务开始不应让无图片/小程序控制的已完成历史气泡刷新")
+
+        fixture.model.messages.append(makeAssistantMessage(
+            id: KotlinUuid.companion.random(), text: "本轮已完成", finished: true))
+        fixture.model.send(.assistantStreamClosed)
+        pump(seconds: 0.3)
+        ChatRenderProbe.reset()
+        fixture.model.isGenerationActive = false
+        fixture.model.send(.generationCompleted)
+        pump(seconds: 0.4)
+        XCTAssertEqual(historicalBodies(), 0,
+                       "终态收尾只应更新受生成状态影响的气泡")
+        XCTAssertEqual(fixture.model.messages.count, history.count + 2)
+        XCTAssertEqual(fixture.model.messages.last?.toText(), "本轮已完成")
+    }
+
     @MainActor
     private final class PacerMount: ObservableObject {
         @Published var identity = 0
@@ -91,7 +181,7 @@ final class ChatTimelineReviewRegressionTests: ChatNativeTimelineReplayTestCase 
                       "内容超过视口后仍需恢复平滑生长")
     }
 
-    func testFrameDriverUses60HzOnlyForStreamingFollowAndRestores120HzForInteractions() throws {
+    func testFrameDriverRequests120HzDuringStreamingAndInteractions() throws {
         let driver = NativeTimelineScrollDriver()
         let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
         scrollView.contentSize = CGSize(width: 390, height: 1_400)
@@ -101,13 +191,15 @@ final class ChatTimelineReviewRegressionTests: ChatNativeTimelineReplayTestCase 
         driver.submit(.streamContentGrew())
         scrollView.contentSize.height += 100
         driver.handleLayoutMetricsChanged()
-        XCTAssertEqual(driver.frameDriverRateForTesting?.preferred, 60)
+        XCTAssertEqual(driver.frameDriverRateForTesting?.preferred, 120,
+                       "流式贴底位移不能硬限到 60Hz")
+        XCTAssertEqual(driver.frameDriverRateForTesting?.maximum, 120)
 
         driver.handleKeyboardWillChangeFrame(duration: 0.25, curveRaw: 7)
         XCTAssertEqual(driver.frameDriverRateForTesting?.preferred, 120,
                        "已有 display link 也必须立即恢复键盘动画帧率")
         driver.handleKeyboardWillChangeFrame(duration: 0, curveRaw: 7)
-        XCTAssertEqual(driver.frameDriverRateForTesting?.preferred, 60)
+        XCTAssertEqual(driver.frameDriverRateForTesting?.preferred, 120)
 
         driver.submit(.explicitBottom(source: .button, animated: true, keyboardToken: nil))
         scrollView.contentSize.height += 100
@@ -115,6 +207,8 @@ final class ChatTimelineReviewRegressionTests: ChatNativeTimelineReplayTestCase 
         XCTAssertEqual(driver.frameDriverRateForTesting?.preferred, 120, "主动回底动画不能限到 60Hz")
         driver.submit(.generationTerminated)
         XCTAssertEqual(driver.frameDriverRateForTesting?.preferred, 120, "终态收敛也不属于流式降帧范围")
+        driver.submit(.userDragBegan)
+        XCTAssertNil(driver.frameDriverRateForTesting, "用户接管滚动后停止自动跟随时钟")
     }
 
     func testLiveTailSingleTokenAndChunkHeightGrowthLayoutMeasurements() throws {

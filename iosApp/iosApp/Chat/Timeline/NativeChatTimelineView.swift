@@ -744,7 +744,8 @@ struct NativeChatTimelineView: View {
                                             firstHistoryEntryID: String?, display: Int, generative: Int) -> Int {
         var hash = Hasher()
         hash.combine(display); hash.combine(generative)
-        hash.combine(isGenerationActive); hash.combine(usesIndependentTasks)
+        hash.combine(isGenerationActive && chunk.entries.contains(where: \.observesGenerationState))
+        hash.combine(usesIndependentTasks && chunk.entries.contains(where: \.observesIndependentTaskMode))
         hash.combine(reasoningLevelLabel); hash.combine(reduceMotion)
         hash.combine(viewportState.liveRenderingFarFromBottom)
         hash.combine(ObjectIdentifier(workspaceStore))
@@ -938,13 +939,13 @@ struct NativeChatTimelineView: View {
             row: row,
             variantInfo: entry.variantInfo.map { .init(variantCount: $0.variantCount, selectedIndex: $0.selectedIndex) },
             renderState: renderState,
-            isGenerationActive: isGenerationActive,
+            isGenerationActive: isGenerationActive && entry.observesGenerationState,
             renderIdentity: ChatListSnapshotBuilder.renderIdentityForRow(row, renderState: renderState),
             liveTailModel: liveTailModel,
             phoneToolGroup: entry.phoneToolGroup?.headSummary,
             assistantTurn: entry.assistantTurn,
             isTaskLive: entry.isTaskLive,
-            usesIndependentTasks: usesIndependentTasks
+            usesIndependentTasks: usesIndependentTasks && entry.observesIndependentTaskMode
         )
     }
 

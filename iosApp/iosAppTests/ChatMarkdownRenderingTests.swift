@@ -8,6 +8,85 @@ import Shared
 
 @MainActor
 final class ChatMarkdownRenderingTests: ChatMessageProjectionTestCase {
+    private final class TextEditRecorder: NSObject, NSTextStorageDelegate {
+        var attributeEdits = 0
+        func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorage.EditActions,
+                         range editedRange: NSRange, changeInLength delta: Int) {
+            if editedMask.contains(.editedAttributes) { attributeEdits += 1 }
+        }
+    }
+
+    func testNativeStreamingFadeDoesNotEditTextStorageEveryDisplayFrame() {
+        let view = ParagraphUIView.makeTextKit1View()
+        view.frame = CGRect(x: 0, y: 0, width: 300, height: 100)
+        let style: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 18), .foregroundColor: UIColor.red]
+        view.setParagraphContents(NSMutableAttributedString(string: "已有文字", attributes: style), animatedByWord: false)
+        view.setParagraphContents(NSMutableAttributedString(string: "已有文字 新增文字", attributes: style),
+                                  animatedByWord: true, appendsTailFadeAsUnit: true)
+        XCTAssertFalse(view.activeAnimations.isEmpty, "保留可见的尾段淡入")
+        XCTAssertEqual(view.fadeFrameRateForTesting?.preferred, 120)
+        let recorder = TextEditRecorder()
+        view.textStorage.delegate = recorder
+        defer { view.textStorage.delegate = nil; view.resetForReuse() }
+        let deadline = Date().addingTimeInterval(0.15)
+        while Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.005)) }
+        XCTAssertEqual(recorder.attributeEdits, 0,
+                       "显示帧只改变绘制透明度，不应让颜色属性编辑进入 TextKit/布局更新链")
+        XCTAssertEqual(view.textStorage.string, "已有文字 新增文字")
+        XCTAssertEqual(view.textStorage.attribute(.foregroundColor, at: 6, effectiveRange: nil) as? UIColor, .red)
+    }
+
+    func testLegacyParagraphWordFadeKeepsItsExistingBehavior() {
+        let view = ParagraphUIView.makeTextKit1View()
+        view.frame = CGRect(x: 0, y: 0, width: 300, height: 100)
+        let style: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 18), .foregroundColor: UIColor.red]
+        view.setParagraphContents(NSMutableAttributedString(string: "existing", attributes: style), animatedByWord: false)
+        view.setParagraphContents(NSMutableAttributedString(string: "existing next words", attributes: style), animatedByWord: true)
+        XCTAssertFalse(view.activeAnimations.isEmpty)
+        let recorder = TextEditRecorder()
+        view.textStorage.delegate = recorder
+        defer { view.textStorage.delegate = nil; view.resetForReuse() }
+        let deadline = Date().addingTimeInterval(0.15)
+        while Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.005)) }
+        _ = view.perform(NSSelectorFromString("updateFadeAnimation"))
+        XCTAssertGreaterThan(recorder.attributeEdits, 0, "未显式启用尾段模式的 vendor 行为保持不变")
+        XCTAssertEqual(view.fadeFrameRateForTesting?.preferred, 60)
+    }
+
+    func testGlyphOpacityActuallyFadesWithoutChangingTextOrColor() throws {
+        let contents = NSAttributedString(string: "office 字形", attributes: [
+            .font: UIFont.systemFont(ofSize: 24), .foregroundColor: UIColor.red])
+        let storage = NSTextStorage(attributedString: contents)
+        let manager = ParagraphFadeLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: 300, height: 80))
+        storage.addLayoutManager(manager)
+        manager.addTextContainer(container)
+        let glyphs = manager.glyphRange(for: container)
+        // Initial TextKit layout resolves script-specific font fallback. Fading
+        // must preserve the content and attributes after that normal layout.
+        let laidOutContents = NSAttributedString(attributedString: storage)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        format.preferredRange = .standard
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 80), format: format)
+        let blank = try XCTUnwrap(renderer.image { _ in }.pngData())
+        func rendered(_ alpha: CGFloat) throws -> Data {
+            manager.setOpacityRanges([.init(range: NSRange(location: 0, length: storage.length), alpha: alpha)])
+            return try XCTUnwrap(renderer.image { _ in
+                manager.drawGlyphs(forGlyphRange: glyphs, at: .zero)
+            }.pngData())
+        }
+        let visible = try rendered(1)
+        let invisible = try rendered(0)
+        let half = try rendered(0.5)
+        XCTAssertNotEqual(visible, blank)
+        XCTAssertEqual(invisible, blank)
+        XCTAssertNotEqual(half, blank)
+        XCTAssertNotEqual(half, visible)
+        XCTAssertEqual(NSAttributedString(attributedString: storage), laidOutContents)
+    }
+
 
     func testFrozenMarkdownSnapshotUsesTheSingleNonEmptyTextPartVerbatim() {
         let messageID = KotlinUuid.companion.random()

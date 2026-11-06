@@ -51,6 +51,11 @@ class ParagraphUIView: UITextView {
   // can assert that stale word fades never survive a full content replacement.
   private(set) var activeAnimations: [FadeAnimationData] = []
   private var fadeAnimationDisplayLink: CADisplayLink?
+  private var rendersFadeAsGlyphs = false
+  private weak var glyphFadeLayoutManager: ParagraphFadeLayoutManager?
+  #if DEBUG
+  var fadeFrameRateForTesting: CAFrameRateRange? { fadeAnimationDisplayLink?.preferredFrameRateRange }
+  #endif
   private var cachedSize: CachedParagraphUIViewSize?
   private var lastReportedFittingSize: CachedParagraphUIViewSize?
   private var intrinsicContentSizeSuppressionDepth = 0
@@ -86,11 +91,12 @@ class ParagraphUIView: UITextView {
 
   static func makeTextKit1View() -> ParagraphUIView {
     let storage = NSTextStorage()
-    let layoutManager = NSLayoutManager()
+    let layoutManager = ParagraphFadeLayoutManager()
     let textContainer = NSTextContainer(size: .zero)
     storage.addLayoutManager(layoutManager)
     layoutManager.addTextContainer(textContainer)
     let view = ParagraphUIView(frame: .zero, textContainer: textContainer)
+    view.glyphFadeLayoutManager = layoutManager
     // Height must not track the view's current bounds: a tracked container is
     // resized on every measurement pass, which discards TextKit 1's layout
     // cache and forces streaming paragraphs to re-lay-out their full length on
@@ -467,6 +473,7 @@ class ParagraphUIView: UITextView {
     // fades for the newly appended tail are added below; otherwise the stale
     // ranges apply wrong alphas to unrelated characters in the replacement.
     activeAnimations.removeAll()
+    glyphFadeLayoutManager?.setOpacityRanges([])
     lastReportedFittingSize = nil
     invalidateCachedSize()
     intrinsicContentSizeSuppressionDepth += 1
@@ -510,6 +517,23 @@ class ParagraphUIView: UITextView {
 
   private func appendFadeAnimations(in newContentRange: NSRange, asUnit: Bool = false) {
     guard newContentRange.length > 0 else { return }
+    let drawsGlyphs = asUnit && glyphFadeLayoutManager != nil
+    if drawsGlyphs != rendersFadeAsGlyphs {
+      if drawsGlyphs, !activeAnimations.isEmpty {
+        // A cached TextKit 1 view can switch from legacy word fades to the
+        // explicit tail-unit mode. Restore its authoritative colors once.
+        textStorage.beginEditing()
+        paragraphContents.enumerateAttribute(.foregroundColor,
+          in: NSRange(location: 0, length: paragraphContents.length), options: []) { value, range, _ in
+          if let value { textStorage.addAttribute(.foregroundColor, value: value, range: range) }
+          else { textStorage.removeAttribute(.foregroundColor, range: range) }
+        }
+        textStorage.endEditing()
+      }
+      rendersFadeAsGlyphs = drawsGlyphs
+      glyphFadeLayoutManager?.setOpacityRanges([])
+      fadeAnimationDisplayLink?.preferredFrameRateRange = fadeFrameRateRange
+    }
     let baseStartTime = CACurrentMediaTime()
     if asUnit {
       // Vendored addition (AmberAgent): fade the whole appended tail as one
@@ -693,11 +717,20 @@ class ParagraphUIView: UITextView {
     activeAnimations.removeAll { currentTime - $0.startTime >= $0.duration }
 
     if activeAnimations.isEmpty {
+      glyphFadeLayoutManager?.setOpacityRanges([])
       tearDownDisplayLink()
     }
   }
 
   private func updateTextViewWithCurrentAnimations(at currentTime: CFTimeInterval = CACurrentMediaTime()) {
+    if rendersFadeAsGlyphs, let manager = glyphFadeLayoutManager {
+      manager.setOpacityRanges(activeAnimations.compactMap { animation in
+        guard NSMaxRange(animation.range) <= textStorage.length else { return nil }
+        let progress = min(max((currentTime - animation.startTime) / animation.duration, 0), 1)
+        return ParagraphFadeLayoutManager.OpacityRange(range: animation.range, alpha: easeOut(progress))
+      })
+      return
+    }
     intrinsicContentSizeSuppressionDepth += 1
     defer { intrinsicContentSizeSuppressionDepth -= 1 }
     textStorage.beginEditing()
@@ -731,17 +764,19 @@ class ParagraphUIView: UITextView {
 
   private func setUpDisplayLink() {
     fadeAnimationDisplayLink = CADisplayLink(target: self, selector: #selector(updateFadeAnimation))
-    fadeAnimationDisplayLink?.preferredFrameRateRange = CAFrameRateRange(
-      minimum: 30,
-      maximum: 60,
-      preferred: 60
-    )
+    fadeAnimationDisplayLink?.preferredFrameRateRange = fadeFrameRateRange
     fadeAnimationDisplayLink?.add(to: .main, forMode: .common)
   }
 
   private func tearDownDisplayLink() {
     fadeAnimationDisplayLink?.remove(from: .main, forMode: .common)
     fadeAnimationDisplayLink = nil
+  }
+
+  private var fadeFrameRateRange: CAFrameRateRange {
+    rendersFadeAsGlyphs
+      ? CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+      : CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
   }
 
   private func invalidateCachedSize() {
@@ -758,6 +793,8 @@ class ParagraphUIView: UITextView {
   func resetForReuse() {
     tearDownDisplayLink()
     activeAnimations.removeAll()
+    glyphFadeLayoutManager?.setOpacityRanges([])
+    rendersFadeAsGlyphs = false
     paragraphContents = NSMutableAttributedString()
     lineSpacing = nil
     attributedText = NSAttributedString()

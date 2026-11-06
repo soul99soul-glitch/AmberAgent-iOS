@@ -52,6 +52,7 @@ final class ChatTaskWaveLayerView: ChatTaskProgressLayerView {
             group.duration = duration
             group.repeatCount = .infinity
             group.timingFunction = CAMediaTimingFunction(name: .linear)
+            group.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
             dot.add(group, forKey: "wave")
         }
         CATransaction.commit()
@@ -109,6 +110,7 @@ final class ChatTaskShimmerLayerView: ChatTaskProgressLayerView {
             sweep.duration = 1.8
             sweep.repeatCount = .infinity
             sweep.timingFunction = CAMediaTimingFunction(name: .linear)
+            sweep.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
             sweep.beginTime = band.convertTime(CACurrentMediaTime(), from: nil) -
                 Date().timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.8)
             band.add(sweep, forKey: "sweep")

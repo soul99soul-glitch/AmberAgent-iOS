@@ -17,7 +17,6 @@ final class NativeTimelineScrollDriver: NSObject {
     private var activeKeyboardAnimation: ActiveKeyboardAnimation?
     private var automaticFollowEnabled = true
     private var layoutPinsBottom = false
-    private var isStreamingFollow = false
     private var fallbackReason: NativeTimelineScrollFallbackReason?
     private var horizontalOffsetDriftClampUsed = false
 
@@ -41,7 +40,6 @@ final class NativeTimelineScrollDriver: NSObject {
             cancelProgrammaticMotion()
             stopFrameDriver()
             state = .idle
-            isStreamingFollow = false
         }
         self.scrollView = scrollView
         lastViewportMetrics = ViewportMetrics(scrollView)
@@ -57,7 +55,6 @@ final class NativeTimelineScrollDriver: NSObject {
         generation &+= 1
         stopFrameDriver()
         state = .idle
-        isStreamingFollow = false
         scrollView = nil
         lastViewportMetrics = nil
         wasNearBottomAtLastSample = false
@@ -87,7 +84,6 @@ final class NativeTimelineScrollDriver: NSObject {
     func setAutomaticFollowEnabled(_ enabled: Bool) {
         guard automaticFollowEnabled != enabled else { return }
         automaticFollowEnabled = enabled
-        isStreamingFollow = false
         generation &+= 1
         stopFrameDriver()
         state = .idle
@@ -108,14 +104,6 @@ final class NativeTimelineScrollDriver: NSObject {
         }
         generation &+= 1
         let token = generation
-        switch intent {
-        case .streamContentGrew:
-            isStreamingFollow = true
-        case .explicitBottom, .generationTerminated, .conversationReset, .userDragBegan:
-            isStreamingFollow = false
-        default:
-            break
-        }
         if case .userDragBegan = intent {
             cancelProgrammaticMotion()
         }
@@ -430,16 +418,11 @@ final class NativeTimelineScrollDriver: NSObject {
 
     private func updateFrameDriverRate() {
         guard let displayLink else { return }
-        let preferred: Float
-        if isStreamingFollow, case .followingBottom = state,
-           programmaticBottomAnimationCount == 0, currentKeyboardAnimation() == nil {
-            preferred = 60
-        } else {
-            preferred = 120
-        }
-        guard displayLink.preferredFrameRateRange.preferred != preferred else { return }
+        // Motion cadence is independent of the text-reveal cadence. Let
+        // ProMotion interpolate following at 120Hz without revealing text faster.
+        guard displayLink.preferredFrameRateRange.preferred != 120 else { return }
         displayLink.preferredFrameRateRange = CAFrameRateRange(
-            minimum: 30, maximum: preferred, preferred: preferred
+            minimum: 60, maximum: 120, preferred: 120
         )
     }
 

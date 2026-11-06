@@ -108,6 +108,8 @@ final class ChatTimelineAnimationIsolationTests: ChatNativeTimelineReplayTestCas
             let animation = try XCTUnwrap(dot.animation(forKey: "wave") as? CAAnimationGroup)
             XCTAssertEqual(animation.duration, 2 * Double.pi / 4.6, accuracy: 0.0001)
             XCTAssertEqual(animation.animations?.count, 3)
+            XCTAssertEqual(animation.preferredFrameRateRange.preferred, 120,
+                           "三点波浪应允许 ProMotion 合成器按 120Hz 播放")
         }
         wave.setAnimationPaused(true)
         XCTAssertEqual(wave.layer.speed, 0)
@@ -119,6 +121,7 @@ final class ChatTimelineAnimationIsolationTests: ChatNativeTimelineReplayTestCas
         let band = try XCTUnwrap(shimmer.layer.sublayers?.first as? CAGradientLayer)
         XCTAssertEqual(band.bounds.width, 67.2, accuracy: 0.001)
         XCTAssertEqual(band.animation(forKey: "sweep")?.duration, 1.8)
+        XCTAssertEqual(band.animation(forKey: "sweep")?.preferredFrameRateRange.preferred, 120)
         shimmer.setAnimationPaused(true)
         XCTAssertEqual(shimmer.layer.speed, 0)
         shimmer.setAnimationPaused(false)

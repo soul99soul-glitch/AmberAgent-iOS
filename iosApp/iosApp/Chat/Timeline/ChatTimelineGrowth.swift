@@ -47,25 +47,16 @@ struct ChatTimelineGrowthModifier: ViewModifier {
     @ObservedObject var growth: ChatTimelineGrowth
 
     func body(content: Content) -> some View {
-        content.modifier(ChatTimelineGrowthEffect(
-            destination: growth.totalGrowth, presented: growth.totalGrowth
-        ))
-    }
-}
-
-/// `destination` jumps with the real layout; `presented` interpolates from the
-/// previous presentation value, including overlapping line-growth animations.
-/// GeometryEffect never changes the layout proposal or scroll content size.
-private struct ChatTimelineGrowthEffect: GeometryEffect {
-    let destination: CGFloat
-    var presented: CGFloat
-
-    var animatableData: CGFloat {
-        get { presented }
-        set { presented = newValue }
-    }
-
-    func effectValue(size: CGSize) -> ProjectionTransform {
-        ProjectionTransform(CGAffineTransform(translationX: 0, y: destination - presented))
+        // Layout has already grown. Apply that compensation immediately, then
+        // let the native offset animation interpolate back at the display rate.
+        // Keeping both operations as built-in effects avoids a custom SwiftUI
+        // GeometryEffect evaluation for every presentation frame.
+        content
+            .offset(y: growth.totalGrowth)
+            .transaction { $0.animation = nil }
+            // Prevent coalescing the immediate compensation with its animated
+            // inverse; otherwise the first line jumps instead of moving up.
+            .geometryGroup()
+            .offset(y: -growth.totalGrowth)
     }
 }
