@@ -185,8 +185,10 @@ enum ChatMarkdownMediaParser {
 /// Only newly appended bytes are scanned on ordinary deltas. AST parsing is needed
 /// when a candidate's paragraph ends, and once more for the authoritative final text.
 struct ChatMarkdownMediaScan {
-    private var processedCount = 0
-    private var checkpoint: [UInt8] = []
+    private static let checkpointLength = 24
+    private var processedUTF16Count = 0
+    private var processedUTF8Count = 0
+    private var checkpointUTF16: [UInt16] = []
     private var previousWasNewline = false
     private var lineContainsOnlyWhitespace = true
     private(set) var hasCandidate = false
@@ -195,34 +197,59 @@ struct ChatMarkdownMediaScan {
     private(set) var didReset = false
 
     mutating func update(_ source: String, isStreaming: Bool) -> Bool {
-        let utf8 = source.utf8
-        let count = utf8.count
-        let checkpointStart = max(0, processedCount - checkpoint.count)
-        let isAppend = count >= processedCount && Array(utf8.dropFirst(checkpointStart).prefix(checkpoint.count)) == checkpoint
+        let ns = source as NSString
+        let utf16Count = ns.length
+        let isAppend = utf16Count >= processedUTF16Count && checkpointMatches(in: ns)
         didReset = !isAppend
         if !isAppend {
-            processedCount = 0; checkpoint = []; previousWasNewline = false
-            lineContainsOnlyWhitespace = true; hasCandidate = false; completedUTF8Count = 0
+            processedUTF16Count = 0; processedUTF8Count = 0
+            checkpointUTF16.removeAll(keepingCapacity: true)
+            previousWasNewline = false; lineContainsOnlyWhitespace = true
+            hasCandidate = false; completedUTF8Count = 0
         }
         let oldCompleted = completedUTF8Count
-        var offset = processedCount
-        for byte in utf8.dropFirst(processedCount) {
-            offset += 1
-            totalScannedUTF8Count += 1
-            if byte == UInt8(ascii: "[") { hasCandidate = true }
-            if byte == 10 {
-                if previousWasNewline && lineContainsOnlyWhitespace { completedUTF8Count = offset }
-                previousWasNewline = true
-                lineContainsOnlyWhitespace = true
-            } else if byte != 13 && byte != 32 && byte != 9 {
-                previousWasNewline = false
-                lineContainsOnlyWhitespace = false
+        if utf16Count > processedUTF16Count {
+            let delta = processedUTF16Count == 0 ? source : ns.substring(from: processedUTF16Count)
+            for byte in delta.utf8 {
+                processedUTF8Count += 1
+                totalScannedUTF8Count += 1
+                if byte == UInt8(ascii: "[") { hasCandidate = true }
+                if byte == 10 {
+                    if previousWasNewline && lineContainsOnlyWhitespace { completedUTF8Count = processedUTF8Count }
+                    previousWasNewline = true
+                    lineContainsOnlyWhitespace = true
+                } else if byte != 13 && byte != 32 && byte != 9 {
+                    previousWasNewline = false
+                    lineContainsOnlyWhitespace = false
+                }
             }
+            processedUTF16Count = utf16Count
+            let length = min(utf16Count, Self.checkpointLength)
+            checkpointUTF16 = Self.codeUnits(
+                in: ns,
+                range: NSRange(location: utf16Count - length, length: length)
+            )
         }
-        processedCount = count
-        checkpoint = Array(utf8.suffix(32))
-        if !isStreaming { completedUTF8Count = count }
+        if !isStreaming { completedUTF8Count = processedUTF8Count }
         return hasCandidate && (!isStreaming || !isAppend || completedUTF8Count != oldCompleted)
+    }
+
+    private func checkpointMatches(in ns: NSString) -> Bool {
+        guard processedUTF16Count > 0 else { return true }
+        guard processedUTF16Count <= ns.length, checkpointUTF16.count <= processedUTF16Count else { return false }
+        if let last = checkpointUTF16.last, (0xD800...0xDBFF).contains(last) { return false }
+        return Self.codeUnits(
+            in: ns,
+            range: NSRange(location: processedUTF16Count - checkpointUTF16.count, length: checkpointUTF16.count)
+        ) == checkpointUTF16
+    }
+
+    private static func codeUnits(in ns: NSString, range: NSRange) -> [UInt16] {
+        guard range.length > 0 else { return [] }
+        return [UInt16](unsafeUninitializedCapacity: range.length) { buffer, initializedCount in
+            ns.getCharacters(buffer.baseAddress!, range: range)
+            initializedCount = range.length
+        }
     }
 }
 
@@ -302,6 +329,10 @@ struct ChatMarkdownMediaContent<TextContent: View>: View {
     }
 
     private var displaySegments: [ChatMarkdownMediaSegment] {
+        if controller.plan.consumedUTF8Count == 0, controller.plan.segments.isEmpty {
+            guard text.contains(where: { !$0.isWhitespace }) else { return [] }
+            return [.init(id: "text:0", kind: .text(text))]
+        }
         var segments = controller.plan.segments
         let consumed = min(controller.plan.consumedUTF8Count, text.utf8.count)
         let tail = consumed == 0 ? text : String(decoding: text.utf8.dropFirst(consumed), as: UTF8.self)

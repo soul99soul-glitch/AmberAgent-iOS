@@ -10,9 +10,11 @@ struct ChatStableStreamingMarkdownView: View {
     @StateObject private var controller = ChatStableStreamingMarkdownController()
 
     var body: some View {
+        let visualHash = ChatStableStreamingMarkdownController.cachedVisualConfigHash(for: config)
         let resolution = controller.resolution(
             for: text,
             config: config,
+            visualConfigHash: visualHash,
             cacheIdentity: cacheIdentity,
             preservesRenderedTable: preservesRenderedTable
         )
@@ -36,7 +38,7 @@ struct ChatStableStreamingMarkdownView: View {
             .task(id: ChatStableStreamingMarkdownParseKey(
                 text: text,
                 animate: config.shouldAnimateText,
-                configHash: config.hashValue,
+                configHash: visualHash,
                 cacheIdentity: cacheIdentity
             )) {
                 controller.scheduleParse(text: text, config: config, cacheIdentity: cacheIdentity)
@@ -84,6 +86,8 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
     // 重新淡入(闪烁)。64 会让靠前的段落在后续解析中被挤出 → 完成时重新淡入;提到 256
     // 让整篇已完成段落基本都能命中,消除完成瞬间的整屏闪烁。
     private static let identityCacheLimit = 256
+    private static var visualConfigHashCache: [SwiftStreamingMarkdown.MarkdownRenderConfig: Int] = [:]
+    private static let lightTraitCollection = UITraitCollection(userInterfaceStyle: .light)
 
     @Published private(set) var revision = 0
     private var renderedText: String?
@@ -113,10 +117,14 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
     func resolution(
         for text: String,
         config: SwiftStreamingMarkdown.MarkdownRenderConfig,
+        visualConfigHash: Int? = nil,
         cacheIdentity: String?,
         preservesRenderedTable: Bool = false
     ) -> (renderable: SwiftStreamingMarkdown.RenderableDocument?, suppressesInitialFade: Bool) {
-        let signature = Self.renderSignature(for: config)
+        let signature = RenderSignature(
+            visualConfigHash: visualConfigHash ?? Self.cachedVisualConfigHash(for: config),
+            speculative: config.shouldAnimateText
+        )
         // 完全匹配:返回最新解析结果。utf16.count 先行短路,避免流式期每次
         // body 求值都对不等长文本做 O(n) 字符串比较。
         if let renderedSignature,
@@ -153,7 +161,7 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
            // Partial table rows contain synthetic closing pipes/empty cells. The
            // next delta rewrites that suffix, so it is not an append-only prefix.
            // Keep this table visible until its replacement has finished parsing.
-           preservesRenderedTable || (text.utf16.count >= renderedText.utf16.count && text.hasPrefix(renderedText)) {
+           preservesRenderedTable || Self.hasPrefixFast(text, prefix: renderedText) {
             return (renderableDocument, false)
         }
         if let cacheIdentity,
@@ -224,10 +232,12 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
                 }
 
                 self.lastLiveParseAt = Date()
+                let target = self.pendingParse ?? next
+                self.pendingParse = nil
                 await self.parseNow(
-                    text: next.text,
-                    config: next.config,
-                    cacheIdentity: next.cacheIdentity
+                    text: target.text,
+                    config: target.config,
+                    cacheIdentity: target.cacheIdentity
                 )
             }
         }
@@ -280,7 +290,6 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
             signature: signature,
             cacheIdentity: cacheIdentity
         ) : nil
-        let previousText = renderedText
         let previousRenderable = renderedSignature?.visualConfigHash == signature.visualConfigHash
             ? renderableDocument
             : nil
@@ -306,10 +315,7 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
                         config: config
                     )
                 }
-                guard let previousText,
-                      let previousRenderable,
-                      text.utf16.count >= previousText.utf16.count,
-                      text.hasPrefix(previousText) else { return converted }
+                guard let previousRenderable else { return converted }
                 return converted.reusingUnchangedPrefix(from: previousRenderable)
             }.value
         }
@@ -447,9 +453,44 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
         for config: SwiftStreamingMarkdown.MarkdownRenderConfig
     ) -> RenderSignature {
         RenderSignature(
-            visualConfigHash: visualConfigHash(for: config),
+            visualConfigHash: cachedVisualConfigHash(for: config),
             speculative: config.shouldAnimateText
         )
+    }
+
+    static func cachedVisualConfigHash(for config: SwiftStreamingMarkdown.MarkdownRenderConfig) -> Int {
+        if let cached = visualConfigHashCache[config] {
+            return cached
+        }
+        let computed = visualConfigHash(for: config)
+        if visualConfigHashCache.count >= 16 {
+            visualConfigHashCache.removeAll(keepingCapacity: true)
+        }
+        visualConfigHashCache[config] = computed
+        return computed
+    }
+
+    static func hasPrefixFast(_ text: String, prefix: String) -> Bool {
+        let nsText = text as NSString
+        let nsPrefix = prefix as NSString
+        let prefixLen = nsPrefix.length
+        let textLen = nsText.length
+        guard textLen >= prefixLen else { return false }
+        guard prefixLen > 0 else { return true }
+        if prefixLen == textLen {
+            return text == prefix
+        }
+        let nextUnit = nsText.character(at: prefixLen)
+        let prevUnit = nsPrefix.character(at: prefixLen - 1)
+        if (nextUnit < 0x80 && !(prevUnit == 0x0D && nextUnit == 0x0A)) ||
+           (nextUnit >= 0x4E00 && nextUnit <= 0x9FFF && prevUnit != 0x200D) {
+            return nsText.compare(
+                prefix,
+                options: .literal,
+                range: NSRange(location: 0, length: prefixLen)
+            ) == .orderedSame
+        }
+        return text.hasPrefix(prefix)
     }
 
     private static func visualConfigHash(for config: SwiftStreamingMarkdown.MarkdownRenderConfig) -> Int {
@@ -511,7 +552,7 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
     /// 动态色按固定 trait 解析为静态色后哈希 RGBA 分量：同一主题任意构建
     /// 实例得到同一值（动态 UIColor 的 hashValue 是实例身份哈希，跨实例不稳）。
     private static func combineResolvedColor(_ color: UIColor, into hasher: inout Hasher) {
-        let resolved = color.resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
+        let resolved = color.resolvedColor(with: lightTraitCollection)
         var red: CGFloat = 0
         var green: CGFloat = 0
         var blue: CGFloat = 0

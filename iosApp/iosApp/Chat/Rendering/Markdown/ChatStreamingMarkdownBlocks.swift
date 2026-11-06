@@ -58,16 +58,19 @@ private struct ChatStreamingMarkdownBlockListView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: config.blockSpacing) {
+            let lastBlockID = controller.blocks.last?.id
             ForEach(controller.blocks) { block in
                 switch block.kind {
                 case .text(let content):
                     if pacesTextBlocks {
+                        let isLastBlock = block.id == lastBlockID
+                        let initialRevealed = controller.initiallyRevealedTextLength(for: block)
                         ChatStreamingRevealPacer(
                             text: content,
-                            isStreaming: liveStreaming,
+                            isStreaming: isLastBlock && liveStreaming,
                             reduceMotion: reduceMotion,
-                            initiallyRevealedUTF16Count: controller.initiallyRevealedTextLength(for: block),
-                            pacePendingText: true
+                            initiallyRevealedUTF16Count: initialRevealed,
+                            pacePendingText: initialRevealed < content.utf16.count
                         ) { revealedText in
                             textBlock(revealedText, id: block.id)
                         }
@@ -108,22 +111,41 @@ private struct ChatStreamingMarkdownBlockParseKey: Equatable {
 final class ChatStreamingMarkdownBlockController: ObservableObject {
     @Published private(set) var blocks: [ChatStreamingMarkdownBlock]
 
+    private var settledAtInitBlockIDs: Set<String>
+    private var tableDetector: ChatStreamingTableDetectionState
     private var pendingParse: (text: String, includeTrailingPartialTableRow: Bool)?
     private var parseTask: Task<Void, Never>?
     private var lastPublishAt = Date.distantPast
 
     init(text: String, includeTrailingPartialTableRow: Bool) {
-        blocks = ChatPerfTrace.measure("MarkdownBlockSplitInitial", count: { text.utf16.count }) {
-            ChatStreamingMarkdownBlockParser.blocks(
+        var detector = ChatStreamingTableDetectionState(text: text)
+        let initialBlocks = ChatPerfTrace.measure("MarkdownBlockSplitInitial", count: { text.utf16.count }) {
+            if !detector.containsTable, (text as NSString).range(of: "\r").location == NSNotFound {
+                return text.contains(where: { !$0.isWhitespace })
+                    ? [ChatStreamingMarkdownBlock(id: "text-0", kind: .text(text))]
+                    : []
+            }
+            return ChatStreamingMarkdownBlockParser.blocks(
                 in: text,
                 includeTrailingPartialTableRow: includeTrailingPartialTableRow
             )
+        }
+        blocks = initialBlocks
+        tableDetector = detector
+        if initialBlocks.count > 1 {
+            settledAtInitBlockIDs = Set(initialBlocks.dropLast().map(\.id))
+        } else {
+            settledAtInitBlockIDs = []
         }
     }
 
     func initiallyRevealedTextLength(for block: ChatStreamingMarkdownBlock) -> Int {
         guard case .text(let content) = block.kind else { return 0 }
-        // 表格出现前的正文已经由外层推进；切换 owner 时不能重播它。
+        // 挂载时已处于后续块之前的非尾块（如流式中途重挂载/LOD 解冻的历史章节），
+        // 以及首个表格出现前已由外层 pacer 推进过的介绍正文，均不再从 0 重播。
+        if settledAtInitBlockIDs.contains(block.id) {
+            return content.utf16.count
+        }
         if let index = blocks.firstIndex(where: { $0.id == block.id }),
            !blocks[..<index].contains(where: { preceding in
                if case .table = preceding.kind { return true }
@@ -179,6 +201,17 @@ final class ChatStreamingMarkdownBlockController: ObservableObject {
                 // 节流窗内若有更新的累计文本到达,直接解析最新值。
                 let target = pendingParse ?? next
                 pendingParse = nil
+
+                tableDetector.update(with: target.text)
+                if !tableDetector.containsTable,
+                   (target.text as NSString).range(of: "\r").location == NSNotFound {
+                    let parsed: [ChatStreamingMarkdownBlock] = target.text.contains(where: { !$0.isWhitespace })
+                        ? [ChatStreamingMarkdownBlock(id: "text-0", kind: .text(target.text))]
+                        : []
+                    lastPublishAt = Date()
+                    publishPreservingSettledBlocks(parsed)
+                    continue
+                }
 
                 let parsed = await Task.detached(priority: .userInitiated) {
                     ChatPerfTrace.measure("MarkdownBlockSplit", count: { target.text.utf16.count }) {

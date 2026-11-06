@@ -60,8 +60,8 @@ final class ChatStreamingDetectionBox {
 struct ChatStreamingTableDetectionState {
     private static let checkpointLength = 32
 
-    private var processedUTF8Count = 0
-    private var checkpoint: [UInt8] = []
+    private var processedUTF16Count = 0
+    private var checkpointUTF16: [UInt16] = []
     private var pendingLineBytes: [UInt8] = []
     private var previousHeaderColumnCount: Int?
     private var fenceState = ChatStreamingMarkdownFenceState()
@@ -76,18 +76,18 @@ struct ChatStreamingTableDetectionState {
 
     mutating func update(with text: String) {
         guard !containsTable else { return }
-        let utf8 = text.utf8
-        let count = utf8.count
-        guard count != processedUTF8Count || !checkpointMatches(in: utf8) else { return }
+        let ns = text as NSString
+        let utf16Count = ns.length
+        let matches = checkpointMatches(in: ns)
+        guard utf16Count != processedUTF16Count || !matches else { return }
 
-        if count < processedUTF8Count || !checkpointMatches(in: utf8) {
+        if utf16Count < processedUTF16Count || !matches {
             resetParserState()
         }
 
-        let start = utf8.index(utf8.startIndex, offsetBy: processedUTF8Count)
-        let appended = utf8[start...]
-        totalConsumedUTF8Count += appended.count
-        for byte in appended {
+        let appended = processedUTF16Count == 0 ? text : ns.substring(from: processedUTF16Count)
+        for byte in appended.utf8 {
+            totalConsumedUTF8Count += 1
             if byte == 0x0A {
                 processCompletedLine()
                 pendingLineBytes.removeAll(keepingCapacity: true)
@@ -96,23 +96,36 @@ struct ChatStreamingTableDetectionState {
             }
             if containsTable { break }
         }
-        processedUTF8Count = count
-        checkpoint = Array(utf8.suffix(Self.checkpointLength))
+        processedUTF16Count = utf16Count
+        let length = min(utf16Count, Self.checkpointLength)
+        checkpointUTF16 = Self.codeUnits(
+            in: ns,
+            range: NSRange(location: utf16Count - length, length: length)
+        )
         evaluatePendingDelimiter()
     }
 
-    private func checkpointMatches(in utf8: String.UTF8View) -> Bool {
-        guard processedUTF8Count > 0 else { return true }
-        guard processedUTF8Count <= utf8.count, checkpoint.count <= processedUTF8Count else { return false }
-        let startOffset = processedUTF8Count - checkpoint.count
-        let start = utf8.index(utf8.startIndex, offsetBy: startOffset)
-        let end = utf8.index(start, offsetBy: checkpoint.count)
-        return utf8[start..<end].elementsEqual(checkpoint)
+    private func checkpointMatches(in ns: NSString) -> Bool {
+        guard processedUTF16Count > 0 else { return true }
+        guard processedUTF16Count <= ns.length, checkpointUTF16.count <= processedUTF16Count else { return false }
+        if let last = checkpointUTF16.last, (0xD800...0xDBFF).contains(last) { return false }
+        return Self.codeUnits(
+            in: ns,
+            range: NSRange(location: processedUTF16Count - checkpointUTF16.count, length: checkpointUTF16.count)
+        ) == checkpointUTF16
+    }
+
+    private static func codeUnits(in ns: NSString, range: NSRange) -> [UInt16] {
+        guard range.length > 0 else { return [] }
+        return [UInt16](unsafeUninitializedCapacity: range.length) { buffer, initializedCount in
+            ns.getCharacters(buffer.baseAddress!, range: range)
+            initializedCount = range.length
+        }
     }
 
     private mutating func resetParserState() {
-        processedUTF8Count = 0
-        checkpoint.removeAll(keepingCapacity: true)
+        processedUTF16Count = 0
+        checkpointUTF16.removeAll(keepingCapacity: true)
         pendingLineBytes.removeAll(keepingCapacity: true)
         previousHeaderColumnCount = nil
         fenceState = ChatStreamingMarkdownFenceState()
