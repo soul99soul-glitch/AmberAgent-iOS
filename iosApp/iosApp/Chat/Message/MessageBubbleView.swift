@@ -421,14 +421,14 @@ struct MessageBubbleView: View {
                         completionFeedback: completionFeedback,
                         messageID: message.id.toHexDashString(),
                         textPartIndex: partIndex
-                    ) { revealedText in
+                    ) { revealedText, isPacingReveal in
                         ChatAssistantText {
                             ChatAssistantMarkdownView(
                                 markdown: revealedText,
                                 renderCacheNamespace: "\(message.id):text:\(partIndex)",
                                 displaySetting: displaySetting,
                                 generativeUiSetting: generativeUiSetting,
-                                isStreaming: isGenerating && isLastMessage,
+                                isStreaming: (isGenerating && isLastMessage) || isPacingReveal,
                                 hasEverStreamed: hasEverStreamed,
                                 liveRenderingEnabled: liveMarkdownRenderingEnabled,
                                 frozenMarkdownSnapshot: nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil,
@@ -580,14 +580,14 @@ struct MessageBubbleView: View {
                         completionFeedback: completionFeedback,
                         messageID: message.id.toHexDashString(),
                         textPartIndex: partIndex
-                    ) { revealedText in
+                    ) { revealedText, isPacingReveal in
                         ChatAssistantText {
                             ChatAssistantMarkdownView(
                                 markdown: revealedText,
                                 renderCacheNamespace: "\(message.id):text:\(partIndex)",
                                 displaySetting: displaySetting,
                                 generativeUiSetting: generativeUiSetting,
-                                isStreaming: isGenerating && isLastMessage,
+                                isStreaming: (isGenerating && isLastMessage) || isPacingReveal,
                                 hasEverStreamed: hasEverStreamed,
                                 liveRenderingEnabled: liveMarkdownRenderingEnabled,
                                 frozenMarkdownSnapshot: nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil,

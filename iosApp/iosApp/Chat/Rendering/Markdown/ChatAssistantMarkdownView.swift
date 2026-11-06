@@ -47,6 +47,7 @@ enum ChatMarkdownRendererPolicy {
 /// 实验渲染器在这里互斥切换,避免两边各渲染各的、视觉不一致。
 struct ChatAssistantMarkdownView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.chatIsActivelyPacingReveal) private var isActivelyPacingReveal
     let markdown: String
     var renderCacheNamespace: String?
     var displaySetting: DisplaySetting?
@@ -61,6 +62,10 @@ struct ChatAssistantMarkdownView: View {
     var sourceTextPartIndex: Int = 0
     @State private var taskSegments: [IOSIntelligentUISegment] = []
     @State private var taskPreview: IOSIntelligentUIStreamingPreview?
+
+    private var effectiveIsStreaming: Bool {
+        isStreaming || isActivelyPacingReveal
+    }
 
     // 渲染器选择已硬编码：block 渲染器无条件参与竞争，coalesced 合并默认开启。
     // 不再暴露 microsoft/liyanan/streamingBlock/coalesced 开关给用户。
@@ -111,7 +116,7 @@ struct ChatAssistantMarkdownView: View {
         // 非流式行(历史行,首帧结果必须就位且不会每 delta 重建)做 eager 扫描;
         // 流式行从空状态起步,由 onAppear/onChange 的持久盒增量补齐——
         // 代价仅是"流式中途重进入"首帧探测未就位(下一帧补齐)。
-        if isStreaming {
+        if isStreaming || (hasEverStreamed && liveRenderingEnabled) {
             let detection = ChatStreamingDetectionBox(markdown: "")
             _detection = State(initialValue: detection)
             _mayContainWidgetPayload = State(initialValue: false)
@@ -140,7 +145,8 @@ struct ChatAssistantMarkdownView: View {
         let _ = ChatRenderProbe.record("markdown", id: sourceMessageID ?? "unattributed")
         let widgetSettings = IOSGenerativeWidgetSettings(generativeUiSetting)
         let renderedMarkdown = renderedMarkdownText
-        let liveStreaming = isStreaming && liveRenderingEnabled
+        let activeStreaming = effectiveIsStreaming
+        let liveStreaming = activeStreaming && liveRenderingEnabled
         Group {
             if widgetSettings.enabled && (mayContainWidgetPayload || !taskSegments.isEmpty) {
                 if !taskSegments.isEmpty {
@@ -150,7 +156,7 @@ struct ChatAssistantMarkdownView: View {
                             case .text(let text):
                                 visualContent(text, liveStreaming: liveStreaming, segmentIdentity: "task:\(index)")
                             case .card(let definition):
-                                if isStreaming {
+                                if activeStreaming {
                                     IOSIntelligentUIStreamingPreviewView(preview: .complete(definition),
                                         generationNamespace: liveStreaming ? taskGenerationNamespace(index) : nil,
                                         isAnimating: liveStreaming)
@@ -197,22 +203,26 @@ struct ChatAssistantMarkdownView: View {
             if renderedMarkdownSnapshot.isEmpty {
                 renderedMarkdownSnapshot = markdown
             }
-            updateTaskSegments(reconcile: true)
-            updateWidgetPayloadLatch(with: markdown)
-            if isStreaming && liveRenderingEnabled {
+            if !effectiveIsStreaming {
+                reconcileFinalWidgetPayloadLatch(with: markdown)
+            } else {
+                updateWidgetPayloadLatch(with: markdown)
+            }
+            updateTaskSegments(reconcile: !effectiveIsStreaming)
+            if effectiveIsStreaming && liveRenderingEnabled {
                 updateTableRendererLatch(with: renderedMarkdown)
             }
         }
         .onChange(of: markdown) { _, newValue in
             updateTaskSegments()
             updateWidgetPayloadLatch(with: newValue)
-            if isStreaming,
+            if effectiveIsStreaming,
                liveRenderingEnabled,
                !hasUsedBlockMarkdownRenderer {
                 updateTableRendererLatch(with: newValue)
             }
         }
-        .onChange(of: isStreaming) { _, newValue in
+        .onChange(of: effectiveIsStreaming) { _, newValue in
             if newValue && liveRenderingEnabled {
                 renderedMarkdownSnapshot = markdown
                 if !hasUsedBlockMarkdownRenderer {
@@ -233,13 +243,13 @@ struct ChatAssistantMarkdownView: View {
             renderedMarkdownSnapshot = markdown
             updateTaskSegments(reconcile: true)
             if ChatStreamingMarkdownRendererPolicy.initialBlockRendererLatch(
-                isStreaming: isStreaming,
+                isStreaming: effectiveIsStreaming,
                 hasEverStreamed: hasEverStreamed,
                 liveRenderingEnabled: newValue
             ) {
                 hasUsedBlockMarkdownRenderer = true
             }
-            if newValue && isStreaming {
+            if newValue && effectiveIsStreaming {
                 if !hasUsedBlockMarkdownRenderer {
                     updateTableRendererLatch(with: markdown)
                 }
@@ -302,7 +312,8 @@ struct ChatAssistantMarkdownView: View {
 
     private func updateTaskSegments(reconcile: Bool = false) {
         let text = renderedMarkdownText
-        if reconcile || !isStreaming {
+        let activeStreaming = effectiveIsStreaming
+        if reconcile || !activeStreaming {
             detection.taskUI.reconcileFinalText(text)
         } else {
             detection.taskUI.update(with: text)
@@ -313,7 +324,7 @@ struct ChatAssistantMarkdownView: View {
             if reconcile { detection.taskPreview.reset() }
             return
         }
-        if isStreaming {
+        if activeStreaming {
             if reconcile { detection.taskPreview.reconcile(text) }
             else { detection.taskPreview.update(with: text) }
             if detection.taskPreview.preview != taskPreview { taskPreview = detection.taskPreview.preview }
@@ -321,7 +332,7 @@ struct ChatAssistantMarkdownView: View {
             detection.taskPreview.reset()
             if taskPreview != nil { taskPreview = nil }
         }
-        let parsed = IOSIntelligentUIProtocol.parse(text, isStreaming: isStreaming)
+        let parsed = IOSIntelligentUIProtocol.parse(text, isStreaming: activeStreaming)
         let next = parsed.contains { segment in
             if case .text = segment { return false }
             return true
@@ -348,7 +359,7 @@ struct ChatAssistantMarkdownView: View {
         if !liveRenderingEnabled, let frozenMarkdownSnapshot, !frozenMarkdownSnapshot.isEmpty {
             return frozenMarkdownSnapshot
         }
-        if isStreaming && !liveRenderingEnabled && !renderedMarkdownSnapshot.isEmpty {
+        if effectiveIsStreaming && !liveRenderingEnabled && !renderedMarkdownSnapshot.isEmpty {
             return renderedMarkdownSnapshot
         }
         return markdown
@@ -364,7 +375,7 @@ struct ChatAssistantMarkdownView: View {
     }
 
     private func updateTableRendererLatch(with text: String) {
-        if isStreaming, liveRenderingEnabled {
+        if effectiveIsStreaming, liveRenderingEnabled {
             hasUsedBlockMarkdownRenderer = true
         }
         detection.table.update(with: text)

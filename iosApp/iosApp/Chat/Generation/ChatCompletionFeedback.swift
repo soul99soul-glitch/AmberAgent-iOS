@@ -6,9 +6,8 @@ import SwiftUI
 final class ChatCompletionFeedback {
     private(set) var runID: String?
     @ObservationIgnored private var isForegroundVisible = false
-    @ObservationIgnored private var terminalReceived = false
-    @ObservationIgnored private var pending: Pending?
-    @ObservationIgnored private var drainedParts: [Part: String] = [:]
+    @ObservationIgnored private var runs: [String: RunState] = [:]
+    @ObservationIgnored private var messageRunIDs: [String: String] = [:]
     @ObservationIgnored private let trigger: () -> Void
 
     private struct Part: Hashable {
@@ -21,49 +20,80 @@ final class ChatCompletionFeedback {
         let textParts: [Int: String]
     }
 
+    private struct RunState {
+        var terminalReceived = false
+        var pending: Pending?
+        var drainedParts: [Part: String] = [:]
+    }
+
     init(trigger: @escaping () -> Void = { AmberHaptics.triggerCompletion(.rigidImpact) }) {
         self.trigger = trigger
+    }
+
+    var hasActiveOrDrainingRun: Bool {
+        runs.values.contains { !$0.terminalReceived || $0.pending != nil }
+    }
+
+    func runID(forMessageID messageID: String?) -> String? {
+        guard let messageID,
+              let mappedRunID = messageRunIDs[messageID],
+              runs[mappedRunID]?.pending != nil else {
+            return nil
+        }
+        return mappedRunID
     }
 
     func begin(runID: String) {
         guard self.runID != runID else { return }
         self.runID = runID
-        terminalReceived = false
-        pending = nil
-        drainedParts = [:]
+        runs[runID] = RunState()
     }
 
     func setForegroundVisible(_ visible: Bool) {
         isForegroundVisible = visible
-        if !visible { pending = nil }
+        if !visible {
+            for key in runs.keys {
+                runs[key]?.pending = nil
+            }
+        }
     }
 
     func complete(runID: String, messageID: String, textParts: [Int: String]) {
-        guard self.runID == runID, !terminalReceived else { return }
-        terminalReceived = true
-        guard isForegroundVisible, !textParts.isEmpty else { return }
-        pending = Pending(messageID: messageID, textParts: textParts)
-        deliverIfDrained()
+        guard var state = runs[runID], !state.terminalReceived else { return }
+        state.terminalReceived = true
+        messageRunIDs[messageID] = runID
+        guard isForegroundVisible, !textParts.isEmpty else {
+            runs[runID] = state
+            return
+        }
+        state.pending = Pending(messageID: messageID, textParts: textParts)
+        runs[runID] = state
+        deliverIfDrained(for: runID)
     }
 
     func finishWithoutFeedback(runID: String) {
-        guard self.runID == runID else { return }
-        terminalReceived = true
-        pending = nil
+        guard var state = runs[runID] else { return }
+        state.terminalReceived = true
+        state.pending = nil
+        runs[runID] = state
     }
 
     func didDrain(runID: String, messageID: String, partIndex: Int, text: String) {
-        guard self.runID == runID else { return }
-        drainedParts[Part(messageID: messageID, index: partIndex)] = text
-        deliverIfDrained()
+        guard var state = runs[runID] else { return }
+        state.drainedParts[Part(messageID: messageID, index: partIndex)] = text
+        runs[runID] = state
+        deliverIfDrained(for: runID)
     }
 
-    private func deliverIfDrained() {
-        guard isForegroundVisible, let pending,
+    private func deliverIfDrained(for runID: String) {
+        guard isForegroundVisible,
+              var state = runs[runID],
+              let pending = state.pending,
               pending.textParts.allSatisfy({ index, text in
-                  drainedParts[Part(messageID: pending.messageID, index: index)] == text
+                  state.drainedParts[Part(messageID: pending.messageID, index: index)] == text
               }) else { return }
-        self.pending = nil
+        state.pending = nil
+        runs[runID] = state
         // Read the preference at delivery, including changes made while the tail drained.
         trigger()
     }

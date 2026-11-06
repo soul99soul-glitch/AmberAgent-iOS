@@ -360,7 +360,7 @@ struct NativeChatTimelineView: View {
             .onDisappear {
                 highlightedMessageAnchor = nil
                 isNativeScrollSurfaceVisible = false
-                timelineGrowth.setEnabled(false)
+                timelineGrowth.reset()
                 timelineUpdates?.detach(owner: timelineStreamOwner)
                 chunkCallbacks.boundary = { _, _, _ in }
                 chunkCallbacks.action = { _ in }

@@ -14,10 +14,28 @@ struct PendingAssistantRegeneration {
 final class ChatConversationRunState {
     let conversationId: KotlinUuid?
     @ObservationIgnored let completionFeedback = ChatCompletionFeedback()
-    var messages: [UIMessage] = [] {
-        didSet { untrackedMessages = messages }
+    @ObservationIgnored private var _messages: [UIMessage] = []
+    var messages: [UIMessage] {
+        get {
+            access(keyPath: \.messages)
+            return _messages
+        }
+        set {
+            withMutation(keyPath: \.messages) {
+                _messages = newValue
+            }
+        }
+        _modify {
+            access(keyPath: \.messages)
+            _$observationRegistrar.willSet(self, keyPath: \.messages)
+            defer { _$observationRegistrar.didSet(self, keyPath: \.messages) }
+            yield &_messages
+        }
     }
-    @ObservationIgnored private(set) var untrackedMessages: [UIMessage] = []
+    /// 无 `@Observable` 依赖登记的只读入口，共享单一底层数组存储，不引入第二份 CoW 引用。
+    var untrackedMessages: [UIMessage] {
+        _messages
+    }
     var isLoading = false
     var pendingMemoryApproval: MemoryToolApprovalRequest?
     var pendingSearchApproval: SearchToolApprovalRequest?

@@ -706,4 +706,42 @@ final class ChatMarkdownRenderingTests: ChatMessageProjectionTestCase {
         XCTAssertFalse(initialSecond === updatedSecond)
         XCTAssertEqual(updatedSecond.string, "Second item grows")
     }
+
+    func testTailDrainKeepsStreamingModeAndSingleFlightSerialParseWithoutCancellingInFlightWork() async throws {
+        let renderedText = await ChatStableStreamingMarkdownControllerTestSupport
+            .renderedTextAfterRapidNonAnimatedPrefixBurst()
+        var expectedText = "尾段排空起点"
+        for step in 1...12 {
+            expectedText += "，第\(step)拍增量"
+        }
+        XCTAssertEqual(renderedText, expectedText)
+
+        let testDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let repoRoot = testDirectory.deletingLastPathComponent()
+        let bubbleSource = try String(
+            contentsOf: repoRoot.appendingPathComponent("iosApp/Chat/Message/MessageBubbleView.swift"),
+            encoding: .utf8
+        )
+        let blocksSource = try String(
+            contentsOf: repoRoot.appendingPathComponent("iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownBlocks.swift"),
+            encoding: .utf8
+        )
+        let stableSource = try String(
+            contentsOf: repoRoot.appendingPathComponent("iosApp/Chat/Rendering/Markdown/ChatStableStreamingMarkdown.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(
+            bubbleSource.contains("isStreaming: (isGenerating && isLastMessage) || isPacingReveal"),
+            "ChatStreamingRevealPacer 尾段排空期间必须继续向 ChatAssistantMarkdownView 传递流式态。"
+        )
+        XCTAssertTrue(
+            blocksSource.contains("textBlock(revealedText, id: block.id, isPacingReveal: isPacingReveal)"),
+            "分段渲染器的内层 pacer 在尾段排空期间必须继续保持动画与增量解析节流。"
+        )
+        XCTAssertTrue(
+            stableSource.contains("throttleSleepTask?.cancel()"),
+            "切换完成态只应唤醒节流 sleep，不能取消正在执行的 parseNow 任务导致尾段解析饥饿。"
+        )
+    }
 }

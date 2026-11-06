@@ -890,7 +890,7 @@ struct ChatView: View {
     }
 
     var topBar: some View {
-        let generating = viewModel.isGenerationActive
+        let generating = viewModel.isGenerationActive || viewModel.completionFeedback.hasActiveOrDrainingRun
         let currentIslandState = topIslandState
         let recap = generating ? nil : currentRecap
         let recapLoading = !generating && (currentConversationIdString.map {
@@ -900,7 +900,7 @@ struct ChatView: View {
             presentation: islandPresentation ?? .idle(currentIslandState),
             conversationID: currentConversationIdString,
             hasMessages: chatListSummary.hasMessages,
-            isGenerating: viewModel.isGenerationActive,
+            isGenerating: generating,
             notices: conversationActivityCenter.notices,
             shelfHeight: chatSize.height * 0.55,
             onBack: handleBackTap,

@@ -10,7 +10,11 @@ final class ChatTimelineGrowth: ObservableObject {
 
     func setEnabled(_ enabled: Bool) {
         self.enabled = enabled
-        guard !enabled, totalGrowth != 0 else { return }
+    }
+
+    func reset() {
+        enabled = false
+        guard totalGrowth != 0 else { return }
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) { totalGrowth = 0 }

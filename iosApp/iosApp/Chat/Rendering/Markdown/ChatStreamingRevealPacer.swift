@@ -4,10 +4,19 @@ private struct ChatPacesStreamingTextBlocksKey: EnvironmentKey {
     static let defaultValue = false
 }
 
+private struct ChatIsActivelyPacingRevealKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 extension EnvironmentValues {
     var chatPacesStreamingTextBlocks: Bool {
         get { self[ChatPacesStreamingTextBlocksKey.self] }
         set { self[ChatPacesStreamingTextBlocksKey.self] = newValue }
+    }
+
+    var chatIsActivelyPacingReveal: Bool {
+        get { self[ChatIsActivelyPacingRevealKey.self] }
+        set { self[ChatIsActivelyPacingRevealKey.self] = newValue }
     }
 }
 
@@ -62,7 +71,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
     private let completionRunID: String?
     private let messageID: String?
     private let textPartIndex: Int
-    @ViewBuilder let content: (String) -> Content
+    @ViewBuilder let content: (String, Bool) -> Content
 
     @Environment(\.chatTimelineGrowth) private var timelineGrowth
     @State private var revealedUTF16Count = 0
@@ -70,6 +79,8 @@ struct ChatStreamingRevealPacer<Content: View>: View {
     /// 历史非流式行在 `init` 时直接为 `false`，首帧即直接渲染完整 `text`，
     /// 绝不经过「先挂空串 `""` 再在 `onAppear` 二次刷全文」的双渲染路径。
     @State private var isActivelyPacing: Bool
+    /// 锁定本 pacer 所属的 runID，防止同会话并发新任务覆盖当前回复的完成反馈归属。
+    @State private var latchedCompletionRunID: String?
     /// 内容自然高度（不含裁剪）。
     @State private var contentHeight: CGFloat = 0
     /// 当前实际占位高度：朝 `contentHeight` 平滑逼近。
@@ -88,18 +99,44 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         textPartIndex: Int = 0,
         @ViewBuilder content: @escaping (String) -> Content
     ) {
+        self.init(
+            text: text,
+            isStreaming: isStreaming,
+            reduceMotion: reduceMotion,
+            initiallyRevealedUTF16Count: initiallyRevealedUTF16Count,
+            pacePendingText: pacePendingText,
+            completionFeedback: completionFeedback,
+            messageID: messageID,
+            textPartIndex: textPartIndex,
+            content: { revealedText, _ in content(revealedText) }
+        )
+    }
+
+    init(
+        text: String,
+        isStreaming: Bool,
+        reduceMotion: Bool,
+        initiallyRevealedUTF16Count: Int? = nil,
+        pacePendingText: Bool = false,
+        completionFeedback: ChatCompletionFeedback? = nil,
+        messageID: String? = nil,
+        textPartIndex: Int = 0,
+        @ViewBuilder content: @escaping (String, Bool) -> Content
+    ) {
         self.text = text
         self.isStreaming = isStreaming
         self.reduceMotion = reduceMotion
         self.initiallyRevealedUTF16Count = initiallyRevealedUTF16Count
         self.completionFeedback = completionFeedback
-        self.completionRunID = completionFeedback?.runID
+        let resolvedRunID = completionFeedback?.runID(forMessageID: messageID) ?? completionFeedback?.runID
+        self.completionRunID = resolvedRunID
         self.messageID = messageID
         self.textPartIndex = textPartIndex
         self.content = content
         self._revealedUTF16Count = State(initialValue: initiallyRevealedUTF16Count ?? 0)
         let initialPacing = (isStreaming || pacePendingText) && !reduceMotion
         self._isActivelyPacing = State(initialValue: initialPacing)
+        self._latchedCompletionRunID = State(initialValue: resolvedRunID)
     }
 
     /// 是否仍按帧吐字。流式结束后若还有尾巴没吐完，继续按同一节奏吐。
@@ -111,7 +148,9 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         // 若外层再按 60fps 逐字切片并对整张 `TableView` 施加 `.frame(height: displayedHeight)` 动画，
         // 会导致数百个单元格每 16ms 触发多遍 `TableLayout` 与滚动几何反馈环（单帧卡死 200-330ms）。
         let bypassPacingForTable = activePacing && pacerBox.containsTable(in: text)
-        let hasPendingReveal = isStreaming || (activePacing && !bypassPacingForTable && revealedUTF16Count < text.utf16.count)
+        let localPendingReveal = activePacing && !bypassPacingForTable && (revealedUTF16Count < text.utf16.count || isActivelyPacing)
+        let hasPendingReveal = isStreaming || localPendingReveal
+        let isActivelyRevealing = isStreaming || localPendingReveal
         let displayedText: String
         let heightTransitionActive: Bool
         if activePacing && !bypassPacingForTable {
@@ -122,19 +161,23 @@ struct ChatStreamingRevealPacer<Content: View>: View {
             } else {
                 displayedText = text
             }
-            heightTransitionActive = clampedUTF16 < totalUTF16 || isStreaming
+            heightTransitionActive = clampedUTF16 < totalUTF16 || isStreaming || isActivelyPacing
         } else {
             displayedText = text
             heightTransitionActive = false
         }
+        let observesTimelineTableGrowth = timelineGrowth != nil && initiallyRevealedUTF16Count == nil && bypassPacingForTable
+        let observesGeometry = (activePacing && !bypassPacingForTable) || observesTimelineTableGrowth
 
-        return content(displayedText)
+        return content(displayedText, isActivelyRevealing)
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGFloat.self) { proxy in
-                activePacing && !bypassPacingForTable ? proxy.size.height : 0
+                observesGeometry ? proxy.size.height : 0
             } action: { height in
-                guard activePacing && !bypassPacingForTable else { return }
+                guard observesGeometry else { return }
                 if let timelineGrowth {
+                    // 当外层 pacer 已接管含表格整块的 timelineGrowth 观测时，内层分块 pacer 不重复累加。
+                    guard initiallyRevealedUTF16Count == nil else { return }
                     #if DEBUG
                     ChatRenderProbe.record("pacer-native-height")
                     #endif
@@ -142,12 +185,17 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                     pacerBox.naturalHeight = height
                     // A remounted live row already contains visible text. Its first
                     // measurement establishes the baseline, not new content growth.
-                    if heightTransitionActive && previous > 0 {
+                    let shouldGrowTimeline = heightTransitionActive || observesTimelineTableGrowth
+                    if shouldGrowTimeline && previous > 0 && height > previous {
+                        pacerBox.lastGrowthUptime = ProcessInfo.processInfo.systemUptime
                         timelineGrowth.contentGrew(by: height - previous)
                     }
                     return
                 }
                 let isFirstMeasurement = contentHeight == 0
+                if !isFirstMeasurement && height > contentHeight {
+                    pacerBox.lastGrowthUptime = ProcessInfo.processInfo.systemUptime
+                }
                 contentHeight = height
                 if isFirstMeasurement,
                    initiallyRevealedUTF16Count != nil,
@@ -164,18 +212,27 @@ struct ChatStreamingRevealPacer<Content: View>: View {
             )
             .clipped()
             .environment(\.chatPacesStreamingTextBlocks, bypassPacingForTable)
+            .environment(\.chatIsActivelyPacingReveal, isActivelyRevealing)
             .transformPreference(ChatStreamingRevealProgressKey.self) { progress in
                 progress.isMounted = true
                 progress.hasPendingReveal = progress.hasPendingReveal || hasPendingReveal
             }
             .onPreferenceChange(ChatStreamingRevealProgressKey.self) { progress in
                 guard progress.isMounted, !progress.hasPendingReveal,
-                      let completionRunID, let messageID else { return }
+                      let messageID else { return }
+                let resolvedRunID = completionFeedback?.runID(forMessageID: messageID)
+                    ?? latchedCompletionRunID
+                    ?? completionRunID
+                    ?? completionFeedback?.runID
+                guard let resolvedRunID else { return }
                 completionFeedback?.didDrain(
-                    runID: completionRunID, messageID: messageID, partIndex: textPartIndex, text: text
+                    runID: resolvedRunID, messageID: messageID, partIndex: textPartIndex, text: text
                 )
             }
             .onAppear {
+                if latchedCompletionRunID == nil {
+                    latchedCompletionRunID = completionFeedback?.runID(forMessageID: messageID) ?? completionRunID ?? completionFeedback?.runID
+                }
                 guard isPacing, revealedUTF16Count == 0 else { return }
                 guard initiallyRevealedUTF16Count == nil else { return }
                 if pacerBox.containsTable(in: text) {
@@ -189,6 +246,11 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                 )
                 displayedHeight = contentHeight
                 isActivelyPacing = true
+            }
+            .onChange(of: completionRunID) { _, newValue in
+                if let newValue, isStreaming || latchedCompletionRunID == nil {
+                    latchedCompletionRunID = newValue
+                }
             }
             .task(
                 id: PacingKey(
@@ -244,9 +306,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         let totalUTF16 = text.utf16.count
         guard revealedUTF16Count < totalUTF16 else {
             pacerBox.lastTickUptime = nil
-            if !Task.isCancelled, !isStreaming, isActivelyPacing {
-                isActivelyPacing = false
-            }
+            await settleTailGrowthIfNeeded(totalUTF16: totalUTF16)
             return
         }
         let tickSeconds = Double(ChatStreamingRevealTiming.tickNanos) / 1_000_000_000
@@ -293,10 +353,22 @@ struct ChatStreamingRevealPacer<Content: View>: View {
             }
             try? await Task.sleep(nanoseconds: ChatStreamingRevealTiming.tickNanos)
         }
-        if !Task.isCancelled, !isStreaming, revealedUTF16Count >= totalUTF16, isActivelyPacing {
-            pacerBox.lastTickUptime = nil
-            isActivelyPacing = false
+        await settleTailGrowthIfNeeded(totalUTF16: totalUTF16)
+    }
+
+    private func settleTailGrowthIfNeeded(totalUTF16: Int) async {
+        guard !Task.isCancelled, !isStreaming, revealedUTF16Count >= totalUTF16, isActivelyPacing else {
+            return
         }
+        pacerBox.lastTickUptime = nil
+        if let lastGrowth = pacerBox.lastGrowthUptime {
+            let remaining = ChatStreamingRevealTiming.heightSettleSeconds - (ProcessInfo.processInfo.systemUptime - lastGrowth)
+            if remaining > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            }
+        }
+        guard !Task.isCancelled, !isStreaming, revealedUTF16Count >= text.utf16.count else { return }
+        isActivelyPacing = false
     }
 
     private struct PacingKey: Equatable {
@@ -309,6 +381,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
 private final class ChatStreamingRevealPacerBox {
     var naturalHeight: CGFloat = 0
     var lastTickUptime: TimeInterval?
+    var lastGrowthUptime: TimeInterval?
     private var tableDetector = ChatStreamingTableDetectionState()
 
     func containsTable(in text: String) -> Bool {

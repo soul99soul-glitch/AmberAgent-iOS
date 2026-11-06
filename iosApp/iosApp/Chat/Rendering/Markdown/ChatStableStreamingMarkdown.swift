@@ -103,10 +103,13 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
         cacheIdentity: String?
     )?
     private var parseTask: Task<Void, Never>?
+    private var throttleSleepTask: Task<Void, Never>?
     private var parseTaskGeneration: UInt64 = 0
     private var lastLiveParseAt = Date.distantPast
+    private(set) var canceledInFlightParseCountForTesting = 0
 
     deinit {
+        throttleSleepTask?.cancel()
         parseTask?.cancel()
     }
 
@@ -192,22 +195,12 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
         config: SwiftStreamingMarkdown.MarkdownRenderConfig,
         cacheIdentity: String? = nil
     ) {
-        if !config.shouldAnimateText {
-            pendingParse = nil
-            parseTaskGeneration &+= 1
-            let generation = parseTaskGeneration
-            parseTask?.cancel()
-            parseTask = Task { @MainActor [weak self] in
-                guard let self else { return }
-                await self.parseNow(text: text, config: config, cacheIdentity: cacheIdentity)
-                guard self.parseTaskGeneration == generation else { return }
-                self.parseTask = nil
-                self.startPendingAnimatedParseIfNeeded()
-            }
-            return
-        }
-
         pendingParse = (text, config, cacheIdentity)
+        if !config.shouldAnimateText {
+            // Wake any throttle sleep immediately when transitioning to non-animated
+            // final state, but never cancel an in-flight `parseNow` computation.
+            throttleSleepTask?.cancel()
+        }
         startPendingAnimatedParseIfNeeded()
     }
 
@@ -227,16 +220,19 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
                 guard let next = self.pendingParse else { return }
                 self.pendingParse = nil
 
-                let elapsed = Date().timeIntervalSince(self.lastLiveParseAt)
-                let liveParseInterval = self.liveParseInterval(for: next.text)
-                if elapsed < liveParseInterval {
-                    let delay = UInt64((liveParseInterval - elapsed) * 1_000_000_000)
-                    do {
-                        try await Task.sleep(nanoseconds: delay)
-                    } catch {
-                        return
+                if next.config.shouldAnimateText {
+                    let elapsed = Date().timeIntervalSince(self.lastLiveParseAt)
+                    let liveParseInterval = self.liveParseInterval(for: next.text)
+                    if elapsed < liveParseInterval {
+                        let delay = UInt64((liveParseInterval - elapsed) * 1_000_000_000)
+                        let sleepTask = Task<Void, Never> {
+                            _ = try? await Task.sleep(nanoseconds: delay)
+                        }
+                        self.throttleSleepTask = sleepTask
+                        await sleepTask.value
+                        self.throttleSleepTask = nil
+                        guard !Task.isCancelled else { return }
                     }
-                    guard !Task.isCancelled else { return }
                 }
 
                 self.lastLiveParseAt = Date()
@@ -753,6 +749,18 @@ enum ChatStableStreamingMarkdownControllerTestSupport {
         )
 
         _ = await waitUntilRendered(updatedText, by: controller)
+        return controller.renderedTextForTesting
+    }
+
+    static func renderedTextAfterRapidNonAnimatedPrefixBurst() async -> String? {
+        let controller = ChatStableStreamingMarkdownController()
+        let config = SwiftStreamingMarkdown.MarkdownRenderConfig.default.withShouldAnimateText(value: false)
+        var prefix = "尾段排空起点"
+        for step in 1...12 {
+            prefix += "，第\(step)拍增量"
+            controller.scheduleParse(text: prefix, config: config)
+        }
+        _ = await waitUntilRendered(prefix, by: controller)
         return controller.renderedTextForTesting
     }
 

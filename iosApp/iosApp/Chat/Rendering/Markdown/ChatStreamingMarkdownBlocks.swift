@@ -76,11 +76,11 @@ private struct ChatStreamingMarkdownBlockListView: View {
                             reduceMotion: reduceMotion,
                             initiallyRevealedUTF16Count: initialRevealed,
                             pacePendingText: initialRevealed < content.utf16.count
-                        ) { revealedText in
-                            textBlock(revealedText, id: block.id)
+                        ) { revealedText, isPacingReveal in
+                            textBlock(revealedText, id: block.id, isPacingReveal: isPacingReveal)
                         }
                     } else {
-                        textBlock(content, id: block.id)
+                        textBlock(content, id: block.id, isPacingReveal: false)
                     }
                 case .table(let table):
                     // 用 vendor 的真实 Markdown 表格渲染，保留 inline 样式、链接与
@@ -97,10 +97,13 @@ private struct ChatStreamingMarkdownBlockListView: View {
         }
     }
 
-    private func textBlock(_ text: String, id: String) -> some View {
-        ChatStableStreamingMarkdownView(
+    private func textBlock(_ text: String, id: String, isPacingReveal: Bool) -> some View {
+        let effectiveConfig = (!config.shouldAnimateText && isPacingReveal && !reduceMotion)
+            ? config.withShouldAnimateText(value: true).withAnimatesAppendedTailAsUnit(value: true)
+            : config
+        return ChatStableStreamingMarkdownView(
             text: text,
-            config: config,
+            config: effectiveConfig,
             cacheIdentity: renderCacheNamespace.map { "\($0):\(id)" }
         )
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -247,14 +247,15 @@ struct ChatTopBarView: View {
             }
             let arrived = withAnimation(.easeInOut(duration: 0.18)) { arrivalState.update(input) }
             guard let notice = arrived else { return }
+            if arrivalState.announcement != nil {
+                UIAccessibility.post(notification: .announcement,
+                                     argument: "\(notice.title)，\(notice.kind.statusTitle)")
+            }
+            guard !input.isGenerating, notice.conversationId != input.conversationID else { return }
             if notice.kind == .awaitingUser {
                 UINotificationFeedbackGenerator().notificationOccurred(.warning)
             } else if notice.kind == .completed {
                 AmberHaptics.triggerCompletion(.lightImpact)
-            }
-            if arrivalState.announcement != nil {
-                UIAccessibility.post(notification: .announcement,
-                                     argument: "\(notice.title)，\(notice.kind.statusTitle)")
             }
         }
         .task(id: activeArrival.map(ChatTopBarArrivalState.Key.init)) {

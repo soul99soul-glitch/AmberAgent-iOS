@@ -122,6 +122,19 @@ final class ChatCompletionFeedbackTests: XCTestCase {
             owner.complete(runID: "on", messageID: "reply", textParts: [0: "正文"])
             owner.didDrain(runID: "on", messageID: "reply", partIndex: 2, text: "最终尾文")
             XCTAssertEqual(events.values, [.rigidImpact], "重复 terminal / reveal 回调只能触发一次")
+
+            // 同会话并发 runID 状态隔离：后启动的 runB 不得覆盖仍在排空的 runA
+            events.values.removeAll()
+            owner.begin(runID: "runA")
+            owner.begin(runID: "runB")
+            owner.complete(runID: "runA", messageID: "msg-a", textParts: [0: "A正文"])
+            owner.didDrain(runID: "runA", messageID: "msg-a", partIndex: 0, text: "A正文")
+            XCTAssertEqual(events.values, [.rigidImpact], "并发 runB 启动后 runA 排空仍应独立触发完成触感")
+            XCTAssertTrue(owner.hasActiveOrDrainingRun, "runB 尚未终态时仍处于活跃/排空期")
+            owner.complete(runID: "runB", messageID: "msg-b", textParts: [0: "B正文"])
+            owner.didDrain(runID: "runB", messageID: "msg-b", partIndex: 0, text: "B正文")
+            XCTAssertEqual(events.values, [.rigidImpact, .rigidImpact])
+            XCTAssertFalse(owner.hasActiveOrDrainingRun)
         }
     }
 

@@ -50,6 +50,12 @@ final class ChatTimelineReviewRegressionTests: ChatNativeTimelineReplayTestCase 
         mount.height += 22
         pump(seconds: 0.2)
         XCTAssertEqual(mount.growth.totalGrowth, 44, "重新挂载后继续计算真实增量")
+
+        // 手指刚碰屏进入 .tracking 调用 setEnabled(false) 时不得无动画把 totalGrowth 清零导致瞬跳
+        mount.growth.setEnabled(false)
+        XCTAssertEqual(mount.growth.totalGrowth, 44, ".tracking 暂停新增生长时必须保留已提交高度基准，避免画面瞬跳")
+        mount.growth.reset()
+        XCTAssertEqual(mount.growth.totalGrowth, 0, "仅在视图销毁 reset 时清零")
     }
 
     func testFirstShortReplyDoesNotTranslateTimelineUntilContentBecomesScrollable() throws {
