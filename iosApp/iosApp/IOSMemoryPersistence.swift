@@ -919,6 +919,7 @@ final class IOSMemoryPersistence {
     let markdownStore: IOSMemoryMarkdownStore
     let events: IOSMemoryEventStore
     let experiences: IOSAgentExperienceStore
+    let health: IOSMemoryHealthStore
     var wikiNotes: IOSMemoryWikiNotes { markdownStore.wikiNotes }
     private(set) var records: [MemoryRecord] = []
     /// Derived profile (memories/profile.json). Losing it only costs a
@@ -935,6 +936,7 @@ final class IOSMemoryPersistence {
         self.markdownStore = IOSMemoryMarkdownStore(directory: fileURL.deletingLastPathComponent())
         self.events = IOSMemoryEventStore(directory: fileURL.deletingLastPathComponent())
         self.experiences = IOSAgentExperienceStore(directory: fileURL.deletingLastPathComponent())
+        self.health = IOSMemoryHealthStore(directory: fileURL.deletingLastPathComponent())
         records = IosMemoryFactory.shared.getAllRecords()
     }
 
@@ -948,6 +950,7 @@ final class IOSMemoryPersistence {
         markdownStore = IOSMemoryMarkdownStore(directory: fileURL.deletingLastPathComponent())
         events = IOSMemoryEventStore(directory: fileURL.deletingLastPathComponent())
         experiences = IOSAgentExperienceStore(directory: fileURL.deletingLastPathComponent())
+        health = IOSMemoryHealthStore(directory: fileURL.deletingLastPathComponent())
         records = IosMemoryFactory.shared.getAllRecords()
     }
 
@@ -1093,7 +1096,7 @@ final class IOSMemoryPersistence {
     ///   强化（`lastReinforcedAt`），供短期 → 长期升级判断；存储本身不再去抖。
     /// - Returns: 本次调用是否发生了实际写盘。
     @discardableResult
-    func markUsed(ids: Set<Int32>, now: Int64 = Int64(Date().timeIntervalSince1970 * 1_000), force: Bool = false) -> Bool {
+    func markUsed(ids: Set<Int32>, now: Int64 = Int64(Date().timeIntervalSince1970 * 1_000), force: Bool = false, runId: String? = nil) -> Bool {
         guard !ids.isEmpty else { return false }
         let previousRecords = IosMemoryFactory.shared.snapshotRecords()
         let kotlinIds = ids.map { KotlinInt(value: $0) }
@@ -1102,7 +1105,9 @@ final class IOSMemoryPersistence {
         } else {
             IosMemoryFactory.shared.touchMemories(ids: kotlinIds, timestamp: now)
         }
-        return persist(previousRecords: previousRecords)
+        guard persist(previousRecords: previousRecords) else { return false }
+        events.recordRecall(ids: ids, runId: runId, cited: force, now: now)
+        return true
     }
 
     private func rollback(to previousRecords: [MemoryRecord]) {

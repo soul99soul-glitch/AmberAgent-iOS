@@ -588,6 +588,7 @@ struct ChatRuntimeContextBuilder {
                                                          selectedMemoryCount: result.ids.count,
                                                          availableChars: maxChars - (wikiIndex?.count ?? 0) - (result.prompt?.count ?? 0) - 4)
         let prompt = [wikiIndex, result.prompt, experience].compactMap { $0 }.joined(separator: "\n\n")
+        IOSMemoryPersistence.shared.health.recordPrompt(residentChars: wikiIndex?.count ?? 0, totalChars: prompt.count)
         guard !prompt.isEmpty else { return messages }
         // Recall changes turn to turn, so it goes after the stable leading
         // system fragments (soul, MCP catalog, orchestration, tool guidance).

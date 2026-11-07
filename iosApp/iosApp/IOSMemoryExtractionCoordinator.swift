@@ -530,6 +530,7 @@ final class IOSMemoryExtractionCoordinator {
                          contentPreview: IOSMemoryLibrary.preview(record.content))
         }
         for (record, evidence) in invalidated {
+            persistence.events.recordInvalidation(memoryId: record.id, conversationId: conversationId, evidence: evidence, now: nowMs)
             audit.record(action: "invalidate", status: "auto_saved", reason: "用户原文：\(IOSMemoryLibrary.preview(evidence))",
                          memoryId: Int(record.id), scope: record.scope.wireName, kind: record.kind.wireName,
                          contentPreview: IOSMemoryLibrary.preview(record.content))

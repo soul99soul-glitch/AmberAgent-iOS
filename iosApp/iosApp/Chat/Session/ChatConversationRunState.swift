@@ -94,7 +94,7 @@ final class ChatConversationRunState {
         if !force, let runId, runId == lastMemoryUsageRunId, ids == lastMarkedMemoryIds {
             return false
         }
-        guard persistence.markUsed(ids: ids, now: now, force: force) else { return false }
+        guard persistence.markUsed(ids: ids, now: now, force: force, runId: runId) else { return false }
         if let runId {
             lastMemoryUsageRunId = runId
             lastMarkedMemoryIds = ids
