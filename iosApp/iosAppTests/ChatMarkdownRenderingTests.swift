@@ -254,6 +254,55 @@ final class ChatMarkdownRenderingTests: ChatMessageProjectionTestCase {
         XCTAssertEqual(completed.first?.kind, "text")
     }
 
+    func testTextKit1ParagraphKeepsItsProposedColumnWidthWhileAppending() throws {
+        let width: CGFloat = 337.3
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        func root(_ text: String) -> some View {
+            ParagraphView(contents: NSMutableAttributedString(string: text,
+                attributes: [.font: UIFont.systemFont(ofSize: 17), .foregroundColor: UIColor.label]),
+                lineSpacing: 4, usesTextKit1: true)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: width)
+        }
+        let host = UIHostingController(rootView: root("短句"))
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previousWindow?.makeKey() }
+        func paragraph(in view: UIView) -> ParagraphUIView? {
+            if let paragraph = view as? ParagraphUIView { return paragraph }
+            return view.subviews.lazy.compactMap { paragraph(in: $0) }.first
+        }
+        for text in ["短句", "短句继续增长", String(repeating: "长正文保持列宽，不跟随字宽来回排版。", count: 12)] {
+            host.rootView = root(text)
+            host.view.layoutIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            let view = try XCTUnwrap(paragraph(in: host.view))
+            XCTAssertEqual(view.bounds.width, width, accuracy: 0.5)
+            XCTAssertEqual(view.text, text)
+        }
+    }
+
+    func testTextKit1SameLineAppendDoesNotInvalidateIntrinsicSize() {
+        let view = ParagraphUIView.makeTextKit1View()
+        view.frame = CGRect(x: 0, y: 0, width: 337.3, height: 21)
+        let style: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 17)]
+        view.setParagraphContents(NSMutableAttributedString(string: "短", attributes: style), animatedByWord: false)
+        view.layoutIfNeeded()
+        let before = view.sizeThatFits(CGSize(width: 337.3, height: .greatestFiniteMagnitude))
+        let previousProbe = ParagraphUIViewLiveProbe.onRecord
+        var invalidations = 0
+        ParagraphUIViewLiveProbe.onRecord = { if $0 == "para-intrinsic-invalidate" { invalidations += 1 } }
+        defer { ParagraphUIViewLiveProbe.onRecord = previousProbe; view.resetForReuse() }
+        view.setParagraphContents(NSMutableAttributedString(string: "短句", attributes: style), animatedByWord: false)
+        XCTAssertEqual(view.sizeThatFits(CGSize(width: 337.3, height: .greatestFiniteMagnitude)).height, before.height)
+        XCTAssertEqual(invalidations, 0, "列宽固定且没有换行时，追加字宽不应让 SwiftUI 重新测量整行")
+        XCTAssertEqual(view.text, "短句")
+    }
+
     func testTextKit1LongParagraphMeasuresEachAppendAtLineGranularity() {
         let width: CGFloat = 337.3
         let view = ParagraphUIView.makeTextKit1View()

@@ -198,6 +198,9 @@ class ParagraphUIView: UITextView {
 
   override func invalidateIntrinsicContentSize() {
     guard !isSuppressingIntrinsicContentSizeInvalidation else { return }
+    #if DEBUG
+    ParagraphUIViewLiveProbe.onRecord?("para-intrinsic-invalidate")
+    #endif
     invalidateCachedSize()
     super.invalidateIntrinsicContentSize()
   }
@@ -281,6 +284,11 @@ class ParagraphUIView: UITextView {
     let heightDiffers = textContainer.size.height != ParagraphUIView.unboundedMeasuringHeight
     let shouldRelayout = boundsInvalid || widthDiffers || heightDiffers
     if shouldRelayout {
+      #if DEBUG
+      if widthDiffers { ParagraphUIViewLiveProbe.onRecord?("para-relayout-width") }
+      if heightDiffers { ParagraphUIViewLiveProbe.onRecord?("para-relayout-height") }
+      if boundsInvalid { ParagraphUIViewLiveProbe.onRecord?("para-relayout-initial") }
+      #endif
       let previousContainerWidth = textContainer.size.width
       textContainer.size = measuringSize
       // A real width transition must re-lay the fragments at the proposed
@@ -425,7 +433,9 @@ class ParagraphUIView: UITextView {
         let updatedFittingSize = sizeThatFits(
           CGSize(width: previousFittingSize.targetWidth, height: .greatestFiniteMagnitude)
         )
-        if updatedFittingSize != previousFittingSize.size {
+        // This path fills a fixed proposed column. Appended glyph width is
+        // not a size change for SwiftUI until the paragraph gains a line.
+        if updatedFittingSize.height != previousFittingSize.size.height {
           setNeedsLayout()
           invalidateIntrinsicContentSize()
         } else {

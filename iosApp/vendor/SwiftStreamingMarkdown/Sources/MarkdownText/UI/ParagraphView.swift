@@ -149,7 +149,13 @@ struct ParagraphView: UIViewRepresentable {
     let size = uiView.sizeThatFits(targetSize)
     // Vendored fix (AmberAgent): UITextView can report a width wider than the
     // proposal; SwiftUI centers non-conforming views, clipping both edges.
-    let calculatedSize = CGSize(width: min(size.width, width), height: size.height.rounded(.up))
+    // Amber's attachment-free blocks fill their proposed column. Returning the
+    // used glyph width would place a narrower UITextView, so its next full-column
+    // measurement sees a width transition and throws away incremental layout.
+    let calculatedSize = CGSize(
+      width: usesTextKit1 ? width : min(size.width, width),
+      height: size.height.rounded(.up)
+    )
 
     context.coordinator.sizeCache[cacheKey] = calculatedSize
 
