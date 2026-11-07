@@ -23,7 +23,7 @@ struct ChatView: View {
     @State private var personalContextPhotoLoadID: UUID?
     @State private var artifactPinHandler = ChatArtifactPinHandler()
     @Environment(RouterPath.self)  var router
-    @AppStorage(IOSDisplayPreferenceKeys.followGeneration) private var followGeneration = true
+    private var followGeneration: Bool { IOSChatRenderPreferences.shared.followGeneration }
     @State var viewportState = ChatViewportState()
     @State var scrollToBottomTrigger = 0
     /// iPhone Duo 外屏右侧竖条是否承载了返回 / 新对话等操作。

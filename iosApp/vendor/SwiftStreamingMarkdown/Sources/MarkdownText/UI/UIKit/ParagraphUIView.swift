@@ -67,6 +67,7 @@ class ParagraphUIView: UITextView {
   private var cachedSize: CachedParagraphUIViewSize?
   private var lastReportedFittingSize: CachedParagraphUIViewSize?
   private var intrinsicContentSizeSuppressionDepth = 0
+  var layoutInvalidationID: String?
   /// Bounds width seen by the last layout pass. `cachedSize` is populated only
   /// by `intrinsicContentSize`; SwiftUI's `UIViewRepresentable.sizeThatFits`
   /// path can leave it nil even after a stable layout, so it cannot be used as
@@ -209,6 +210,7 @@ class ParagraphUIView: UITextView {
     #if DEBUG
     ParagraphUIViewLiveProbe.onRecord?("para-intrinsic-invalidate")
     #endif
+    ParagraphLayoutInvalidationHook.onInvalidate?(layoutInvalidationID)
     invalidateCachedSize()
     super.invalidateIntrinsicContentSize()
   }
@@ -1077,6 +1079,7 @@ class ParagraphUIView: UITextView {
     lineSpacing = nil
     attributedText = NSAttributedString()
     lastReportedFittingSize = nil
+    layoutInvalidationID = nil
     invalidateCachedSize()
     lastLaidOutWidth = nil
     if customAccessibilityLabel != nil {
@@ -1217,6 +1220,10 @@ extension NSAttributedString {
   }
 }
 #endif
+
+public enum ParagraphLayoutInvalidationHook {
+  public nonisolated(unsafe) static var onInvalidate: ((String?) -> Void)?
+}
 
 fileprivate extension NSMutableAttributedString {
   func setLineSpacing(_ lineSpacing: CGFloat) {

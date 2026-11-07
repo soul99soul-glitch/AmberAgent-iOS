@@ -3,6 +3,7 @@ import UIKit
 import Shared
 import ChatLayout
 import Combine
+import SwiftStreamingMarkdown
 
 struct ChatSwiftUIMessageBubble: View, @MainActor Equatable {
     let entryID: String
@@ -98,9 +99,24 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
     let imageAccessibilityFocusToolCallID: String?
     let onAction: (ChatListAction) -> Void
 
+    private var rowLayoutSignature: Int {
+        var hasher = Hasher()
+        hasher.combine(model.renderIdentity)
+        hasher.combine(model.phoneToolGroup?.signature)
+        hasher.combine(model.variantInfo?.selectedIndex)
+        hasher.combine(model.variantInfo?.variantCount)
+        hasher.combine(displaySettingSignature)
+        hasher.combine(generativeUiSettingSignature)
+        return hasher.finalize()
+    }
+
     var body: some View {
         let _ = ChatRenderProbe.record("row", id: model.row.messageId)
-        ChatTimelineRowLayout(messageID: model.row.messageId) {
+        ChatTimelineRowLayout(
+            messageID: model.row.messageId,
+            tracksRowInvalidation: true,
+            layoutSignature: rowLayoutSignature
+        ) {
             ChatMessageHostedBubble(
                 model: model,
                 displaySetting: displaySetting,
@@ -109,6 +125,7 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
                 imageAccessibilityFocusToolCallID: imageAccessibilityFocusToolCallID,
                 onAction: onAction
             )
+            .environment(\.markdownLayoutInvalidationID, model.row.messageId)
             .id(model.renderIdentity)
         }
     }

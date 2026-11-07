@@ -284,7 +284,7 @@ struct ChatTaskGroupDetailSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.locale) private var locale
-    @AppStorage(IOSAppLanguagePreference.defaultsKey) private var appLanguage = IOSAppLanguage.system.rawValue
+    private var appLanguage: String { IOSChatRenderPreferences.shared.appLanguage }
     @State private var detailSteps: [ChatToolStepModel] = []
     @State private var resolvedDetailVersion: String?
     @State private var showsReasoningDetails = false

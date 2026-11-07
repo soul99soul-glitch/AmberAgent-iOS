@@ -142,6 +142,7 @@ struct ChatAssistantMarkdownView: View {
     }
 
     var body: some View {
+        let _ = ChatTimelineRowLayoutInvalidation.markRowDirty(sourceMessageID)
         let _ = ChatRenderProbe.record("markdown", id: sourceMessageID ?? "unattributed")
         let widgetSettings = IOSGenerativeWidgetSettings(generativeUiSetting)
         let renderedMarkdown = renderedMarkdownText

@@ -137,15 +137,6 @@ struct MessageBubbleView: View {
             actions: actionBox
         )
         .equatable()
-        // 只注入可判等的值：新建闭包每次都不相等，会让所有代码块与 Markdown 随气泡重算失效。
-        .environment(\.chatArtifactMessageID, artifactPinAction == nil ? nil : ChatMessageProjector.messageId(for: message))
-        // vendor 默认「复制」只有文字可点；Amber 显式放大到整组图标+文字、约 44pt 高（不改布局）。
-        .environment(\.swiftStreamingMarkdownCodeCopyHitOutset, 13)
-        // 流式 block 渲染路径的代码块头部同样放“收进产物架”，与 AmberMarkdownView 一致。
-        .environment(
-            \.swiftStreamingMarkdownCodeBlockHeaderAccessory,
-            artifactPinAction == nil ? nil : ChatCodeBlockHeaderAccessory.streamingHeaderProvider
-        )
     }
 
     private static func displaySignature(_ setting: DisplaySetting?, prefs: IOSChatRenderPreferences) -> Int {
@@ -230,23 +221,6 @@ private struct MessageBubbleEquatableContent: View, @MainActor Equatable {
     let appLanguage: String
     let actions: MessageBubbleActionBox
 
-    @State private var workspaceSaveAlert: WorkspaceSaveAlert?
-    @State private var toolDetailTarget: ToolDetailTarget?
-    @State private var taskStepCache = ChatTaskToolStepCache()
-    @AccessibilityFocusState private var focusedGeneratedImageToolCallID: String?
-
-    private var onRegenerate: () -> Void { actions.onRegenerate }
-    private var onRequestEdit: (String) -> Void { actions.onRequestEdit }
-    private var onEdit: (String) -> Void { actions.onEdit }
-    private var onDelete: () -> Void { actions.onDelete }
-    private var onSelectVariant: (Int) -> Void { actions.onSelectVariant }
-    private var onGenerativeWidgetAction: (String) -> Void { actions.onGenerativeWidgetAction }
-    private var onModifyGeneratedImage: (String, String, String) -> Void { actions.onModifyGeneratedImage }
-    private var onOpenMiniApp: (String) -> Void { actions.onOpenMiniApp }
-    private var onOpenMiniApps: () -> Void { actions.onOpenMiniApps }
-    private var onOpenSubagentConversation: ((String) -> Void)? { actions.onOpenSubagentConversation }
-    private var artifactPinAction: ChatArtifactPinHandler? { actions.artifactPinAction }
-
     private var observesChatGenerationActive: Bool {
         contentIdentity.cachedParts.contains { part in
             if part is UIMessagePart.MiniApp { return true }
@@ -285,6 +259,87 @@ private struct MessageBubbleEquatableContent: View, @MainActor Equatable {
             lhs.chatMessageAnchorHighlighted == rhs.chatMessageAnchorHighlighted
     }
 
+    var body: some View {
+        MessageBubbleStatefulContent(
+            message: message,
+            contentIdentity: contentIdentity,
+            messageIndex: messageIndex,
+            isAssistantContinuation: isAssistantContinuation,
+            variantInfo: variantInfo,
+            displaySetting: displaySetting,
+            generativeUiSetting: generativeUiSetting,
+            displaySignature: displaySignature,
+            generativeSignature: generativeSignature,
+            isGenerating: isGenerating,
+            isChatGenerationActive: isChatGenerationActive,
+            isLastMessage: isLastMessage,
+            hasEverStreamed: hasEverStreamed,
+            liveMarkdownRenderingEnabled: liveMarkdownRenderingEnabled,
+            frozenMarkdownSnapshot: frozenMarkdownSnapshot,
+            reasoningLevelLabel: reasoningLevelLabel,
+            imageAccessibilityFocusToolCallID: imageAccessibilityFocusToolCallID,
+            phoneToolGroup: phoneToolGroup,
+            assistantTurn: assistantTurn,
+            workspaceStore: workspaceStore,
+            reduceMotion: reduceMotion,
+            locale: locale,
+            messageEditingAllowed: messageEditingAllowed,
+            completionFeedback: completionFeedback,
+            hasArtifactPinAction: hasArtifactPinAction,
+            chatMessageAnchorHighlighted: chatMessageAnchorHighlighted,
+            appLanguage: appLanguage,
+            actions: actions
+        )
+    }
+}
+
+private struct MessageBubbleStatefulContent: View {
+    let message: UIMessage
+    let contentIdentity: ChatMessageContentIdentity
+    let messageIndex: Int
+    let isAssistantContinuation: Bool
+    let variantInfo: IOSConversationStore.VariantInfo?
+    let displaySetting: DisplaySetting?
+    let generativeUiSetting: GenerativeUiSetting?
+    let displaySignature: Int
+    let generativeSignature: Int
+    let isGenerating: Bool
+    let isChatGenerationActive: Bool
+    let isLastMessage: Bool
+    let hasEverStreamed: Bool
+    let liveMarkdownRenderingEnabled: Bool
+    let frozenMarkdownSnapshot: String?
+    let reasoningLevelLabel: String?
+    let imageAccessibilityFocusToolCallID: String?
+    let phoneToolGroup: ChatPhoneToolGroupSummary?
+    let assistantTurn: ChatAssistantTurnRole?
+    let workspaceStore: IOSWorkspaceStore
+    let reduceMotion: Bool
+    let locale: Locale
+    let messageEditingAllowed: Bool
+    let completionFeedback: ChatCompletionFeedback?
+    let hasArtifactPinAction: Bool
+    let chatMessageAnchorHighlighted: Bool
+    let appLanguage: String
+    let actions: MessageBubbleActionBox
+
+    @State private var workspaceSaveAlert: WorkspaceSaveAlert?
+    @State private var toolDetailTarget: ToolDetailTarget?
+    @State private var taskStepCache = ChatTaskToolStepCache()
+    @AccessibilityFocusState private var focusedGeneratedImageToolCallID: String?
+
+    private var onRegenerate: () -> Void { actions.onRegenerate }
+    private var onRequestEdit: (String) -> Void { actions.onRequestEdit }
+    private var onEdit: (String) -> Void { actions.onEdit }
+    private var onDelete: () -> Void { actions.onDelete }
+    private var onSelectVariant: (Int) -> Void { actions.onSelectVariant }
+    private var onGenerativeWidgetAction: (String) -> Void { actions.onGenerativeWidgetAction }
+    private var onModifyGeneratedImage: (String, String, String) -> Void { actions.onModifyGeneratedImage }
+    private var onOpenMiniApp: (String) -> Void { actions.onOpenMiniApp }
+    private var onOpenMiniApps: () -> Void { actions.onOpenMiniApps }
+    private var onOpenSubagentConversation: ((String) -> Void)? { actions.onOpenSubagentConversation }
+    private var artifactPinAction: ChatArtifactPinHandler? { actions.artifactPinAction }
+
     private var isUser: Bool {
         message.role == MessageRole.user
     }
@@ -295,9 +350,31 @@ private struct MessageBubbleEquatableContent: View, @MainActor Equatable {
         messageEditingAllowed && !isGenerating
     }
 
+    private func streamingBoundaryKey(
+        text: String,
+        partIndex: Int,
+        nonEmptyTextPartCount: Int,
+        isSourceMessageComplete: Bool
+    ) -> Int {
+        var hasher = Hasher()
+        hasher.combine(text)
+        hasher.combine(partIndex)
+        hasher.combine(isGenerating && isLastMessage)
+        hasher.combine(reduceMotion)
+        hasher.combine(liveMarkdownRenderingEnabled)
+        hasher.combine(hasEverStreamed)
+        hasher.combine(nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil)
+        hasher.combine(isSourceMessageComplete)
+        hasher.combine(displaySignature)
+        hasher.combine(generativeSignature)
+        return hasher.finalize()
+    }
+
     var body: some View {
+        let messageHexID = message.id.toHexDashString()
+        let _ = ChatTimelineRowLayoutInvalidation.markRowDirty(messageHexID)
         #if DEBUG
-        let _ = ChatRenderProbe.record("message", id: message.id.toHexDashString())
+        let _ = ChatRenderProbe.record("message", id: messageHexID)
         #endif
         Group {
             if ChatMessageProjector.isSubAgentResult(message) {
@@ -358,6 +435,13 @@ private struct MessageBubbleEquatableContent: View, @MainActor Equatable {
                 dismissButton: .default(Text("好"))
             )
         }
+        .environment(\.markdownLayoutInvalidationID, messageHexID)
+        .environment(\.chatArtifactMessageID, hasArtifactPinAction ? ChatMessageProjector.messageId(for: message) : nil)
+        .environment(\.swiftStreamingMarkdownCodeCopyHitOutset, 13)
+        .environment(
+            \.swiftStreamingMarkdownCodeBlockHeaderAccessory,
+            hasArtifactPinAction ? ChatCodeBlockHeaderAccessory.streamingHeaderProvider : nil
+        )
     }
 
     // MARK: - Annotations (URL citations)
@@ -609,14 +693,25 @@ private struct MessageBubbleEquatableContent: View, @MainActor Equatable {
                 } else {
                     // 逐字平滑吐字：上游 delta 成块到达，直接整块上屏会一次撑高多行，
                     // 观感是「黑框先跳、文字后亮」。按帧小步推进让折行自然逐行上推。
-                    ChatStreamingGraphBoundary(isStreaming: isGenerating && isLastMessage) {
+                    let messageHexID = message.id.toHexDashString()
+                    let isSourceComplete = IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: IOSIntelligentUITerminal.completedKey) == "completed"
+                    ChatStreamingGraphBoundary(
+                        isStreaming: isGenerating && isLastMessage,
+                        messageID: messageHexID,
+                        contentKey: streamingBoundaryKey(
+                            text: textPart.text,
+                            partIndex: partIndex,
+                            nonEmptyTextPartCount: nonEmptyTextPartCount,
+                            isSourceMessageComplete: isSourceComplete
+                        )
+                    ) {
                         ChatStreamingRevealPacer(
                             text: textPart.text,
                             isStreaming: isGenerating && isLastMessage,
                             reduceMotion: reduceMotion,
                             liveRenderingEnabled: liveMarkdownRenderingEnabled,
                             completionFeedback: completionFeedback,
-                            messageID: message.id.toHexDashString(),
+                            messageID: messageHexID,
                             textPartIndex: partIndex
                         ) { revealedText, isPacingReveal in
                             ChatAssistantText {
@@ -630,8 +725,8 @@ private struct MessageBubbleEquatableContent: View, @MainActor Equatable {
                                     liveRenderingEnabled: liveMarkdownRenderingEnabled,
                                     frozenMarkdownSnapshot: nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil,
                                     onGenerativeWidgetAction: onGenerativeWidgetAction,
-                                    isSourceMessageComplete: IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: IOSIntelligentUITerminal.completedKey) == "completed",
-                                    sourceMessageID: message.id.toHexDashString(),
+                                    isSourceMessageComplete: isSourceComplete,
+                                    sourceMessageID: messageHexID,
                                     sourceTextPartIndex: partIndex
                                 )
                             }
@@ -771,14 +866,25 @@ private struct MessageBubbleEquatableContent: View, @MainActor Equatable {
                 } else {
                     // 逐字平滑吐字：上游 delta 成块到达，直接整块上屏会一次撑高多行，
                     // 观感是「黑框先跳、文字后亮」。按帧小步推进让折行自然逐行上推。
-                    ChatStreamingGraphBoundary(isStreaming: isGenerating && isLastMessage) {
+                    let messageHexID = message.id.toHexDashString()
+                    let isSourceComplete = IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: IOSIntelligentUITerminal.completedKey) == "completed"
+                    ChatStreamingGraphBoundary(
+                        isStreaming: isGenerating && isLastMessage,
+                        messageID: messageHexID,
+                        contentKey: streamingBoundaryKey(
+                            text: textPart.text,
+                            partIndex: partIndex,
+                            nonEmptyTextPartCount: nonEmptyTextPartCount,
+                            isSourceMessageComplete: isSourceComplete
+                        )
+                    ) {
                         ChatStreamingRevealPacer(
                             text: textPart.text,
                             isStreaming: isGenerating && isLastMessage,
                             reduceMotion: reduceMotion,
                             liveRenderingEnabled: liveMarkdownRenderingEnabled,
                             completionFeedback: completionFeedback,
-                            messageID: message.id.toHexDashString(),
+                            messageID: messageHexID,
                             textPartIndex: partIndex
                         ) { revealedText, isPacingReveal in
                             ChatAssistantText {
@@ -792,8 +898,8 @@ private struct MessageBubbleEquatableContent: View, @MainActor Equatable {
                                     liveRenderingEnabled: liveMarkdownRenderingEnabled,
                                     frozenMarkdownSnapshot: nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil,
                                     onGenerativeWidgetAction: onGenerativeWidgetAction,
-                                    isSourceMessageComplete: IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: IOSIntelligentUITerminal.completedKey) == "completed",
-                                    sourceMessageID: message.id.toHexDashString(),
+                                    isSourceMessageComplete: isSourceComplete,
+                                    sourceMessageID: messageHexID,
                                     sourceTextPartIndex: partIndex
                                 )
                             }

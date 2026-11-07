@@ -5,12 +5,24 @@
 
 import SwiftUI
 
+private struct MarkdownLayoutInvalidationIDKey: EnvironmentKey {
+  static let defaultValue: String? = nil
+}
+
+public extension EnvironmentValues {
+  var markdownLayoutInvalidationID: String? {
+    get { self[MarkdownLayoutInvalidationIDKey.self] }
+    set { self[MarkdownLayoutInvalidationIDKey.self] = newValue }
+  }
+}
+
 struct ParagraphView: UIViewRepresentable {
   @Environment(\.openURL) var openURL
   @Environment(\.markdownConfig) var config: MarkdownRenderConfig
   @Environment(\.markdownAnimateInitialText) var animateInitialText
   @Environment(\.markdownController) var markdownController: MarkdownController?
   @Environment(\.markdownStreamingTailSink) var streamingTailSink: MarkdownStreamingTailSink?
+  @Environment(\.markdownLayoutInvalidationID) var layoutInvalidationID: String?
 
   var contents: NSMutableAttributedString
   var lineSpacing: CGFloat?
@@ -29,6 +41,7 @@ struct ParagraphView: UIViewRepresentable {
       usesTextKit1: usesTextKit1
     )
     view.onUrlTap = openUrlFunction
+    view.layoutInvalidationID = layoutInvalidationID
     view.setParagraphContents(contents, lineSpacing: lineSpacing, animatedByWord: false)
     view.setTextContextMenu(config.textContextMenu)
     view.setMarkdownController(markdownController)
@@ -61,6 +74,7 @@ struct ParagraphView: UIViewRepresentable {
   }
 
   func updateUIView(_ view: ParagraphUIView, context: Context) {
+    view.layoutInvalidationID = layoutInvalidationID
     syncTailSinkBinding(for: view, coordinator: context.coordinator)
     // Vendored fix (AmberAgent): identity-first short circuit. Frozen/settled
     // streaming blocks re-pass the same NSMutableAttributedString instance on
@@ -111,6 +125,7 @@ struct ParagraphView: UIViewRepresentable {
     ParagraphViewSizeThatFitsTestHook.recordCall()
     #endif
 
+    uiView.layoutInvalidationID = layoutInvalidationID
     syncTailSinkBinding(for: uiView, coordinator: context.coordinator)
 
     // Vendored fix (AmberAgent): SwiftUI invokes sizeThatFits BEFORE updateUIView

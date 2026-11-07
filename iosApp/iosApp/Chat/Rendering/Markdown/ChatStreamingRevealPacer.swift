@@ -858,12 +858,21 @@ enum ChatStreamingRevealTiming {
 /// their existing hosting path.
 struct ChatStreamingGraphBoundary<Content: View>: View {
     let isStreaming: Bool
+    var messageID: String = ""
+    var contentKey: Int? = nil
     let content: Content
     @State private var didStream: Bool
     @Environment(\.chatTimelineGrowth) private var growth
 
-    init(isStreaming: Bool, @ViewBuilder content: () -> Content) {
+    init(
+        isStreaming: Bool,
+        messageID: String = "",
+        contentKey: Int? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
         self.isStreaming = isStreaming
+        self.messageID = messageID
+        self.contentKey = contentKey
         self.content = content()
         _didStream = State(initialValue: isStreaming)
     }
@@ -871,7 +880,12 @@ struct ChatStreamingGraphBoundary<Content: View>: View {
     var body: some View {
         Group {
             if growth != nil && didStream {
-                ChatStreamingGraphHost(content: content)
+                ChatStreamingGraphHost(
+                    isStreaming: isStreaming,
+                    messageID: messageID,
+                    contentKey: contentKey,
+                    content: content
+                )
             } else {
                 content
             }
@@ -883,7 +897,34 @@ struct ChatStreamingGraphBoundary<Content: View>: View {
 }
 
 private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresentable {
+    let isStreaming: Bool
+    let messageID: String
+    let contentKey: Int?
     let content: Content
+
+    struct HostEnvironmentKey: Equatable {
+        let reduceMotion: Bool
+        let locale: Locale
+        let artifactMessageID: String?
+        let layoutInvalidationID: String?
+        let fontScale: Double
+        let chatFont: String
+        let agentName: Bool
+        let appLanguage: String
+
+        @MainActor
+        init(_ env: EnvironmentValues) {
+            let prefs = IOSChatRenderPreferences.shared
+            reduceMotion = env.accessibilityReduceMotion
+            locale = env.locale
+            artifactMessageID = env.chatArtifactMessageID
+            layoutInvalidationID = env.markdownLayoutInvalidationID
+            fontScale = prefs.fontScale
+            chatFont = prefs.chatFont
+            agentName = prefs.agentName
+            appLanguage = prefs.appLanguage
+        }
+    }
 
     struct Root: View {
         let content: Content
@@ -909,11 +950,26 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
 
     final class Controller: UIViewController {
         var host: UIHostingController<Root>!
+        var messageID: String
+        private var lastIsStreaming: Bool
+        private var lastContentKey: Int?
+        private var lastEnvKey: HostEnvironmentKey
         private var measuredWidth: CGFloat?
         private var hasMeasured = false
         private var sizedView: SizedView { view as! SizedView }
 
-        init(content: Content, environment: EnvironmentValues) {
+        init(
+            content: Content,
+            environment: EnvironmentValues,
+            isStreaming: Bool,
+            messageID: String,
+            contentKey: Int?,
+            envKey: HostEnvironmentKey
+        ) {
+            self.messageID = messageID
+            self.lastIsStreaming = isStreaming
+            self.lastContentKey = contentKey
+            self.lastEnvKey = envKey
             super.init(nibName: nil, bundle: nil)
             ChatRenderProbe.record("graph-host-created")
             host = UIHostingController(rootView: root(content, environment: environment))
@@ -939,11 +995,40 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
                 guard let self, height.isFinite, height >= 0,
                       abs(sizedView.height - height) > 0.5 else { return }
                 sizedView.height = height
+                if !messageID.isEmpty {
+                    ChatTimelineRowLayoutInvalidation.markRowDirty(messageID)
+                }
                 sizedView.invalidateIntrinsicContentSize()
                 sizedView.setNeedsLayout()
             })
         }
-        func update(_ content: Content, environment: EnvironmentValues) {
+        func shouldUpdate(
+            isStreaming: Bool,
+            contentKey: Int?,
+            envKey: HostEnvironmentKey
+        ) -> Bool {
+            if let contentKey, let lastContentKey {
+                return isStreaming != lastIsStreaming ||
+                    contentKey != lastContentKey ||
+                    envKey != lastEnvKey
+            }
+            if !isStreaming && !lastIsStreaming && envKey == lastEnvKey {
+                return false
+            }
+            return true
+        }
+        func update(
+            _ content: Content,
+            environment: EnvironmentValues,
+            isStreaming: Bool,
+            messageID: String,
+            contentKey: Int?,
+            envKey: HostEnvironmentKey
+        ) {
+            self.messageID = messageID
+            self.lastIsStreaming = isStreaming
+            self.lastContentKey = contentKey
+            self.lastEnvKey = envKey
             host.rootView = root(content, environment: environment)
         }
         func size(width: CGFloat) -> CGSize {
@@ -958,11 +1043,34 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
     }
 
     func makeUIViewController(context: Context) -> Controller {
-        Controller(content: content, environment: context.environment)
+        let envKey = HostEnvironmentKey(context.environment)
+        return Controller(
+            content: content,
+            environment: context.environment,
+            isStreaming: isStreaming,
+            messageID: messageID,
+            contentKey: contentKey,
+            envKey: envKey
+        )
     }
     func updateUIViewController(_ controller: Controller, context: Context) {
+        let envKey = HostEnvironmentKey(context.environment)
+        guard controller.shouldUpdate(
+            isStreaming: isStreaming,
+            contentKey: contentKey,
+            envKey: envKey
+        ) else {
+            return
+        }
         ChatRenderProbe.record("graph-host-update")
-        controller.update(content, environment: context.environment)
+        controller.update(
+            content,
+            environment: context.environment,
+            isStreaming: isStreaming,
+            messageID: messageID,
+            contentKey: contentKey,
+            envKey: envKey
+        )
     }
     func sizeThatFits(_ proposal: ProposedViewSize, uiViewController: Controller, context: Context) -> CGSize? {
         guard let width = proposal.width, width > 0, width.isFinite else { return nil }

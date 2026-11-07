@@ -3,7 +3,10 @@ import SwiftUI
 
 /// The provider owns terminal work; this owner only waits for the visible reply's reveal.
 @MainActor @Observable
-final class ChatCompletionFeedback {
+final class ChatCompletionFeedback: Equatable {
+    nonisolated static func == (lhs: ChatCompletionFeedback, rhs: ChatCompletionFeedback) -> Bool {
+        lhs === rhs
+    }
     private(set) var runID: String?
     @ObservationIgnored private var isForegroundVisible = false
     @ObservationIgnored private var runs: [String: RunState] = [:]

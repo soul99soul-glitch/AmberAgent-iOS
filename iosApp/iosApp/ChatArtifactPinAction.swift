@@ -13,7 +13,10 @@ typealias ChatArtifactPinAction = @MainActor (
 /// 每次重算都会让读取该环境值的全部消息气泡失效重建（滑动/流式时逐帧整页重算）。
 /// 容器随 ChatView 的 @State 存活，渲染时只刷新其中的回调，不触发视图更新。
 @MainActor
-final class ChatArtifactPinHandler {
+final class ChatArtifactPinHandler: Equatable {
+    nonisolated static func == (lhs: ChatArtifactPinHandler, rhs: ChatArtifactPinHandler) -> Bool {
+        lhs === rhs
+    }
     var action: ChatArtifactPinAction?
 
     func callAsFunction(

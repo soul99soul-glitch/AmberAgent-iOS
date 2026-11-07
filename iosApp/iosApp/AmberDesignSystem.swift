@@ -918,6 +918,7 @@ final class IOSChatRenderPreferences {
     private(set) var chatFont: String
     private(set) var agentName: Bool
     private(set) var appLanguage: String
+    private(set) var followGeneration: Bool
 
     @ObservationIgnored private var defaultsObserver: NSObjectProtocol?
 
@@ -926,6 +927,7 @@ final class IOSChatRenderPreferences {
         self.chatFont = defaults.string(forKey: IOSDisplayPreferenceKeys.chatFont) ?? IOSChatFont.default.rawValue
         self.agentName = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.agentName, defaultValue: true)
         self.appLanguage = defaults.string(forKey: IOSAppLanguagePreference.defaultsKey) ?? IOSAppLanguage.system.rawValue
+        self.followGeneration = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.followGeneration, defaultValue: true)
 
         self.defaultsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
@@ -961,6 +963,10 @@ final class IOSChatRenderPreferences {
         let nextAppLanguage = defaults.string(forKey: IOSAppLanguagePreference.defaultsKey) ?? IOSAppLanguage.system.rawValue
         if _appLanguage != nextAppLanguage {
             appLanguage = nextAppLanguage
+        }
+        let nextFollowGeneration = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.followGeneration, defaultValue: true)
+        if _followGeneration != nextFollowGeneration {
+            followGeneration = nextFollowGeneration
         }
     }
 

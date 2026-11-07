@@ -86,6 +86,7 @@ struct ChatReasoningCard: View {
     /// 思考正文是否被高度上限裁切——驱动 mask 底部渐变（未裁切不洗淡短正文）。
     @State private var bodyIsClipped = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.markdownLayoutInvalidationID) private var layoutInvalidationID
 
     /// 正文可见 = 已展开，或终态软收起进行中（高度已 ramp 到 0 但尚未卸载）。
     private var bodyPresent: Bool { showsBody || isCollapsingAtTerminal }
@@ -272,6 +273,7 @@ struct ChatReasoningCard: View {
     // Compact cream pill: thought-cloud + "思考中 N 秒 · Auto" (live) / "思考了 N 秒 · Auto" (done) +
     // chevron. Expands to a height-capped, auto-scrolling view of the streaming reasoning text.
     var body: some View {
+        let _ = ChatTimelineRowLayoutInvalidation.markRowDirty(layoutInvalidationID)
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 // 软收起进行中忽略点击（0.2s 窗口），避免与 ramp 互相打架。

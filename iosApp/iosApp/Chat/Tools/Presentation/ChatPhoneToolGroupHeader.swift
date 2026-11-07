@@ -7,7 +7,10 @@ import Shared
 
 /// Keep environment identity stable while the timeline refreshes its callback.
 @MainActor
-final class ChatPhoneToolGroupToggleHandler {
+final class ChatPhoneToolGroupToggleHandler: Equatable {
+    nonisolated static func == (lhs: ChatPhoneToolGroupToggleHandler, rhs: ChatPhoneToolGroupToggleHandler) -> Bool {
+        lhs === rhs
+    }
     var action: (@MainActor (String) -> Void)?
 
     func callAsFunction(_ groupID: String) {

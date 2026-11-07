@@ -5,7 +5,10 @@ import UIKit
 /// The timeline takes its natural height immediately. Only its presentation
 /// transform interpolates, keeping bottom-anchored text moving at the old pace.
 @MainActor
-final class ChatTimelineGrowth: ObservableObject {
+final class ChatTimelineGrowth: ObservableObject, Equatable {
+    nonisolated static func == (lhs: ChatTimelineGrowth, rhs: ChatTimelineGrowth) -> Bool {
+        lhs === rhs
+    }
     @Published private(set) var totalGrowth: CGFloat = 0
     private var enabled = false
     private weak var presentationLayer: CALayer?

@@ -1,19 +1,33 @@
 import Foundation
 
 extension AmberUnifiedTaskBuilder {
-    private final class SummaryEntry {
-        let value: AmberDeliverableSummary
-        init(_ value: AmberDeliverableSummary) { self.value = value }
-    }
-
     // Bottom-badge reads also build task cards. Their unchanged result text must
     // not be scanned again on every view update; status classification stays live.
-    // NSCache serializes its accesses; entries contain immutable summary values.
+    // Unlike NSCache (which iOS purges on every background/scenePhase snapshot),
+    // a bounded lock-protected ring keeps parsed summaries across scene transitions.
     private final class SummaryCache: @unchecked Sendable {
-        let values = NSCache<NSString, SummaryEntry>()
-        init() {
-            values.countLimit = 64
-            values.totalCostLimit = 1_048_576
+        private let lock = NSLock()
+        private let capacity = 128
+        private var entries: [String: AmberDeliverableSummary] = [:]
+        private var order: [String] = []
+
+        func value(for key: String) -> AmberDeliverableSummary? {
+            lock.lock()
+            defer { lock.unlock() }
+            return entries[key]
+        }
+
+        func insert(_ summary: AmberDeliverableSummary, for key: String) {
+            lock.lock()
+            defer { lock.unlock() }
+            if entries[key] == nil {
+                if order.count >= capacity, let oldest = order.first {
+                    order.removeFirst()
+                    entries.removeValue(forKey: oldest)
+                }
+                order.append(key)
+            }
+            entries[key] = summary
         }
     }
     private static let summaryCache = SummaryCache()
@@ -21,10 +35,9 @@ extension AmberUnifiedTaskBuilder {
     /// Exact input value is the cache key, including decision markers at the tail.
     static func extractDeliverableSummary(from raw: String?) -> AmberDeliverableSummary {
         guard let raw else { return parseDeliverableSummary(from: nil) }
-        let key = raw as NSString
-        if let cached = summaryCache.values.object(forKey: key) { return cached.value }
+        if let cached = summaryCache.value(for: raw) { return cached }
         let summary = parseDeliverableSummary(from: raw)
-        summaryCache.values.setObject(SummaryEntry(summary), forKey: key, cost: key.length * 2)
+        summaryCache.insert(summary, for: raw)
         return summary
     }
 

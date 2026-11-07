@@ -235,8 +235,8 @@ final class ComposerInputController {
 
 struct ComposerPlaceholderText: View {
     let text: String
-    @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
-    @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
+    private var fontScale: Double { IOSChatRenderPreferences.shared.fontScale }
+    private var chatFont: String { IOSChatRenderPreferences.shared.chatFont }
     @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
 
     private var selectedFont: IOSChatFont {
@@ -261,8 +261,8 @@ struct ComposerInputTextView: UIViewRepresentable {
     var controller: ComposerInputController
     var onSubmit: () -> Void
 
-    @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
-    @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
+    private var fontScale: Double { IOSChatRenderPreferences.shared.fontScale }
+    private var chatFont: String { IOSChatRenderPreferences.shared.chatFont }
 
     private let minHeight: CGFloat = 40
     private let maxLines: CGFloat = 5
