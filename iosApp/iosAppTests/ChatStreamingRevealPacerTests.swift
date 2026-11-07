@@ -137,6 +137,64 @@ final class ChatStreamingRevealPacerTests: XCTestCase {
         XCTAssertFalse(receivingText.contains("首块结尾标记"), "首快照中的 tail 不能误判成已经显示的正文")
     }
 
+    func testPlainStreamingProseUsesDirectAppendInsteadOfPerTickMarkdownReparse() async throws {
+        let initialPrefix = "直接追加验证："
+        let prose = initialPrefix + String(repeating: "这是一段连续纯文本流式输出，期间没有任何块级或行内语法切换。", count: 6) + "收尾完成"
+        let stream = Stream(text: initialPrefix)
+        let host = UIHostingController(rootView: Fixture(stream: stream))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 1_200)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            ChatRenderProbe.enabled = false
+            ChatRenderProbe.reset()
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        host.view.layoutIfNeeded()
+        ChatRenderProbe.reset()
+        ChatRenderProbe.enabled = true
+        stream.text = prose
+        try await pump(host: host, milliseconds: 480)
+        stream.isStreaming = false
+        try await waitUntil(host: host) { self.paragraphText(in: host.view).contains("收尾完成") }
+        let counts = ChatRenderProbe.counts
+        ChatRenderProbe.enabled = false
+
+        XCTAssertEqual(paragraphText(in: host.view), prose)
+        let ticks = counts["pacer-tick"]?.values.reduce(0, +) ?? 0
+        let directAppends = counts["pacer-direct-append"]?.values.reduce(0, +) ?? 0
+        let mdSchedules = counts["md-schedule"]?.values.reduce(0, +) ?? 0
+        XCTAssertGreaterThan(ticks, 20)
+        XCTAssertGreaterThan(directAppends, ticks / 2, "纯文本吐字应主要由直接追加承载")
+        XCTAssertLessThanOrEqual(mdSchedules, ticks / 3, "纯文本吐字仅在折行或收尾时同步前缀，不应每拍触发 Markdown 重解析（实际 md-schedule=\(mdSchedules), ticks=\(ticks)）")
+    }
+
+    func testDirectAppendReparsesInlineStrongAndParagraphBoundariesCleanly() async throws {
+        let markdown = "前导纯文本连续吐字后遇到**加粗重点**继续纯文本。\n\n第二段继续平滑显示直到结尾标记。"
+        let stream = Stream(text: markdown)
+        let host = UIHostingController(rootView: Fixture(stream: stream))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 1_200)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        try await pump(host: host, milliseconds: 240)
+        stream.isStreaming = false
+        try await waitUntil(host: host) { self.paragraphText(in: host.view).contains("结尾标记。") }
+
+        let expectedVisible = "前导纯文本连续吐字后遇到加粗重点继续纯文本。\n第二段继续平滑显示直到结尾标记。"
+        XCTAssertEqual(paragraphText(in: host.view), expectedVisible)
+    }
+
     private func paragraphText(in view: UIView) -> String {
         if let textView = view as? UITextView {
             return textView.text ?? ""

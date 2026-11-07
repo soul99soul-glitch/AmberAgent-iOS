@@ -10,6 +10,7 @@ struct ParagraphView: UIViewRepresentable {
   @Environment(\.markdownConfig) var config: MarkdownRenderConfig
   @Environment(\.markdownAnimateInitialText) var animateInitialText
   @Environment(\.markdownController) var markdownController: MarkdownController?
+  @Environment(\.markdownStreamingTailSink) var streamingTailSink: MarkdownStreamingTailSink?
 
   var contents: NSMutableAttributedString
   var lineSpacing: CGFloat?
@@ -31,6 +32,7 @@ struct ParagraphView: UIViewRepresentable {
     view.setParagraphContents(contents, lineSpacing: lineSpacing, animatedByWord: false)
     view.setTextContextMenu(config.textContextMenu)
     view.setMarkdownController(markdownController)
+    syncTailSinkBinding(for: view, coordinator: context.coordinator)
 
     let willFade = ParagraphInitialFadePolicy.shouldAnimate(
       configShouldAnimateText: config.shouldAnimateText,
@@ -53,16 +55,20 @@ struct ParagraphView: UIViewRepresentable {
   }
 
   static func dismantleUIView(_ uiView: ParagraphUIView, coordinator: Coordinator) {
+    coordinator.boundTailSink?.unbindParagraphView(uiView)
+    coordinator.boundTailSink = nil
     ParagraphUIViewCache.shared.recycle(uiView)
   }
 
   func updateUIView(_ view: ParagraphUIView, context: Context) {
+    syncTailSinkBinding(for: view, coordinator: context.coordinator)
     // Vendored fix (AmberAgent): identity-first short circuit. Frozen/settled
     // streaming blocks re-pass the same NSMutableAttributedString instance on
     // every layout pass; the deep attributed-string compare is O(content) per
     // paragraph per pass and dominated long-document streaming profiles.
-    let contentsUnchanged = view.paragraphContents === contents || view.paragraphContents == contents
-    if !contentsUnchanged || view.lineSpacing != lineSpacing {
+    // Direct-appended streaming tails also stay untouched while `contents` still
+    // points at the base attributed string they extended.
+    if !view.isUpToDate(with: contents, lineSpacing: lineSpacing) {
       // Vendored fix (AmberAgent): streaming publishes land while cells are
       // still being configured (window == nil), so the window gate silently
       // skipped the fade and whole beats popped in unfaded. Unit-tail mode
@@ -78,6 +84,7 @@ struct ParagraphView: UIViewRepresentable {
       )
       context.coordinator.sizeCache.removeAll()
       context.coordinator.lastContents = nil
+      context.coordinator.lastDirectAppendLayoutRevision = view.directAppendLayoutRevision
     }
     view.setTextContextMenu(config.textContextMenu)
     view.setMarkdownController(markdownController)
@@ -104,14 +111,14 @@ struct ParagraphView: UIViewRepresentable {
     ParagraphViewSizeThatFitsTestHook.recordCall()
     #endif
 
+    syncTailSinkBinding(for: uiView, coordinator: context.coordinator)
+
     // Vendored fix (AmberAgent): SwiftUI invokes sizeThatFits BEFORE updateUIView
     // in the same layout pass. Synchronize uiView's contents here (while
     // suppressing intrinsic size invalidation since we are already returning the
     // new measurement to SwiftUI) so the first pass measures the real text and
     // updateUIView does not have to invalidate and trigger a second layout pass.
-    let viewContentsUnchanged = uiView.paragraphContents === contents
-      || uiView.paragraphContents == contents
-    if !viewContentsUnchanged || uiView.lineSpacing != lineSpacing {
+    if !uiView.isUpToDate(with: contents, lineSpacing: lineSpacing) {
       let shouldAnimate = config.shouldAnimateText
         && (config.animatesAppendedTailAsUnit || uiView.window != nil)
       uiView.setParagraphContents(
@@ -123,14 +130,17 @@ struct ParagraphView: UIViewRepresentable {
       )
     }
 
-    // Check if content or lineSpacing changed - if so, clear the cache
+    // Check if content, lineSpacing, or direct-append layout revision changed - if so, clear the cache
     // Vendored fix (AmberAgent): identity-first short circuit, see updateUIView.
     let contentsUnchanged = contents === context.coordinator.lastContents
       || contents == context.coordinator.lastContents
-    if !contentsUnchanged || lineSpacing != context.coordinator.lastLineSpacing {
+    if !contentsUnchanged
+        || lineSpacing != context.coordinator.lastLineSpacing
+        || uiView.directAppendLayoutRevision != context.coordinator.lastDirectAppendLayoutRevision {
       context.coordinator.sizeCache.removeAll()
       context.coordinator.lastContents = contents
       context.coordinator.lastLineSpacing = lineSpacing
+      context.coordinator.lastDirectAppendLayoutRevision = uiView.directAppendLayoutRevision
     }
 
     // Round width to avoid cache misses from floating point precision issues
@@ -162,11 +172,33 @@ struct ParagraphView: UIViewRepresentable {
     return calculatedSize
   }
 
+  private func syncTailSinkBinding(for view: ParagraphUIView, coordinator: Coordinator) {
+    if let streamingTailSink {
+      if coordinator.boundTailSink !== streamingTailSink {
+        coordinator.boundTailSink?.unbindParagraphView(view)
+      }
+      if streamingTailSink.syncParagraphView(view, contents: contents, usesTextKit1: usesTextKit1) {
+        coordinator.boundTailSink = streamingTailSink
+      } else if coordinator.boundTailSink === streamingTailSink {
+        view.setGatesStreamingHeightByLineCount(false)
+        coordinator.boundTailSink = nil
+      }
+    } else {
+      coordinator.boundTailSink?.unbindParagraphView(view)
+      coordinator.boundTailSink = nil
+      if view.gatesStreamingHeightByLineCount {
+        view.setGatesStreamingHeightByLineCount(false)
+      }
+    }
+  }
+
   class Coordinator {
     // Cache all calculated sizes keyed by width
     var sizeCache: [CGFloat: CGSize] = [:]
     var lastContents: NSMutableAttributedString?
     var lastLineSpacing: CGFloat?
+    var lastDirectAppendLayoutRevision: UInt64 = 0
+    weak var boundTailSink: MarkdownStreamingTailSink?
     /// Last finite width SwiftUI proposed. Used when a later pass sends a nil
     /// proposal so we do not fall back to the screen-width intrinsic guess.
     var lastProposedWidth: CGFloat?

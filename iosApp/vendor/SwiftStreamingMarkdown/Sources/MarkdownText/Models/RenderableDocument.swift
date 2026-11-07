@@ -235,9 +235,31 @@ extension RenderableDocument {
   var attributedStrings: [NSAttributedString] {
     return renderables.flatMap { $0.extractAttributedStrings() }
   }
+
+  /// Vendored addition (AmberAgent): trailing mutable attributed string backing
+  /// the last attachment-free `ParagraphUIView` in this document, or `nil` when
+  /// the document ends in a non-paragraph block (table, code block, blockquote,
+  /// math block, thematic break) or an attachment-bearing paragraph.
+  public var trailingAppendableAttributedContent: NSMutableAttributedString? {
+    renderables.last?.trailingAppendableAttributedContent
+  }
 }
 
 extension MarkdownRenderable {
+  var trailingAppendableAttributedContent: NSMutableAttributedString? {
+    switch self {
+    case .coalescedText(_, let content):
+      return content
+    case .paragraph(_, let content), .heading(_, _, let content):
+      let fullRange = NSRange(location: 0, length: content.length)
+      return content.containsAttachments(in: fullRange) ? nil : content
+    case .orderedList(_, let items), .unorderedList(_, let items, _):
+      return items.last?.children.last?.trailingAppendableAttributedContent
+    default:
+      return nil
+    }
+  }
+
   func extractAttributedStrings() -> [NSAttributedString] {
     switch self {
     case .paragraph(_, let str):

@@ -3,6 +3,7 @@ import Shared
 import SwiftStreamingMarkdown
 
 struct ChatStableStreamingMarkdownView: View {
+    @Environment(\.chatStreamingTailCoordinator) private var tailCoordinator
     let text: String
     let config: SwiftStreamingMarkdown.MarkdownRenderConfig
     var cacheIdentity: String? = nil
@@ -35,15 +36,22 @@ struct ChatStableStreamingMarkdownView: View {
             usesLayerBackedTableAnimation: config.shouldAnimateText,
             usesTextKit1ForAttachmentFreeText: true
         )
+            .environment(\.markdownStreamingTailSink, tailCoordinator != nil ? controller.tailSink : nil)
             .modifier(ChatStreamingRevealProgressModifier(progress: .init(
                 hasPendingReveal: !controller.hasRendered(text))))
             .task(id: ChatStableStreamingMarkdownParseKey(
                 text: text,
                 animate: config.shouldAnimateText,
                 configHash: visualHash,
-                cacheIdentity: cacheIdentity
+                cacheIdentity: cacheIdentity,
+                hasTailCoordinator: tailCoordinator != nil
             )) {
-                controller.scheduleParse(text: text, config: config, cacheIdentity: cacheIdentity)
+                controller.scheduleParse(
+                    text: text,
+                    config: config,
+                    cacheIdentity: cacheIdentity,
+                    tailCoordinator: tailCoordinator
+                )
             }
     }
 }
@@ -53,6 +61,7 @@ private struct ChatStableStreamingMarkdownParseKey: Equatable {
     let animate: Bool
     let configHash: Int
     let cacheIdentity: String?
+    let hasTailCoordinator: Bool
 }
 
 @MainActor
@@ -92,6 +101,8 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
     private static let lightTraitCollection = UITraitCollection(userInterfaceStyle: .light)
 
     @Published private(set) var revision = 0
+    let tailSink = SwiftStreamingMarkdown.MarkdownStreamingTailSink()
+    private weak var tailCoordinator: ChatStreamingTailCoordinator?
     private var renderedText: String?
     private var renderableDocument: SwiftStreamingMarkdown.RenderableDocument?
     private var renderedSignature: RenderSignature?
@@ -192,9 +203,26 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
     func scheduleParse(
         text: String,
         config: SwiftStreamingMarkdown.MarkdownRenderConfig,
-        cacheIdentity: String? = nil
+        cacheIdentity: String? = nil,
+        tailCoordinator: ChatStreamingTailCoordinator? = nil
     ) {
         ChatRenderProbe.record("md-schedule")
+        self.tailCoordinator = tailCoordinator
+        if let tailCoordinator {
+            tailCoordinator.bindSink(tailSink)
+            tailSink.updateStreamingConfig(
+                shouldAnimateText: config.shouldAnimateText,
+                appendsTailFadeAsUnit: config.animatesAppendedTailAsUnit,
+                gatesHeightByLineCount: config.shouldAnimateText
+            )
+        } else {
+            tailSink.configureTarget(
+                contents: nil,
+                shouldAnimateText: false,
+                appendsTailFadeAsUnit: false,
+                gatesHeightByLineCount: false
+            )
+        }
         pendingParse = (text, config, cacheIdentity)
         if !config.shouldAnimateText {
             // Wake any throttle sleep immediately when transitioning to non-animated
@@ -202,6 +230,27 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
             throttleSleepTask?.cancel()
         }
         startPendingAnimatedParseIfNeeded()
+    }
+
+    private func syncStreamingTail(
+        text: String,
+        renderable: SwiftStreamingMarkdown.RenderableDocument,
+        config: SwiftStreamingMarkdown.MarkdownRenderConfig
+    ) {
+        let gatesHeight = tailCoordinator != nil && config.shouldAnimateText
+        let targetContents = tailCoordinator != nil ? renderable.trailingAppendableAttributedContent : nil
+        tailSink.configureTarget(
+            contents: targetContents,
+            shouldAnimateText: config.shouldAnimateText,
+            appendsTailFadeAsUnit: config.animatesAppendedTailAsUnit,
+            gatesHeightByLineCount: gatesHeight
+        )
+        if let tailCoordinator, targetContents != nil {
+            tailCoordinator.bindSink(tailSink)
+            tailCoordinator.didSyncRenderedText(text)
+        } else {
+            tailCoordinator?.invalidateSync()
+        }
     }
 
     private func startPendingAnimatedParseIfNeeded() {
@@ -294,6 +343,9 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
         let animate = config.shouldAnimateText
         let signature = Self.renderSignature(for: config)
         if renderedSignature == signature, renderedText == text {
+            if let renderableDocument {
+                syncStreamingTail(text: text, renderable: renderableDocument, config: config)
+            }
             return
         }
         // Only remounts need a static lookup; an active stream already owns its
@@ -338,6 +390,7 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
         }
         guard !Task.isCancelled else { return }
         guard renderedText != text || renderedSignature != signature || renderableDocument != renderable else {
+            syncStreamingTail(text: text, renderable: renderable, config: config)
             return
         }
         ChatPerfTrace.measure("MarkdownPublish", count: { text.utf16.count }) {
@@ -358,6 +411,7 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
             } else {
                 Self.storeCachedRenderable(renderable, for: text, config: config)
             }
+            syncStreamingTail(text: text, renderable: renderable, config: config)
             revision &+= 1
         }
     }
