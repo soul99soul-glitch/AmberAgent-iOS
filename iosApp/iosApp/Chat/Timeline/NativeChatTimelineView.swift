@@ -79,6 +79,7 @@ struct NativeChatTimelineView: View {
         let _ = phoneToolGroupToggleHandler.action = togglePhoneToolGroup
         let _ = timelineUpdates?.attach(owner: timelineStreamOwner, consume: consumeTimelineStream)
         let messages = timelineUpdates?.structuralMessages ?? messagesProvider()
+        let _ = resetConversationCachesIfNeeded(event: signal.event, revision: signal.revision)
         let startIndex = resolvedHistoryStartIndex(messages: messages)
         let nativeScrollDriverDesired = isNativeScrollDriverDesired
         let displaySettingSignature = projectionCache.settings.display(displaySetting, fontScale: fontScale, chatFont: chatFont, agentName: agentName)
@@ -948,7 +949,8 @@ struct NativeChatTimelineView: View {
             phoneToolGroup: entry.phoneToolGroup?.headSummary,
             assistantTurn: entry.assistantTurn,
             isTaskLive: entry.isTaskLive,
-            usesIndependentTasks: usesIndependentTasks && entry.observesIndependentTaskMode
+            usesIndependentTasks: usesIndependentTasks && entry.observesIndependentTaskMode,
+            contentObservesGenerationState: entry.contentObservesGenerationState ?? false
         )
     }
 
@@ -1005,11 +1007,17 @@ struct NativeChatTimelineView: View {
         return .chatUserMessageSend
     }
 
+    private func resetConversationCachesIfNeeded(event: ChatEvent, revision: Int) {
+        guard event == .conversationLoaded || event == .conversationSwitched || event == .branchChanged,
+              projectionCache.lastResetRevision != revision else { return }
+        renderStateStore.removeAll()
+        contentHashCache.removeAll()
+        projectionCache.reset(forRevision: revision)
+    }
+
     private func updateRendererMemory(event: ChatEvent, messages: [UIMessage]) {
         if event == .conversationLoaded || event == .conversationSwitched || event == .branchChanged {
-            renderStateStore.removeAll()
-            contentHashCache.removeAll()
-            projectionCache.reset()
+            resetConversationCachesIfNeeded(event: event, revision: signal.revision)
             nativeStreamingTailVisibility = ChatSwiftUIStreamingTailVisibilityState()
         }
         streamedMessageIDs.formUnion(liveTaskTailIDs)
@@ -1019,14 +1027,27 @@ struct NativeChatTimelineView: View {
            (!usesIndependentTasks || liveTaskTailIDs.contains(ChatMessageProjector.messageId(for: last))) {
             streamedMessageIDs.insert(ChatMessageProjector.messageId(for: last))
         } else {
-            let currentIDs = Set(messages.map(ChatMessageProjector.messageId(for:)))
             streamedMessageIDs = NativeStaticTimelineRendererMemory.nextStreamedMessageIDs(
                 previous: streamedMessageIDs,
                 event: event,
                 messages: messages
             )
-            renderStateStore.retain(ids: currentIDs)
-            contentHashCache.retain(ids: currentIDs)
+            let isMonotonicEvent: Bool = {
+                switch event {
+                case .userMessageAppended, .toolCallStarted, .toolResultAppended,
+                     .assistantStreamClosed, .generationCompleted, .generationFailed,
+                     .generationCancelled, .generationHandedOffToBackground,
+                     .awaitingToolApproval, .settingsRefreshed:
+                    return messages.count >= projectionCache.cachedMessageCount
+                default:
+                    return false
+                }
+            }()
+            if !isMonotonicEvent {
+                let currentIDs = Set(messages.map(ChatMessageProjector.messageId(for:)))
+                renderStateStore.retain(ids: currentIDs)
+                contentHashCache.retain(ids: currentIDs)
+            }
         }
         unfreezeVisibleLiveTailIfNeeded(messages: messages, viewportState: viewportState)
     }

@@ -73,11 +73,20 @@ enum NativeStaticTimelineRendererMemory {
         case .conversationLoaded, .conversationSwitched, .branchChanged:
             return []
         default:
-            // Empty renderer memory needs no full-history ID scan. This is the
-            // normal cold-history path, including body updates while browsing.
-            var retained = previous.isEmpty ? previous : previous.intersection(
-                Set(messages.map(ChatMessageProjector.messageId(for:)))
-            )
+            // Empty renderer memory needs no full-history ID scan. When non-empty,
+            // streamed IDs almost always live near the tail, so scanning backward
+            // finds all retained IDs in O(|previous|) without bridging every old UUID.
+            var retained: Set<String> = []
+            if !previous.isEmpty {
+                retained.reserveCapacity(previous.count)
+                for message in messages.reversed() {
+                    let id = ChatMessageProjector.messageId(for: message)
+                    if previous.contains(id) {
+                        retained.insert(id)
+                        if retained.count == previous.count { break }
+                    }
+                }
+            }
             if event.remembersStreamingRenderer,
                let lastAssistant = messages.last(where: { $0.role == MessageRole.assistant }) {
                 retained.insert(ChatMessageProjector.messageId(for: lastAssistant))

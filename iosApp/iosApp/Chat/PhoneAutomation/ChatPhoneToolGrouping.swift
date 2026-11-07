@@ -160,11 +160,19 @@ enum ChatPhoneToolGrouping {
         _ entries: inout [NativeTimelineEntry],
         messages: [UIMessage],
         expandedGroupIDs: Set<String>,
-        isGenerationActive: Bool
+        isGenerationActive: Bool,
+        fromEntryIndex: Int = 0,
+        factsByObjectID: [ObjectIdentifier: NativeTimelineMessageFacts]? = nil
     ) {
+        let startEntryIndex = max(0, min(fromEntryIndex, entries.count))
+        func resolvedFacts(for message: UIMessage) -> NativeTimelineMessageFacts? {
+            factsByObjectID?[ObjectIdentifier(message)]
+        }
+
         struct Run {
             /// First phone message of the whole run (may precede the window).
             var firstMessage: UIMessage?
+            var firstMessageID: String?
             var memberIndices: [Int] = []
             var tools: [UIMessagePart.Tool] = []
         }
@@ -175,12 +183,22 @@ enum ChatPhoneToolGrouping {
             current = nil
         }
         // A run open at the window start continues from outside the window.
-        if let windowStart = entries.first(where: { $0.kind == .message })?.index {
-            current = prefixRun(messages: messages, before: windowStart).map {
-                Run(firstMessage: $0.firstMessage, memberIndices: [], tools: $0.tools)
+        if startEntryIndex == 0,
+           let windowStart = entries.first(where: { $0.kind == .message })?.index {
+            current = prefixRun(
+                messages: messages,
+                before: windowStart,
+                factsByObjectID: factsByObjectID
+            ).map {
+                Run(
+                    firstMessage: $0.firstMessage,
+                    firstMessageID: resolvedFacts(for: $0.firstMessage)?.messageId,
+                    memberIndices: [],
+                    tools: $0.tools
+                )
             }
         }
-        for index in entries.indices {
+        for index in startEntryIndex ..< entries.count {
             let entry = entries[index]
             guard entry.kind == .message else {
                 // A compaction marker is visible between rows; top/bottom decorations
@@ -188,25 +206,46 @@ enum ChatPhoneToolGrouping {
                 if entry.kind == .contextMarker { close() }
                 continue
             }
-            guard let message = entry.message,
-                  !entry.hasMultipleVariants,
-                  !ChatMessageProjector.isSubAgentResult(message) else {
+            guard let message = entry.message, !entry.hasMultipleVariants else {
                 close()
                 continue
             }
-            switch membership(of: message) {
-            case .phone:
-                if current == nil { current = Run(firstMessage: message) }
-                current?.memberIndices.append(index)
-                for part in message.parts {
-                    if let tool = part as? UIMessagePart.Tool { current?.tools.append(tool) }
+            if let facts = resolvedFacts(for: message) {
+                guard !facts.isSubAgentResult else {
+                    close()
+                    continue
                 }
-            case .neutral:
-                // Reasoning-only steps (e.g. thinking before the next phone action)
-                // stay inside an open run; they never start one.
-                current?.memberIndices.append(index)
-            case .breaking:
-                close()
+                switch facts.phoneMembership {
+                case .phone:
+                    if current == nil {
+                        current = Run(firstMessage: message, firstMessageID: facts.messageId)
+                    }
+                    current?.memberIndices.append(index)
+                    current?.tools.append(contentsOf: facts.phoneTools)
+                case .neutral:
+                    current?.memberIndices.append(index)
+                case .breaking:
+                    close()
+                }
+            } else {
+                guard !ChatMessageProjector.isSubAgentResult(message) else {
+                    close()
+                    continue
+                }
+                switch membership(of: message) {
+                case .phone:
+                    if current == nil { current = Run(firstMessage: message) }
+                    current?.memberIndices.append(index)
+                    for part in message.parts {
+                        if let tool = part as? UIMessagePart.Tool { current?.tools.append(tool) }
+                    }
+                case .neutral:
+                    // Reasoning-only steps (e.g. thinking before the next phone action)
+                    // stay inside an open run; they never start one.
+                    current?.memberIndices.append(index)
+                case .breaking:
+                    close()
+                }
             }
         }
         close()
@@ -219,14 +258,18 @@ enum ChatPhoneToolGrouping {
             // the window are ordinary members.
             guard let firstMessage = run.firstMessage,
                   let headIndex = run.memberIndices.first(where: { index in
-                      entries[index].message.map { membership(of: $0) == .phone } ?? false
+                      guard let message = entries[index].message else { return false }
+                      if let facts = resolvedFacts(for: message) {
+                          return facts.phoneMembership == .phone
+                      }
+                      return membership(of: message) == .phone
                   }),
                   let lastIndex = run.memberIndices.last,
                   let latestTool = run.tools.last,
                   let headMessageID = entries[headIndex].messageId else { continue }
             // Keyed on the run's first message UUID: provider toolCallIds (e.g. "call_0")
             // are not unique across conversations.
-            let groupID = ChatMessageProjector.messageId(for: firstMessage)
+            let groupID = run.firstMessageID ?? ChatMessageProjector.messageId(for: firstMessage)
             let isExpanded = expandedGroupIDs.contains(groupID)
             let summary = summary(
                 id: groupID,
@@ -250,9 +293,11 @@ enum ChatPhoneToolGrouping {
         let turnRoles = ChatAssistantTurnToolGrouping.roles(
             entries: entries,
             messages: messages,
-            isGenerationActive: isGenerationActive
+            isGenerationActive: isGenerationActive,
+            fromEntryIndex: startEntryIndex,
+            factsByObjectID: factsByObjectID
         )
-        for index in entries.indices where entries[index].kind == .message {
+        for index in startEntryIndex ..< entries.count where entries[index].kind == .message {
             let turnRole = turnRoles[index]
             let role = turnRole == nil ? roles[index] : nil
             guard entries[index].phoneToolGroup != role ||
@@ -271,7 +316,8 @@ enum ChatPhoneToolGrouping {
     /// are transparent, as they are for assistant continuation.
     static func prefixRun(
         messages: [UIMessage],
-        before index: Int
+        before index: Int,
+        factsByObjectID: [ObjectIdentifier: NativeTimelineMessageFacts]? = nil
     ) -> (firstMessage: UIMessage, tools: [UIMessagePart.Tool])? {
         var firstMessage: UIMessage?
         var reversedTools: [UIMessagePart.Tool] = []
@@ -279,17 +325,31 @@ enum ChatPhoneToolGrouping {
         while cursor >= 0 {
             let message = messages[cursor]
             cursor -= 1
-            guard ChatMessageProjector.isVisibleInTimeline(message) else { continue }
-            guard !ChatMessageProjector.isSubAgentResult(message) else { break }
-            switch membership(of: message) {
-            case .breaking:
-                cursor = -1
-            case .neutral:
-                continue
-            case .phone:
-                firstMessage = message
-                for part in message.parts.reversed() {
-                    if let tool = part as? UIMessagePart.Tool { reversedTools.append(tool) }
+            if let facts = factsByObjectID?[ObjectIdentifier(message)] {
+                guard facts.isVisibleInTimeline else { continue }
+                guard !facts.isSubAgentResult else { break }
+                switch facts.phoneMembership {
+                case .breaking:
+                    cursor = -1
+                case .neutral:
+                    continue
+                case .phone:
+                    firstMessage = message
+                    reversedTools.append(contentsOf: facts.phoneTools.reversed())
+                }
+            } else {
+                guard ChatMessageProjector.isVisibleInTimeline(message) else { continue }
+                guard !ChatMessageProjector.isSubAgentResult(message) else { break }
+                switch membership(of: message) {
+                case .breaking:
+                    cursor = -1
+                case .neutral:
+                    continue
+                case .phone:
+                    firstMessage = message
+                    for part in message.parts.reversed() {
+                        if let tool = part as? UIMessagePart.Tool { reversedTools.append(tool) }
+                    }
                 }
             }
         }
