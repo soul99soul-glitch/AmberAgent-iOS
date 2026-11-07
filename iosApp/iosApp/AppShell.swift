@@ -150,7 +150,7 @@ struct AppShell: View {
             }
         )
         IOSMemoryConsolidationCoordinator.shared.configure(
-            settings: sharedSettingsStore,
+            settings: sharedSettingsStore, conversations: conversationStore,
             writesEnabled: {
                 guard let policy = localToolExecutor.permissionPolicy(capabilityId: "ios.agent.memory_write") else { return false }
                 return policy != .disabled

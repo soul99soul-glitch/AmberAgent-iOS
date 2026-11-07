@@ -25,6 +25,7 @@ final class IOSMemoryConsolidationCoordinator {
     private let environment: () -> (foreground: Bool, idle: Bool, charging: Bool)
     private let now: () -> Date
     private weak var settings: IOSSharedSettingsStore?
+    private weak var conversations: IOSConversationStore?
     private var writesEnabled: () -> Bool = { true }
     private static let statusKey = "app.amber.ios.memoryConsolidation.status.v1"
     private static let budgetKey = "app.amber.ios.memoryConsolidation.dailyRuns.v1"
@@ -82,8 +83,9 @@ final class IOSMemoryConsolidationCoordinator {
         statusMessage = defaults.string(forKey: Self.statusKey) ?? "定期合并重复、归档过期并整理主题。"
     }
 
-    func configure(settings: IOSSharedSettingsStore, writesEnabled: @escaping () -> Bool = { true }) {
+    func configure(settings: IOSSharedSettingsStore, conversations: IOSConversationStore? = nil, writesEnabled: @escaping () -> Bool = { true }) {
         self.settings = settings
+        self.conversations = conversations
         self.writesEnabled = writesEnabled
     }
 
@@ -158,8 +160,41 @@ final class IOSMemoryConsolidationCoordinator {
         }
 
         guard MemoryWorkerDreamGate.shared.isModelDreamEnabled(worker: worker) else { return }
+        await runCorrectionPass(settings: settings, worker: worker)
         await runTopicPass(settings: settings, worker: worker)
         await runProfilePass(settings: settings, worker: worker)
+    }
+
+    private func runCorrectionPass(settings: IOSSharedSettingsStore, worker: MemoryWorkerSetting) async {
+        guard writesEnabled(), let conversations else { return }
+        let nowMs = Int64(now().timeIntervalSince1970 * 1000)
+        let snapshot = Array(ChatMemoryContextBuilder.hardEligible(
+            ChatMemoryContextBuilder.recordsForPrompt(records: persistence.records, runtime: settings.agentRuntime), now: nowMs
+        ).filter { $0.kind != .topic }.sorted { $0.updatedAt > $1.updatedAt }.prefix(80))
+        guard !snapshot.isEmpty else { return }
+        let evidence = await IOSMemoryCorrection.evidence(conversations: conversations)
+        guard evidence.contains(where: { source in snapshot.contains { source.timestamp > $0.updatedAt } }) else { return }
+        do {
+            let prompt = try IOSMemoryCorrection.prompt(records: snapshot, evidence: evidence)
+            let request = try makeDaydreamRequest(settings: settings.snapshot, worker: worker, prompt: prompt)
+            let text = try await Self.generate(request, timeoutMillis: worker.timeoutMs)
+            guard writesEnabled(), MemoryWorkerDreamGate.shared.isModelDreamEnabled(worker: settings.agentRuntime.memoryWorker) else { return }
+            // Reload raw sources too: a user may delete or edit an Episode while
+            // the model runs. Removed quotes must not trigger an archive.
+            let freshEvidence = await IOSMemoryCorrection.evidence(conversations: conversations)
+            guard writesEnabled(), MemoryWorkerDreamGate.shared.isModelDreamEnabled(worker: settings.agentRuntime.memoryWorker) else { return }
+            let outcome = try IOSMemoryCorrection.apply(IOSMemoryCorrection.proposals(from: text), snapshot: snapshot,
+                                                       evidence: freshEvidence.filter { evidence.contains($0) },
+                                                       runtime: settings.agentRuntime, persistence: persistence, now: nowMs)
+            if outcome.archived + outcome.review > 0 {
+                let summary = "纠错归档 \(outcome.archived) 条，待用户确认 \(outcome.review) 条"
+                audit.record(action: "correct", status: "auto_saved", reason: summary)
+                report(summary)
+            }
+        } catch {
+            audit.record(action: "correct", status: "failed", reason: error.localizedDescription)
+            report("记忆纠错未完成：\(error.localizedDescription)")
+        }
     }
 
     // MARK: - Profile & near-duplicate pass

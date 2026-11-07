@@ -255,6 +255,11 @@ extension IOSChatBackgroundGenerationCoordinator {
         // force（不受 P2-b 召回同集去抖影响）。
         let initialCitationTracker = IOSMemoryCitationTracker(enforceCitationAllowlist: true)
         let retryCitationTracker = IOSMemoryCitationTracker(enforceCitationAllowlist: true)
+        let injectedIds = Set(job.uploadMessages.filter { $0.role == .system }.flatMap { message in
+            message.parts.compactMap { $0 as? UIMessagePart.Text }.flatMap { IOSMemoryCitation.recordIds(in: $0) }
+        })
+        IOSMemoryPersistence.shared.events.recordRecall(ids: injectedIds, runId: job.runId, cited: false,
+                                                       now: Int64(Date().timeIntervalSince1970 * 1000))
         let budgetSettings = dependencies?.sharedSettings.snapshot
         func uploadPreparer(
             params: TextGenerationParams
@@ -451,8 +456,8 @@ extension IOSChatBackgroundGenerationCoordinator {
         job.messagesSnapshot.replace(with: result.messages)
         // P2-c: 引擎终结处 finish() 已把引用 id 收齐（幂等）；模型显式引用 →
         // markUsed(force: true)，与前台 citation flush 同语义。空集合 no-op。
-        IOSMemoryPersistence.shared.markUsed(ids: initialCitationTracker.citationIds, force: true)
-        IOSMemoryPersistence.shared.markUsed(ids: retryCitationTracker.citationIds, force: true)
+        IOSMemoryPersistence.shared.markUsed(ids: initialCitationTracker.citationIds, force: true, runId: job.runId)
+        IOSMemoryPersistence.shared.markUsed(ids: retryCitationTracker.citationIds, force: true, runId: job.runId)
         presentationEvents.continuation.finish()
         await presentationConsumer.value
         runState.clearOperationTask()
