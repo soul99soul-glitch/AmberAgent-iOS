@@ -918,6 +918,7 @@ final class IOSMemoryPersistence {
     /// Derived Markdown documents (index.md + topics/) next to memories.json.
     let markdownStore: IOSMemoryMarkdownStore
     let events: IOSMemoryEventStore
+    let experiences: IOSAgentExperienceStore
     var wikiNotes: IOSMemoryWikiNotes { markdownStore.wikiNotes }
     private(set) var records: [MemoryRecord] = []
     /// Derived profile (memories/profile.json). Losing it only costs a
@@ -933,6 +934,7 @@ final class IOSMemoryPersistence {
         self.decoder = decoder
         self.markdownStore = IOSMemoryMarkdownStore(directory: fileURL.deletingLastPathComponent())
         self.events = IOSMemoryEventStore(directory: fileURL.deletingLastPathComponent())
+        self.experiences = IOSAgentExperienceStore(directory: fileURL.deletingLastPathComponent())
         records = IosMemoryFactory.shared.getAllRecords()
     }
 
@@ -945,6 +947,7 @@ final class IOSMemoryPersistence {
         decoder = JSONDecoder()
         markdownStore = IOSMemoryMarkdownStore(directory: fileURL.deletingLastPathComponent())
         events = IOSMemoryEventStore(directory: fileURL.deletingLastPathComponent())
+        experiences = IOSAgentExperienceStore(directory: fileURL.deletingLastPathComponent())
         records = IosMemoryFactory.shared.getAllRecords()
     }
 

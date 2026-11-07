@@ -4,6 +4,34 @@ import XCTest
 
 @MainActor
 final class IOSMemoryExtractionTests: XCTestCase {
+    func testCompletedTaskLearnsExperienceWithoutTurningToolResultIntoUserFact() async throws {
+        try await withFixture { f in
+            let user = UIMessage.companion.user(prompt: "检查 alpha 主机")
+            let observation = "alpha 主机需要指定端口 2222 才能连接。"
+            let tool = UIMessagePart.Tool(toolCallId: "ssh1", toolName: "terminal_execute", input: "alpha",
+                                          output: [UIMessagePart.Text(text: observation, metadata: nil)],
+                                          approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+            let base = UIMessage.companion.assistant(prompt: "")
+            let result = base.doCopy(id: base.id, role: base.role, parts: [tool], annotations: base.annotations,
+                                     createdAt: base.createdAt, finishedAt: base.finishedAt,
+                                     modelId: base.modelId, usage: base.usage, translation: base.translation)
+            let answer = UIMessage.companion.assistant(prompt: "检查完成。")
+            let completed = [user, result, answer]
+            _ = await f.store.saveCurrent(messages: completed)
+            let id = try XCTUnwrap(f.store.currentConversation?.id)
+            let provider = StubProvider { prompt, _ in
+                XCTAssertTrue(prompt.contains("task_evidence"))
+                return #"{"memories":[],"experiences":[{"content":"alpha 主机需要指定端口 2222 才能连接。","toolCallId":"ssh1","quote":"alpha 主机需要指定端口 2222 才能连接。","context":"alpha","expiresInDays":30}]}"#
+            }
+            let coordinator = f.coordinator(provider: provider)
+            coordinator.enqueue(conversationId: id, baseline: [user], completed: completed)
+            await coordinator.processPending()
+            XCTAssertTrue(f.persistence.records.isEmpty)
+            XCTAssertEqual(f.persistence.experiences.records.count, 1)
+            XCTAssertEqual(f.persistence.experiences.records.first?.completionMessageId, answer.id.toHexDashString())
+        }
+    }
+
     @MainActor
     private final class WarmupGate {
         var calls = 0

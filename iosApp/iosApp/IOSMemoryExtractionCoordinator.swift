@@ -140,11 +140,13 @@ final class IOSMemoryExtractionCoordinator {
                 let related = Self.relatedRecords(sources: sources, runtime: snapshot.agentRuntime, now: now())
                 let assistantContext = conversation.memoryMode == .polluted
                     ? [:] : Self.assistantContext(conversation, ids: Array(sources.keys))
+                let taskEvidence = conversation.memoryMode == .polluted || !snapshot.agentRuntime.enableLongTermMemory
+                    ? [] : IOSAgentExperienceStore.evidence(messages: conversation.currentMessages, sourceIds: Set(sources.keys))
                 let request = try makeRequest(
                     settings: snapshot, sources: sources,
                     sourceDates: Self.sourceDates(conversation, ids: Array(sources.keys)),
                     assistantContext: assistantContext,
-                    related: related, conversationId: conversationKey
+                    related: related, conversationId: conversationKey, taskEvidence: taskEvidence
                 )
                 defaults.set(["day": day, "count": runs + 1], forKey: Self.budgetKey)
                 let text = try await Self.generate(request, timeoutMillis: worker.timeoutMs)
@@ -168,6 +170,11 @@ final class IOSMemoryExtractionCoordinator {
                     output, sources: sources, assistantContext: assistantContext,
                     related: related, conversationId: conversationKey, runtime: runtime
                 )
+                if runtime.enableLongTermMemory, current.memoryMode == .enabled {
+                    let fresh = IOSAgentExperienceStore.evidence(messages: current.currentMessages, sourceIds: Set(sources.keys))
+                    try persistence.experiences.save(output.experiences ?? [], evidence: taskEvidence.filter { fresh.contains($0) },
+                                                     conversationId: conversationKey, now: Int64(now().timeIntervalSince1970 * 1000))
+                }
                 removePending(conversationKey, ids: sourceIds)
                 report(result.summary)
             } catch is CancellationError {
@@ -232,6 +239,7 @@ final class IOSMemoryExtractionCoordinator {
 
     private struct Output: Decodable {
         let memories: [Candidate]
+        let experiences: [IOSAgentExperienceCandidate]?
     }
 
     /// scope/kind/sensitive are only meaningful for add; targeted actions
@@ -540,7 +548,8 @@ final class IOSMemoryExtractionCoordinator {
         sourceDates: [String: String],
         assistantContext: [String: String],
         related: [MemoryRecord],
-        conversationId: String
+        conversationId: String,
+        taskEvidence: [IOSAgentTaskEvidence] = []
     ) throws -> Request {
         let worker = settings.agentRuntime.memoryWorker
         let model = worker.followCompressModel
@@ -593,7 +602,7 @@ final class IOSMemoryExtractionCoordinator {
         \(contextJSON)
         existing_memories：
         \(relatedJSON)
-        """
+        """ + (try IOSAgentExperienceStore.prompt(evidence: taskEvidence))
         let assistant = settings.getCurrentAssistant()
         let params = TextGenerationParams(
             model: model, temperature: nil, topP: nil, maxTokens: KotlinInt(value: 1_600), tools: [],

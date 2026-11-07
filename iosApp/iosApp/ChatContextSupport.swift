@@ -582,7 +582,12 @@ struct ChatRuntimeContextBuilder {
     ) -> [UIMessage] {
         let result = memoryRecallResult(for: messages, override: memoryRecallOverride)
         let wikiIndex = IOSMemoryPersistence.shared.wikiNavigation(runtime: sharedSettings.agentRuntime)
-        let prompt = [wikiIndex, result.prompt].compactMap { $0 }.joined(separator: "\n\n")
+        let runtime = sharedSettings.agentRuntime
+        let maxChars = min(max(Int(runtime.memoryRecall.maxPromptChars), 256), 12000)
+        let experience = IOSMemoryExperienceRecall.prompt(messages: messages, runtime: runtime, store: IOSMemoryPersistence.shared.experiences,
+                                                         selectedMemoryCount: result.ids.count,
+                                                         availableChars: maxChars - (wikiIndex?.count ?? 0) - (result.prompt?.count ?? 0) - 4)
+        let prompt = [wikiIndex, result.prompt, experience].compactMap { $0 }.joined(separator: "\n\n")
         guard !prompt.isEmpty else { return messages }
         // Recall changes turn to turn, so it goes after the stable leading
         // system fragments (soul, MCP catalog, orchestration, tool guidance).
