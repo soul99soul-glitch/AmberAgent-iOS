@@ -1212,9 +1212,13 @@ final class ChatTimelineReviewRegressionTests: ChatNativeTimelineReplayTestCase 
             workspaceStore: workspaceStore,
             state: state
         ))
+        ChatRenderProbe.reset()
+        ChatRenderProbe.enabled = true
         window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
         window.rootViewController = host
         window.makeKeyAndVisible()
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
         defer {
             ChatRenderProbe.enabled = false
             ChatRenderProbe.reset()
@@ -1223,7 +1227,11 @@ final class ChatTimelineReviewRegressionTests: ChatNativeTimelineReplayTestCase 
             window.windowScene = nil
             previousWindow?.makeKey()
         }
-        pump(seconds: 0.3)
+        XCTAssertTrue(pumpUntil(timeout: 3.0) {
+            (ChatRenderProbe.counts["message"]?[messageID] ?? 0) >= 1 &&
+                (ChatRenderProbe.counts["markdown"]?[messageID] ?? 0) >= 1
+        })
+        pump(seconds: 0.2)
 
         ChatRenderProbe.reset()
         ChatRenderProbe.enabled = true

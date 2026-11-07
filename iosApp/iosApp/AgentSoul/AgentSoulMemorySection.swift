@@ -252,7 +252,7 @@ enum AgentMemoryPortraitBuilder {
 // MARK: - 「记忆 Memory」栏视图（方案 A：3 维画像摘要 + AI 一键整理去重 + 原始记忆默认折叠）
 
 struct AgentSoulMemorySection: View {
-    var healthSnapshot: MemoryHealthCheckSnapshot = .empty
+    var healthSnapshot: MemoryHealthCheckSnapshot? = nil
 
     @State private var persistence = IOSMemoryPersistence.shared
     @State private var isAdding = false
@@ -303,7 +303,9 @@ struct AgentSoulMemorySection: View {
             topActionRow
                 .padding(.horizontal, 2)
 
-            MemoryHealthCheckCard(snapshot: healthSnapshot)
+            MemoryHealthCheckCard(
+                snapshot: healthSnapshot ?? MemoryHealthCheckSnapshot(persistence.memoryHealthSnapshot())
+            )
 
             if let archived = recentlyArchivedRecord {
                 HStack(spacing: 8) {

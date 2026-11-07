@@ -30,6 +30,8 @@ private final class MessageBubbleActionBox {
     var onOpenMiniApps: () -> Void = {}
     var onOpenSubagentConversation: ((String) -> Void)? = nil
     var artifactPinAction: ChatArtifactPinHandler? = nil
+    var workspaceStore: IOSWorkspaceStore? = nil
+    var completionFeedback: ChatCompletionFeedback? = nil
 }
 
 struct MessageBubbleView: View {
@@ -104,6 +106,8 @@ struct MessageBubbleView: View {
             actionBox.onOpenMiniApps = onOpenMiniApps
             actionBox.onOpenSubagentConversation = onOpenSubagentConversation
             actionBox.artifactPinAction = artifactPinAction
+            actionBox.workspaceStore = workspaceStore
+            actionBox.completionFeedback = completionFeedback
         }()
         let prefs = renderPreferences
         MessageBubbleEquatableContent(
@@ -126,11 +130,10 @@ struct MessageBubbleView: View {
             imageAccessibilityFocusToolCallID: imageAccessibilityFocusToolCallID,
             phoneToolGroup: phoneToolGroup,
             assistantTurn: assistantTurn,
-            workspaceStore: workspaceStore,
+            workspaceStoreID: ObjectIdentifier(workspaceStore),
             reduceMotion: reduceMotion,
             locale: locale,
             messageEditingAllowed: messageEditingAllowed,
-            completionFeedback: completionFeedback,
             hasArtifactPinAction: artifactPinAction != nil,
             chatMessageAnchorHighlighted: chatMessageAnchorHighlighted,
             appLanguage: prefs.appLanguage,
@@ -220,32 +223,14 @@ private struct MessageBubbleEquatableContent: View, @MainActor Equatable {
     let imageAccessibilityFocusToolCallID: String?
     let phoneToolGroup: ChatPhoneToolGroupSummary?
     let assistantTurn: ChatAssistantTurnRole?
-    let workspaceStore: IOSWorkspaceStore
+    let workspaceStoreID: ObjectIdentifier
     let reduceMotion: Bool
     let locale: Locale
     let messageEditingAllowed: Bool
-    let completionFeedback: ChatCompletionFeedback?
     let hasArtifactPinAction: Bool
     let chatMessageAnchorHighlighted: Bool
     let appLanguage: String
     let actions: MessageBubbleActionBox
-
-    @State private var workspaceSaveAlert: WorkspaceSaveAlert?
-    @State private var toolDetailTarget: ToolDetailTarget?
-    @State private var taskStepCache = ChatTaskToolStepCache()
-    @AccessibilityFocusState private var focusedGeneratedImageToolCallID: String?
-
-    private var onRegenerate: () -> Void { actions.onRegenerate }
-    private var onRequestEdit: (String) -> Void { actions.onRequestEdit }
-    private var onEdit: (String) -> Void { actions.onEdit }
-    private var onDelete: () -> Void { actions.onDelete }
-    private var onSelectVariant: (Int) -> Void { actions.onSelectVariant }
-    private var onGenerativeWidgetAction: (String) -> Void { actions.onGenerativeWidgetAction }
-    private var onModifyGeneratedImage: (String, String, String) -> Void { actions.onModifyGeneratedImage }
-    private var onOpenMiniApp: (String) -> Void { actions.onOpenMiniApp }
-    private var onOpenMiniApps: () -> Void { actions.onOpenMiniApps }
-    private var onOpenSubagentConversation: ((String) -> Void)? { actions.onOpenSubagentConversation }
-    private var artifactPinAction: ChatArtifactPinHandler? { actions.artifactPinAction }
 
     private var observesChatGenerationActive: Bool {
         contentIdentity.cachedParts.contains { part in
@@ -277,13 +262,88 @@ private struct MessageBubbleEquatableContent: View, @MainActor Equatable {
             lhs.imageAccessibilityFocusToolCallID == rhs.imageAccessibilityFocusToolCallID &&
             lhs.phoneToolGroup?.signature == rhs.phoneToolGroup?.signature &&
             lhs.assistantTurn == rhs.assistantTurn &&
-            ObjectIdentifier(lhs.workspaceStore) == ObjectIdentifier(rhs.workspaceStore) &&
+            lhs.workspaceStoreID == rhs.workspaceStoreID &&
             lhs.reduceMotion == rhs.reduceMotion &&
             lhs.locale == rhs.locale &&
             lhs.messageEditingAllowed == rhs.messageEditingAllowed &&
             lhs.hasArtifactPinAction == rhs.hasArtifactPinAction &&
             lhs.chatMessageAnchorHighlighted == rhs.chatMessageAnchorHighlighted
     }
+
+    var body: some View {
+        MessageBubbleStatefulContent(
+            message: message,
+            contentIdentity: contentIdentity,
+            messageIndex: messageIndex,
+            isAssistantContinuation: isAssistantContinuation,
+            variantInfo: variantInfo,
+            displaySetting: displaySetting,
+            generativeUiSetting: generativeUiSetting,
+            isGenerating: isGenerating,
+            isChatGenerationActive: isChatGenerationActive,
+            isLastMessage: isLastMessage,
+            hasEverStreamed: hasEverStreamed,
+            liveMarkdownRenderingEnabled: liveMarkdownRenderingEnabled,
+            frozenMarkdownSnapshot: frozenMarkdownSnapshot,
+            reasoningLevelLabel: reasoningLevelLabel,
+            imageAccessibilityFocusToolCallID: imageAccessibilityFocusToolCallID,
+            phoneToolGroup: phoneToolGroup,
+            assistantTurn: assistantTurn,
+            workspaceStore: actions.workspaceStore ?? .shared,
+            reduceMotion: reduceMotion,
+            locale: locale,
+            messageEditingAllowed: messageEditingAllowed,
+            completionFeedback: actions.completionFeedback,
+            chatMessageAnchorHighlighted: chatMessageAnchorHighlighted,
+            appLanguage: appLanguage,
+            actions: actions
+        )
+    }
+}
+
+private struct MessageBubbleStatefulContent: View {
+    let message: UIMessage
+    let contentIdentity: ChatMessageContentIdentity
+    let messageIndex: Int
+    let isAssistantContinuation: Bool
+    let variantInfo: IOSConversationStore.VariantInfo?
+    let displaySetting: DisplaySetting?
+    let generativeUiSetting: GenerativeUiSetting?
+    let isGenerating: Bool
+    let isChatGenerationActive: Bool
+    let isLastMessage: Bool
+    let hasEverStreamed: Bool
+    let liveMarkdownRenderingEnabled: Bool
+    let frozenMarkdownSnapshot: String?
+    let reasoningLevelLabel: String?
+    let imageAccessibilityFocusToolCallID: String?
+    let phoneToolGroup: ChatPhoneToolGroupSummary?
+    let assistantTurn: ChatAssistantTurnRole?
+    let workspaceStore: IOSWorkspaceStore
+    let reduceMotion: Bool
+    let locale: Locale
+    let messageEditingAllowed: Bool
+    let completionFeedback: ChatCompletionFeedback?
+    let chatMessageAnchorHighlighted: Bool
+    let appLanguage: String
+    let actions: MessageBubbleActionBox
+
+    @State private var workspaceSaveAlert: WorkspaceSaveAlert?
+    @State private var toolDetailTarget: ToolDetailTarget?
+    @State private var taskStepCache = ChatTaskToolStepCache()
+    @AccessibilityFocusState private var focusedGeneratedImageToolCallID: String?
+
+    private var onRegenerate: () -> Void { actions.onRegenerate }
+    private var onRequestEdit: (String) -> Void { actions.onRequestEdit }
+    private var onEdit: (String) -> Void { actions.onEdit }
+    private var onDelete: () -> Void { actions.onDelete }
+    private var onSelectVariant: (Int) -> Void { actions.onSelectVariant }
+    private var onGenerativeWidgetAction: (String) -> Void { actions.onGenerativeWidgetAction }
+    private var onModifyGeneratedImage: (String, String, String) -> Void { actions.onModifyGeneratedImage }
+    private var onOpenMiniApp: (String) -> Void { actions.onOpenMiniApp }
+    private var onOpenMiniApps: () -> Void { actions.onOpenMiniApps }
+    private var onOpenSubagentConversation: ((String) -> Void)? { actions.onOpenSubagentConversation }
+    private var artifactPinAction: ChatArtifactPinHandler? { actions.artifactPinAction }
 
     private var isUser: Bool {
         message.role == MessageRole.user

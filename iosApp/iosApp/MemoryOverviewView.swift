@@ -3,7 +3,7 @@ import SwiftUI
 
 struct MemoryOverviewView: View {
     let sharedSettings: IOSSharedSettingsStore
-    var healthSnapshot: MemoryHealthCheckSnapshot = .empty
+    var healthSnapshot: MemoryHealthCheckSnapshot? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(RouterPath.self) private var router
@@ -311,8 +311,10 @@ struct MemoryOverviewView: View {
     private var healthCheckSection: some View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "记忆体检")
-            MemoryHealthCheckCard(snapshot: healthSnapshot)
-                .padding(.horizontal, 16)
+            MemoryHealthCheckCard(
+                snapshot: healthSnapshot ?? MemoryHealthCheckSnapshot(persistence.memoryHealthSnapshot())
+            )
+            .padding(.horizontal, 16)
         }
     }
 

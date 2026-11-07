@@ -39,6 +39,14 @@ final class IOSMemoryHealthTests: XCTestCase {
         XCTAssertEqual(snapshot.residentInjectedChars, index.count)
         XCTAssertEqual(snapshot.maxPromptCharsBudget, 1000)
         XCTAssertEqual(loaded.latestPrompt?.totalMemoryPromptChars, index.count + 500)
+
+        let uiSnapshot = MemoryHealthCheckSnapshot(snapshot)
+        XCTAssertEqual(uiSnapshot.supersededRatio, snapshot.supersededRatio)
+        XCTAssertEqual(uiSnapshot.citedRatio, snapshot.citedRatio)
+        XCTAssertEqual(uiSnapshot.residentInjectedChars, snapshot.residentInjectedChars)
+        XCTAssertEqual(uiSnapshot.maxPromptCharsBudget, snapshot.maxPromptCharsBudget)
+        XCTAssertEqual(uiSnapshot.residentCharsText, "\(index.count) 字")
+        XCTAssertEqual(uiSnapshot.residentBudgetText, "上限 1000 字")
     }
 
     private func record(_ id: Int32, archived: Bool = false, supersedes: [Int32] = [], kind: MemoryKind = .project) -> MemoryRecord {

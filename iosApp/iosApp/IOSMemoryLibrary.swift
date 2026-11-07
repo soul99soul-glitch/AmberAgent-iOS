@@ -456,6 +456,27 @@ struct MemoryHealthCheckSnapshot: Equatable, Sendable {
     /// 常驻注入预算上限（可选，用于辅助显示对比）。
     var maxPromptCharsBudget: Int?
 
+    init(
+        supersededRatio: Double? = nil,
+        citedRatio: Double? = nil,
+        residentInjectedChars: Int? = nil,
+        maxPromptCharsBudget: Int? = nil
+    ) {
+        self.supersededRatio = supersededRatio
+        self.citedRatio = citedRatio
+        self.residentInjectedChars = residentInjectedChars
+        self.maxPromptCharsBudget = maxPromptCharsBudget
+    }
+
+    init(_ data: IOSMemoryHealthData) {
+        self.init(
+            supersededRatio: data.supersededRatio,
+            citedRatio: data.citedRatio,
+            residentInjectedChars: data.residentInjectedChars,
+            maxPromptCharsBudget: data.maxPromptCharsBudget
+        )
+    }
+
     static let empty = MemoryHealthCheckSnapshot(
         supersededRatio: nil,
         citedRatio: nil,
