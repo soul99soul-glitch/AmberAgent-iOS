@@ -205,6 +205,9 @@ struct ChatView: View {
             }
         }
         .animation(browserTaskVisibilityAnimation, value: compactWebMountSession?.id)
+        .onChange(of: composerState.activeDuetTab) { oldTab, newTab in
+            ChatPanelSwitchPerfProbe.didSwitch(from: oldTab.rawValue, to: newTab.rawValue)
+        }
         .onChange(of: displayedWebMountSession?.ownerRunId) { _, _ in
             browserState.expandedWebMountSessionId = nil
         }

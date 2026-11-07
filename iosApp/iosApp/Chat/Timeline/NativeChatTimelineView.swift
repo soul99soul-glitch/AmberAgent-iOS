@@ -225,75 +225,95 @@ struct NativeChatTimelineView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .contentShape(Rectangle())
-            .onScrollPhaseChange { _, phase in
-                defer { updateGrowthFollowState() }
-                if phase == .tracking || phase == .interacting { timelineGrowth.setEnabled(false) }
-                guard isNativeScrollDriverActive else {
-                    handleNativeFallbackScrollPhase(phase)
-                    return
+            .onScrollPhaseChange { oldPhase, phase in
+                if oldPhase == .idle && phase != .idle {
+                    ChatRenderProbe.record("scroll:start")
+                    ChatRenderProbe.beginScene("scroll", ttlSeconds: 5.0)
+                } else if phase != .idle {
+                    ChatRenderProbe.touchScene("scroll", ttlSeconds: 5.0)
                 }
-                switch phase {
-                case .tracking, .interacting:
-                    guard Self.shouldBeginNativeUserDrag(
-                        phase: phase,
-                        isUIKitUserInteracting: scrollDriver.isUIKitUserInteracting
-                    ) else { return }
-                    if !nativeUserScrollActive {
-                        // 新触摸开始：重置「本次触摸内是否出现过拖拽」。只在此处
-                        // 重置（interacting 会在一次拖拽中反复触发，不能在分支里
-                        // 无条件清零），否则首次真实拖拽后轻点恢复永久失效。
-                        nativeDragPhaseOccurredDuringTouch = false
-                        nativeTouchStartOffsetY = scrollDriver.verticalOffsetNow
-                    }
-                    if phase == .interacting {
-                        // SwiftUI 把「移动已开始的主动拖拽」归入 interacting；
-                        // tracking 只是手指落下。轻点（tracking→idle）与拖拽
-                        // （tracking→interacting→…→idle）由此区分。
-                        nativeDragPhaseOccurredDuringTouch = true
-                    }
-                    nativeUserScrollActive = true
-                    nativeTouchStartedWhileFollowing = scrollDriver.isFollowingBottomOrKeyboardFocus ||
-                        (!viewportState.followPaused && viewportState.isAtBottom)
-                    scrollDriver.submit(.userDragBegan)
-                case .idle:
-                    let endedUserScroll = nativeUserScrollActive
-                    nativeUserScrollActive = false
-                    // 轻点（从未进入拖拽相位）不该终止跟随：按下期间快速增长可能把
-                    // 距底推过恢复阈值，但用户从未表达离开意图——恢复原跟随语义。
-                    let accidentalTapRestore = endedUserScroll && followGeneration && Self
-                        .shouldRestoreFollowAfterAccidentalTap(
-                            wasFollowingAtTouchDown: nativeTouchStartedWhileFollowing,
-                            dragPhaseOccurred: nativeDragPhaseOccurredDuringTouch,
-                            generationActive: isGenerationActive || isLoading
-                        )
-                    if accidentalTapRestore {
-                        scrollDriver.submit(.userDragEnded(isAtBottom: true))
-                        resumeNativeBottomFollowAfterUserReturn()
-                    } else if endedUserScroll {
-                        let returnedToBottom = NativeTimelineScrollReturnPolicy.returnedToBottom(
-                            liveDistanceToBottom: scrollDriver.distanceToBottomNow(),
-                            cachedNearBottom: viewportState.isAtBottom,
-                            threshold: ChatLayout.nearBottomResumeThreshold,
-                            draggedAwayFromBottom: nativeUserDraggedAwayFromBottom
-                        )
-                        scrollDriver.submit(.userDragEnded(isAtBottom: returnedToBottom))
-                        if returnedToBottom {
-                            resumeNativeBottomFollowAfterUserReturn()
+                ChatRenderProbe.record(Self.scrollPhaseProbeScope(phase))
+                defer {
+                    if oldPhase != .idle && phase == .idle {
+                        if ChatRenderProbe.endScene(
+                            "scroll",
+                            spanKey: "ms:scroll-span",
+                            cpuKey: "ms:scroll-cpu"
+                        ) {
+                            ChatRenderProbe.record("scroll:end")
                         }
                     }
-                case .animating:
-                    break
-                case .decelerating:
-                    // 甩向底部的惯性不等静止再判定：快速生成时底部在跑，静止时
-                    // 往往已移出恢复窗口（用户被迫甩第二次）。释放瞬间用 pan 速度
-                    // 预测落点，命中容差即磁吸接管。Reduce Motion 下不插入程序
-                    // 缓动：让自然减速走完，由 .idle 相位的 returnedToBottom 判定
-                    // 收口（该路径无动画）。
-                    if !reduceMotion {
-                        scrollDriver.attemptMagneticBottomSnapAfterDragRelease()
+                }
+                ChatRenderProbe.measureUs("us:scroll-phase") {
+                    defer { updateGrowthFollowState() }
+                    if phase == .tracking || phase == .interacting { timelineGrowth.setEnabled(false) }
+                    guard isNativeScrollDriverActive else {
+                        handleNativeFallbackScrollPhase(phase)
+                        return
                     }
-                @unknown default:
-                    break
+                    switch phase {
+                    case .tracking, .interacting:
+                        guard Self.shouldBeginNativeUserDrag(
+                            phase: phase,
+                            isUIKitUserInteracting: scrollDriver.isUIKitUserInteracting
+                        ) else { return }
+                        if !nativeUserScrollActive {
+                            // 新触摸开始：重置「本次触摸内是否出现过拖拽」。只在此处
+                            // 重置（interacting 会在一次拖拽中反复触发，不能在分支里
+                            // 无条件清零），否则首次真实拖拽后轻点恢复永久失效。
+                            nativeDragPhaseOccurredDuringTouch = false
+                            nativeTouchStartOffsetY = scrollDriver.verticalOffsetNow
+                        }
+                        if phase == .interacting {
+                            // SwiftUI 把「移动已开始的主动拖拽」归入 interacting；
+                            // tracking 只是手指落下。轻点（tracking→idle）与拖拽
+                            // （tracking→interacting→…→idle）由此区分。
+                            nativeDragPhaseOccurredDuringTouch = true
+                        }
+                        nativeUserScrollActive = true
+                        nativeTouchStartedWhileFollowing = scrollDriver.isFollowingBottomOrKeyboardFocus ||
+                            (!viewportState.followPaused && viewportState.isAtBottom)
+                        scrollDriver.submit(.userDragBegan)
+                    case .idle:
+                        let endedUserScroll = nativeUserScrollActive
+                        nativeUserScrollActive = false
+                        // 轻点（从未进入拖拽相位）不该终止跟随：按下期间快速增长可能把
+                        // 距底推过恢复阈值，但用户从未表达离开意图——恢复原跟随语义。
+                        let accidentalTapRestore = endedUserScroll && followGeneration && Self
+                            .shouldRestoreFollowAfterAccidentalTap(
+                                wasFollowingAtTouchDown: nativeTouchStartedWhileFollowing,
+                                dragPhaseOccurred: nativeDragPhaseOccurredDuringTouch,
+                                generationActive: isGenerationActive || isLoading
+                            )
+                        if accidentalTapRestore {
+                            scrollDriver.submit(.userDragEnded(isAtBottom: true))
+                            resumeNativeBottomFollowAfterUserReturn()
+                        } else if endedUserScroll {
+                            let returnedToBottom = NativeTimelineScrollReturnPolicy.returnedToBottom(
+                                liveDistanceToBottom: scrollDriver.distanceToBottomNow(),
+                                cachedNearBottom: viewportState.isAtBottom,
+                                threshold: ChatLayout.nearBottomResumeThreshold,
+                                draggedAwayFromBottom: nativeUserDraggedAwayFromBottom
+                            )
+                            scrollDriver.submit(.userDragEnded(isAtBottom: returnedToBottom))
+                            if returnedToBottom {
+                                resumeNativeBottomFollowAfterUserReturn()
+                            }
+                        }
+                    case .animating:
+                        break
+                    case .decelerating:
+                        // 甩向底部的惯性不等静止再判定：快速生成时底部在跑，静止时
+                        // 往往已移出恢复窗口（用户被迫甩第二次）。释放瞬间用 pan 速度
+                        // 预测落点，命中容差即磁吸接管。Reduce Motion 下不插入程序
+                        // 缓动：让自然减速走完，由 .idle 相位的 returnedToBottom 判定
+                        // 收口（该路径无动画）。
+                        if !reduceMotion {
+                            scrollDriver.attemptMagneticBottomSnapAfterDragRelease()
+                        }
+                    @unknown default:
+                        break
+                    }
                 }
             }
             .onScrollGeometryChange(for: ChatSwiftUIScrollGeometry.self) { geo in
@@ -305,45 +325,51 @@ struct NativeChatTimelineView: View {
                     bottomInset: geo.contentInsets.bottom
                 )
             } action: { previousGeometry, geometry in
-                let wasAtBottom = viewportState.isAtBottom && !viewportState.followPaused
-                let viewportDimensionsChanged = previousGeometry.visibleHeight != geometry.visibleHeight ||
-                    previousGeometry.topInset != geometry.topInset ||
-                    previousGeometry.bottomInset != geometry.bottomInset
-                if isNativeScrollDriverActive && viewportDimensionsChanged {
-                    scrollDriver.handleLayoutMetricsChanged()
+                ChatRenderProbe.record("scroll-geometry")
+                if nativeUserScrollActive {
+                    ChatRenderProbe.touchScene("scroll", ttlSeconds: 5.0)
                 }
-                let effectiveDistanceToBottom: CGFloat = {
-                    guard isNativeScrollDriverActive,
-                          viewportDimensionsChanged,
-                          let liveDistance = scrollDriver.distanceToBottomNow() else {
-                        return geometry.distanceToBottom
+                ChatRenderProbe.measureUs("us:scroll-geometry") {
+                    let wasAtBottom = viewportState.isAtBottom && !viewportState.followPaused
+                    let viewportDimensionsChanged = previousGeometry.visibleHeight != geometry.visibleHeight ||
+                        previousGeometry.topInset != geometry.topInset ||
+                        previousGeometry.bottomInset != geometry.bottomInset
+                    if isNativeScrollDriverActive && viewportDimensionsChanged {
+                        scrollDriver.handleLayoutMetricsChanged()
                     }
-                    return liveDistance
-                }()
-                let rawViewportState = NativeStaticTimelineViewportPolicy.state(
-                    distanceToBottom: effectiveDistanceToBottom,
-                    visibleHeight: geometry.visibleHeight,
-                    contentHeight: geometry.contentHeight,
-                    hasMessages: !messages.isEmpty,
-                    userInteracting: nativeUserScrollActive,
-                    driverPausedForUser: isNativeScrollDriverActive && scrollDriver.isPausedForUser
-                )
-                let nextViewportState = rawViewportState
-                let viewportChanged = nextViewportState != viewportState
-                publishViewportState(nextViewportState)
-                // Actual visibility and signal changes have their own update paths.
-                // Pixel-by-pixel bottom tracking must not bridge/copy all messages.
-                if viewportChanged || scrollDriver.isPausedForUser {
-                    let latestMessages = messagesProvider()
-                    unfreezeVisibleLiveTailIfNeeded(messages: latestMessages, viewportState: nextViewportState)
-                    resumeNativeBottomFollowFromGeometryIfNeeded(geometry: geometry,
-                        viewportState: nextViewportState, messages: latestMessages)
+                    let effectiveDistanceToBottom: CGFloat = {
+                        guard isNativeScrollDriverActive,
+                              viewportDimensionsChanged,
+                              let liveDistance = scrollDriver.distanceToBottomNow() else {
+                            return geometry.distanceToBottom
+                        }
+                        return liveDistance
+                    }()
+                    let rawViewportState = NativeStaticTimelineViewportPolicy.state(
+                        distanceToBottom: effectiveDistanceToBottom,
+                        visibleHeight: geometry.visibleHeight,
+                        contentHeight: geometry.contentHeight,
+                        hasMessages: !messages.isEmpty,
+                        userInteracting: nativeUserScrollActive,
+                        driverPausedForUser: isNativeScrollDriverActive && scrollDriver.isPausedForUser
+                    )
+                    let nextViewportState = rawViewportState
+                    let viewportChanged = nextViewportState != viewportState
+                    publishViewportState(nextViewportState)
+                    // Actual visibility and signal changes have their own update paths.
+                    // Pixel-by-pixel bottom tracking must not bridge/copy all messages.
+                    if viewportChanged || scrollDriver.isPausedForUser {
+                        let latestMessages = messagesProvider()
+                        unfreezeVisibleLiveTailIfNeeded(messages: latestMessages, viewportState: nextViewportState)
+                        resumeNativeBottomFollowFromGeometryIfNeeded(geometry: geometry,
+                            viewportState: nextViewportState, messages: latestMessages)
+                    }
+                    reanchorAfterViewportShrinkIfNeeded(
+                        previous: previousGeometry,
+                        current: geometry,
+                        wasAtBottom: wasAtBottom
+                    )
                 }
-                reanchorAfterViewportShrinkIfNeeded(
-                    previous: previousGeometry,
-                    current: geometry,
-                    wasAtBottom: wasAtBottom
-                )
             }
             .onAppear {
                 isNativeScrollSurfaceVisible = true
@@ -443,29 +469,49 @@ struct NativeChatTimelineView: View {
         return min(historyStartIndex ?? tailStart, tailStart)
     }
 
+    private static func scrollPhaseProbeScope(_ phase: ScrollPhase) -> String {
+        switch phase {
+        case .idle:
+            return "scroll:phase-idle"
+        case .tracking:
+            return "scroll:phase-tracking"
+        case .interacting:
+            return "scroll:phase-interacting"
+        case .decelerating:
+            return "scroll:phase-decelerating"
+        case .animating:
+            return "scroll:phase-animating"
+        @unknown default:
+            return "scroll:phase-unknown"
+        }
+    }
+
     private func loadEarlierMessages(position: UnitPoint = .top) {
         let messages = messagesProvider()
         let startIndex = resolvedHistoryStartIndex(messages: messages)
         guard startIndex > 0, historyRevealAnchor == nil else { return }
-        guard let firstVisible = messages.dropFirst(startIndex).first(where: ChatMessageProjector.isVisibleInTimeline) else {
+        ChatRenderProbe.record("scroll:load-earlier")
+        ChatRenderProbe.measureUs("us:scroll-load-earlier") {
+            guard let firstVisible = messages.dropFirst(startIndex).first(where: ChatMessageProjector.isVisibleInTimeline) else {
+                historyStartIndex = max(0, startIndex - Self.historyPageSize)
+                return
+            }
+            let anchorID = "message-\(ChatMessageProjector.messageId(for: firstVisible))"
+            historyBoundaryIDs.insert(anchorID)
+            historyRevealAnchor = HistoryRevealAnchor(
+                id: "history-boundary-" + anchorID,
+                position: position
+            )
+            scrollDriver.submit(.userDragBegan)
+            nativeScrollFallbackReplayToken &+= 1
+            nativeScrollFallbackShouldReplayBottom = false
+            var paused = viewportState
+            paused.isAtBottom = false
+            paused.followPaused = true
+            paused.showScrollToBottom = true
+            publishViewportState(paused)
             historyStartIndex = max(0, startIndex - Self.historyPageSize)
-            return
         }
-        let anchorID = "message-\(ChatMessageProjector.messageId(for: firstVisible))"
-        historyBoundaryIDs.insert(anchorID)
-        historyRevealAnchor = HistoryRevealAnchor(
-            id: "history-boundary-" + anchorID,
-            position: position
-        )
-        scrollDriver.submit(.userDragBegan)
-        nativeScrollFallbackReplayToken &+= 1
-        nativeScrollFallbackShouldReplayBottom = false
-        var paused = viewportState
-        paused.isAtBottom = false
-        paused.followPaused = true
-        paused.showScrollToBottom = true
-        publishViewportState(paused)
-        historyStartIndex = max(0, startIndex - Self.historyPageSize)
     }
 
     private var isHistoryWindowLaidOut: Bool {

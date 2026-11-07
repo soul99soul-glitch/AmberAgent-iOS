@@ -536,7 +536,8 @@ struct AmberDuetTaskCenterCard: View {
     }
 
     var body: some View {
-        let current = groups
+        let _ = ChatRenderProbe.record("panel-tasks-body")
+        let current = ChatRenderProbe.measureUs("us:panel-tasks-groups") { groups }
         Group {
             if isEmbeddedInModalSheet {
                 VStack(alignment: .leading, spacing: 20) {
@@ -1231,6 +1232,7 @@ struct AmberDuetHubsCard: View {
     }
 
     var body: some View {
+        let _ = ChatRenderProbe.record("panel-hubs-body")
         VStack(alignment: .leading, spacing: 0) {
             VStack(spacing: 12) {
                 // Drag indicator
@@ -1282,7 +1284,7 @@ struct AmberDuetHubsCard: View {
                                 .padding(16)
                                 .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         } else {
-                            let activeTasks = allActiveTasks
+                            let activeTasks = ChatRenderProbe.measureUs("us:panel-hubs-tasks") { allActiveTasks }
                             // Pure-typography Hub cards (No left category icon boxes)
                             ForEach(hubStore.hubs) { hub in
                                 hubRowCard(hub, activeTasks: activeTasks)
@@ -1306,7 +1308,9 @@ struct AmberDuetHubsCard: View {
     }
 
     private var headerActionCapsule: some View {
-        let upgradableCount = hubStore.upgradableCollectionCount
+        let upgradableCount = ChatRenderProbe.measureUs("us:panel-hubs-collections") {
+            hubStore.upgradableCollectionCount
+        }
         return HStack(spacing: 8) {
             if upgradableCount > 0 {
                 Button {

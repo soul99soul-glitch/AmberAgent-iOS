@@ -595,4 +595,90 @@ final class ChatTimelineReviewRegressionTests: ChatNativeTimelineReplayTestCase 
         XCTAssertEqual(AmberThemeRuntime.shared.paper, nextPaper)
         XCTAssertTrue(pumpUntil(timeout: 2.0) { model.latestViewport.isAtBottom })
     }
+
+    func testLivePerfBlackboxSceneTagsTimingsAnd120HzFrameBudgetSummary() throws {
+        let wasEnabled = ChatRenderProbe.enabled
+        ChatRenderProbe.reset()
+        ChatRenderProbe.enabled = true
+        defer {
+            ChatRenderProbe.enabled = wasEnabled
+            ChatRenderProbe.reset()
+        }
+
+        // 1. 120Hz CADisplayLink range & 8.33ms frame budget excess calculation.
+        let rateRange = AmberLivePerfFlightRecorder.preferredFrameRateRange120Hz
+        XCTAssertEqual(rateRange.minimum, 120)
+        XCTAssertEqual(rateRange.maximum, 120)
+        XCTAssertEqual(rateRange.preferred, 120)
+        XCTAssertEqual(AmberLivePerfFlightRecorder.frameBudget120HzMs, 1000.0 / 120.0, accuracy: 0.0001)
+        if let liveRange = AmberLivePerfFlightRecorder.shared.displayLinkRateRangeForTesting {
+            XCTAssertEqual(liveRange.minimum, 120)
+            XCTAssertEqual(liveRange.maximum, 120)
+            XCTAssertEqual(liveRange.preferred, 120)
+        }
+
+        var budget = AmberLivePerfFlightRecorder.FrameBudgetMetrics()
+        budget.record(dtMs: 8.20)
+        XCTAssertEqual(budget.overBudgetMs, 0, accuracy: 0.001)
+        XCTAssertEqual(budget.stalledMs, 0, accuracy: 0.001)
+        XCTAssertEqual(budget.drop12, 0)
+
+        budget.record(dtMs: 8.50) // sub-vblank wakeup jitter (< 12.5ms)
+        XCTAssertEqual(budget.overBudgetMs, 8.50 - (1000.0 / 120.0), accuracy: 0.001)
+        XCTAssertEqual(budget.stalledMs, 0, accuracy: 0.001)
+        XCTAssertEqual(budget.drop12, 0)
+
+        budget.record(dtMs: 16.67) // 1 missed 120Hz vblank
+        XCTAssertEqual(budget.drop12, 1)
+        XCTAssertEqual(budget.stalledMs, 16.67 - (1000.0 / 120.0), accuracy: 0.001)
+
+        budget.record(dtMs: 299.0) // keyboard-scale freeze frame
+        XCTAssertEqual(budget.drop12, 2)
+        XCTAssertEqual(
+            budget.stalledMs,
+            (16.67 - (1000.0 / 120.0)) + (299.0 - (1000.0 / 120.0)),
+            accuracy: 0.001
+        )
+
+        // 2. Scene tags persist across multi-frame transitions and auto-expire safely.
+        var drained: [String: Int] = [:]
+        ChatRenderProbe.beginScene("scroll", ttlSeconds: 0.25)
+        let value = ChatRenderProbe.measureUs("us:scroll-geometry") { 42 }
+        XCTAssertEqual(value, 42)
+
+        ChatRenderProbe.drainFrameDeltas(into: &drained, nowWall: CACurrentMediaTime())
+        XCTAssertEqual(drained["scene:scroll"], 1)
+        XCTAssertGreaterThanOrEqual(drained["us:scroll-geometry"] ?? 0, 1)
+
+        // Next frame without new instantaneous probes still carries active scene tag.
+        ChatRenderProbe.drainFrameDeltas(into: &drained, nowWall: CACurrentMediaTime() + 0.05)
+        XCTAssertEqual(drained, ["scene:scroll": 1])
+
+        XCTAssertTrue(ChatRenderProbe.endScene("scroll", spanKey: "ms:scroll-span", cpuKey: "ms:scroll-cpu"))
+        ChatRenderProbe.drainFrameDeltas(into: &drained, nowWall: CACurrentMediaTime())
+        XCTAssertEqual(drained["scene:scroll"], 1)
+        XCTAssertGreaterThanOrEqual(drained["ms:scroll-span"] ?? 0, 1)
+
+        // Subsequent frame after endScene is clean.
+        ChatRenderProbe.drainFrameDeltas(into: &drained, nowWall: CACurrentMediaTime())
+        XCTAssertTrue(drained.isEmpty)
+
+        // TTL expiry keeps the starting frame tagged, then clears activeScenes so subsequent frames never stick.
+        ChatRenderProbe.beginScene("keyboard-show", ttlSeconds: 0.05)
+        ChatRenderProbe.drainFrameDeltas(into: &drained, nowWall: CACurrentMediaTime() + 0.20)
+        XCTAssertEqual(drained["scene:keyboard-show"], 1)
+        ChatRenderProbe.drainFrameDeltas(into: &drained, nowWall: CACurrentMediaTime() + 0.21)
+        XCTAssertNil(drained["scene:keyboard-show"])
+
+        // 3. Panel switch probe captures direction, first commit, and transition settle.
+        ChatPanelSwitchPerfProbe.didSwitch(from: "chat", to: "tasks")
+        XCTAssertEqual(ChatRenderProbe.counts["panel-switch:start"]?["all"], 1)
+        XCTAssertEqual(ChatRenderProbe.counts["panel:chat->tasks"]?["all"], 1)
+        pump(seconds: 0.05)
+        XCTAssertGreaterThanOrEqual(ChatRenderProbe.counts["ms:panel-first-commit"]?["all"] ?? 0, 1)
+        XCTAssertTrue(pumpUntil(timeout: 1.0) {
+            (ChatRenderProbe.counts["panel-switch:end"]?["all"] ?? 0) == 1
+        })
+        XCTAssertGreaterThanOrEqual(ChatRenderProbe.counts["ms:panel-switch-span"]?["all"] ?? 0, 1)
+    }
 }

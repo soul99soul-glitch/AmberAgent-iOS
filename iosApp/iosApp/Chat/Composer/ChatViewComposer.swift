@@ -804,15 +804,18 @@ extension ChatView {
     // MARK: - Argon 3+1 Mode & Host Switcher Actions
 
     func selectDuetTab(_ tab: AmberDuetModeTab) {
-        if let committed = composerInputController.committedText(), committed != viewModel.inputText {
-            viewModel.inputText = committed
+        ChatRenderProbe.record("panel-select-tab")
+        ChatRenderProbe.measureUs("us:panel-select-tab") {
+            if let committed = composerInputController.committedText(), committed != viewModel.inputText {
+                viewModel.inputText = committed
+            }
+            if tab != .chat {
+                composerState.activeComposerPanel = nil
+                composerState.isAttachExpanded = false
+                dismissKeyboard()
+            }
+            composerState.activeDuetTab = tab
         }
-        if tab != .chat {
-            composerState.activeComposerPanel = nil
-            composerState.isAttachExpanded = false
-            dismissKeyboard()
-        }
-        composerState.activeDuetTab = tab
     }
 
     func selectMainDialogueHost(useCloud: Bool) {

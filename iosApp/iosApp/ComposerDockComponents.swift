@@ -221,12 +221,15 @@ final class ComposerInputController {
 
     @discardableResult
     func resignFirstResponderIfNeeded() -> Bool {
-        if let textView, textView.isFirstResponder {
-            return textView.resignFirstResponder()
+        ChatRenderProbe.record("keyboard-resign")
+        return ChatRenderProbe.measureUs("us:keyboard-resign") {
+            if let textView, textView.isFirstResponder {
+                return textView.resignFirstResponder()
+            }
+            return UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil
+            )
         }
-        return UIApplication.shared.sendAction(
-            #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil
-        )
     }
 }
 
@@ -331,11 +334,19 @@ struct ComposerInputTextView: UIViewRepresentable {
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
-            parent.isFocused.wrappedValue = true
+            ChatRenderProbe.record("keyboard:begin-editing")
+            ChatRenderProbe.beginScene("keyboard-show", ttlSeconds: 2.5, restart: false)
+            ChatRenderProbe.measureUs("us:keyboard-editing-delegate") {
+                parent.isFocused.wrappedValue = true
+            }
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
-            parent.isFocused.wrappedValue = false
+            ChatRenderProbe.record("keyboard:end-editing")
+            ChatRenderProbe.beginScene("keyboard-hide", ttlSeconds: 2.5, restart: false)
+            ChatRenderProbe.measureUs("us:keyboard-editing-delegate") {
+                parent.isFocused.wrappedValue = false
+            }
         }
 
         func textViewDidChange(_ textView: UITextView) {
@@ -371,10 +382,16 @@ struct ComposerInputTextView: UIViewRepresentable {
                 guard let textView, self.controller.textView === textView,
                       textView.window != nil else { return }
                 if (!self.parent.isEnabled || !self.parent.isFocused.wrappedValue), textView.isFirstResponder {
-                    textView.resignFirstResponder()
+                    ChatRenderProbe.record("keyboard-resign")
+                    _ = ChatRenderProbe.measureUs("us:keyboard-resign") {
+                        textView.resignFirstResponder()
+                    }
                 } else if self.parent.isEnabled, self.parent.isFocused.wrappedValue,
                           !textView.isFirstResponder {
-                    textView.becomeFirstResponder()
+                    ChatRenderProbe.record("keyboard-become")
+                    _ = ChatRenderProbe.measureUs("us:keyboard-become") {
+                        textView.becomeFirstResponder()
+                    }
                 }
             }
         }

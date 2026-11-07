@@ -697,6 +697,28 @@ enum AmberUnifiedTaskBuilder {
         hubStore: AmberHubStore,
         filterHubId: String? = nil
     ) -> Groups {
+        ChatRenderProbe.record("task-builder")
+        return ChatRenderProbe.measureUs("us:task-builder") {
+            buildTasksUnprobed(
+                gateway: gateway,
+                subAgentStore: subAgentStore,
+                taskStore: taskStore,
+                wakeStore: wakeStore,
+                hubStore: hubStore,
+                filterHubId: filterHubId
+            )
+        }
+    }
+
+    @MainActor
+    private static func buildTasksUnprobed(
+        gateway: MacGatewayStore,
+        subAgentStore: IOSSubAgentActivityStore,
+        taskStore: IOSAdvancedTaskStore,
+        wakeStore: IOSWakeTaskStore,
+        hubStore: AmberHubStore,
+        filterHubId: String?
+    ) -> Groups {
         var all: [AmberUnifiedTaskItem] = []
         var seenTitles = Set<String>()
         let defaultHubId = hubStore.activeHubId

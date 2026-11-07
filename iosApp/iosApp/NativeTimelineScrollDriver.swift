@@ -112,34 +112,36 @@ final class NativeTimelineScrollDriver: NSObject {
 
     func handleLayoutMetricsChanged() {
         ChatRenderProbe.record("scroll-metrics")
-        guard fallbackReason == nil else { return }
-        guard let scrollView else { return }
-        guard validateScrollViewHealth() else { return }
-        guard automaticFollowEnabled else { return }
-        let viewportMetrics = ViewportMetrics(scrollView)
-        if viewportMetrics != lastViewportMetrics {
-            let previousMetrics = lastViewportMetrics
-            lastViewportMetrics = viewportMetrics
-            let shrinkDelta = max(
-                0,
-                (previousMetrics?.visibleHeight ?? viewportMetrics.visibleHeight) - viewportMetrics.visibleHeight
-            )
-            let distanceBeforeShrink = max(0, distanceToBottom(in: scrollView) - shrinkDelta)
-            let keyboardAnimation = currentKeyboardAnimation()
-            let shouldFollowViewportChange = !isPausedForUser &&
-                !isUIKitUserInteracting &&
-                (keyboardAnimation?.shouldFollowBottom ?? (
-                    isFollowingBottomOrKeyboardFocus ||
-                    wasNearBottomAtLastSample ||
-                    distanceBeforeShrink <= NativeTimelineScrollCore.resumeEpsilon
-                ))
-            if shouldFollowViewportChange, keyboardAnimation != nil {
-                writeBottomTargetSynchronizedWithKeyboardIfNeeded(animated: false)
+        ChatRenderProbe.measureUs("us:scroll-metrics") {
+            guard fallbackReason == nil else { return }
+            guard let scrollView else { return }
+            guard validateScrollViewHealth() else { return }
+            guard automaticFollowEnabled else { return }
+            let viewportMetrics = ViewportMetrics(scrollView)
+            if viewportMetrics != lastViewportMetrics {
+                let previousMetrics = lastViewportMetrics
+                lastViewportMetrics = viewportMetrics
+                let shrinkDelta = max(
+                    0,
+                    (previousMetrics?.visibleHeight ?? viewportMetrics.visibleHeight) - viewportMetrics.visibleHeight
+                )
+                let distanceBeforeShrink = max(0, distanceToBottom(in: scrollView) - shrinkDelta)
+                let keyboardAnimation = currentKeyboardAnimation()
+                let shouldFollowViewportChange = !isPausedForUser &&
+                    !isUIKitUserInteracting &&
+                    (keyboardAnimation?.shouldFollowBottom ?? (
+                        isFollowingBottomOrKeyboardFocus ||
+                        wasNearBottomAtLastSample ||
+                        distanceBeforeShrink <= NativeTimelineScrollCore.resumeEpsilon
+                    ))
+                if shouldFollowViewportChange, keyboardAnimation != nil {
+                    writeBottomTargetSynchronizedWithKeyboardIfNeeded(animated: false)
+                }
+                submitViewportChanged(wasNearBottomBeforeChange: shouldFollowViewportChange)
+                return
             }
-            submitViewportChanged(wasNearBottomBeforeChange: shouldFollowViewportChange)
-            return
+            reduceAndPerform(.layoutSettled(token: nil), token: generation)
         }
-        reduceAndPerform(.layoutSettled(token: nil), token: generation)
     }
 
     private func submitViewportChanged(
@@ -312,24 +314,27 @@ final class NativeTimelineScrollDriver: NSObject {
         let target = bottomTarget(in: scrollView)
         if let keyboardAnimation = currentKeyboardAnimation(),
            !UIAccessibility.isReduceMotionEnabled {
-            guard abs(scrollView.contentOffset.y - target) >= NativeTimelineScrollCore.arrivalEpsilon else {
+            ChatRenderProbe.record("keyboard-scroll-sync")
+            ChatRenderProbe.measureUs("us:keyboard-scroll-sync") {
+                guard abs(scrollView.contentOffset.y - target) >= NativeTimelineScrollCore.arrivalEpsilon else {
+                    wasNearBottomAtLastSample = true
+                    return
+                }
+                if UIView.inheritedAnimationDuration > 0 {
+                    writeOffsetY(target)
+                } else {
+                    let remaining = max(0.05, keyboardAnimation.expiresAt - CACurrentMediaTime())
+                    UIView.animate(
+                        withDuration: min(keyboardAnimation.duration, remaining),
+                        delay: 0,
+                        options: keyboardAnimation.options,
+                        animations: { [weak self] in
+                            self?.writeOffsetY(target)
+                        }
+                    )
+                }
                 wasNearBottomAtLastSample = true
-                return
             }
-            if UIView.inheritedAnimationDuration > 0 {
-                writeOffsetY(target)
-            } else {
-                let remaining = max(0.05, keyboardAnimation.expiresAt - CACurrentMediaTime())
-                UIView.animate(
-                    withDuration: min(keyboardAnimation.duration, remaining),
-                    delay: 0,
-                    options: keyboardAnimation.options,
-                    animations: { [weak self] in
-                        self?.writeOffsetY(target)
-                    }
-                )
-            }
-            wasNearBottomAtLastSample = true
             return
         }
         writeBottomTarget(animated: animated)
@@ -380,24 +385,27 @@ final class NativeTimelineScrollDriver: NSObject {
     }
 
     func handleKeyboardWillChangeFrame(duration: TimeInterval, curveRaw: UInt) {
-        guard fallbackReason == nil, automaticFollowEnabled, let scrollView else { return }
-        defer { updateFrameDriverRate() }
-        let shouldFollow = !isPausedForUser &&
-            !isUIKitUserInteracting &&
-            (isFollowingBottomOrKeyboardFocus ||
-             wasNearBottomAtLastSample ||
-             distanceToBottom(in: scrollView) <= NativeTimelineScrollCore.resumeEpsilon)
-        guard duration > 0 else {
-            activeKeyboardAnimation = nil
-            return
+        ChatRenderProbe.record("keyboard-scroll-sync")
+        ChatRenderProbe.measureUs("us:keyboard-scroll-sync") {
+            guard fallbackReason == nil, automaticFollowEnabled, let scrollView else { return }
+            defer { updateFrameDriverRate() }
+            let shouldFollow = !isPausedForUser &&
+                !isUIKitUserInteracting &&
+                (isFollowingBottomOrKeyboardFocus ||
+                 wasNearBottomAtLastSample ||
+                 distanceToBottom(in: scrollView) <= NativeTimelineScrollCore.resumeEpsilon)
+            guard duration > 0 else {
+                activeKeyboardAnimation = nil
+                return
+            }
+            let curveOptions = UIView.AnimationOptions(rawValue: curveRaw << 16)
+            activeKeyboardAnimation = ActiveKeyboardAnimation(
+                duration: duration,
+                options: curveOptions.union([.beginFromCurrentState, .allowUserInteraction]),
+                expiresAt: CACurrentMediaTime() + duration + 0.05,
+                shouldFollowBottom: shouldFollow
+            )
         }
-        let curveOptions = UIView.AnimationOptions(rawValue: curveRaw << 16)
-        activeKeyboardAnimation = ActiveKeyboardAnimation(
-            duration: duration,
-            options: curveOptions.union([.beginFromCurrentState, .allowUserInteraction]),
-            expiresAt: CACurrentMediaTime() + duration + 0.05,
-            shouldFollowBottom: shouldFollow
-        )
     }
 
     private func currentKeyboardAnimation(now: CFTimeInterval = CACurrentMediaTime()) -> ActiveKeyboardAnimation? {
@@ -449,18 +457,21 @@ final class NativeTimelineScrollDriver: NSObject {
     }
 
     @objc private func displayLinkTick(_ link: CADisplayLink) {
-        guard validateScrollViewHealth() else { return }
-        let now = link.timestamp
-        let dt = lastDisplayLinkTimestamp.map { now - $0 } ?? link.duration
-        lastDisplayLinkTimestamp = now
-        let result = NativeTimelineScrollCore.tick(
-            state: state,
-            geometry: sampleGeometry(),
-            now: now,
-            dt: dt
-        )
-        state = result.state
-        perform(result.actions, token: generation)
+        ChatRenderProbe.record("scroll-driver-tick")
+        ChatRenderProbe.measureUs("us:scroll-driver-tick") {
+            guard validateScrollViewHealth() else { return }
+            let now = link.timestamp
+            let dt = lastDisplayLinkTimestamp.map { now - $0 } ?? link.duration
+            lastDisplayLinkTimestamp = now
+            let result = NativeTimelineScrollCore.tick(
+                state: state,
+                geometry: sampleGeometry(),
+                now: now,
+                dt: dt
+            )
+            state = result.state
+            perform(result.actions, token: generation)
+        }
     }
 
     private func sampleGeometry(

@@ -539,9 +539,12 @@ extension ChatView {
     }
 
     func dismissKeyboard() {
-        _ = composerInputController.resignFirstResponderIfNeeded()
-        if composerState.isInputFocused {
-            composerState.isInputFocused = false
+        ChatRenderProbe.record("keyboard-dismiss")
+        ChatRenderProbe.measureUs("us:keyboard-dismiss") {
+            _ = composerInputController.resignFirstResponderIfNeeded()
+            if composerState.isInputFocused {
+                composerState.isInputFocused = false
+            }
         }
     }
 
