@@ -63,7 +63,7 @@ extension ChatViewModel {
 
         if isCurrentConversation(state.conversationId) { generateChatSuggestions() }
         let userMessageCount = state.messages.filter { $0.role == MessageRole.user }.count
-        if userMessageCount == 1 { generateConversationTitle(state: state) }
+        if userMessageCount >= 1 { generateConversationTitle(state: state) }
         // 与标题共用 titleModelId；后台成功路径走同一 generator。
         generateConversationListPreview(state: state)
     }
@@ -193,8 +193,15 @@ extension ChatViewModel {
         guard let model = resolveAuxModel(snapshot.titleModelId),
               let conversationId = state.conversationId,
               let conversationStore,
-              let expectedTitle = conversationStore.summaries.first(where: { $0.id == conversationId })?.title else { return }
-        let content = auxConversationText(maxMessages: 4, messages: state.messages)
+              let expectedTitle = (conversationStore.currentConversation?.id == conversationId
+                  ? conversationStore.currentConversation?.title
+                  : nil) ?? conversationStore.summaries.first(where: { $0.id == conversationId })?.title else { return }
+        let activeMessages = ChatEpisodeStore.shared.unsealedNonSystemMessages(
+            for: conversationId.toHexDashString(),
+            in: state.messages
+        )
+        let sourceMessages = activeMessages.isEmpty ? state.messages : activeMessages
+        let content = auxConversationText(maxMessages: 4, messages: sourceMessages)
         guard !content.isEmpty else { return }
         let baseline = conversationStore.writeBaseline(for: conversationId)
         // 标题 LLM 顺带选 icon key：列表优先用它，避免事后猜标题关键词。
