@@ -523,6 +523,16 @@ struct ChatView: View {
         .onChange(of: conversationStore.conversationSwitchedRevision) { _, _ in
             handleConversationSwitch()
         }
+        .onChange(of: MacGatewayStore.shared.suggestionHostKey, initial: true) { _, host in
+            viewModel.setSuggestionHost(host)
+            viewModel.refreshCloudSuggestions(gateway: MacGatewayStore.shared)
+        }
+        .onChange(of: MacGatewayStore.shared.cloudSuggestionReplyID) { _, _ in
+            viewModel.refreshCloudSuggestions(gateway: MacGatewayStore.shared)
+        }
+        .onChange(of: MacGatewayStore.shared.selectedCloudDialogueWorkItemId) { _, _ in
+            viewModel.invalidateSuggestionRequest()
+        }
         .onChange(of: viewModel.currentConversationRunId) { _, runId in
             rememberJevSummaryRun(runId)
         }

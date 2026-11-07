@@ -612,6 +612,7 @@ extension MacGatewayStore {
         cloudDialogueFollowups = envelope.followups
         cloudDialogueProgressByWorkItem = envelope.progressByWorkItem
         cloudDialogueSubmissions = envelope.submissions
+        for event in envelope.events { updateCloudSuggestionTrigger(event) }
     }
 
     func persistCloudDialogueState() {
@@ -655,6 +656,8 @@ extension MacGatewayStore {
         isCloudMainDialogueSelected = false
         cloudDialogueCursor = 0
         cloudDialogueEvents = []
+        cloudSuggestionReplyID = nil
+        cloudSuggestionSequence = 0
         cloudDialogueReceipts = [:]
         cloudDialogueFollowups = []
         cloudDialogueProgressByWorkItem = [:]
@@ -936,8 +939,9 @@ extension MacGatewayStore {
         cloudDialogueEvents = eventsById.values.sorted { lhs, rhs in
             lhs.seq != rhs.seq ? lhs.seq < rhs.seq : lhs.id < rhs.id
         }
-        for event in newEvents {
+        for event in newEvents.sorted(by: { $0.seq < $1.seq }) {
             applyCloudDialogueEvent(event)
+            updateCloudSuggestionTrigger(event)
         }
         let maxSeenSeq = page.items.map(\.seq).max() ?? requestedAfter
         cloudDialogueCursor = max(cloudDialogueCursor, max(page.nextCursor, maxSeenSeq))

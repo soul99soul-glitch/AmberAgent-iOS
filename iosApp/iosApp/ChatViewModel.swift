@@ -115,7 +115,10 @@ final class ChatViewModel {
     }
     var inputText: String {
         get { currentRun.state.inputText }
-        set { currentRun.state.inputText = newValue }
+        set {
+            currentRun.state.inputText = newValue
+            suggestionDraftChanged(newValue)
+        }
     }
     var isLoading: Bool {
         get { currentRun.state.isLoading }
