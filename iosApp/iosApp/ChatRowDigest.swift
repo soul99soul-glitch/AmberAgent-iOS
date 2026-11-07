@@ -29,15 +29,15 @@ enum ChatRowDigests {
         layout.combine(String(describing: row.role))
         layout.combine(contentHash)
         layout.combine(row.isAssistantContinuation)
-        layout.combine(row.isLast)
         layout.combine(row.isStreaming)
         layout.combine(row.hasEverStreamed)
         // isGenerating 经由思考胶囊显隐、reasoning 卡自动折叠、widget 流式占位
         // 三条路径真实影响高度,v1 保守归入 layout;精细化(按 part 组成拆位)
-        // 待夹具实测后再收紧。
+        // 待夹具实测后再收紧。单纯 isLast 翻转在已完结气泡上不影响正文高度。
         layout.combine(row.isLast && isGenerationActive)
         layout.combine(renderState.rendererMode.rawValue)
         layout.combine(renderState.liveRenderingEnabled)
+        layout.combine(renderState.frozenMarkdownSnapshot != nil)
         layout.combine(displaySettingSignature)
         layout.combine(generativeUiSettingSignature)
         layout.combine(renderStateRevision)

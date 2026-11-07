@@ -681,4 +681,563 @@ final class ChatTimelineReviewRegressionTests: ChatNativeTimelineReplayTestCase 
         })
         XCTAssertGreaterThanOrEqual(ChatRenderProbe.counts["ms:panel-switch-span"]?["all"] ?? 0, 1)
     }
+
+    func testP1SendFrameAndStructuralAppendBenchmark() throws {
+        let rich26BlockMarkdown: String = {
+            var blocks: [String] = [
+                "# 检索与性能核查汇总",
+                "本轮针对真机长会话中的**发送帧同步投影**与**旧末尾气泡失效重排**做了逐层拆解，以下为完整结构化记录。"
+            ]
+            for section in 1...6 {
+                blocks.append("## 第 \(section) 节：多轮工具链路与布局证据")
+                blocks.append("在第 \(section) 轮核查中，主线程耗时主要集中在跨语言消息部件桥接、轮次分组重算以及旧尾行 `isLastMessage` 翻转引发的子树重评估。")
+                blocks.append("""
+                - 指标 A\(section)：历史消息数增长至 139 条时，未变更消息被重复扫描
+                - 指标 B\(section)：旧末尾 Markdown 块缓存因行级摘要变化被整体清空
+                - 指标 C\(section)：工具输出 JSON 与思考摘要在结构事件中重复桥接
+                """)
+                blocks.append("""
+                | 阶段 | 采样帧 \(section) | 复杂度 | 目标上限 |
+                |------|------------|--------|----------|
+                | 投影构建 | 130ms | O(N) | O(Δ) |
+                | 尾行切换 | 58ms | O(blocks) | O(1) |
+                """)
+            }
+            return blocks.joined(separator: "\n\n")
+        }()
+
+        func makeToolStepMessage(step: Int) -> UIMessage {
+            let payload = String(repeating: "search_snippet_\(step)_verified_evidence ", count: 36)
+            let toolA = UIMessagePart.Tool(
+                toolCallId: "bench-tool-\(step)-a",
+                toolName: "web_search",
+                input: "{\"query\":\"amber ios timeline perf \(step)\"}",
+                output: [UIMessagePart.Text(text: "{\"ok\":true,\"results\":\"\(payload)\"}", metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            )
+            let toolB = UIMessagePart.Tool(
+                toolCallId: "bench-tool-\(step)-b",
+                toolName: "read_page",
+                input: "{\"index\":\(step)}",
+                output: [UIMessagePart.Text(text: "{\"status\":\"completed\",\"content\":\"\(payload)\"}", metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            )
+            let now = KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: Int64(1_730_000_000_000 + step * 1_000))
+            let reasoning = UIMessagePart.Reasoning(
+                reasoning: "正在交叉比对第 \(step) 组检索摘要与上下文约束。",
+                createdAt: now,
+                finishedAt: now,
+                metadata: [:]
+            )
+            return UIMessage(
+                id: KotlinUuid.companion.random(),
+                role: MessageRole.assistant,
+                parts: [reasoning, toolA, toolB],
+                annotations: [],
+                createdAt: chatNowLocalDateTime(),
+                finishedAt: chatNowLocalDateTime(),
+                modelId: nil,
+                usage: nil,
+                translation: nil
+            )
+        }
+
+        var initialMessages: [UIMessage] = []
+        initialMessages.reserveCapacity(118)
+        for turn in 0..<23 {
+            initialMessages.append(makeUserMessage("第 \(turn + 1) 轮：请检索并整理关键性能证据与边界条件"))
+            initialMessages.append(makeToolStepMessage(step: turn * 3))
+            initialMessages.append(makeToolStepMessage(step: turn * 3 + 1))
+            initialMessages.append(makeToolStepMessage(step: turn * 3 + 2))
+            let replyText = turn == 22
+                ? rich26BlockMarkdown
+                : "### 第 \(turn + 1) 轮结论\n\n已完成检索与归档，共核对 3 组工具调用输出与引用来源。\n\n- 状态：通过\n- 备注：保留完整上下文锚点"
+            initialMessages.append(makeAssistantMessage(text: replyText, finished: true))
+        }
+        initialMessages.append(makeUserMessage("补充核查：确认第 24 轮基线状态"))
+        initialMessages.append(makeToolStepMessage(step: 99))
+        initialMessages.append(makeAssistantMessage(text: rich26BlockMarkdown, finished: true))
+        XCTAssertEqual(initialMessages.count, 118)
+
+        if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
+            for orphan in scene.windows where orphan.isHidden {
+                orphan.rootViewController = nil
+                orphan.windowScene = nil
+            }
+        }
+        let fixture = makeFixture { model in
+            model.messages = initialMessages
+            model.isGenerationActive = false
+        }
+        defer {
+            fixture.tearDown()
+            fixture.window.windowScene = nil
+            ChatRenderProbe.enabled = false
+            ChatRenderProbe.reset()
+        }
+
+        fixture.model.send(.initialLoad)
+        pump(seconds: 2.5)
+        XCTAssertTrue(pumpUntil(timeout: 4.0) { fixture.model.latestViewport.isAtBottom })
+
+        func progress(_ title: String, anchor: String, kind: ChatActivityIslandState.Kind = .tool) -> ChatTimelineActivity {
+            ChatTimelineActivity(
+                anchorMessageID: anchor,
+                hasAssistant: true,
+                presentation: .activity(kind: kind, title: title, systemImage: "magnifyingglass", tint: .amber),
+                tool: nil,
+                taskSlot: nil,
+                plannedStages: [],
+                stagePlanStartedUptime: nil,
+                liveReasoningSummary: nil,
+                tracksTaskLiveness: false,
+                showsThought: false
+            )
+        }
+
+        struct FrameSample {
+            let label: String
+            let syncCPUMs: Double
+            let syncWallMs: Double
+            let settleCPUMs: Double
+            let settleWallMs: Double
+            let oldTailMessageCount: Int
+            let oldTailMarkdownCount: Int
+            let oldTailLayoutInvalidateCount: Int
+            let oldTailLayoutMeasureCount: Int
+            let totals: [String: Int]
+        }
+
+        func measureStep(
+            _ label: String,
+            oldTailID: String,
+            settleSeconds: TimeInterval,
+            mutate: () -> Void
+        ) -> FrameSample {
+            ChatRenderProbe.reset()
+            ChatRenderProbe.enabled = true
+            let wallStart = ProcessInfo.processInfo.systemUptime
+            let cpuStart = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+            mutate()
+            fixture.host.view.setNeedsLayout()
+            fixture.host.view.layoutIfNeeded()
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.002))
+            fixture.host.view.layoutIfNeeded()
+            let syncCPUMs = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - cpuStart) / 1_000_000
+            let syncWallMs = (ProcessInfo.processInfo.systemUptime - wallStart) * 1_000
+            if settleSeconds > 0 {
+                pump(seconds: settleSeconds)
+            }
+            let settleCPUMs = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - cpuStart) / 1_000_000
+            let settleWallMs = (ProcessInfo.processInfo.systemUptime - wallStart) * 1_000
+            ChatRenderProbe.enabled = false
+
+            let counts = ChatRenderProbe.counts
+            return FrameSample(
+                label: label,
+                syncCPUMs: syncCPUMs,
+                syncWallMs: syncWallMs,
+                settleCPUMs: settleCPUMs,
+                settleWallMs: settleWallMs,
+                oldTailMessageCount: counts["message"]?[oldTailID] ?? 0,
+                oldTailMarkdownCount: counts["markdown"]?[oldTailID] ?? 0,
+                oldTailLayoutInvalidateCount: counts["layout-invalidate"]?[oldTailID] ?? 0,
+                oldTailLayoutMeasureCount: counts["layout-measure"]?[oldTailID] ?? 0,
+                totals: counts.mapValues { $0.values.reduce(0, +) }
+            )
+        }
+
+        let staticTailID = initialMessages[initialMessages.count - 1].id.toHexDashString()
+        let send119User = makeUserMessage("第 25 轮提问：继续深挖发送帧同步投影与尾行隔离")
+        let anchor119 = send119User.id.toHexDashString()
+        let sendStaticSample = measureStep("user-send-119-static-tail", oldTailID: staticTailID, settleSeconds: 0.20) {
+            fixture.model.isGenerationActive = true
+            fixture.model.activity = progress("正在搜索网页", anchor: anchor119)
+            fixture.model.messages.append(send119User)
+            fixture.model.send(.userAppend)
+        }
+
+        var toolAppendSamples: [FrameSample] = []
+        for offset in 0..<18 {
+            let prevTailID = fixture.model.messages[fixture.model.messages.count - 1].id.toHexDashString()
+            let stepMsg = makeToolStepMessage(step: 200 + offset)
+            let sample = measureStep("tool-append-\(120 + offset)", oldTailID: prevTailID, settleSeconds: 0.05) {
+                fixture.model.messages.append(stepMsg)
+                fixture.model.activity = progress(offset.isMultiple(of: 2) ? "正在核对网页" : "正在思考", anchor: anchor119)
+                fixture.model.send(.toolResultAppended)
+            }
+            toolAppendSamples.append(sample)
+        }
+
+        // 第 138 条消息：完整走真实流式生成 -> assistantStreamClosed -> generationCompleted -> 排空稳定
+        let streamedReplyID = KotlinUuid.companion.random()
+        let streamedTailID = streamedReplyID.toHexDashString()
+        fixture.model.messages.append(makeAssistantMessage(id: streamedReplyID, text: "", finished: false))
+        fixture.model.activity = progress("正在整理回复", anchor: anchor119, kind: .generating)
+        let chars = Array(rich26BlockMarkdown)
+        let strideStep = max(64, chars.count / 24)
+        for end in stride(from: strideStep, through: chars.count + strideStep - 1, by: strideStep) {
+            fixture.model.messages[fixture.model.messages.count - 1] = makeAssistantMessage(
+                id: streamedReplyID,
+                text: String(chars.prefix(min(end, chars.count))),
+                finished: false
+            )
+            fixture.model.send(.streamDelta)
+            pump(seconds: 0.02)
+        }
+        fixture.model.messages[fixture.model.messages.count - 1] = makeAssistantMessage(
+            id: streamedReplyID,
+            text: rich26BlockMarkdown,
+            finished: true
+        )
+        fixture.model.send(.assistantStreamClosed)
+        pump(seconds: 0.3)
+
+        let completionSample = measureStep("generation-completed-138", oldTailID: streamedTailID, settleSeconds: 0.20) {
+            fixture.model.isGenerationActive = false
+            fixture.model.activity = nil
+            fixture.model.send(.generationCompleted)
+        }
+        pump(seconds: 1.8)
+        XCTAssertEqual(fixture.model.messages.count, 138)
+        XCTAssertTrue(pumpUntil(timeout: 4.0) { fixture.model.latestViewport.isAtBottom })
+
+        // 第 139 条消息（核心指标 user-send-139）：在刚完成流式生成的 26-block Markdown 尾行之后点击发送
+        let send139User = makeUserMessage("第 26 轮提问：验证发送帧主线程耗时是否压到 50ms 以下且旧尾行 Markdown 零失效")
+        let anchor139 = send139User.id.toHexDashString()
+        let send139Sample = measureStep("user-send-139-streamed-tail", oldTailID: streamedTailID, settleSeconds: 0.20) {
+            fixture.model.isGenerationActive = true
+            fixture.model.activity = progress("正在搜索网页", anchor: anchor139)
+            fixture.model.messages.append(send139User)
+            fixture.model.send(.userAppend)
+        }
+        XCTAssertEqual(fixture.model.messages.count, 139)
+
+        let toolSyncAvg = toolAppendSamples.map(\.syncCPUMs).reduce(0, +) / Double(toolAppendSamples.count)
+        let toolSettleAvg = toolAppendSamples.map(\.settleCPUMs).reduce(0, +) / Double(toolAppendSamples.count)
+        let toolSettleMax = toolAppendSamples.map(\.settleCPUMs).max() ?? 0
+
+        print(String(
+            format: "[P1-BENCH] %@ syncCPU=%.2fms syncWall=%.2fms settle200CPU=%.2fms settle200Wall=%.2fms oldTail(msg=%d,md=%d,layInv=%d,layMeas=%d) totals=%@",
+            sendStaticSample.label,
+            sendStaticSample.syncCPUMs,
+            sendStaticSample.syncWallMs,
+            sendStaticSample.settleCPUMs,
+            sendStaticSample.settleWallMs,
+            sendStaticSample.oldTailMessageCount,
+            sendStaticSample.oldTailMarkdownCount,
+            sendStaticSample.oldTailLayoutInvalidateCount,
+            sendStaticSample.oldTailLayoutMeasureCount,
+            String(describing: sendStaticSample.totals)
+        ))
+        print(String(
+            format: "[P1-BENCH] tool-append(x%d) syncCPUAvg=%.2fms settle50CPUAvg=%.2fms settle50CPUMax=%.2fms",
+            toolAppendSamples.count,
+            toolSyncAvg,
+            toolSettleAvg,
+            toolSettleMax
+        ))
+        print(String(
+            format: "[P1-BENCH] %@ syncCPU=%.2fms settle200CPU=%.2fms oldTail(msg=%d,md=%d,layInv=%d,layMeas=%d)",
+            completionSample.label,
+            completionSample.syncCPUMs,
+            completionSample.settleCPUMs,
+            completionSample.oldTailMessageCount,
+            completionSample.oldTailMarkdownCount,
+            completionSample.oldTailLayoutInvalidateCount,
+            completionSample.oldTailLayoutMeasureCount
+        ))
+        print(String(
+            format: "[P1-BENCH] %@ syncCPU=%.2fms syncWall=%.2fms settle200CPU=%.2fms settle200Wall=%.2fms oldTail(msg=%d,md=%d,layInv=%d,layMeas=%d) totals=%@",
+            send139Sample.label,
+            send139Sample.syncCPUMs,
+            send139Sample.syncWallMs,
+            send139Sample.settleCPUMs,
+            send139Sample.settleWallMs,
+            send139Sample.oldTailMessageCount,
+            send139Sample.oldTailMarkdownCount,
+            send139Sample.oldTailLayoutInvalidateCount,
+            send139Sample.oldTailLayoutMeasureCount,
+            String(describing: send139Sample.totals)
+        ))
+
+        XCTAssertLessThan(sendStaticSample.syncCPUMs, 50.0, "静态尾行发送帧同步主线程耗时必须低于 50ms")
+        XCTAssertEqual(sendStaticSample.oldTailMessageCount, 0, "静态尾行退为历史行时不得重算 MessageBubble")
+        XCTAssertEqual(sendStaticSample.oldTailMarkdownCount, 0, "静态尾行退为历史行时不得重建 Markdown")
+        XCTAssertEqual(sendStaticSample.oldTailLayoutInvalidateCount, 0, "静态尾行退为历史行时不得触发布局失效")
+        XCTAssertEqual(sendStaticSample.oldTailLayoutMeasureCount, 0, "静态尾行退为历史行时不得触发重新测量")
+
+        XCTAssertLessThan(send139Sample.syncCPUMs, 50.0, "流式完结尾行发送帧同步主线程耗时必须低于 50ms")
+        XCTAssertEqual(send139Sample.oldTailMessageCount, 0, "流式完结尾行退为历史行时不得重算 MessageBubble")
+        XCTAssertEqual(send139Sample.oldTailMarkdownCount, 0, "流式完结尾行退为历史行时不得重建 Markdown")
+        XCTAssertEqual(send139Sample.oldTailLayoutInvalidateCount, 0, "流式完结尾行退为历史行时不得触发布局失效")
+        XCTAssertEqual(send139Sample.oldTailLayoutMeasureCount, 0, "流式完结尾行退为历史行时不得触发重新测量")
+    }
+
+    func testP1IncrementalProjectionMatchesFullBuildAndSkipsHistoricalBridging() {
+        let cache = NativeTimelineProjectionCache()
+        let fullHashes = ChatRowContentHashCache()
+        let cachedHashes = ChatRowContentHashCache()
+        let fullStore = ChatRenderStateStore()
+        let cachedStore = ChatRenderStateStore()
+
+        var messages: [UIMessage] = []
+        for turn in 0..<24 {
+            messages.append(makeUserMessage("历史提问 \(turn)"))
+            let tool = UIMessagePart.Tool(
+                toolCallId: "hist-tool-\(turn)",
+                toolName: "search_web",
+                input: #"{"q":"\#(turn)"}"#,
+                output: [UIMessagePart.Text(text: "结果 \(turn)", metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            )
+            messages.append(UIMessage(
+                id: KotlinUuid.companion.random(),
+                role: MessageRole.assistant,
+                parts: [tool],
+                annotations: [],
+                createdAt: chatNowLocalDateTime(),
+                finishedAt: chatNowLocalDateTime(),
+                modelId: nil,
+                usage: nil,
+                translation: nil
+            ))
+            messages.append(makeAssistantMessage(text: "历史回答 \(turn)", finished: true))
+        }
+        XCTAssertEqual(messages.count, 72)
+
+        let windowStart = 12
+        var revision = 0
+        var streamed: Set<String> = []
+        var requestedIndices: [Int] = []
+        var previousFullProjection: NativeTimelineProjection?
+
+        func verifyStep(_ event: ChatEvent, isGenerationActive: Bool, expectIncrementalFrom minIndex: Int?) {
+            revision += 1
+            requestedIndices = []
+            let incremental = cache.projection(
+                messages: messages,
+                event: event,
+                sourceRevision: revision,
+                startIndex: windowStart,
+                configurationIssue: nil,
+                isGenerationActive: isGenerationActive,
+                isLoading: false,
+                isRecognizingImages: false,
+                contextCompactState: .idle,
+                contextCompactBoundaries: [],
+                viewportState: ChatViewportState(),
+                displaySettingSignature: 42,
+                generativeUiSettingSignature: 7,
+                renderStateRevision: 1,
+                reasoningLevelLabel: "High",
+                streamedMessageIDs: streamed,
+                renderStateStore: cachedStore,
+                variantInfoProvider: { index in
+                    requestedIndices.append(index)
+                    return nil
+                },
+                contentHashProvider: { row, streaming in
+                    streaming ? cachedHashes.streamingTailLayoutToken(for: row) : cachedHashes.contentHash(for: row)
+                }
+            )
+            let full = NativeTimelineProjector.build(
+                messages: messages,
+                event: event,
+                isGenerationActive: isGenerationActive,
+                viewportState: ChatViewportState(),
+                displaySettingSignature: 42,
+                generativeUiSettingSignature: 7,
+                renderStateRevision: 1,
+                reasoningLevelLabel: "High",
+                streamedMessageIDs: streamed,
+                renderStateStore: fullStore,
+                variantInfoProvider: { _ in nil },
+                contentHashProvider: { row, streaming in
+                    streaming ? fullHashes.streamingTailLayoutToken(for: row) : fullHashes.contentHash(for: row)
+                },
+                startIndex: windowStart
+            )
+            if event == .assistantStreamDelta,
+               let prevFull = previousFullProjection,
+               let expectedFastTail = NativeTimelineProjector.replacingStreamingTail(
+                   in: prevFull,
+                   messages: messages,
+                   event: event,
+                   isGenerationActive: isGenerationActive,
+                   viewportState: ChatViewportState(),
+                   displaySettingSignature: 42,
+                   generativeUiSettingSignature: 7,
+                   renderStateRevision: 1,
+                   reasoningLevelLabel: "High",
+                   streamedMessageIDs: streamed,
+                   renderStateStore: fullStore,
+                   variantInfoProvider: { _ in nil },
+                   contentHashProvider: { row, streaming in
+                       streaming ? fullHashes.streamingTailLayoutToken(for: row) : fullHashes.contentHash(for: row)
+                   }
+               ) {
+                XCTAssertEqual(incremental, expectedFastTail, "流式同尾 delta 必须与 replacingStreamingTail 快速路径完全一致")
+                if let lastMsgIdx = incremental.entries.lastIndex(where: { $0.kind == .message }) {
+                    XCTAssertEqual(Array(incremental.entries[..<lastMsgIdx]), Array(full.entries[..<lastMsgIdx]))
+                    XCTAssertEqual(Array(incremental.entries[(lastMsgIdx + 1)...]), Array(full.entries[(lastMsgIdx + 1)...]))
+                    XCTAssertEqual(incremental.entries[lastMsgIdx].assistantTurn, full.entries[lastMsgIdx].assistantTurn)
+                    XCTAssertEqual(incremental.entries[lastMsgIdx].renderDigest, full.entries[lastMsgIdx].renderDigest)
+                }
+            } else {
+                XCTAssertEqual(incremental, full, "事件 \(event) 下增量投影必须与全量投影逐字段完全一致")
+            }
+            previousFullProjection = full
+            if let minIndex {
+                XCTAssertTrue(
+                    requestedIndices.allSatisfy { $0 >= minIndex },
+                    "事件 \(event) 仅允许重投当前活跃轮次(>=\(minIndex))，实际请求索引: \(requestedIndices)"
+                )
+            }
+        }
+
+        // 1. 初始全量建立缓存（前轮 user 位于索引 69）
+        verifyStep(.conversationLoaded, isGenerationActive: false, expectIncrementalFrom: nil)
+        XCTAssertEqual(requestedIndices.count, 60)
+
+        // 2. 用户发送新消息（索引 72）：旧尾行位于 71，分界点为索引 69 的 user 行
+        let sendIndex = messages.count
+        messages.append(makeUserMessage("增量投影验证提问"))
+        verifyStep(.userMessageAppended, isGenerationActive: true, expectIncrementalFrom: 69)
+
+        // 3. 连续追加工具消息（分界点推进到索引 72 的新 user 行）
+        for step in 0..<3 {
+            let tool = UIMessagePart.Tool(
+                toolCallId: "inc-tool-\(step)",
+                toolName: "terminal_execute",
+                input: "{}",
+                output: [UIMessagePart.Text(text: "ok-\(step)", metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            )
+            messages.append(UIMessage(
+                id: KotlinUuid.companion.random(),
+                role: MessageRole.assistant,
+                parts: [tool],
+                annotations: [],
+                createdAt: chatNowLocalDateTime(),
+                finishedAt: chatNowLocalDateTime(),
+                modelId: nil,
+                usage: nil,
+                translation: nil
+            ))
+            verifyStep(.toolResultAppended, isGenerationActive: true, expectIncrementalFrom: sendIndex)
+        }
+
+        // 4. 流式回复首次挂载 -> delta -> 收口 -> 完成 -> 下一轮发送
+        let replyID = KotlinUuid.companion.random()
+        let replyHex = replyID.toHexDashString()
+        streamed.insert(replyHex)
+        messages.append(makeAssistantMessage(id: replyID, text: "首段流式内容", finished: false))
+        verifyStep(.assistantStreamDelta, isGenerationActive: true, expectIncrementalFrom: sendIndex)
+
+        messages[messages.count - 1] = makeAssistantMessage(id: replyID, text: "首段流式内容，继续补充正文。", finished: false)
+        verifyStep(.assistantStreamDelta, isGenerationActive: true, expectIncrementalFrom: messages.count - 1)
+
+        messages[messages.count - 1] = makeAssistantMessage(id: replyID, text: "首段流式内容，继续补充正文。", finished: true)
+        verifyStep(.assistantStreamClosed, isGenerationActive: true, expectIncrementalFrom: sendIndex)
+
+        verifyStep(.generationCompleted, isGenerationActive: false, expectIncrementalFrom: sendIndex)
+
+        messages.append(makeUserMessage("下一轮继续提问"))
+        verifyStep(.userMessageAppended, isGenerationActive: true, expectIncrementalFrom: sendIndex)
+    }
+
+    @MainActor
+    private final class BubbleIsolationState: ObservableObject {
+        @Published var isLastMessage = true
+        @Published var liveRenderingEnabled = true
+        @Published var isChatGenerationActive = false
+    }
+
+    private struct BubbleIsolationHarness: View {
+        let message: UIMessage
+        let workspaceStore: IOSWorkspaceStore
+        @ObservedObject var state: BubbleIsolationState
+
+        var body: some View {
+            MessageBubbleView(
+                message: message,
+                messageIndex: 10,
+                isAssistantContinuation: false,
+                variantInfo: nil,
+                displaySetting: nil,
+                generativeUiSetting: nil,
+                onRegenerate: {},
+                onRequestEdit: { _ in },
+                onEdit: { _ in },
+                onDelete: {},
+                onSelectVariant: { _ in },
+                onGenerativeWidgetAction: { _ in },
+                onModifyGeneratedImage: { _, _, _ in },
+                onOpenMiniApp: { _ in },
+                onOpenMiniApps: {},
+                isGenerating: false,
+                isChatGenerationActive: state.isChatGenerationActive,
+                isLastMessage: state.isLastMessage,
+                hasEverStreamed: true,
+                liveMarkdownRenderingEnabled: state.liveRenderingEnabled,
+                frozenMarkdownSnapshot: nil,
+                reasoningLevelLabel: nil
+            )
+            .environment(workspaceStore)
+        }
+    }
+
+    func testP1MessageBubbleViewIsolatesIsLastMessageTransitionFromMarkdownAndBody() throws {
+        let message = makeAssistantMessage(
+            text: "### 标题\n\n这里是一段包含 `inline code` 与列表的完整回复：\n\n- 第一项\n- 第二项",
+            finished: true
+        )
+        let messageID = message.id.toHexDashString()
+        let state = BubbleIsolationState()
+        let workspaceStore = IOSWorkspaceStore()
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: BubbleIsolationHarness(
+            message: message,
+            workspaceStore: workspaceStore,
+            state: state
+        ))
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            ChatRenderProbe.enabled = false
+            ChatRenderProbe.reset()
+            window.isHidden = true
+            window.rootViewController = nil
+            window.windowScene = nil
+            previousWindow?.makeKey()
+        }
+        pump(seconds: 0.3)
+
+        ChatRenderProbe.reset()
+        ChatRenderProbe.enabled = true
+        state.isLastMessage = false
+        state.liveRenderingEnabled = false
+        state.isChatGenerationActive = true
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        pump(seconds: 0.2)
+        ChatRenderProbe.enabled = false
+
+        XCTAssertEqual(ChatRenderProbe.counts["message"]?[messageID] ?? 0, 0,
+                       "已完结气泡翻转 isLastMessage/liveRenderingEnabled 时不得重算正文子树")
+        XCTAssertEqual(ChatRenderProbe.counts["markdown"]?[messageID] ?? 0, 0,
+                       "已完结气泡翻转 isLastMessage/liveRenderingEnabled 时不得重建 Markdown")
+    }
 }

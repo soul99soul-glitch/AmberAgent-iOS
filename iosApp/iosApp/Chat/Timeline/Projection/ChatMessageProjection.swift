@@ -122,15 +122,23 @@ enum ChatTimelinePlanner {
         )
     }
 
-    static func messageEntry(for row: ChatMessageRowModel, includeRenderToken: Bool = true) -> ChatTimelineMessageEntry {
+    static func messageEntry(
+        for row: ChatMessageRowModel,
+        partTokensBody: String? = nil,
+        includeRenderToken: Bool = true
+    ) -> ChatTimelineMessageEntry {
         ChatTimelineMessageEntry(
             id: messageEntryIDPrefix + row.messageId, messageId: row.messageId,
             message: row.message, role: row.role, index: row.index,
             isLast: row.isLast, isStreaming: row.isStreaming, hasEverStreamed: row.hasEverStreamed,
             canAnimateInsertion: row.canAnimateInsertion, renderer: rendererKind(for: row),
-            renderToken: includeRenderToken ? renderToken(for: row) : "",
+            renderToken: includeRenderToken ? renderToken(for: row, partTokensBody: partTokensBody) : "",
             isAssistantContinuation: row.isAssistantContinuation
         )
+    }
+
+    static func partTokensBody(for parts: [UIMessagePart]) -> String {
+        parts.map { compactRenderToken(for: $0) }.joined(separator: "|")
     }
 
     private static func rendererKind(for row: ChatMessageRowModel) -> ChatTimelineRendererKind {
@@ -151,8 +159,8 @@ enum ChatTimelinePlanner {
         return "\(rows.count):\(row.messageId):\(renderToken(for: row)):\(includePendingAssistant)"
     }
 
-    private static func renderToken(for row: ChatMessageRowModel) -> String {
-        let partTokens = row.parts.map { compactRenderToken(for: $0) }.joined(separator: "|")
+    private static func renderToken(for row: ChatMessageRowModel, partTokensBody: String? = nil) -> String {
+        let partTokens = partTokensBody ?? Self.partTokensBody(for: row.parts)
         return "\(row.messageId):\(row.role.name):\(row.isStreaming):\(row.hasEverStreamed):\(row.isAssistantContinuation):\(partTokens)"
     }
 

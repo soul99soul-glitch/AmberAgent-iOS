@@ -57,6 +57,7 @@ final class ChatRenderStateStore {
     private var frozenMessageIDs: Set<String> = []
     private var frozenMarkdownByMessageID: [String: String] = [:]
     private var liveTailModelsByMessageID: [String: ChatLiveTailModel] = [:]
+    private(set) var stateMutationCount: UInt64 = 0
 
     func existingLiveTailModel(messageID: String) -> ChatLiveTailModel? {
         liveTailModelsByMessageID[messageID]
@@ -64,24 +65,12 @@ final class ChatRenderStateStore {
 
     func stateForRow(_ row: ChatMessageRowModel, isLiveRenderingFarFromBottom: Bool,
                      isLiveTask: Bool = false) -> ChatRenderState {
-        let renderer: ChatTimelineRendererKind = row.role == MessageRole.assistant && (row.hasEverStreamed || row.isStreaming)
-            ? .streamingAssistantMarkdown
-            : (row.role == MessageRole.user ? .user : .staticAssistantMarkdown)
-        return stateForEntry(
-            ChatTimelineMessageEntry(
-                id: "message-\(row.messageId)",
-                messageId: row.messageId,
-                message: row.message,
-                role: row.role,
-                index: row.index,
-                isLast: row.isLast,
-                isStreaming: row.isStreaming,
-                hasEverStreamed: row.hasEverStreamed,
-                canAnimateInsertion: row.canAnimateInsertion,
-                renderer: renderer,
-                renderToken: row.messageId,
-                isAssistantContinuation: row.isAssistantContinuation
-            ),
+        let usesStreamingMarkdown = row.role == MessageRole.assistant && (row.hasEverStreamed || row.isStreaming)
+        return resolveState(
+            messageId: row.messageId,
+            role: row.role,
+            isLast: row.isLast,
+            usesStreamingMarkdown: usesStreamingMarkdown,
             isLiveRenderingFarFromBottom: isLiveRenderingFarFromBottom,
             isLiveTask: isLiveTask
         )
@@ -89,8 +78,25 @@ final class ChatRenderStateStore {
 
     func stateForEntry(_ entry: ChatTimelineMessageEntry, isLiveRenderingFarFromBottom: Bool,
                        isLiveTask: Bool = false) -> ChatRenderState {
-        let row = entry.rowModel
-        guard entry.renderer == .streamingAssistantMarkdown else {
+        resolveState(
+            messageId: entry.messageId,
+            role: entry.role,
+            isLast: entry.isLast,
+            usesStreamingMarkdown: entry.renderer == .streamingAssistantMarkdown,
+            isLiveRenderingFarFromBottom: isLiveRenderingFarFromBottom,
+            isLiveTask: isLiveTask
+        )
+    }
+
+    private func resolveState(
+        messageId: String,
+        role: MessageRole,
+        isLast: Bool,
+        usesStreamingMarkdown: Bool,
+        isLiveRenderingFarFromBottom: Bool,
+        isLiveTask: Bool
+    ) -> ChatRenderState {
+        guard usesStreamingMarkdown else {
             return ChatRenderState(
                 rendererMode: .staticMarkdown,
                 hasEverStreamed: false,
@@ -99,16 +105,16 @@ final class ChatRenderStateStore {
             )
         }
 
-        let frozen = frozenMessageIDs.contains(row.messageId)
-        let live = (row.isLast || isLiveTask) &&
-            row.role == MessageRole.assistant &&
+        let frozen = frozenMessageIDs.contains(messageId)
+        let live = (isLast || isLiveTask) &&
+            role == MessageRole.assistant &&
             !isLiveRenderingFarFromBottom &&
             !frozen
         return ChatRenderState(
             rendererMode: live ? .streamingMarkdown : .frozen,
             hasEverStreamed: true,
             liveRenderingEnabled: live,
-            frozenMarkdownSnapshot: live ? nil : frozenMarkdownByMessageID[row.messageId]
+            frozenMarkdownSnapshot: live ? nil : frozenMarkdownByMessageID[messageId]
         )
     }
 
@@ -143,6 +149,9 @@ final class ChatRenderStateStore {
         visibleMessageIDs.insert(messageID)
         frozenMessageIDs.remove(messageID)
         frozenMarkdownByMessageID.removeValue(forKey: messageID)
+        if changed {
+            stateMutationCount &+= 1
+        }
         return changed
     }
 
@@ -152,20 +161,34 @@ final class ChatRenderStateStore {
         if let latestText {
             frozenMarkdownByMessageID[messageID] = latestText
         }
+        stateMutationCount &+= 1
     }
 
     func retain(ids: Set<String>) {
+        let previousFrozenCount = frozenMessageIDs.count
+        let previousSnapshotCount = frozenMarkdownByMessageID.count
         visibleMessageIDs = visibleMessageIDs.intersection(ids)
         frozenMessageIDs = frozenMessageIDs.intersection(ids)
         frozenMarkdownByMessageID = frozenMarkdownByMessageID.filter { ids.contains($0.key) }
         liveTailModelsByMessageID = liveTailModelsByMessageID.filter { ids.contains($0.key) }
+        if frozenMessageIDs.count != previousFrozenCount ||
+            frozenMarkdownByMessageID.count != previousSnapshotCount {
+            stateMutationCount &+= 1
+        }
     }
 
     func removeAll() {
+        let hadState = !visibleMessageIDs.isEmpty ||
+            !frozenMessageIDs.isEmpty ||
+            !frozenMarkdownByMessageID.isEmpty ||
+            !liveTailModelsByMessageID.isEmpty
         visibleMessageIDs.removeAll()
         frozenMessageIDs.removeAll()
         frozenMarkdownByMessageID.removeAll()
         liveTailModelsByMessageID.removeAll()
+        if hadState {
+            stateMutationCount &+= 1
+        }
     }
 }
 

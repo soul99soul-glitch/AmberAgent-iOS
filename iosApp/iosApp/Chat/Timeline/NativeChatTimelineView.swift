@@ -79,6 +79,7 @@ struct NativeChatTimelineView: View {
         let _ = phoneToolGroupToggleHandler.action = togglePhoneToolGroup
         let _ = timelineUpdates?.attach(owner: timelineStreamOwner, consume: consumeTimelineStream)
         let messages = timelineUpdates?.structuralMessages ?? messagesProvider()
+        let _ = resetConversationCachesIfNeeded(event: signal.event, revision: signal.revision)
         let startIndex = resolvedHistoryStartIndex(messages: messages)
         let nativeScrollDriverDesired = isNativeScrollDriverDesired
         let displaySettingSignature = projectionCache.settings.display(displaySetting, fontScale: fontScale, chatFont: chatFont, agentName: agentName)
@@ -234,23 +235,15 @@ struct NativeChatTimelineView: View {
                 }
                 ChatRenderProbe.record(Self.scrollPhaseProbeScope(phase))
                 defer {
-                    if oldPhase != .idle && phase == .idle {
-                        if ChatRenderProbe.endScene(
-                            "scroll",
-                            spanKey: "ms:scroll-span",
-                            cpuKey: "ms:scroll-cpu"
-                        ) {
-                            ChatRenderProbe.record("scroll:end")
-                        }
+                    if oldPhase != .idle && phase == .idle,
+                       ChatRenderProbe.endScene("scroll", spanKey: "ms:scroll-span", cpuKey: "ms:scroll-cpu") {
+                        ChatRenderProbe.record("scroll:end")
                     }
                 }
                 ChatRenderProbe.measureUs("us:scroll-phase") {
                     defer { updateGrowthFollowState() }
                     if phase == .tracking || phase == .interacting { timelineGrowth.setEnabled(false) }
-                    guard isNativeScrollDriverActive else {
-                        handleNativeFallbackScrollPhase(phase)
-                        return
-                    }
+                    guard isNativeScrollDriverActive else { handleNativeFallbackScrollPhase(phase); return }
                     switch phase {
                     case .tracking, .interacting:
                         guard Self.shouldBeginNativeUserDrag(
@@ -471,18 +464,12 @@ struct NativeChatTimelineView: View {
 
     private static func scrollPhaseProbeScope(_ phase: ScrollPhase) -> String {
         switch phase {
-        case .idle:
-            return "scroll:phase-idle"
-        case .tracking:
-            return "scroll:phase-tracking"
-        case .interacting:
-            return "scroll:phase-interacting"
-        case .decelerating:
-            return "scroll:phase-decelerating"
-        case .animating:
-            return "scroll:phase-animating"
-        @unknown default:
-            return "scroll:phase-unknown"
+        case .idle: "scroll:phase-idle"
+        case .tracking: "scroll:phase-tracking"
+        case .interacting: "scroll:phase-interacting"
+        case .decelerating: "scroll:phase-decelerating"
+        case .animating: "scroll:phase-animating"
+        @unknown default: "scroll:phase-unknown"
         }
     }
 
@@ -994,7 +981,8 @@ struct NativeChatTimelineView: View {
             phoneToolGroup: entry.phoneToolGroup?.headSummary,
             assistantTurn: entry.assistantTurn,
             isTaskLive: entry.isTaskLive,
-            usesIndependentTasks: usesIndependentTasks && entry.observesIndependentTaskMode
+            usesIndependentTasks: usesIndependentTasks && entry.observesIndependentTaskMode,
+            contentObservesGenerationState: entry.contentObservesGenerationState ?? false
         )
     }
 
@@ -1051,11 +1039,17 @@ struct NativeChatTimelineView: View {
         return .chatUserMessageSend
     }
 
+    private func resetConversationCachesIfNeeded(event: ChatEvent, revision: Int) {
+        guard event == .conversationLoaded || event == .conversationSwitched || event == .branchChanged,
+              projectionCache.lastResetRevision != revision else { return }
+        renderStateStore.removeAll()
+        contentHashCache.removeAll()
+        projectionCache.reset(forRevision: revision)
+    }
+
     private func updateRendererMemory(event: ChatEvent, messages: [UIMessage]) {
         if event == .conversationLoaded || event == .conversationSwitched || event == .branchChanged {
-            renderStateStore.removeAll()
-            contentHashCache.removeAll()
-            projectionCache.reset()
+            resetConversationCachesIfNeeded(event: event, revision: signal.revision)
             nativeStreamingTailVisibility = ChatSwiftUIStreamingTailVisibilityState()
         }
         streamedMessageIDs.formUnion(liveTaskTailIDs)
@@ -1065,14 +1059,27 @@ struct NativeChatTimelineView: View {
            (!usesIndependentTasks || liveTaskTailIDs.contains(ChatMessageProjector.messageId(for: last))) {
             streamedMessageIDs.insert(ChatMessageProjector.messageId(for: last))
         } else {
-            let currentIDs = Set(messages.map(ChatMessageProjector.messageId(for:)))
             streamedMessageIDs = NativeStaticTimelineRendererMemory.nextStreamedMessageIDs(
                 previous: streamedMessageIDs,
                 event: event,
                 messages: messages
             )
-            renderStateStore.retain(ids: currentIDs)
-            contentHashCache.retain(ids: currentIDs)
+            let isMonotonicEvent: Bool = {
+                switch event {
+                case .userMessageAppended, .toolCallStarted, .toolResultAppended,
+                     .assistantStreamClosed, .generationCompleted, .generationFailed,
+                     .generationCancelled, .generationHandedOffToBackground,
+                     .awaitingToolApproval, .settingsRefreshed:
+                    return messages.count >= projectionCache.cachedMessageCount
+                default:
+                    return false
+                }
+            }()
+            if !isMonotonicEvent {
+                let currentIDs = Set(messages.map(ChatMessageProjector.messageId(for:)))
+                renderStateStore.retain(ids: currentIDs)
+                contentHashCache.retain(ids: currentIDs)
+            }
         }
         unfreezeVisibleLiveTailIfNeeded(messages: messages, viewportState: viewportState)
     }
@@ -1118,10 +1125,7 @@ struct NativeChatTimelineView: View {
             let next = ChatSwiftUIStreamingTailVisibilityState(messageID: messageID, isVisible: true)
             guard next != nativeStreamingTailVisibility else { return }
             nativeStreamingTailVisibility = next
-            unfreezeVisibleLiveTailIfNeeded(
-                messages: messagesProvider(),
-                viewportState: viewportState
-            )
+            unfreezeVisibleLiveTailIfNeeded(messages: messagesProvider(), viewportState: viewportState)
         } else if nativeStreamingTailVisibility.messageID == messageID {
             guard nativeStreamingTailVisibility.isVisible != false else { return }
             nativeStreamingTailVisibility.isVisible = false
@@ -1129,47 +1133,37 @@ struct NativeChatTimelineView: View {
     }
 
     private func markRenderVisible(_ messageID: String) {
-        if renderStateStore.markVisible(messageID) {
-            renderStateRevision &+= 1
-        }
+        if renderStateStore.markVisible(messageID) { renderStateRevision &+= 1 }
     }
 
     private func latestAssistantMessageID(messages: [UIMessage]) -> String? {
-        guard let lastAssistant = messages.last(where: { $0.role == MessageRole.assistant }) else {
-            return nil
-        }
+        guard let lastAssistant = messages.last(where: { $0.role == MessageRole.assistant }) else { return nil }
         return ChatMessageProjector.messageId(for: lastAssistant)
     }
 
     private func consumeTimelineStream(_ message: UIMessage, signal: ChatMessageUpdateSignal) -> Bool {
         let id = ChatMessageProjector.messageId(for: message)
         guard streamedMessageIDs.contains(id) else {
-            ChatRenderProbe.record("consume-stream:fail-not-in-streamedMessageIDs")
-            return false
+            ChatRenderProbe.record("consume-stream:fail-not-in-streamedMessageIDs"); return false
         }
         guard !usesIndependentTasks || liveTaskTailIDs.contains(id) else {
-            ChatRenderProbe.record("consume-stream:fail-usesIndependentTasks")
-            return false
+            ChatRenderProbe.record("consume-stream:fail-usesIndependentTasks"); return false
         }
         guard let model = renderStateStore.existingLiveTailModel(messageID: id) else {
-            ChatRenderProbe.record("consume-stream:fail-liveTailModel-nil")
-            return false
+            ChatRenderProbe.record("consume-stream:fail-liveTailModel-nil"); return false
         }
         guard model.renderState.hasEverStreamed else {
-            ChatRenderProbe.record("consume-stream:fail-not-hasEverStreamed")
-            return false
+            ChatRenderProbe.record("consume-stream:fail-not-hasEverStreamed"); return false
         }
         guard model.renderState.liveRenderingEnabled else {
-            ChatRenderProbe.record("consume-stream:fail-liveRenderingDisabled")
-            return false
+            ChatRenderProbe.record("consume-stream:fail-liveRenderingDisabled"); return false
         }
         guard NativeTimelineStreamingTailUpdatePolicy.shouldUpdate(
             messageID: id,
             isFarFromBottom: viewportState.liveRenderingFarFromBottom,
             visibility: nativeStreamingTailVisibility
         ) else {
-            ChatRenderProbe.record("consume-stream:fail-shouldUpdate-false")
-            return false
+            ChatRenderProbe.record("consume-stream:fail-shouldUpdate-false"); return false
         }
         ChatRenderProbe.record("consume-stream:hit")
         model.update(message: message, isGenerationActive: isGenerationActive,
@@ -1188,33 +1182,22 @@ struct NativeChatTimelineView: View {
         let currentSignal = timelineUpdates?.latestSignal ?? signal
         let isStreaming = currentSignal.event == .assistantStreamDelta && isLast
         let row = ChatMessageRowModel(
-            rowId: messageID,
-            messageId: messageID,
-            message: message,
-            role: message.role,
-            parts: message.parts,
-            index: indexedMessage.offset,
-            isLast: isLast,
-            isStreaming: isStreaming,
+            rowId: messageID, messageId: messageID, message: message, role: message.role,
+            parts: message.parts, index: indexedMessage.offset, isLast: isLast, isStreaming: isStreaming,
             hasEverStreamed: isStreaming || streamedMessageIDs.contains(messageID),
             canAnimateInsertion: false,
             isAssistantContinuation: ChatMessageProjector.isAssistantContinuation(at: indexedMessage.offset, in: messages)
         )
         let renderState = renderStateStore.stateForRow(
-            row,
-            isLiveRenderingFarFromBottom: viewportState.liveRenderingFarFromBottom
+            row, isLiveRenderingFarFromBottom: viewportState.liveRenderingFarFromBottom
         )
         guard renderState.liveRenderingEnabled else { return }
         let liveTailModel = renderStateStore.liveTailModel(
-            for: row,
-            renderState: renderState,
-            isGenerationActive: isGenerationActive
+            for: row, renderState: renderState, isGenerationActive: isGenerationActive
         )
         liveTailModel?.update(
-            message: row.message,
-            isGenerationActive: isGenerationActive,
-            renderState: renderState,
-            sourceRevision: currentSignal.revision
+            message: row.message, isGenerationActive: isGenerationActive,
+            renderState: renderState, sourceRevision: currentSignal.revision
         )
     }
 
@@ -1377,10 +1360,8 @@ struct NativeChatTimelineView: View {
             nativeUserScrollActive = true
         case .idle:
             nativeUserScrollActive = false
-        case .animating, .decelerating:
-            break
-        @unknown default:
-            break
+        case .animating, .decelerating: break
+        @unknown default: break
         }
     }
 
@@ -1392,15 +1373,10 @@ struct NativeChatTimelineView: View {
             requestNativeSwiftUIFallbackBottom(animated: false)
         case .userMessageAppended:
             requestNativeSwiftUIFallbackBottom(animated: false)
-        case .assistantStreamDelta:
-            guard canRunStreamingSwiftUIFallback else { return }
-            guard canRunNativeSwiftUIFallbackBottomFollow else { return }
-            requestNativeSwiftUIFallbackBottom(animated: false)
-        case .assistantStreamClosed, .toolCallStarted, .toolResultAppended,
+        case .assistantStreamDelta, .assistantStreamClosed, .toolCallStarted, .toolResultAppended,
              .awaitingToolApproval, .generationCompleted, .generationFailed,
              .generationCancelled, .generationHandedOffToBackground:
-            guard canRunStreamingSwiftUIFallback else { return }
-            guard canRunNativeSwiftUIFallbackBottomFollow else { return }
+            guard canRunStreamingSwiftUIFallback, canRunNativeSwiftUIFallbackBottomFollow else { return }
             requestNativeSwiftUIFallbackBottom(animated: false)
         case .branchChanged, .settingsRefreshed:
             break
@@ -1412,9 +1388,7 @@ struct NativeChatTimelineView: View {
     }
 
     private var canRunNativeSwiftUIFallbackBottomFollow: Bool {
-        viewportState.isAtBottom &&
-            !viewportState.followPaused &&
-            !nativeUserScrollActive
+        viewportState.isAtBottom && !viewportState.followPaused && !nativeUserScrollActive
     }
 
     private func requestNativeSwiftUIFallbackBottom(animated: Bool) {
@@ -1462,30 +1436,19 @@ private struct ChatConfigurationNoticeCard: View {
                     .foregroundStyle(AmberTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
-
             HStack(spacing: 8) {
                 Button(localized(primaryTitle), action: onPrimary)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .tint(AmberTheme.accent)
-
+                    .buttonStyle(.borderedProminent).controlSize(.small).tint(AmberTheme.accent)
                 if issue != .missingModel {
                     Button("选择模型", action: onModelDefaults)
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        .buttonStyle(.bordered).controlSize(.small)
                 }
             }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            AmberTheme.surface.opacity(0.92),
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
-        }
+        .background(AmberTheme.surface.opacity(0.92), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay { RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AmberTheme.borderSoft, lineWidth: 0.5) }
         .accessibilityElement(children: .contain)
     }
 
@@ -1514,18 +1477,14 @@ private struct HistoryRevealAnchor {
 }
 
 private extension View {
-    func nativeTimelineScrollPosition(
-        _ position: Binding<ScrollPosition>
-    ) -> some View {
-        self
-            .scrollPosition(position)
+    func nativeTimelineScrollPosition(_ position: Binding<ScrollPosition>) -> some View {
+        self.scrollPosition(position)
             .defaultScrollAnchor(.bottom, for: .initialOffset)
             .defaultScrollAnchor(.top, for: .alignment)
     }
 }
 
 private enum ChatListSnapshotBuilder {
-
     static func renderIdentityForRow(_ row: ChatMessageRowModel, renderState: ChatRenderState) -> String {
         row.messageId
     }

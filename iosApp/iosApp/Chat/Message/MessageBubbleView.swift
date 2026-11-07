@@ -18,6 +18,20 @@ private struct ChatToolPartRow: View, @MainActor Equatable {
     }
 }
 
+private final class MessageBubbleActionBox {
+    var onRegenerate: () -> Void = {}
+    var onRequestEdit: (String) -> Void = { _ in }
+    var onEdit: (String) -> Void = { _ in }
+    var onDelete: () -> Void = {}
+    var onSelectVariant: (Int) -> Void = { _ in }
+    var onGenerativeWidgetAction: (String) -> Void = { _ in }
+    var onModifyGeneratedImage: (String, String, String) -> Void = { _, _, _ in }
+    var onOpenMiniApp: (String) -> Void = { _ in }
+    var onOpenMiniApps: () -> Void = {}
+    var onOpenSubagentConversation: ((String) -> Void)? = nil
+    var artifactPinAction: ChatArtifactPinHandler? = nil
+}
+
 struct MessageBubbleView: View {
 
     let message: UIMessage
@@ -74,11 +88,202 @@ struct MessageBubbleView: View {
     @Environment(\.chatCompletionFeedback) private var completionFeedback
     @Environment(\.chatArtifactPinAction) private var artifactPinAction
     @Environment(\.chatMessageAnchorHighlighted) private var chatMessageAnchorHighlighted
+    @State private var actionBox = MessageBubbleActionBox()
+    private var renderPreferences: IOSChatRenderPreferences { IOSChatRenderPreferences.shared }
+
+    var body: some View {
+        let _ = {
+            actionBox.onRegenerate = onRegenerate
+            actionBox.onRequestEdit = onRequestEdit
+            actionBox.onEdit = onEdit
+            actionBox.onDelete = onDelete
+            actionBox.onSelectVariant = onSelectVariant
+            actionBox.onGenerativeWidgetAction = onGenerativeWidgetAction
+            actionBox.onModifyGeneratedImage = onModifyGeneratedImage
+            actionBox.onOpenMiniApp = onOpenMiniApp
+            actionBox.onOpenMiniApps = onOpenMiniApps
+            actionBox.onOpenSubagentConversation = onOpenSubagentConversation
+            actionBox.artifactPinAction = artifactPinAction
+        }()
+        let prefs = renderPreferences
+        MessageBubbleEquatableContent(
+            message: message,
+            contentIdentity: ChatMessageContentIdentity(message, index: messageIndex),
+            messageIndex: messageIndex,
+            isAssistantContinuation: isAssistantContinuation,
+            variantInfo: variantInfo,
+            displaySetting: displaySetting,
+            generativeUiSetting: generativeUiSetting,
+            displaySignature: Self.displaySignature(displaySetting, prefs: prefs),
+            generativeSignature: Self.generativeSignature(generativeUiSetting),
+            isGenerating: isGenerating,
+            isChatGenerationActive: isChatGenerationActive,
+            isLastMessage: isLastMessage,
+            hasEverStreamed: hasEverStreamed,
+            liveMarkdownRenderingEnabled: liveMarkdownRenderingEnabled,
+            frozenMarkdownSnapshot: frozenMarkdownSnapshot,
+            reasoningLevelLabel: reasoningLevelLabel,
+            imageAccessibilityFocusToolCallID: imageAccessibilityFocusToolCallID,
+            phoneToolGroup: phoneToolGroup,
+            assistantTurn: assistantTurn,
+            workspaceStore: workspaceStore,
+            reduceMotion: reduceMotion,
+            locale: locale,
+            messageEditingAllowed: messageEditingAllowed,
+            completionFeedback: completionFeedback,
+            hasArtifactPinAction: artifactPinAction != nil,
+            chatMessageAnchorHighlighted: chatMessageAnchorHighlighted,
+            appLanguage: prefs.appLanguage,
+            actions: actionBox
+        )
+        .equatable()
+        // 只注入可判等的值：新建闭包每次都不相等，会让所有代码块与 Markdown 随气泡重算失效。
+        .environment(\.chatArtifactMessageID, artifactPinAction == nil ? nil : ChatMessageProjector.messageId(for: message))
+        // vendor 默认「复制」只有文字可点；Amber 显式放大到整组图标+文字、约 44pt 高（不改布局）。
+        .environment(\.swiftStreamingMarkdownCodeCopyHitOutset, 13)
+        // 流式 block 渲染路径的代码块头部同样放“收进产物架”，与 AmberMarkdownView 一致。
+        .environment(
+            \.swiftStreamingMarkdownCodeBlockHeaderAccessory,
+            artifactPinAction == nil ? nil : ChatCodeBlockHeaderAccessory.streamingHeaderProvider
+        )
+    }
+
+    private static func displaySignature(_ setting: DisplaySetting?, prefs: IOSChatRenderPreferences) -> Int {
+        var hasher = Hasher()
+        hasher.combine(prefs.fontScale)
+        hasher.combine(prefs.chatFont)
+        hasher.combine(prefs.agentName)
+        hasher.combine(prefs.appLanguage)
+        if let setting {
+            hasher.combine(ObjectIdentifier(setting))
+            hasher.combine(setting.hash)
+        } else {
+            hasher.combine(0)
+        }
+        return hasher.finalize()
+    }
+
+    private static func generativeSignature(_ setting: GenerativeUiSetting?) -> Int {
+        guard let setting else { return 0 }
+        var hasher = Hasher()
+        hasher.combine(ObjectIdentifier(setting))
+        hasher.combine(setting.hash)
+        return hasher.finalize()
+    }
+
+    static func shouldRenderReasoningCard(_ reasoning: UIMessagePart.Reasoning) -> Bool {
+        !ReasoningMetadataKt.isEmptyProtocolReasoning(reasoning: reasoning)
+    }
+
+    static func firstVisibleReasoningIndex(in parts: [UIMessagePart]) -> Int? {
+        parts.firstIndex { part in
+            guard let reasoning = part as? UIMessagePart.Reasoning else { return false }
+            return shouldRenderReasoningCard(reasoning)
+        }
+    }
+
+    static func hasVisibleAssistantContent(in parts: [UIMessagePart]) -> Bool {
+        parts.contains { part in
+            if let text = part as? UIMessagePart.Text {
+                return text.text.contains { !$0.isWhitespace }
+            }
+            if let reasoning = part as? UIMessagePart.Reasoning {
+                return shouldRenderReasoningCard(reasoning)
+            }
+            return true
+        }
+    }
+
+    static func instantToDate(_ instant: KotlinInstant) -> Date {
+        Date(timeIntervalSince1970:
+            Double(instant.epochSeconds) + Double(instant.nanosecondsOfSecond) / 1_000_000_000)
+    }
+}
+
+private struct MessageBubbleEquatableContent: View, @MainActor Equatable {
+    let message: UIMessage
+    let contentIdentity: ChatMessageContentIdentity
+    let messageIndex: Int
+    let isAssistantContinuation: Bool
+    let variantInfo: IOSConversationStore.VariantInfo?
+    let displaySetting: DisplaySetting?
+    let generativeUiSetting: GenerativeUiSetting?
+    let displaySignature: Int
+    let generativeSignature: Int
+    let isGenerating: Bool
+    let isChatGenerationActive: Bool
+    let isLastMessage: Bool
+    let hasEverStreamed: Bool
+    let liveMarkdownRenderingEnabled: Bool
+    let frozenMarkdownSnapshot: String?
+    let reasoningLevelLabel: String?
+    let imageAccessibilityFocusToolCallID: String?
+    let phoneToolGroup: ChatPhoneToolGroupSummary?
+    let assistantTurn: ChatAssistantTurnRole?
+    let workspaceStore: IOSWorkspaceStore
+    let reduceMotion: Bool
+    let locale: Locale
+    let messageEditingAllowed: Bool
+    let completionFeedback: ChatCompletionFeedback?
+    let hasArtifactPinAction: Bool
+    let chatMessageAnchorHighlighted: Bool
+    let appLanguage: String
+    let actions: MessageBubbleActionBox
+
     @State private var workspaceSaveAlert: WorkspaceSaveAlert?
     @State private var toolDetailTarget: ToolDetailTarget?
     @State private var taskStepCache = ChatTaskToolStepCache()
-    private var appLanguage: String { IOSChatRenderPreferences.shared.appLanguage }
     @AccessibilityFocusState private var focusedGeneratedImageToolCallID: String?
+
+    private var onRegenerate: () -> Void { actions.onRegenerate }
+    private var onRequestEdit: (String) -> Void { actions.onRequestEdit }
+    private var onEdit: (String) -> Void { actions.onEdit }
+    private var onDelete: () -> Void { actions.onDelete }
+    private var onSelectVariant: (Int) -> Void { actions.onSelectVariant }
+    private var onGenerativeWidgetAction: (String) -> Void { actions.onGenerativeWidgetAction }
+    private var onModifyGeneratedImage: (String, String, String) -> Void { actions.onModifyGeneratedImage }
+    private var onOpenMiniApp: (String) -> Void { actions.onOpenMiniApp }
+    private var onOpenMiniApps: () -> Void { actions.onOpenMiniApps }
+    private var onOpenSubagentConversation: ((String) -> Void)? { actions.onOpenSubagentConversation }
+    private var artifactPinAction: ChatArtifactPinHandler? { actions.artifactPinAction }
+
+    private var observesChatGenerationActive: Bool {
+        contentIdentity.cachedParts.contains { part in
+            if part is UIMessagePart.MiniApp { return true }
+            return (part as? UIMessagePart.Tool)?.toolName == "generate_image"
+        }
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        // Isolate `isLastMessage`: flipping `isLastMessage` (`true -> false`) on an
+        // idle/settled message does not change `isGenerating && isLastMessage` and
+        // must never re-evaluate body text or Markdown subtrees.
+        lhs.message === rhs.message &&
+            lhs.contentIdentity.matches(rhs.message) &&
+            lhs.isAssistantContinuation == rhs.isAssistantContinuation &&
+            lhs.variantInfo == rhs.variantInfo &&
+            lhs.displaySignature == rhs.displaySignature &&
+            lhs.generativeSignature == rhs.generativeSignature &&
+            lhs.isGenerating == rhs.isGenerating &&
+            (lhs.isGenerating && lhs.isLastMessage) == (rhs.isGenerating && rhs.isLastMessage) &&
+            (!(lhs.observesChatGenerationActive || rhs.observesChatGenerationActive) ||
+                lhs.isChatGenerationActive == rhs.isChatGenerationActive) &&
+            lhs.hasEverStreamed == rhs.hasEverStreamed &&
+            (lhs.liveMarkdownRenderingEnabled == rhs.liveMarkdownRenderingEnabled ||
+                (!lhs.isGenerating && !rhs.isGenerating &&
+                 lhs.frozenMarkdownSnapshot == nil && rhs.frozenMarkdownSnapshot == nil)) &&
+            lhs.frozenMarkdownSnapshot == rhs.frozenMarkdownSnapshot &&
+            lhs.reasoningLevelLabel == rhs.reasoningLevelLabel &&
+            lhs.imageAccessibilityFocusToolCallID == rhs.imageAccessibilityFocusToolCallID &&
+            lhs.phoneToolGroup?.signature == rhs.phoneToolGroup?.signature &&
+            lhs.assistantTurn == rhs.assistantTurn &&
+            ObjectIdentifier(lhs.workspaceStore) == ObjectIdentifier(rhs.workspaceStore) &&
+            lhs.reduceMotion == rhs.reduceMotion &&
+            lhs.locale == rhs.locale &&
+            lhs.messageEditingAllowed == rhs.messageEditingAllowed &&
+            lhs.hasArtifactPinAction == rhs.hasArtifactPinAction &&
+            lhs.chatMessageAnchorHighlighted == rhs.chatMessageAnchorHighlighted
+    }
 
     private var isUser: Bool {
         message.role == MessageRole.user
@@ -153,15 +358,6 @@ struct MessageBubbleView: View {
                 dismissButton: .default(Text("好"))
             )
         }
-        // 只注入可判等的值：新建闭包每次都不相等，会让所有代码块与 Markdown 随气泡重算失效。
-        .environment(\.chatArtifactMessageID, artifactPinAction == nil ? nil : ChatMessageProjector.messageId(for: message))
-        // vendor 默认「复制」只有文字可点；Amber 显式放大到整组图标+文字、约 44pt 高（不改布局）。
-        .environment(\.swiftStreamingMarkdownCodeCopyHitOutset, 13)
-        // 流式 block 渲染路径的代码块头部同样放“收进产物架”，与 AmberMarkdownView 一致。
-        .environment(
-            \.swiftStreamingMarkdownCodeBlockHeaderAccessory,
-            artifactPinAction == nil ? nil : ChatCodeBlockHeaderAccessory.streamingHeaderProvider
-        )
     }
 
     // MARK: - Annotations (URL citations)

@@ -11,6 +11,7 @@ final class ChatTimelineUpdates {
     private(set) var structuralMessages: [UIMessage] = []
     private(set) var latestSignal = ChatMessageUpdateSignal()
     private var sourceIdentities: [ChatMessageContentIdentity] = []
+    private var canBypassNextStreamDelta = false
     private var tailHasBodyText = false
     private var consumerOwner: UUID?
     private var consume: ((UIMessage, ChatMessageUpdateSignal) -> Bool)?
@@ -41,15 +42,17 @@ final class ChatTimelineUpdates {
             guard let tail = messages.last else {
                 ChatRenderProbe.record("tail-fastpath:fail-no-tail")
                 structuralMessages = messages
-                sourceIdentities = messages.map { ChatMessageContentIdentity($0) }
-                tailHasBodyText = messages.last.map(Self.hasBodyText) ?? false
+                sourceIdentities = []
+                canBypassNextStreamDelta = false
+                tailHasBodyText = false
                 return true
             }
-            guard let previousTailIdentity = sourceIdentities.last else {
+            guard canBypassNextStreamDelta, let previousTailIdentity = sourceIdentities.last else {
                 ChatRenderProbe.record("tail-fastpath:fail-no-prev-identity")
                 structuralMessages = messages
-                sourceIdentities = messages.map { ChatMessageContentIdentity($0) }
-                tailHasBodyText = messages.last.map(Self.hasBodyText) ?? false
+                sourceIdentities = nextIdentities(for: messages)
+                tailHasBodyText = Self.hasBodyText(tail)
+                canBypassNextStreamDelta = Self.canPrepareStreamBypass(for: tail)
                 return true
             }
             if canUpdateOnlyTail(messages, previousTailIdentity: previousTailIdentity),
@@ -60,11 +63,47 @@ final class ChatTimelineUpdates {
                 )
                 return false
             }
+            structuralMessages = messages
+            sourceIdentities = nextIdentities(for: messages)
+            tailHasBodyText = Self.hasBodyText(tail)
+            canBypassNextStreamDelta = Self.canPrepareStreamBypass(for: tail)
+            return true
         }
         structuralMessages = messages
-        sourceIdentities = messages.map { ChatMessageContentIdentity($0) }
-        tailHasBodyText = messages.last.map(Self.hasBodyText) ?? false
+        if let tail = messages.last, Self.canPrepareStreamBypass(for: tail) {
+            sourceIdentities = nextIdentities(for: messages)
+            tailHasBodyText = Self.hasBodyText(tail)
+            canBypassNextStreamDelta = true
+        } else {
+            tailHasBodyText = messages.last.map(Self.hasBodyText) ?? false
+            canBypassNextStreamDelta = false
+        }
         return true
+    }
+
+    private static func canPrepareStreamBypass(for tail: UIMessage) -> Bool {
+        guard tail.role == MessageRole.assistant, tail.finishedAt == nil else { return false }
+        return tail.parts.contains { $0 is UIMessagePart.Text || $0 is UIMessagePart.Reasoning }
+    }
+
+    private func nextIdentities(for messages: [UIMessage]) -> [ChatMessageContentIdentity] {
+        var result: [ChatMessageContentIdentity] = []
+        result.reserveCapacity(messages.count)
+        let reusableCount = min(sourceIdentities.count, messages.count)
+        for index in 0..<reusableCount {
+            let existing = sourceIdentities[index]
+            if existing.matches(messages[index]) {
+                result.append(existing)
+            } else {
+                result.append(ChatMessageContentIdentity(messages[index]))
+            }
+        }
+        if reusableCount < messages.count {
+            for index in reusableCount..<messages.count {
+                result.append(ChatMessageContentIdentity(messages[index]))
+            }
+        }
+        return result
     }
 
     private func canUpdateOnlyTail(

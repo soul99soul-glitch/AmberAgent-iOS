@@ -61,7 +61,7 @@ struct ChatSwiftUIMessageBubble: View, @MainActor Equatable {
         return lhs.row.messageId == rhs.row.messageId &&
             lhs.row.role == rhs.row.role &&
             lhs.row.index == rhs.row.index &&
-            lhs.row.isLast == rhs.row.isLast &&
+            (lhs.row.isLast && lhs.isGenerationActive) == (rhs.row.isLast && rhs.isGenerationActive) &&
             lhs.row.hasEverStreamed == rhs.row.hasEverStreamed &&
             lhs.row.canAnimateInsertion == rhs.row.canAnimateInsertion &&
             lhs.variantInfo == rhs.variantInfo &&
@@ -83,6 +83,7 @@ struct ChatListMessageRenderModel {
     var assistantTurn: ChatAssistantTurnRole? = nil
     var isTaskLive = false
     var usesIndependentTasks = false
+    var contentObservesGenerationState = false
 }
 
 struct NativeTimelineMessageBubble: View, @MainActor Equatable {
@@ -119,16 +120,14 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
               lhs.model.row.role == rhs.model.row.role,
               lhs.model.row.index == rhs.model.row.index,
               lhs.model.row.isAssistantContinuation == rhs.model.row.isAssistantContinuation,
-              lhs.model.row.isLast == rhs.model.row.isLast,
               lhs.model.row.hasEverStreamed == rhs.model.row.hasEverStreamed,
               lhs.model.row.canAnimateInsertion == rhs.model.row.canAnimateInsertion,
               lhs.model.variantInfo == rhs.model.variantInfo,
-              lhs.model.renderState == rhs.model.renderState,
               lhs.model.renderIdentity == rhs.model.renderIdentity,
               lhs.model.phoneToolGroup?.signature == rhs.model.phoneToolGroup?.signature,
               lhs.model.assistantTurn == rhs.model.assistantTurn,
               lhs.model.isTaskLive == rhs.model.isTaskLive,
-              lhs.model.usesIndependentTasks == rhs.model.usesIndependentTasks,
+              lhs.effectiveIsGenerating == rhs.effectiveIsGenerating,
               lhs.displaySettingSignature == rhs.displaySettingSignature,
               lhs.generativeUiSettingSignature == rhs.generativeUiSettingSignature,
               lhs.imageAccessibilityFocusToolCallID == rhs.imageAccessibilityFocusToolCallID
@@ -139,13 +138,47 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
             return false
         }
 
+        if lhs.usesLiveTail && rhs.usesLiveTail {
+            return lhs.model.liveTailModel === rhs.model.liveTailModel &&
+                lhs.reasoningLevelLabel == rhs.reasoningLevelLabel
+        }
+
+        // Settled tail -> history transition (`isLast: true -> false` on send/append):
+        // keep the already-mounted body & Markdown subtree untouched when neither side
+        // is generating/streaming and the underlying message + frozen snapshot match.
+        if lhs.model.row.isLast != rhs.model.row.isLast {
+            let lhsHasMeta = ChatMessageContentIdentity.containsNonNilMetadata(in: lhs.model.row.parts)
+            let rhsHasMeta = ChatMessageContentIdentity.containsNonNilMetadata(in: rhs.model.row.parts)
+            let samePartMetadata = (!lhsHasMeta && !rhsHasMeta) || ChatMessageContentIdentity.sameMetadata(
+                ChatMessageContentIdentity.metadata(in: lhs.model.row.parts),
+                ChatMessageContentIdentity.metadata(in: rhs.model.row.parts)
+            )
+            let settledTransition = !lhs.effectiveIsGenerating &&
+                !rhs.effectiveIsGenerating &&
+                !rhs.model.row.isStreaming &&
+                (!lhs.model.row.isStreaming || lhs.usesLiveTail) &&
+                lhs.effectiveMessage === rhs.effectiveMessage &&
+                samePartMetadata &&
+                lhs.effectiveRenderState.hasEverStreamed == rhs.effectiveRenderState.hasEverStreamed &&
+                lhs.effectiveRenderState.frozenMarkdownSnapshot == rhs.effectiveRenderState.frozenMarkdownSnapshot &&
+                lhs.reasoningLevelLabel == rhs.reasoningLevelLabel &&
+                (!(lhs.model.contentObservesGenerationState || rhs.model.contentObservesGenerationState) ||
+                    lhs.effectiveIsGenerationActive == rhs.effectiveIsGenerationActive)
+            #if DEBUG
+            if !settledTransition { ChatRenderProbe.recordRowDifferences(lhs, rhs) }
+            #endif
+            return settledTransition
+        }
+
         if lhs.usesLiveTail || rhs.usesLiveTail {
             return lhs.model.liveTailModel === rhs.model.liveTailModel &&
                 lhs.reasoningLevelLabel == rhs.reasoningLevelLabel
         }
 
-        let equal = lhs.renderDigest == rhs.renderDigest &&
-            lhs.model.isGenerationActive == rhs.model.isGenerationActive
+        let equal = lhs.model.renderState == rhs.model.renderState &&
+            lhs.renderDigest == rhs.renderDigest &&
+            lhs.model.isGenerationActive == rhs.model.isGenerationActive &&
+            lhs.reasoningLevelLabel == rhs.reasoningLevelLabel
         #if DEBUG
         if !equal { ChatRenderProbe.recordRowDifferences(lhs, rhs) }
         #endif
@@ -154,6 +187,22 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
 
     private var usesLiveTail: Bool {
         model.row.isLast && model.liveTailModel != nil && model.renderState.liveRenderingEnabled
+    }
+
+    private var effectiveMessage: UIMessage {
+        (model.row.isLast ? model.liveTailModel?.message : nil) ?? model.row.message
+    }
+
+    private var effectiveIsGenerationActive: Bool {
+        (model.row.isLast ? model.liveTailModel?.isGenerationActive : nil) ?? model.isGenerationActive
+    }
+
+    private var effectiveRenderState: ChatRenderState {
+        (model.row.isLast ? model.liveTailModel?.renderState : nil) ?? model.renderState
+    }
+
+    private var effectiveIsGenerating: Bool {
+        (model.isTaskLive || (model.row.isLast && !model.usesIndependentTasks)) && effectiveIsGenerationActive
     }
 }
 

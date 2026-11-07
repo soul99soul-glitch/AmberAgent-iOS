@@ -10,32 +10,60 @@ import Combine
 struct ChatMessageContentIdentity {
     let message: UIMessage
     let index: Int?
+    let cachedParts: [UIMessagePart]
     typealias Metadata = [String: Kotlinx_serialization_jsonJsonElement]
+    private let trackedParts: [UIMessagePart]
     private let metadata: [Metadata?]
     private let hasNonNilMetadata: Bool
 
-    init(_ message: UIMessage, index: Int? = nil) {
+    init(_ message: UIMessage, index: Int? = nil, bridgedParts: [UIMessagePart]? = nil) {
         self.message = message
         self.index = index
-        if Self.containsNonNilMetadata(in: message.parts) {
-            metadata = Self.metadata(in: message.parts)
-            hasNonNilMetadata = true
+        let topParts = bridgedParts ?? message.parts
+        self.cachedParts = topParts
+        var flatParts: [UIMessagePart] = []
+        flatParts.reserveCapacity(topParts.count)
+        Self.collectTrackedParts(from: topParts, into: &flatParts)
+        self.trackedParts = flatParts
+        if flatParts.contains(where: { $0.metadata != nil }) {
+            self.metadata = flatParts.map(\.metadata)
+            self.hasNonNilMetadata = true
         } else {
-            metadata = []
-            hasNonNilMetadata = false
+            self.metadata = []
+            self.hasNonNilMetadata = false
         }
     }
 
     init(reusingMetadataFrom previous: ChatMessageContentIdentity, message: UIMessage) {
+        let topParts = message.parts
         self.message = message
         self.index = previous.index
+        self.cachedParts = topParts
+        var flatParts: [UIMessagePart] = []
+        flatParts.reserveCapacity(topParts.count)
+        Self.collectTrackedParts(from: topParts, into: &flatParts)
+        self.trackedParts = flatParts
         self.metadata = previous.metadata
         self.hasNonNilMetadata = previous.hasNonNilMetadata
     }
 
     func matches(_ message: UIMessage) -> Bool {
         guard self.message === message else { return false }
-        return hasSameMetadata(as: message.parts)
+        return hasSameTrackedMetadata()
+    }
+
+    private func hasSameTrackedMetadata() -> Bool {
+        if !hasNonNilMetadata {
+            for part in trackedParts where part.metadata != nil {
+                return false
+            }
+            return true
+        }
+        guard metadata.count == trackedParts.count else { return false }
+        for index in trackedParts.indices where metadata[index] != trackedParts[index].metadata {
+            return false
+        }
+        return true
     }
 
     func hasSameMetadata(as parts: [UIMessagePart]) -> Bool {
@@ -43,6 +71,15 @@ struct ChatMessageContentIdentity {
             return !Self.containsNonNilMetadata(in: parts)
         }
         return Self.sameMetadata(metadata, Self.metadata(in: parts))
+    }
+
+    private static func collectTrackedParts(from parts: [UIMessagePart], into output: inout [UIMessagePart]) {
+        for part in parts {
+            output.append(part)
+            if let tool = part as? UIMessagePart.Tool {
+                collectTrackedParts(from: tool.output, into: &output)
+            }
+        }
     }
 
     static func containsNonNilMetadata(in parts: [UIMessagePart]) -> Bool {
@@ -78,36 +115,70 @@ struct ChatMessageContentIdentity {
 final class ChatRowContentHashCache {
     private struct PartEntry {
         let part: UIMessagePart
+        let trackedSubparts: [UIMessagePart]
         let metadata: [ChatMessageContentIdentity.Metadata?]
         let hash: Int
     }
+    private struct RowHashEntry {
+        let identity: ChatMessageContentIdentity
+        let hash: Int
+    }
     private var entries: [String: [PartEntry?]] = [:]
+    private var rowHashes: [String: RowHashEntry] = [:]
     private(set) var partHashComputationCount = 0
+
+    private static func collectSubparts(of part: UIMessagePart) -> [UIMessagePart] {
+        guard let tool = part as? UIMessagePart.Tool else { return [part] }
+        var result: [UIMessagePart] = [part]
+        func appendChildren(_ parts: [UIMessagePart]) {
+            for child in parts {
+                result.append(child)
+                if let nested = child as? UIMessagePart.Tool {
+                    appendChildren(nested.output)
+                }
+            }
+        }
+        appendChildren(tool.output)
+        return result
+    }
 
     private func partEntry(_ part: UIMessagePart, cached: PartEntry?) -> PartEntry {
         if let cached, cached.part === part {
             if cached.metadata.isEmpty {
-                if !ChatMessageContentIdentity.containsNonNilMetadata(in: [part]) {
+                if !cached.trackedSubparts.contains(where: { $0.metadata != nil }) {
                     return cached
                 }
-            } else if ChatMessageContentIdentity.sameMetadata(
-                cached.metadata,
-                ChatMessageContentIdentity.metadata(in: [part])
-            ) {
-                return cached
+            } else if cached.metadata.count == cached.trackedSubparts.count {
+                var allSame = true
+                for index in cached.trackedSubparts.indices
+                where cached.metadata[index] != cached.trackedSubparts[index].metadata {
+                    allSame = false
+                    break
+                }
+                if allSame { return cached }
             }
         }
-        let metadata = ChatMessageContentIdentity.containsNonNilMetadata(in: [part])
-            ? ChatMessageContentIdentity.metadata(in: [part])
+        let trackedSubparts = Self.collectSubparts(of: part)
+        let metadata = trackedSubparts.contains(where: { $0.metadata != nil })
+            ? trackedSubparts.map(\.metadata)
             : []
         // Never `String(describing: part)`: Kotlin toString() of a phone tool part
         // serializes its base64 screenshots (100–200 KB each, MBs per row).
         // ChatPartSignature keeps tool payloads bounded and text parts exact.
         partHashComputationCount &+= 1
-        return PartEntry(part: part, metadata: metadata, hash: ChatPartSignature.hash(part, exactText: true))
+        return PartEntry(
+            part: part,
+            trackedSubparts: trackedSubparts,
+            metadata: metadata,
+            hash: ChatPartSignature.hash(part, exactText: true)
+        )
     }
 
     func contentHash(for row: ChatMessageRowModel) -> Int {
+        if let cachedRow = rowHashes[row.messageId],
+           cachedRow.identity.matches(row.message) {
+            return cachedRow.hash
+        }
         let previous = entries[row.messageId] ?? []
         var next: [PartEntry?] = []
         next.reserveCapacity(row.parts.count)
@@ -122,7 +193,12 @@ final class ChatRowContentHashCache {
             hasher.combine(String(describing: annotation))
         }
         entries[row.messageId] = next
-        return hasher.finalize()
+        let finalized = hasher.finalize()
+        rowHashes[row.messageId] = RowHashEntry(
+            identity: ChatMessageContentIdentity(row.message, bridgedParts: row.parts),
+            hash: finalized
+        )
+        return finalized
     }
 
     /// Streaming tail rows are re-laid out by the live-tail invalidation bridge on
@@ -173,6 +249,7 @@ final class ChatRowContentHashCache {
             }
         }
         entries[row.messageId] = next
+        rowHashes.removeValue(forKey: row.messageId)
         return hasher.finalize()
     }
 
@@ -188,10 +265,12 @@ final class ChatRowContentHashCache {
 
     func retain(ids: Set<String>) {
         entries = entries.filter { ids.contains($0.key) }
+        rowHashes = rowHashes.filter { ids.contains($0.key) }
     }
 
     func removeAll() {
         entries.removeAll()
+        rowHashes.removeAll()
     }
 }
 

@@ -20,6 +20,7 @@ struct ChatAssistantTurnProgress {
     /// Live, every tool has been called, and reply text is arriving after the last one.
     let isComposingReply: Bool
     let signature: Int
+    var hasPendingToolCall: Bool = false
 }
 
 enum ChatAssistantTurnRole: Equatable {
@@ -71,8 +72,11 @@ enum ChatAssistantTurnToolGrouping {
         entries: [NativeTimelineEntry],
         messages: [UIMessage],
         isGenerationActive: Bool,
-        liveMessageIDs: Set<String> = []
+        liveMessageIDs: Set<String> = [],
+        fromEntryIndex: Int = 0,
+        factsByObjectID: [ObjectIdentifier: NativeTimelineMessageFacts]? = nil
     ) -> [ChatAssistantTurnRole?] {
+        let startEntryIndex = max(0, min(fromEntryIndex, entries.count))
         var roles = [ChatAssistantTurnRole?](repeating: nil, count: entries.count)
         var current: Turn?
         func close() {
@@ -82,27 +86,43 @@ enum ChatAssistantTurnToolGrouping {
                     entries: entries,
                     isGenerationActive: isGenerationActive,
                     liveMessageIDs: liveMessageIDs,
+                    factsByObjectID: factsByObjectID,
                     into: &roles
                 )
             }
             current = nil
         }
-        if let windowStart = entries.first(where: { $0.kind == .message })?.index {
-            let prefix = prefixMessages(messages: messages, before: windowStart)
+        if startEntryIndex == 0,
+           let windowStart = entries.first(where: { $0.kind == .message })?.index {
+            let prefix = prefixMessages(
+                messages: messages,
+                before: windowStart,
+                factsByObjectID: factsByObjectID
+            )
             if !prefix.isEmpty { current = Turn(prefixMessages: prefix) }
         }
-        for index in entries.indices {
+        for index in startEntryIndex ..< entries.count {
             let entry = entries[index]
             guard entry.kind == .message else {
                 if entry.kind == .contextMarker { close() }
                 continue
             }
-            guard let message = entry.message,
-                  message.role == MessageRole.assistant,
-                  !entry.hasMultipleVariants,
-                  !ChatMessageProjector.isSubAgentResult(message) else {
+            guard let message = entry.message, !entry.hasMultipleVariants else {
                 close()
                 continue
+            }
+            if let facts = factsByObjectID?[ObjectIdentifier(message)] {
+                guard facts.effectiveRole == MessageRole.assistant,
+                      !facts.isSubAgentResult else {
+                    close()
+                    continue
+                }
+            } else {
+                guard message.role == MessageRole.assistant,
+                      !ChatMessageProjector.isSubAgentResult(message) else {
+                    close()
+                    continue
+                }
             }
             if current == nil { current = Turn() }
             current?.memberIndices.append(index)
@@ -128,35 +148,58 @@ enum ChatAssistantTurnToolGrouping {
         entries: [NativeTimelineEntry],
         isGenerationActive: Bool,
         liveMessageIDs: Set<String> = [],
+        factsByObjectID: [ObjectIdentifier: NativeTimelineMessageFacts]? = nil,
         into roles: inout [ChatAssistantTurnRole?]
     ) {
+        func resolvedFacts(_ message: UIMessage) -> NativeTimelineMessageFacts? {
+            factsByObjectID?[ObjectIdentifier(message)]
+        }
+        func resolvedMessageID(_ message: UIMessage) -> String {
+            resolvedFacts(message)?.messageId ?? ChatMessageProjector.messageId(for: message)
+        }
+        func resolvedTools(_ message: UIMessage) -> [UIMessagePart.Tool] {
+            resolvedFacts(message)?.turnToolParts ?? toolParts(message)
+        }
+        func resolvedHasReasoning(_ message: UIMessage) -> Bool {
+            resolvedFacts(message)?.hasRenderableReasoning ?? hasRenderableReasoning(message)
+        }
+        func resolvedContainsVisibleText(_ message: UIMessage) -> Bool {
+            resolvedFacts(message)?.containsVisibleText ?? containsVisibleText(message)
+        }
+        func resolvedCanHost(_ message: UIMessage) -> Bool {
+            resolvedFacts(message)?.canHostTurnProgress ?? canHostTurnProgress(message)
+        }
+        func resolvedIsCollapsible(_ message: UIMessage) -> Bool {
+            resolvedFacts(message)?.isTurnCollapsible ?? isCollapsible(message)
+        }
+
         let loaded = turn.memberIndices.compactMap { index in entries[index].message.map { (index, $0) } }
         let turnMessages = turn.prefixMessages + loaded.map(\.1)
-        let tools = turnMessages.flatMap(toolParts)
+        let tools = turnMessages.flatMap(resolvedTools)
 
         if tools.isEmpty {
-            let hasReasoning = turnMessages.contains(where: hasRenderableReasoning)
+            let hasReasoning = turnMessages.contains(where: resolvedHasReasoning)
             guard hasReasoning else { return }
-            let hasVisibleText = turnMessages.contains(where: containsVisibleText)
-            guard let firstReasoningMessage = turnMessages.first(where: hasRenderableReasoning) else { return }
-            let groupID = ChatMessageProjector.messageId(for: firstReasoningMessage)
+            let hasVisibleText = turnMessages.contains(where: resolvedContainsVisibleText)
+            guard let firstReasoningMessage = turnMessages.first(where: resolvedHasReasoning) else { return }
+            let groupID = resolvedMessageID(firstReasoningMessage)
 
             if hasVisibleText {
                 for (index, message) in loaded {
                     roles[index] = .member(
                         groupID: groupID,
-                        isCollapsed: isCollapsible(message),
-                        hasVisibleText: containsVisibleText(message)
+                        isCollapsed: resolvedIsCollapsible(message),
+                        hasVisibleText: resolvedContainsVisibleText(message)
                     )
                 }
                 return
             }
 
-            guard let head = loaded.first(where: { hasRenderableReasoning($0.1) }),
+            guard let head = loaded.first(where: { resolvedHasReasoning($0.1) }),
                   let headMessageID = entries[head.0].messageId else { return }
             let isTailTurn = loaded.last.map { entries[$0.0].isLastMessage } ?? false
             let isSlotLive = !liveMessageIDs.isEmpty && turnMessages.contains {
-                liveMessageIDs.contains(ChatMessageProjector.messageId(for: $0))
+                liveMessageIDs.contains(resolvedMessageID($0))
             }
             let isLive = isGenerationActive && (isTailTurn || isSlotLive)
             var hasher = Hasher()
@@ -180,30 +223,44 @@ enum ChatAssistantTurnToolGrouping {
                     ? .head(progress)
                     : .member(
                         groupID: groupID,
-                        isCollapsed: isCollapsible(message),
-                        hasVisibleText: containsVisibleText(message)
+                        isCollapsed: resolvedIsCollapsible(message),
+                        hasVisibleText: resolvedContainsVisibleText(message)
                     )
             }
             return
         }
 
         guard !tools.allSatisfy({ ChatPhoneToolGrouping.isPhoneTool($0.toolName) }),
-              let firstToolMessage = turnMessages.first(where: canHostTurnProgress),
-              let head = loaded.first(where: { canHostTurnProgress($0.1) }),
+              let firstToolMessage = turnMessages.first(where: resolvedCanHost),
+              let head = loaded.first(where: { resolvedCanHost($0.1) }),
               let headMessageID = entries[head.0].messageId else { return }
 
-        let groupID = ChatMessageProjector.messageId(for: firstToolMessage)
+        let groupID = resolvedMessageID(firstToolMessage)
         let isTailTurn = loaded.last.map { entries[$0.0].isLastMessage } ?? false
-        let hasPendingToolCall = tools.contains { $0.output.isEmpty }
+        let hasPendingToolCall = factsByObjectID != nil
+            ? turnMessages.contains { resolvedFacts($0)?.hasPendingTurnTool ?? false }
+            : tools.contains { $0.output.isEmpty }
         let isSlotLive = !liveMessageIDs.isEmpty && turnMessages.contains {
-            liveMessageIDs.contains(ChatMessageProjector.messageId(for: $0))
+            liveMessageIDs.contains(resolvedMessageID($0))
         }
         let isLive = isGenerationActive && (isTailTurn || hasPendingToolCall || isSlotLive)
-        let isThinking = isLive && !hasPendingToolCall && endsWithThinking(turnMessages)
-        let isComposingReply = isLive && !hasPendingToolCall && endsWithReplyText(turnMessages)
+        let trailingSignal: ChatAssistantTurnTrailingSignal? = {
+            guard isLive && !hasPendingToolCall, factsByObjectID != nil else { return nil }
+            for message in turnMessages.reversed() {
+                guard let facts = resolvedFacts(message) else { return nil }
+                if facts.trailingTurnSignal != .none {
+                    return facts.trailingTurnSignal
+                }
+            }
+            return ChatAssistantTurnTrailingSignal.none
+        }()
+        let isThinking = isLive && !hasPendingToolCall &&
+            (trailingSignal.map { $0 == .thinking } ?? endsWithThinking(turnMessages))
+        let isComposingReply = isLive && !hasPendingToolCall &&
+            (trailingSignal.map { $0 == .replyText } ?? endsWithReplyText(turnMessages))
         let anchorIDs = turnMessages.flatMap { message -> [String] in
-            let messageID = ChatMessageProjector.messageId(for: message)
-            return toolParts(message).map {
+            let messageID = resolvedMessageID(message)
+            return resolvedTools(message).map {
                 ChatToolCallAnchorTarget.id(messageID: messageID, toolCallID: $0.toolCallId)
             }
         }
@@ -238,29 +295,40 @@ enum ChatAssistantTurnToolGrouping {
             isLive: isLive,
             isThinking: isThinking,
             isComposingReply: isComposingReply,
-            signature: hasher.finalize()
+            signature: hasher.finalize(),
+            hasPendingToolCall: hasPendingToolCall
         )
         for (index, message) in loaded {
             roles[index] = index == head.0
                 ? .head(progress)
                 : .member(
                     groupID: groupID,
-                    isCollapsed: isCollapsible(message),
-                    hasVisibleText: containsVisibleText(message)
+                    isCollapsed: resolvedIsCollapsible(message),
+                    hasVisibleText: resolvedContainsVisibleText(message)
                 )
         }
     }
 
     /// Earlier assistant messages of the turn cut off by the loaded window.
-    private static func prefixMessages(messages: [UIMessage], before index: Int) -> [UIMessage] {
+    private static func prefixMessages(
+        messages: [UIMessage],
+        before index: Int,
+        factsByObjectID: [ObjectIdentifier: NativeTimelineMessageFacts]? = nil
+    ) -> [UIMessage] {
         var reversed: [UIMessage] = []
         var cursor = min(index, messages.count) - 1
         while cursor >= 0 {
             let message = messages[cursor]
             cursor -= 1
-            guard ChatMessageProjector.isVisibleInTimeline(message) else { continue }
-            guard message.role == MessageRole.assistant,
-                  !ChatMessageProjector.isSubAgentResult(message) else { break }
+            if let facts = factsByObjectID?[ObjectIdentifier(message)] {
+                guard facts.isVisibleInTimeline else { continue }
+                guard facts.effectiveRole == MessageRole.assistant,
+                      !facts.isSubAgentResult else { break }
+            } else {
+                guard ChatMessageProjector.isVisibleInTimeline(message) else { continue }
+                guard message.role == MessageRole.assistant,
+                      !ChatMessageProjector.isSubAgentResult(message) else { break }
+            }
             reversed.append(message)
         }
         return reversed.reversed()
