@@ -43,7 +43,12 @@ extension ChatView {
         next.inChatActiveTaskCount = taskCounts.active
         next.inChatNeedsAttentionCount = taskCounts.needsAttention
         if resetTitleSeed || next.firstUserTitleSeed == nil {
-            next.firstUserTitleSeed = messages.first(where: { $0.role == MessageRole.user })?
+            let activeMessages = ChatEpisodeStore.shared.unsealedNonSystemMessages(
+                for: currentConversationIdString,
+                in: messages
+            )
+            let seedMessages = activeMessages.isEmpty ? messages : activeMessages
+            next.firstUserTitleSeed = seedMessages.first(where: { $0.role == MessageRole.user })?
                 .toText()
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -149,14 +154,22 @@ extension ChatView {
             return "\(resolvedSoulName) · 云端"
         }
         _ = conversationStore.currentRevision
-        let storedTitle = conversationStore.currentConversation?.title
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !storedTitle.isEmpty {
-            return storedTitle.replacingOccurrences(of: "\n", with: " ")
-        }
-        if let firstUserText = chatListSummary.firstUserTitleSeed,
-           !firstUserText.isEmpty {
-            return firstUserText.replacingOccurrences(of: "\n", with: " ")
+        _ = ChatEpisodeStore.shared.mutationRevision
+        let isAtEmptyEpisodeBoundary = !ChatEpisodeStore.shared.episodes(for: currentConversationIdString).isEmpty
+            && ChatEpisodeStore.shared.isAtEmptyBoundary(
+                conversationId: currentConversationIdString,
+                messages: viewModel.messages
+            )
+        if !isAtEmptyEpisodeBoundary {
+            let storedTitle = conversationStore.currentConversation?.title
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !storedTitle.isEmpty {
+                return storedTitle.replacingOccurrences(of: "\n", with: " ")
+            }
+            if let firstUserText = chatListSummary.firstUserTitleSeed,
+               !firstUserText.isEmpty {
+                return firstUserText.replacingOccurrences(of: "\n", with: " ")
+            }
         }
         if let activeHubTitle = AmberHubStore.shared.activeHub?.title,
            !activeHubTitle.isEmpty {

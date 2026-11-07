@@ -56,6 +56,92 @@ final class ChatEpisodeTests: XCTestCase {
         }
     }
 
+    func testSingleStreamConversationTitleUpdatesAcrossTurnsAndEpisodes() async throws {
+        try await withFixture { f in
+            var capturedTitlePrompts: [String] = []
+            let auxProvider = EpisodeStubProvider { prompt in
+                if prompt.contains("icon:") || prompt.contains("summarize the conversation") {
+                    capturedTitlePrompts.append(prompt)
+                    if prompt.contains("看鞋底这么个动作") {
+                        return "看鞋底防滑出行\nicon:sparkles"
+                    }
+                    if prompt.contains("西湖散步") {
+                        return "西湖散步带伞\nicon:map"
+                    }
+                    return "毒舌吐槽用户\nicon:chat"
+                }
+                return "建议1"
+            }
+
+            let vm = ChatViewModel(
+                settingsStore: SettingsStore(
+                    userDefaults: f.defaults,
+                    storageKey: "episode-title-settings-\(UUID().uuidString)"
+                ),
+                sharedSettings: f.settings,
+                autoGenerateResponses: false,
+                auxiliaryTextProvider: auxProvider
+            )
+            vm.conversationStore = f.conversationStore
+            vm.reloadFromStore()
+            let convId = try XCTUnwrap(vm.currentConversationId)
+            let convKey = convId.toHexDashString()
+            defer { ChatEpisodeStore.shared.remove(conversationIds: [convKey]) }
+
+            // Turn 1: initial persona / roast topic -> title becomes "毒舌吐槽用户"
+            let u1 = UIMessage.companion.user(prompt: "给我来个毒舌吐槽用户的风格")
+            let a1 = UIMessage.companion.assistant(prompt: "行，那我就不客气了。")
+            vm.messages = [u1, a1]
+            await f.conversationStore.saveCurrent(messages: vm.messages)
+            vm.onGenerationCompleted(state: vm.currentRun.state)
+
+            let deadline1 = Date().addingTimeInterval(2.0)
+            while f.conversationStore.currentConversation?.title != "毒舌吐槽用户", Date() < deadline1 {
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            XCTAssertEqual(f.conversationStore.currentConversation?.title, "毒舌吐槽用户")
+
+            // Turn 2 & Turn 3 in the same single-stream conversation shift topic to checking shoe soles
+            let u2 = UIMessage.companion.user(prompt: "外面刚下完雨，路面看着有点滑")
+            let a2 = UIMessage.companion.assistant(prompt: "出门前先翻过来看一眼鞋底花纹深不深。")
+            let u3 = UIMessage.companion.user(prompt: "我刚看了一下鞋底，前掌还有纹路")
+            let a3 = UIMessage.companion.assistant(prompt: "宝宝，这就对了。看鞋底这么个动作，比听天气预报都实在，纹路清楚就行。")
+            vm.messages = [u1, a1, u2, a2, u3, a3]
+            await f.conversationStore.saveCurrent(messages: vm.messages)
+            vm.onGenerationCompleted(state: vm.currentRun.state)
+
+            let deadline2 = Date().addingTimeInterval(2.0)
+            while f.conversationStore.currentConversation?.title != "看鞋底防滑出行", Date() < deadline2 {
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            XCTAssertEqual(
+                f.conversationStore.currentConversation?.title,
+                "看鞋底防滑出行",
+                "单流对话后续轮次话题演进后应刷新会话标题，不应永久卡在首轮的「毒舌吐槽用户」"
+            )
+
+            // Seal current episode and start a new Episode topic: archived messages must not leak into title prompt
+            XCTAssertTrue(vm.startNewEpisode(nowMillis: 1_700_000_200_000))
+            let u4 = UIMessage.companion.user(prompt: "周末去西湖散步带什么伞比较好？")
+            let a4 = UIMessage.companion.assistant(prompt: "带一把轻便的晴雨两用折叠伞就够了。")
+            vm.messages = [u1, a1, u2, a2, u3, a3, u4, a4]
+            await f.conversationStore.saveCurrent(messages: vm.messages)
+            vm.onGenerationCompleted(state: vm.currentRun.state)
+
+            let deadline3 = Date().addingTimeInterval(2.0)
+            while f.conversationStore.currentConversation?.title != "西湖散步带伞", Date() < deadline3 {
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            XCTAssertEqual(f.conversationStore.currentConversation?.title, "西湖散步带伞")
+            let latestTitlePrompt = try XCTUnwrap(capturedTitlePrompts.last)
+            XCTAssertTrue(latestTitlePrompt.contains("西湖散步"))
+            XCTAssertFalse(
+                latestTitlePrompt.contains("看鞋底这么个动作"),
+                "新 Episode 的标题生成输入不应混入已归档 Episode 的旧消息"
+            )
+        }
+    }
+
     func testAutomaticThreeHourIdleGapSealsPriorEpisodeBeforeNewMessage() async throws {
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("EpisodeIdle-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: tempDir) }
