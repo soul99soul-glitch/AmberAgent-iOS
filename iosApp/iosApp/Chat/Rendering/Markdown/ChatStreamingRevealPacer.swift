@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 private struct ChatPacesStreamingTextBlocksKey: EnvironmentKey {
     static let defaultValue = false
@@ -481,5 +482,122 @@ enum ChatStreamingRevealTiming {
         guard chosenStep > 0, !stepIndices.isEmpty else { return totalUTF16 }
         let targetIndex = stepIndices[min(chosenStep, stepIndices.count) - 1]
         return targetIndex.utf16Offset(in: text)
+    }
+}
+
+/// Keeps the streaming subtree's graph updates local; the surrounding timeline
+/// receives only a changed natural height. Non-native and settled history keep
+/// their existing hosting path.
+struct ChatStreamingGraphBoundary<Content: View>: View {
+    let isStreaming: Bool
+    let content: Content
+    @State private var didStream: Bool
+    @Environment(\.chatTimelineGrowth) private var growth
+
+    init(isStreaming: Bool, @ViewBuilder content: () -> Content) {
+        self.isStreaming = isStreaming
+        self.content = content()
+        _didStream = State(initialValue: isStreaming)
+    }
+
+    var body: some View {
+        Group {
+            if growth != nil && didStream {
+                ChatStreamingGraphHost(content: content)
+            } else {
+                content
+            }
+        }
+        .onChange(of: isStreaming) { _, active in
+            if active && !didStream { didStream = true }
+        }
+    }
+}
+
+private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresentable {
+    let content: Content
+
+    struct Root: View {
+        let content: Content
+        let environment: EnvironmentValues
+        let heightChanged: (CGFloat) -> Void
+
+        var body: some View {
+            let _ = ChatRenderProbe.record("graph-host-root")
+            content
+                .environment(\.self, environment)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { heightChanged($0) }
+        }
+    }
+
+    final class SizedView: UIView {
+        var height: CGFloat = 0
+        override var intrinsicContentSize: CGSize {
+            CGSize(width: UIView.noIntrinsicMetric, height: height)
+        }
+    }
+
+    final class Controller: UIViewController {
+        var host: UIHostingController<Root>!
+        private var measuredWidth: CGFloat?
+        private var hasMeasured = false
+        private var sizedView: SizedView { view as! SizedView }
+
+        init(content: Content, environment: EnvironmentValues) {
+            super.init(nibName: nil, bundle: nil)
+            ChatRenderProbe.record("graph-host-created")
+            host = UIHostingController(rootView: root(content, environment: environment))
+            host.safeAreaRegions = []
+            host.view.backgroundColor = .clear
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        deinit { ChatRenderProbe.record("graph-host-released") }
+        override func loadView() { view = SizedView() }
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            view.backgroundColor = .clear
+            addChild(host)
+            view.addSubview(host.view)
+            host.didMove(toParent: self)
+        }
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            host.view.frame = view.bounds
+        }
+        func root(_ content: Content, environment: EnvironmentValues) -> Root {
+            Root(content: content, environment: environment, heightChanged: { [weak self] height in
+                guard let self, height.isFinite, height >= 0,
+                      abs(sizedView.height - height) > 0.5 else { return }
+                sizedView.height = height
+                sizedView.invalidateIntrinsicContentSize()
+                sizedView.setNeedsLayout()
+            })
+        }
+        func update(_ content: Content, environment: EnvironmentValues) {
+            host.rootView = root(content, environment: environment)
+        }
+        func size(width: CGFloat) -> CGSize {
+            if !hasMeasured || measuredWidth.map({ abs($0 - width) > 0.5 }) == true {
+                measuredWidth = width
+                let size = host.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude))
+                sizedView.height = size.height
+                hasMeasured = true
+            }
+            return CGSize(width: width, height: sizedView.height)
+        }
+    }
+
+    func makeUIViewController(context: Context) -> Controller {
+        Controller(content: content, environment: context.environment)
+    }
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        ChatRenderProbe.record("graph-host-update")
+        controller.update(content, environment: context.environment)
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, uiViewController: Controller, context: Context) -> CGSize? {
+        guard let width = proposal.width, width > 0, width.isFinite else { return nil }
+        return uiViewController.size(width: width)
     }
 }

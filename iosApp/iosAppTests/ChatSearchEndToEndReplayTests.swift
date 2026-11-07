@@ -25,6 +25,9 @@ final class ChatSearchEndToEndReplayTests: ChatNativeTimelineReplayTestCase {
             var result = try autoreleasepool { try runRound(round, records: records, firstUser: firstUser) }
             pump(seconds: 1)
             result["afterTeardownFootprintBytes"] = try XCTUnwrap(ChatReplayMemoryProbe.read()).footprint
+            let graphCounts = ChatRenderProbe.counts
+            result["streamingGraphsCreated"] = graphCounts["graph-host-created"]?.values.reduce(0, +) ?? 0
+            result["streamingGraphsReleased"] = graphCounts["graph-host-released"]?.values.reduce(0, +) ?? 0
             rounds.append(result)
             let data = try JSONSerialization.data(withJSONObject: rounds, options: [.prettyPrinted, .sortedKeys])
             try data.write(to: artifact.appendingPathComponent("end-to-end-three-rounds.json"))
