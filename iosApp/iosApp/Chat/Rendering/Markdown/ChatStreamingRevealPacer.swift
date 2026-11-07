@@ -143,7 +143,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         self.reduceMotion = reduceMotion
         self.initiallyRevealedUTF16Count = initiallyRevealedUTF16Count
         self.completionFeedback = completionFeedback
-        let resolvedRunID = completionFeedback?.runID(forMessageID: messageID) ?? completionFeedback?.runID
+        let resolvedRunID = completionFeedback?.runID(forMessageID: messageID) ?? completionFeedback?.untrackedCurrentRunID()
         self.completionRunID = resolvedRunID
         self.messageID = messageID
         self.textPartIndex = textPartIndex
@@ -236,7 +236,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                 let resolvedRunID = completionFeedback?.runID(forMessageID: messageID)
                     ?? latchedCompletionRunID
                     ?? completionRunID
-                    ?? completionFeedback?.runID
+                    ?? completionFeedback?.untrackedCurrentRunID()
                 guard let resolvedRunID else { return }
                 completionFeedback?.didDrain(
                     runID: resolvedRunID, messageID: messageID, partIndex: textPartIndex, text: text
@@ -244,7 +244,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
             }
             .onAppear {
                 if latchedCompletionRunID == nil {
-                    latchedCompletionRunID = completionFeedback?.runID(forMessageID: messageID) ?? completionRunID ?? completionFeedback?.runID
+                    latchedCompletionRunID = completionFeedback?.runID(forMessageID: messageID) ?? completionRunID ?? completionFeedback?.untrackedCurrentRunID()
                 }
                 guard isPacing, revealedUTF16Count == 0 else { return }
                 guard initiallyRevealedUTF16Count == nil else { return }

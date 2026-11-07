@@ -69,8 +69,8 @@ struct ChatAssistantMarkdownView: View {
 
     // 渲染器选择已硬编码：block 渲染器无条件参与竞争，coalesced 合并默认开启。
     // 不再暴露 microsoft/liyanan/streamingBlock/coalesced 开关给用户。
-    @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
-    @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
+    private var fontScale: Double { IOSChatRenderPreferences.shared.fontScale }
+    private var chatFont: String { IOSChatRenderPreferences.shared.chatFont }
     @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
     /// per-view-instance 的「这个 bubble 用过 block 流式渲染」latch，覆盖 completion 瞬间；
     /// 回收后的完成态由 projection 层 hasEverStreamed + liveRenderingEnabled 驱动。

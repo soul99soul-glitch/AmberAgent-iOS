@@ -903,6 +903,76 @@ enum IOSDisplayPreferenceKeys {
     static let coalescedTextBlocks = "app.amber.ios.display.coalescedTextBlocks"
 }
 
+/// Value-diffed `@Observable` mirror of chat display and language preferences in `UserDefaults.standard`.
+///
+/// `@AppStorage` observes `UserDefaults.didChangeNotification` without per-key filtering before
+/// scheduling SwiftUI view invalidations, causing unrelated `UserDefaults.standard` writes to
+/// penetrate `Equatable` timeline rows and clear `ChatTimelineRowLayout` caches. Diffing values
+/// before mutating `@Observable` properties keeps unrelated writes silent while preserving
+/// immediate updates when a display or language setting actually changes.
+@Observable
+final class IOSChatRenderPreferences {
+    nonisolated(unsafe) static let shared = IOSChatRenderPreferences()
+
+    private(set) var fontScale: Double
+    private(set) var chatFont: String
+    private(set) var agentName: Bool
+    private(set) var appLanguage: String
+
+    @ObservationIgnored private var defaultsObserver: NSObjectProtocol?
+
+    private init(defaults: UserDefaults = .standard) {
+        self.fontScale = Self.readDouble(from: defaults, key: IOSDisplayPreferenceKeys.fontScale, defaultValue: 1.0)
+        self.chatFont = defaults.string(forKey: IOSDisplayPreferenceKeys.chatFont) ?? IOSChatFont.default.rawValue
+        self.agentName = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.agentName, defaultValue: true)
+        self.appLanguage = defaults.string(forKey: IOSAppLanguagePreference.defaultsKey) ?? IOSAppLanguage.system.rawValue
+
+        self.defaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: nil,
+            queue: nil
+        ) { _ in
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    IOSChatRenderPreferences.shared.syncFromDefaults()
+                }
+            } else {
+                Task { @MainActor in
+                    IOSChatRenderPreferences.shared.syncFromDefaults()
+                }
+            }
+        }
+    }
+
+    @MainActor
+    func syncFromDefaults(_ defaults: UserDefaults = .standard) {
+        let nextFontScale = Self.readDouble(from: defaults, key: IOSDisplayPreferenceKeys.fontScale, defaultValue: 1.0)
+        if _fontScale != nextFontScale {
+            fontScale = nextFontScale
+        }
+        let nextChatFont = defaults.string(forKey: IOSDisplayPreferenceKeys.chatFont) ?? IOSChatFont.default.rawValue
+        if _chatFont != nextChatFont {
+            chatFont = nextChatFont
+        }
+        let nextAgentName = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.agentName, defaultValue: true)
+        if _agentName != nextAgentName {
+            agentName = nextAgentName
+        }
+        let nextAppLanguage = defaults.string(forKey: IOSAppLanguagePreference.defaultsKey) ?? IOSAppLanguage.system.rawValue
+        if _appLanguage != nextAppLanguage {
+            appLanguage = nextAppLanguage
+        }
+    }
+
+    private static func readDouble(from defaults: UserDefaults, key: String, defaultValue: Double) -> Double {
+        defaults.object(forKey: key) != nil ? defaults.double(forKey: key) : defaultValue
+    }
+
+    private static func readBool(from defaults: UserDefaults, key: String, defaultValue: Bool) -> Bool {
+        defaults.object(forKey: key) != nil ? defaults.bool(forKey: key) : defaultValue
+    }
+}
+
 enum IOSChatFont: String, CaseIterable, Identifiable {
     case `default`
     case serif

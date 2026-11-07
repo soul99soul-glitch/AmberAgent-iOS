@@ -228,8 +228,8 @@ struct AmberMarkdownView: View {
     @Environment(\.chatArtifactPinAction) private var artifactPinAction
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.legibilityWeight) private var legibilityWeight
-    @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
-    @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
+    private var fontScale: Double { IOSChatRenderPreferences.shared.fontScale }
+    private var chatFont: String { IOSChatRenderPreferences.shared.chatFont }
     @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
 
     private var boundedScale: Double {

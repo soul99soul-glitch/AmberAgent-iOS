@@ -34,6 +34,12 @@ final class ChatCompletionFeedback {
         runs.values.contains { !$0.terminalReceived || $0.pending != nil }
     }
 
+    /// Reads the latest `runID` without registering an `@Observable` access on the calling SwiftUI view,
+    /// preventing `begin(runID:)` from invalidating settled historical reveal pacers.
+    func untrackedCurrentRunID() -> String? {
+        _runID
+    }
+
     func runID(forMessageID messageID: String?) -> String? {
         guard let messageID,
               let mappedRunID = messageRunIDs[messageID],

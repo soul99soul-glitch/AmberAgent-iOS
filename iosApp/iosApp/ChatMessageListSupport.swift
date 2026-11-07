@@ -46,7 +46,7 @@ struct ChatAssistantStack<Content: View>: View {
 }
 
 struct ChatAgentName: View {
-    @AppStorage(IOSDisplayPreferenceKeys.agentName) private var agentName = true
+    private var agentName: Bool { IOSChatRenderPreferences.shared.agentName }
 
     var body: some View {
         if agentName {
@@ -61,8 +61,8 @@ struct ChatAgentName: View {
 
 struct ChatUserBubble: View {
     let text: String
-    @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
-    @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
+    private var fontScale: Double { IOSChatRenderPreferences.shared.fontScale }
+    private var chatFont: String { IOSChatRenderPreferences.shared.chatFont }
     @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
 
     private var boundedScale: Double {
@@ -121,8 +121,8 @@ struct ChatUserBubble: View {
 
 struct ChatAssistantText<Content: View>: View {
     let content: Content
-    @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
-    @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
+    private var fontScale: Double { IOSChatRenderPreferences.shared.fontScale }
+    private var chatFont: String { IOSChatRenderPreferences.shared.chatFont }
     @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
 
     init(@ViewBuilder content: () -> Content) {

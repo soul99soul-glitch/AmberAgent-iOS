@@ -77,8 +77,7 @@ struct MessageBubbleView: View {
     @State private var workspaceSaveAlert: WorkspaceSaveAlert?
     @State private var toolDetailTarget: ToolDetailTarget?
     @State private var taskStepCache = ChatTaskToolStepCache()
-    @AppStorage(IOSDisplayPreferenceKeys.autoExpandThinking) private var autoExpandThinking = true
-    @AppStorage(IOSAppLanguagePreference.defaultsKey) private var appLanguage = IOSAppLanguage.system.rawValue
+    private var appLanguage: String { IOSChatRenderPreferences.shared.appLanguage }
     @AccessibilityFocusState private var focusedGeneratedImageToolCallID: String?
 
     private var isUser: Bool {

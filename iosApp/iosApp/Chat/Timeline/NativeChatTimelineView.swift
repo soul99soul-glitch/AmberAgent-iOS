@@ -70,9 +70,9 @@ struct NativeChatTimelineView: View {
     @State private var laidOutHistoryFirstMessageID: String?
     @State private var expandedPhoneToolGroupIDs = ChatPhoneToolGroupExpansionStore.shared.expandedIDs
     @State private var phoneToolGroupToggleHandler = ChatPhoneToolGroupToggleHandler()
-    @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
-    @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
-    @AppStorage(IOSDisplayPreferenceKeys.agentName) private var agentName = true
+    private var fontScale: Double { IOSChatRenderPreferences.shared.fontScale }
+    private var chatFont: String { IOSChatRenderPreferences.shared.chatFont }
+    private var agentName: Bool { IOSChatRenderPreferences.shared.agentName }
 
     var body: some View {
         let _ = ChatRenderProbe.record("timeline")
