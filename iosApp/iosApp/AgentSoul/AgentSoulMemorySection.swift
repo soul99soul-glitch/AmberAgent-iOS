@@ -16,6 +16,7 @@ enum AgentMemoryPortraitBuilder {
         case identityAndFocus = "身份与项目"
         case preferencesAndTaboos = "偏好与禁区"
         case recentTopics = "近期议题"
+        case archived = "已归档"
 
         var id: String { rawValue }
     }
@@ -71,7 +72,7 @@ enum AgentMemoryPortraitBuilder {
                 if preferenceItems.count < 3, !containsNearDuplicate(cleaned, in: preferenceItems) {
                     preferenceItems.append(cleaned)
                 }
-            case .recentTopics, .all:
+            case .recentTopics, .all, .archived:
                 if recentItems.count < 3, !containsNearDuplicate(cleaned, in: recentItems) {
                     recentItems.append(cleaned)
                 }
@@ -251,8 +252,11 @@ enum AgentMemoryPortraitBuilder {
 // MARK: - 「记忆 Memory」栏视图（方案 A：3 维画像摘要 + AI 一键整理去重 + 原始记忆默认折叠）
 
 struct AgentSoulMemorySection: View {
+    var healthSnapshot: MemoryHealthCheckSnapshot = .empty
+
     @State private var persistence = IOSMemoryPersistence.shared
     @State private var isAdding = false
+    @State private var editingRecord: MemoryRecord?
     @State private var draft = ""
     @State private var errorText: String?
     @State private var consolidationFeedback: String?
@@ -262,6 +266,7 @@ struct AgentSoulMemorySection: View {
     @State private var selectedBucket: AgentMemoryPortraitBuilder.Bucket = .all
     @State private var searchQuery = ""
     @State private var swipedRecordId: Int32?
+    @State private var recentlyArchivedRecord: MemoryRecord?
 
     private static let portraitCacheKey = "app.amber.ios.agentSoul.memoryPortrait.v1"
 
@@ -269,10 +274,15 @@ struct AgentSoulMemorySection: View {
         persistence.records.filter { !$0.archived && $0.kind != .topic }
     }
 
+    private var archivedRecords: [MemoryRecord] {
+        persistence.records.filter { $0.archived && $0.kind != .topic }
+    }
+
     private var filteredRecords: [MemoryRecord] {
         let trimmedQuery = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        return records.filter { record in
-            if selectedBucket != .all && AgentMemoryPortraitBuilder.classify(record) != selectedBucket {
+        let pool = (selectedBucket == .archived) ? archivedRecords : records
+        return pool.filter { record in
+            if selectedBucket != .all && selectedBucket != .archived && AgentMemoryPortraitBuilder.classify(record) != selectedBucket {
                 return false
             }
             guard !trimmedQuery.isEmpty else { return true }
@@ -293,10 +303,38 @@ struct AgentSoulMemorySection: View {
             topActionRow
                 .padding(.horizontal, 2)
 
-            if records.isEmpty {
+            MemoryHealthCheckCard(snapshot: healthSnapshot)
+
+            if let archived = recentlyArchivedRecord {
+                HStack(spacing: 8) {
+                    Image(systemName: "archivebox.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(AmberTheme.accentAmber)
+                    Text("已归档「\(IOSMemoryLibrary.preview(archived.content, limit: 20))」")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AgentEmbodimentPalette.ink)
+                        .lineLimit(1)
+                    Spacer()
+                    Button("撤销") {
+                        restore(archived)
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AgentEmbodimentPalette.accent)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Capsule(style: .continuous).fill(AgentEmbodimentPalette.cardElevated))
+                .overlay {
+                    Capsule(style: .continuous).strokeBorder(AgentEmbodimentPalette.hairline, lineWidth: 1)
+                }
+            }
+
+            if records.isEmpty && archivedRecords.isEmpty {
                 emptyState
             } else {
-                portraitSummaryCard
+                if !records.isEmpty {
+                    portraitSummaryCard
+                }
 
                 if let consolidationFeedback {
                     HStack(spacing: 6) {
@@ -328,6 +366,19 @@ struct AgentSoulMemorySection: View {
         }
         .sheet(isPresented: $isAdding) {
             addMemorySheet
+        }
+        .sheet(isPresented: Binding(
+            get: { editingRecord != nil },
+            set: { if !$0 { editingRecord = nil } }
+        )) {
+            if let record = editingRecord {
+                MemoryEditView(
+                    recordId: Int(record.id),
+                    initialText: record.content,
+                    initialScope: IOSMemoryLibrary.scopeTitle(record.scope),
+                    initialPinned: record.pinned
+                )
+            }
         }
     }
 
@@ -578,7 +629,7 @@ struct AgentSoulMemorySection: View {
                     }
 
                     if filteredRecords.isEmpty {
-                        Text("当前筛选下没有匹配的原始记忆")
+                        Text(selectedBucket == .archived ? "没有已归档的记忆" : "当前筛选下没有匹配的原始记忆")
                             .font(.system(size: 12.5))
                             .foregroundStyle(AgentEmbodimentPalette.inkMuted)
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -593,6 +644,15 @@ struct AgentSoulMemorySection: View {
                                         withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
                                             swipedRecordId = isOpen ? record.id : nil
                                         }
+                                    },
+                                    onEdit: {
+                                        editingRecord = record
+                                    },
+                                    onArchive: {
+                                        archive(record)
+                                    },
+                                    onRestore: {
+                                        restore(record)
                                     },
                                     onDelete: {
                                         delete(record)
@@ -776,6 +836,35 @@ struct AgentSoulMemorySection: View {
         }
     }
 
+    private func archive(_ record: MemoryRecord) {
+        if swipedRecordId == record.id { swipedRecordId = nil }
+        let previous = persistence.records
+        guard let archived = IosMemoryFactory.shared.setArchived(id: record.id, archived: true),
+              persistence.persist(previousRecords: previous) else {
+            errorText = persistence.lastErrorMessage ?? "归档失败，请重试。"
+            return
+        }
+        errorText = nil
+        aiRefinedPortrait = nil
+        recentlyArchivedRecord = archived
+    }
+
+    private func restore(_ record: MemoryRecord) {
+        if swipedRecordId == record.id { swipedRecordId = nil }
+        let previous = persistence.records
+        let now = Int64(Date().timeIntervalSince1970 * 1_000)
+        guard IosMemoryFactory.shared.restoreMemory(id: record.id, now: now) != nil,
+              persistence.persist(previousRecords: previous) else {
+            errorText = persistence.lastErrorMessage ?? "恢复失败，请重试。"
+            return
+        }
+        errorText = nil
+        aiRefinedPortrait = nil
+        if recentlyArchivedRecord?.id == record.id {
+            recentlyArchivedRecord = nil
+        }
+    }
+
     private func delete(_ record: MemoryRecord) {
         if swipedRecordId == record.id {
             swipedRecordId = nil
@@ -787,16 +876,22 @@ struct AgentSoulMemorySection: View {
         } else {
             errorText = nil
             aiRefinedPortrait = nil
+            if recentlyArchivedRecord?.id == record.id {
+                recentlyArchivedRecord = nil
+            }
         }
     }
 }
 
-// MARK: - 单条记忆卡片（支持左滑露出红色「删除」与右上菜单删除）
+// MARK: - 单条记忆卡片（展示类型、内容、来源对话、最近使用，支持编辑、归档/恢复与左滑删除）
 
 private struct MemorySwipeItemCard: View {
     let record: MemoryRecord
     let isSwipedOpen: Bool
     let onSetSwiped: (Bool) -> Void
+    let onEdit: () -> Void
+    let onArchive: () -> Void
+    let onRestore: () -> Void
     let onDelete: () -> Void
 
     @State private var dragTranslationX: CGFloat = 0
@@ -809,16 +904,13 @@ private struct MemorySwipeItemCard: View {
             return ("近期项目", true)
         case .preferencesAndTaboos:
             return ("偏好习惯", false)
-        case .recentTopics, .all:
+        case .recentTopics, .all, .archived:
             return ("近期议题", false)
         }
     }
 
-    private var timeLabel: String {
-        let timestampMs = record.updatedAt > 0 ? record.updatedAt : record.createdAt
-        guard timestampMs > 0 else { return "近期" }
-        let date = Date(timeIntervalSince1970: Double(timestampMs) / 1000)
-        return AgentEmbodimentHomeSheet.shortDate(date)
+    private var primaryTypeText: String {
+        IOSMemoryLibrary.primaryTypeTitle(for: record)
     }
 
     private var effectiveTrailingInset: CGFloat {
@@ -830,6 +922,7 @@ private struct MemorySwipeItemCard: View {
     var body: some View {
         let category = categoryInfo
         let revealDelete = isSwipedOpen || dragTranslationX < -6
+        let lastUsed = IOSMemoryLibrary.lastUsedDisplay(for: record)
 
         ZStack(alignment: .trailing) {
             if revealDelete {
@@ -855,28 +948,58 @@ private struct MemorySwipeItemCard: View {
             }
 
             VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
-                    Text(category.title)
+                HStack(spacing: 6) {
+                    Text(primaryTypeText)
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(category.isAccent ? AgentEmbodimentPalette.accent : AgentEmbodimentPalette.inkSecondary)
+                        .foregroundStyle(AgentEmbodimentPalette.accent)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 2.5)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(category.isAccent ? AgentEmbodimentPalette.accentSoftBg : AgentEmbodimentPalette.cardElevated)
-                        )
+                        .background(Capsule(style: .continuous).fill(AgentEmbodimentPalette.accentSoftBg))
+
+                    Text(category.title)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(AgentEmbodimentPalette.inkSecondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2.5)
+                        .background(Capsule(style: .continuous).fill(AgentEmbodimentPalette.cardElevated))
                         .overlay {
                             Capsule(style: .continuous)
-                                .strokeBorder(category.isAccent ? Color.clear : AgentEmbodimentPalette.hairline, lineWidth: 1)
+                                .strokeBorder(AgentEmbodimentPalette.hairline, lineWidth: 1)
                         }
-
-                    Text(timeLabel)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(AgentEmbodimentPalette.inkMuted)
 
                     Spacer(minLength: 4)
 
+                    if record.archived {
+                        Button(action: onRestore) {
+                            Text("恢复")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(AgentEmbodimentPalette.accent)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Capsule(style: .continuous).fill(AgentEmbodimentPalette.accentSoftBg))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
                     Menu {
+                        if !record.archived {
+                            Button {
+                                onEdit()
+                            } label: {
+                                Label("编辑记忆", systemImage: "pencil")
+                            }
+                            Button {
+                                onArchive()
+                            } label: {
+                                Label("归档此条记忆", systemImage: "archivebox")
+                            }
+                        } else {
+                            Button {
+                                onRestore()
+                            } label: {
+                                Label("恢复此条记忆", systemImage: "arrow.uturn.backward")
+                            }
+                        }
                         if isSwipedOpen {
                             Button(IOSAppLocalization.string("收起操作", defaultValue: "收起操作")) { onSetSwiped(false) }
                         } else {
@@ -903,6 +1026,16 @@ private struct MemorySwipeItemCard: View {
                     .lineSpacing(2.5)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 6) {
+                    Text(IOSMemoryLibrary.sourceDisplay(for: record))
+                        .lineLimit(1)
+                    Text("·")
+                    Text(lastUsed.text)
+                        .lineLimit(1)
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(AgentEmbodimentPalette.inkMuted)
             }
             .padding(13)
             .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(AgentEmbodimentPalette.cardBg))
@@ -912,7 +1045,11 @@ private struct MemorySwipeItemCard: View {
             .padding(.trailing, effectiveTrailingInset)
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .onTapGesture {
-                if isSwipedOpen { onSetSwiped(false) }
+                if isSwipedOpen {
+                    onSetSwiped(false)
+                } else if !record.archived {
+                    onEdit()
+                }
             }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 18, coordinateSpace: .local)

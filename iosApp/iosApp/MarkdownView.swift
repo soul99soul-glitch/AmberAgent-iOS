@@ -714,9 +714,9 @@ struct AmberMarkdownView: View {
 
         case .link:
             var result = buildInlineAttrString(node.children, source: source)
-            result.foregroundColor = .blue
+            result.foregroundColor = AmberTheme.accent
             result.underlineStyle = .single
-            if let urlString = node.linkHref(), let url = safeExternalURL(from: urlString) {
+            if let urlString = node.linkHref(), let url = safeMarkdownLinkURL(from: urlString) {
                 result.link = url
             }
             return result
@@ -735,8 +735,11 @@ struct AmberMarkdownView: View {
         }
     }
 
-    private func safeExternalURL(from raw: String) -> URL? {
-        ChatMarkdownOpenURLPolicy.url(from: raw)
+    private func safeMarkdownLinkURL(from raw: String) -> URL? {
+        if let external = ChatMarkdownOpenURLPolicy.url(from: raw) {
+            return external
+        }
+        return MemoryWikiLinkResolver.encodeRelativeHref(raw)
     }
 
     /// CommonMark flanking 规则会拒绝若干模型高频粗体形态（`**（重点）**`、

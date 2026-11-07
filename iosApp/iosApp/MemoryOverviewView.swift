@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MemoryOverviewView: View {
     let sharedSettings: IOSSharedSettingsStore
+    var healthSnapshot: MemoryHealthCheckSnapshot = .empty
 
     @Environment(\.dismiss) private var dismiss
     @Environment(RouterPath.self) private var router
@@ -21,6 +22,7 @@ struct MemoryOverviewView: View {
     @State private var operationError: String?
     @State private var showClearAuditConfirmation = false
     @State private var showAllAudit = false
+    @State private var showAutomationSettings = false
     /// P2-a: 受外部内容影响（POLLUTED）的会话数；空态时整节不显示。
     @State private var pollutedConversations: [ConversationSummary] = []
     /// 派生的记忆文档列表（index.md + topics/）；随 persistence.revision 刷新。
@@ -40,11 +42,10 @@ struct MemoryOverviewView: View {
                     case .memory:
                         intro
                         loadStatusSection
-                        runtimeSection
-                        extractionSection
-                        consolidationSection
-                        pollutionSection
+                        healthCheckSection
                         documentsSection
+                        pollutionSection
+                        automationSettingsGroup
                         auditSection
                     }
                 }
@@ -298,13 +299,68 @@ struct MemoryOverviewView: View {
     }
 
     private var intro: some View {
-        Text("管理 Amber 会在聊天中参考的本地记忆。自动提炼只保存用户明确表达的偏好与项目事实；你更正或否定时会更新或作废旧记忆，旧版本归档保留，可在「管理全部记忆」的「已归档」中查看与恢复。记录可以搜索、查看来源或删除。")
+        Text("管理 Amber 会在聊天中参考的本地记忆。自动提炼只保存用户明确表达的偏好与项目事实；更正或否定时旧版本会归档保留，可随时查看或恢复。")
             .font(.callout)
             .foregroundStyle(AmberTheme.foreground2)
             .lineSpacing(3)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
             .padding(.bottom, 6)
+    }
+
+    private var healthCheckSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "记忆体检")
+            MemoryHealthCheckCard(snapshot: healthSnapshot)
+                .padding(.horizontal, 16)
+        }
+    }
+
+    private var automationSettingsGroup: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "范围与自动维护")
+            AmberFormGroup {
+                Button {
+                    withAnimation(.smooth(duration: 0.2)) {
+                        showAutomationSettings.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "slider.horizontal.3")
+                            .accessibilityHidden(true)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(AmberTheme.accent)
+                            .frame(width: 28, height: 28)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("记忆范围、自动提炼与整理策略")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(AmberTheme.foreground)
+                            Text(consolidation.statusMessage)
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.muted)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Image(systemName: showAutomationSettings ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(AmberTheme.muted2)
+                            .accessibilityHidden(true)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            if showAutomationSettings {
+                runtimeSection
+                extractionSection
+                consolidationSection
+            }
+        }
     }
 
     private var extractionSection: some View {
@@ -807,5 +863,86 @@ private struct MemoryPresetRow: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
         .accessibilityLabel(title)
+    }
+}
+
+/// 记忆体检紧凑卡片：展示「被取代比例」「被引用比例」「常驻注入字数」三项指标。
+/// 支持纯空数据（`.empty`）占位展示，待核心线程传入真实统计快照后自动点亮数值。
+struct MemoryHealthCheckCard: View {
+    let snapshot: MemoryHealthCheckSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                MemoryHealthMetricCell(
+                    title: "被取代比例",
+                    value: snapshot.supersededRatioText,
+                    subtitle: snapshot.hasData ? "旧版本已归档" : "待统计",
+                    tint: AmberTheme.accentAmber
+                )
+
+                MemoryHealthMetricCell(
+                    title: "被引用比例",
+                    value: snapshot.citedRatioText,
+                    subtitle: snapshot.hasData ? "曾参与对话" : "待统计",
+                    tint: AmberTheme.accentGreen
+                )
+
+                MemoryHealthMetricCell(
+                    title: "常驻注入字数",
+                    value: snapshot.residentCharsText,
+                    subtitle: snapshot.residentBudgetText ?? (snapshot.hasData ? "核心与画像" : "待统计"),
+                    tint: AmberTheme.accent
+                )
+            }
+        }
+        .padding(12)
+        .background(
+            AmberTheme.surface,
+            in: RoundedRectangle(cornerRadius: AmberTheme.radiusLarge, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: AmberTheme.radiusLarge, style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.75)
+        }
+    }
+}
+
+private struct MemoryHealthMetricCell: View {
+    let title: String
+    let value: String
+    let subtitle: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(AmberTheme.muted)
+                .lineLimit(1)
+
+            Text(value)
+                .font(.system(.subheadline, design: .rounded).weight(.bold))
+                .foregroundStyle(value == "—" ? AmberTheme.muted2 : AmberTheme.foreground)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(value == "—" ? AmberTheme.muted2.opacity(0.45) : tint)
+                    .frame(width: 5, height: 5)
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(AmberTheme.muted)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            AmberTheme.background.opacity(0.65),
+            in: RoundedRectangle(cornerRadius: AmberTheme.radiusMedium, style: .continuous)
+        )
     }
 }
