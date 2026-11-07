@@ -1028,7 +1028,7 @@ enum IOSToolEffectClassMapping {
             return .sideEffect
         }
         switch rawAction.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "list", "read", "search", "query", "status":
+        case "list", "read", "search", "query", "status", "wiki_read", "wiki_search", "wiki_history":
             return .pure
         case "edit", "update", "delete", "remove":
             return .idempotent

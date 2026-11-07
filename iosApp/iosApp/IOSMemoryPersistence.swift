@@ -40,6 +40,12 @@ enum IOSMemoryToolExecutor {
         }
 
         let action = action(from: args)
+        if IOSMemoryWikiTool.actions.contains(action) {
+            var result = IOSMemoryWikiTool.execute(args: args, runtime: runtime, persistence: .shared, writePolicy: writePolicy)
+            result["tool"] = "memory_tool"
+            result["action"] = action
+            return json(result)
+        }
         switch action {
         case "list":
             return list(args: args, runtime: runtime)
@@ -76,7 +82,7 @@ enum IOSMemoryToolExecutor {
     static func requiresWriteApproval(input: String) -> Bool {
         guard let args = jsonObject(input) else { return false }
         switch action(from: args) {
-        case "create", "add", "write", "edit", "update", "delete", "remove":
+        case "create", "add", "write", "edit", "update", "delete", "remove", "wiki_edit", "wiki_revert":
             return true
         default:
             return false
@@ -86,8 +92,15 @@ enum IOSMemoryToolExecutor {
     static func approvalPreview(input: String) -> IOSMemoryToolApprovalPreview? {
         guard let args = jsonObject(input) else { return nil }
         let action = action(from: args)
-        guard ["create", "add", "write", "edit", "update", "delete", "remove"].contains(action) else {
+        guard ["create", "add", "write", "edit", "update", "delete", "remove", "wiki_edit", "wiki_revert"].contains(action) else {
             return nil
+        }
+        if IOSMemoryWikiTool.writes.contains(action) {
+            return IOSMemoryToolApprovalPreview(
+                action: action, scope: "long_term", kind: "note",
+                contentPreview: previewText("页面：\(args["path"] as? String ?? "index.md")\n说明：\(args["reason"] as? String ?? "")\n\(args["content"] as? String ?? "恢复版本：\(args["revision_id"] as? String ?? "")")"),
+                targetId: nil, expectedUpdatedAt: nil
+            )
         }
 
         let targetId = int(args["id"])
@@ -903,7 +916,8 @@ final class IOSMemoryPersistence {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     /// Derived Markdown documents (index.md + topics/) next to memories.json.
-    private let markdownStore: IOSMemoryMarkdownStore
+    let markdownStore: IOSMemoryMarkdownStore
+    var wikiNotes: IOSMemoryWikiNotes { markdownStore.wikiNotes }
     private(set) var records: [MemoryRecord] = []
     /// Derived profile (memories/profile.json). Losing it only costs a
     /// regeneration, so read/write failures never block the record store.
@@ -980,6 +994,11 @@ final class IOSMemoryPersistence {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.hasPrefix("<!--") }
             .joined(separator: "\n")
+    }
+
+    func refreshWikiDocuments() {
+        markdownStore.syncIfChanged(records: records, profile: profile)
+        revision += 1
     }
 
     /// Write the current KMP records to disk. Call after each mutation.

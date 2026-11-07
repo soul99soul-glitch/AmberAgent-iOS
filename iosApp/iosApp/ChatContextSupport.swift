@@ -581,7 +581,9 @@ struct ChatRuntimeContextBuilder {
         memoryRecallOverride: ChatMemoryContextBuilder.RecallResult?
     ) -> [UIMessage] {
         let result = memoryRecallResult(for: messages, override: memoryRecallOverride)
-        guard let prompt = result.prompt else { return messages }
+        let wikiIndex = IOSMemoryPersistence.shared.wikiNavigation(runtime: sharedSettings.agentRuntime)
+        let prompt = [wikiIndex, result.prompt].compactMap { $0 }.joined(separator: "\n\n")
+        guard !prompt.isEmpty else { return messages }
         // Recall changes turn to turn, so it goes after the stable leading
         // system fragments (soul, MCP catalog, orchestration, tool guidance).
         // Prefix-matching prompt caches then keep reusing those fragments.

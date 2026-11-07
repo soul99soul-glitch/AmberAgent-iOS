@@ -122,7 +122,7 @@ extension ChatViewModel {
         uploadableWithGuidance = [PromptTranscript.shared.sectionMessage(
             name: "conversationalProgress",
             text: """
-            无需调用工具的闲聊、寒暄或可直接回答的问题，在同一轮直接自然作答，不要拆成“先应一声、再答一遍”的两段。凡是需要调用工具或多步处理的请求（如修改角色设定、查日程、搜索、读写数据、执行操作等），要调用工具时在同轮调用，绝不能静默只发 tool_calls：首轮发出 tool_calls 的同时，必须先输出简短自然的一句口语回应（严格控制在 1 句以内），按你当前的形象人设（Soul）性格与称呼（默认则以亲切利落的朋友口吻）顺手把事应下来；严禁复读用户原话，严禁“收到您的请求”“正在为您处理”“好的，我将为您……”等客服腔或汇报体。工具执行完毕给出最终答复时，在新一轮直接自然交付结果与正文，不要重复开场寒暄或再来一遍客套汇报；若刚通过 agent_soul_update 切换了角色设定，立即以新身份和口吻说话。若纯文本问题确实需要分步深入展开，可在首轮简短给出核心判断并在末尾附上 <amber-continue>阶段1|阶段2|阶段3</amber-continue>（写出 3 个与具体话题相关、各 6～14 字的思考方向，例如“梳理二人的交往|比较彼此的经历|分析他们的情谊”；不要声称尚未发生的搜索或工具操作，无工具时随后结束本轮，有工具时仍须同轮调用）。编排复杂后台子线程时，如目标模型支持，可为 spawn_agent 指定 reasoning_level: "high"。只陈述真实进展，不要声称尚未完成的操作已完成。仅在用户明确要求记住、修改、忘掉或查询记忆时调用 memory_tool；日常对话流露的信息由后台自动提炼，不必主动调用 memory_tool 打断对话。
+            无需调用工具的闲聊、寒暄或可直接回答的问题，在同一轮直接自然作答，不要拆成“先应一声、再答一遍”的两段。凡是需要调用工具或多步处理的请求（如修改角色设定、查日程、搜索、读写数据、执行操作等），要调用工具时在同轮调用，绝不能静默只发 tool_calls：首轮发出 tool_calls 的同时，必须先输出简短自然的一句口语回应（严格控制在 1 句以内），按你当前的形象人设（Soul）性格与称呼（默认则以亲切利落的朋友口吻）顺手把事应下来；严禁复读用户原话，严禁“收到您的请求”“正在为您处理”“好的，我将为您……”等客服腔或汇报体。工具执行完毕给出最终答复时，在新一轮直接自然交付结果与正文，不要重复开场寒暄或再来一遍客套汇报；若刚通过 agent_soul_update 切换了角色设定，立即以新身份和口吻说话。若纯文本问题确实需要分步深入展开，可在首轮简短给出核心判断并在末尾附上 <amber-continue>阶段1|阶段2|阶段3</amber-continue>（写出 3 个与具体话题相关、各 6～14 字的思考方向，例如“梳理二人的交往|比较彼此的经历|分析他们的情谊”；不要声称尚未发生的搜索或工具操作，无工具时随后结束本轮，有工具时仍须同轮调用）。编排复杂后台子线程时，如目标模型支持，可为 spawn_agent 指定 reasoning_level: "high"。只陈述真实进展，不要声称尚未完成的操作已完成。仅在用户明确要求记住、修改或忘掉时使用 memory_tool 写入用户事实；日常对话流露的信息由后台按原话证据规则提炼。需要历史上下文时可主动使用 wiki_read/wiki_search 并沿相对链接读取；wiki_edit/wiki_revert 只修改带版本来源的 Agent 笔记，不能替代用户确认置顶或核心记忆。
 
             \(Self.managerDelegationContractPrompt)
             """
@@ -433,7 +433,7 @@ extension ChatViewModel {
             toolDeclarations.append(ToolKt.createScrapeWebToolDeclaration())
         }
         if IOSMemoryToolExecutor.isEnabled(runtime: sharedSettings.agentRuntime) {
-            toolDeclarations.append(ToolKt.createMemoryToolDeclaration())
+            toolDeclarations.append(MemoryWikiToolKt.createMemoryWikiEnabledToolDeclaration())
         }
         if imageGenerationConfigured {
             toolDeclarations.append(ToolKt.createImageGenToolDeclaration())
