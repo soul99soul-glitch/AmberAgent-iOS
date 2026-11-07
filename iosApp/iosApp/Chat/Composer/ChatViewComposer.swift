@@ -143,11 +143,13 @@ extension ChatView {
                         .transition(.scale(scale: 0.75, anchor: .bottomLeading).combined(with: .opacity))
                 }
 
-                if !viewModel.chatSuggestions.isEmpty, !viewModel.isGenerationActive {
+                if !viewModel.chatSuggestions.isEmpty, isCloudMainDialogueActive || !viewModel.isGenerationActive {
                     ChatSuggestionStrip(suggestions: viewModel.chatSuggestions) { suggestion in
                         viewModel.fillInputFromSuggestion(suggestion)
                         composerState.isInputFocused = true
                     }
+                    .onAppear { viewModel.suggestionDidAppear() }
+                    .onChange(of: viewModel.chatSuggestions) { _, _ in viewModel.suggestionDidAppear() }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
@@ -589,6 +591,7 @@ extension ChatView {
         let reqId = composerState.activeCloudDialogueRequestId
         composerState.isSubmittingCloudDialogue = true
         composerState.cloudDialogueErrorMessage = nil
+        viewModel.suggestionDraftChanged(text)
 
         Task { @MainActor in
             let result: Result<MacGatewayCloudDialogueReceipt, Error>
@@ -600,11 +603,13 @@ extension ChatView {
             composerState.isSubmittingCloudDialogue = false
             switch result {
             case .success:
+                viewModel.suggestionMessageSubmitted(text)
                 viewModel.inputText = ""
                 store.selectedCloudDialogueWorkItemId = nil
                 composerState.activeCloudDialogueRequestId = UUID().uuidString.lowercased()
                 composerState.lastCloudDialogueFingerprint = nil
                 _ = await store.pollCloudDialogueEvents()
+                viewModel.refreshCloudSuggestions(gateway: store)
             case .failure(let error):
                 composerState.cloudDialogueErrorMessage = error.localizedDescription
             }

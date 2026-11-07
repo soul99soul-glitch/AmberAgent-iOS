@@ -56,6 +56,9 @@ final class MacGatewayStore {
     var isCloudMainDialogueSelected = false
     var cloudDialogueCursor: Int64 = 0
     var cloudDialogueEvents: [MacGatewayCloudDialogueEvent] = []
+    /// Low-frequency composer trigger; process/progress events do not change it.
+    var cloudSuggestionReplyID: String?
+    @ObservationIgnored var cloudSuggestionSequence: Int64 = 0
     var cloudDialogueReceipts: [String: MacGatewayCloudDialogueReceipt] = [:]
     var cloudDialogueFollowups: [MacGatewayCloudDialogueFollowupRecord] = []
     var cloudDialogueProgressByWorkItem: [String: MacGatewayCloudDialogueWorkItemProgress] = [:]

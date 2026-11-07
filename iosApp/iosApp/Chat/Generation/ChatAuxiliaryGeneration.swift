@@ -10,11 +10,17 @@ import SwiftUI
 final class ChatSuggestionRequestOwner {
     private(set) var token: UUID?
     var task: Task<Void, Never>?
+    var host = "local"
+    var source: ChatSuggestionSource?
+    var sourceIsCurrent: (@MainActor () -> Bool)?
+    var cached: (source: ChatSuggestionSource, suggestions: [String], modelID: String)?
+    var feedback = ChatSuggestionFeedbackSession()
 
-    func begin() -> UUID {
+    func begin(source: ChatSuggestionSource? = nil) -> UUID {
         task?.cancel()
         let next = UUID()
         token = next
+        self.source = source
         return next
     }
 
@@ -22,11 +28,14 @@ final class ChatSuggestionRequestOwner {
         task?.cancel()
         task = nil
         token = nil
+        source = nil
+        sourceIsCurrent = nil
     }
 
     func finish(ifCurrent requestToken: UUID) -> Bool {
         guard token == requestToken else { return false }
         task = nil
+        token = nil
         return true
     }
 }
@@ -61,7 +70,7 @@ extension ChatViewModel {
 
         syncSoulFromCompletedTurnIfNeeded(messages: state.messages)
 
-        if isCurrentConversation(state.conversationId) { generateChatSuggestions() }
+        if isCurrentConversation(state.conversationId) { generateChatSuggestions(state: state) }
         let userMessageCount = state.messages.filter { $0.role == MessageRole.user }.count
         if userMessageCount == 1 { generateConversationTitle(state: state) }
         // 与标题共用 titleModelId；后台成功路径走同一 generator。
@@ -118,7 +127,7 @@ extension ChatViewModel {
     }
 
     /// 辅助模型:优先用指定的辅助模型,未设置时回退当前聊天模型(对齐 Android resolveTaskChatModel)。
-    private func resolveAuxModel(_ auxId: KotlinUuid) -> Model? {
+    func resolveAuxModel(_ auxId: KotlinUuid) -> Model? {
         sharedSettings.snapshot.findModelById(uuid: auxId) ?? sharedSettings.snapshot.getCurrentChatModel()
     }
 
@@ -137,12 +146,12 @@ extension ChatViewModel {
         }.joined(separator: "\n\n")
     }
 
-    private func auxLocaleName() -> String {
+    func auxLocaleName() -> String {
         Locale.current.localizedString(forIdentifier: Locale.current.identifier) ?? Locale.current.identifier
     }
 
     /// 用辅助模型跑一次单轮文本生成(OpenAIKmpProviderAdapter 内部按服务商类型分发 OpenAI/Claude)。
-    private func runAuxModel(model: Model, prompt: String, conversationId: KotlinUuid?) async -> String? {
+    func runAuxModel(model: Model, prompt: String, conversationId: KotlinUuid?) async -> String? {
         let snapshot = sharedSettings.snapshot
         guard let provider = ChatProviderConfiguration.provider(
             for: model,
@@ -238,44 +247,21 @@ extension ChatViewModel {
     }
 
     func fillInputFromSuggestion(_ suggestion: String) {
-        invalidateSuggestionRequest()
+        recordSuggestionFeedback(suggestionRequests.feedback.accept(suggestion))
+        suggestionRequests.invalidate()
         inputText = suggestion
         chatSuggestions = []
-    }
-
-    private func generateChatSuggestions() {
-        let snapshot = sharedSettings.snapshot
-        guard let model = resolveAuxModel(snapshot.suggestionModelId) else { return }
-        let content = auxConversationText(maxMessages: 8)
-        guard !content.isEmpty else { return }
-        let prompt = snapshot.suggestionPrompt
-            .replacingOccurrences(of: "{locale}", with: auxLocaleName())
-            .replacingOccurrences(of: "{content}", with: content)
-        let conversationId = currentConversationId
-        let requestToken = beginSuggestionRequest()
-        suggestionRequests.task = Task { [weak self] in
-            guard let self else { return }
-            guard let raw = await self.runAuxModel(model: model, prompt: prompt, conversationId: conversationId) else { return }
-            guard !Task.isCancelled else { return }
-            let suggestions = raw
-                .split(separator: "\n")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-                .prefix(5)
-            self.applySuggestions(
-                Array(suggestions),
-                requestToken: requestToken,
-                conversationId: conversationId
-            )
-        }
     }
 
     func beginSuggestionRequest() -> UUID {
         suggestionRequests.begin()
     }
 
-    func invalidateSuggestionRequest() {
+    func invalidateSuggestionRequest(reason: String = "context_changed", preserveCached: Bool = false) {
+        recordSuggestionFeedback(suggestionRequests.feedback.dismiss(reason: reason))
         suggestionRequests.invalidate()
+        if !preserveCached { suggestionRequests.cached = nil }
+        chatSuggestions = []
     }
 
     func applySuggestions(
@@ -284,12 +270,22 @@ extension ChatViewModel {
         conversationId: KotlinUuid?
     ) {
         guard suggestionRequests.token == requestToken,
-              isCurrentConversation(conversationId),
-              !isGenerationActive else { return }
-        _ = suggestionRequests.finish(ifCurrent: requestToken)
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-            chatSuggestions = suggestions
+              inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let source = suggestionRequests.source
+        if let source {
+            guard source.host == suggestionRequests.host else { return }
+            if source.host == "local" {
+                guard isCurrentConversation(conversationId), !isGenerationActive,
+                      messages.last.map({ String(describing: $0.id) }) == source.turn else { return }
+            } else {
+                guard suggestionRequests.sourceIsCurrent?() == true else { return }
+            }
+        } else {
+            guard isCurrentConversation(conversationId), !isGenerationActive else { return }
         }
+        _ = suggestionRequests.finish(ifCurrent: requestToken)
+        publishSuggestions(Array(suggestions.prefix(ChatSuggestionFilter.maximumCount)), source: source,
+                           modelID: suggestionRequests.cached?.modelID ?? "")
     }
 
     /// 清洗标题:取首行、去引号/首尾标点、限长。

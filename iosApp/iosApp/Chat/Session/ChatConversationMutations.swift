@@ -369,6 +369,7 @@ extension ChatViewModel {
         consumesComposer: Bool = true,
         persistsImmediately: Bool = true
     ) -> (digest: String, conversationId: KotlinUuid?, messageId: String) {
+        if consumesComposer { suggestionMessageSubmitted(text) }
         currentRun.state.clearChildResultWait()
         let nowMillis = Int64(Date().timeIntervalSince1970 * 1_000.0)
         _ = sealActiveEpisodeForIdleGapIfNeeded(incomingTimestampMillis: nowMillis)
