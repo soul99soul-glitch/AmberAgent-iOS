@@ -78,6 +78,151 @@ extension EnvironmentValues {
   /// The shared controller used by descendant Markdown views to route
   /// table/context-menu events to the configured `MarkdownListener`.
   @Entry public var markdownController: MarkdownController?
+  /// Vendored addition (AmberAgent): opt-in sink allowing streaming hosts to
+  /// append plain-text characters directly into the trailing TextKit 1
+  /// `ParagraphUIView` and gate height invalidation by laid-out line count.
+  /// Defaults to `nil`, keeping legacy package behavior unchanged.
+  @Entry public var markdownStreamingTailSink: MarkdownStreamingTailSink? = nil
+}
+
+/// Identity-stable bridge between a streaming host and the mounted trailing
+/// TextKit 1 `ParagraphUIView`.
+@MainActor
+public final class MarkdownStreamingTailSink: Equatable {
+  public nonisolated static func == (lhs: MarkdownStreamingTailSink, rhs: MarkdownStreamingTailSink) -> Bool {
+    lhs === rhs
+  }
+
+  weak var tailParagraphView: ParagraphUIView?
+  private(set) var targetTailContents: NSMutableAttributedString?
+  private(set) var shouldAnimateText = false
+  private(set) var appendsTailFadeAsUnit = false
+  private(set) var gatesHeightByLineCount = false
+
+  public nonisolated init() {}
+
+  public func updateStreamingConfig(
+    shouldAnimateText: Bool,
+    appendsTailFadeAsUnit: Bool,
+    gatesHeightByLineCount: Bool
+  ) {
+    self.shouldAnimateText = shouldAnimateText
+    self.appendsTailFadeAsUnit = appendsTailFadeAsUnit
+    self.gatesHeightByLineCount = gatesHeightByLineCount
+    tailParagraphView?.setGatesStreamingHeightByLineCount(gatesHeightByLineCount)
+  }
+
+  public func configureTarget(
+    contents: NSMutableAttributedString?,
+    shouldAnimateText: Bool,
+    appendsTailFadeAsUnit: Bool,
+    gatesHeightByLineCount: Bool
+  ) {
+    self.targetTailContents = contents
+    self.shouldAnimateText = shouldAnimateText
+    self.appendsTailFadeAsUnit = appendsTailFadeAsUnit
+    self.gatesHeightByLineCount = gatesHeightByLineCount
+
+    if let view = tailParagraphView {
+      if let contents {
+        if view.paragraphContents === contents || view.baseParagraphContents === contents {
+          view.setGatesStreamingHeightByLineCount(gatesHeightByLineCount)
+        } else if view.paragraphContents == contents {
+          view.adoptEquivalentParagraphContents(contents)
+          view.setGatesStreamingHeightByLineCount(gatesHeightByLineCount)
+        } else {
+          if !gatesHeightByLineCount {
+            view.setGatesStreamingHeightByLineCount(false)
+          }
+          tailParagraphView = nil
+        }
+      } else {
+        view.setGatesStreamingHeightByLineCount(false)
+        tailParagraphView = nil
+      }
+    }
+  }
+
+  public func setGatesHeightByLineCount(_ enabled: Bool) {
+    gatesHeightByLineCount = enabled
+    tailParagraphView?.setGatesStreamingHeightByLineCount(enabled)
+  }
+
+  public func canDirectAppend() -> Bool {
+    guard let targetTailContents,
+          let view = tailParagraphView,
+          view.paragraphContents === targetTailContents || view.baseParagraphContents === targetTailContents else {
+      return false
+    }
+    return view.canDirectAppendPlainTail()
+  }
+
+  public enum PlainTailAppendResult {
+    case notAppended
+    case appendedSameLine
+    case appendedHeightChanged
+  }
+
+  @discardableResult
+  public func appendPlainTail(_ suffixText: String) -> Bool {
+    appendPlainTailWithResult(suffixText, suppressIntrinsicInvalidation: false) != .notAppended
+  }
+
+  public func appendPlainTailWithResult(
+    _ suffixText: String,
+    suppressIntrinsicInvalidation: Bool = false
+  ) -> PlainTailAppendResult {
+    guard !suffixText.isEmpty,
+          let targetTailContents,
+          let view = tailParagraphView,
+          view.paragraphContents === targetTailContents || view.baseParagraphContents === targetTailContents else {
+      return .notAppended
+    }
+    view.setGatesStreamingHeightByLineCount(gatesHeightByLineCount)
+    let shouldAnimate = shouldAnimateText && (appendsTailFadeAsUnit || view.window != nil)
+    let outcome = view.appendStreamingPlainTail(
+      suffixText,
+      animatedByWord: shouldAnimate,
+      appendsTailFadeAsUnit: appendsTailFadeAsUnit,
+      suppressIntrinsicInvalidation: suppressIntrinsicInvalidation
+    )
+    switch outcome {
+    case .notAppended:
+      return .notAppended
+    case .appendedSameLine:
+      return .appendedSameLine
+    case .appendedHeightChanged:
+      return .appendedHeightChanged
+    }
+  }
+
+  func syncParagraphView(
+    _ view: ParagraphUIView,
+    contents: NSMutableAttributedString,
+    usesTextKit1: Bool
+  ) -> Bool {
+    guard usesTextKit1,
+          let targetTailContents,
+          contents === targetTailContents else {
+      if tailParagraphView === view {
+        view.setGatesStreamingHeightByLineCount(false)
+        tailParagraphView = nil
+      }
+      return false
+    }
+    if let previous = tailParagraphView, previous !== view {
+      previous.setGatesStreamingHeightByLineCount(false)
+    }
+    tailParagraphView = view
+    view.setGatesStreamingHeightByLineCount(gatesHeightByLineCount)
+    return true
+  }
+
+  func unbindParagraphView(_ view: ParagraphUIView) {
+    guard tailParagraphView === view else { return }
+    view.setGatesStreamingHeightByLineCount(false)
+    tailParagraphView = nil
+  }
 }
 
 #if DEBUG

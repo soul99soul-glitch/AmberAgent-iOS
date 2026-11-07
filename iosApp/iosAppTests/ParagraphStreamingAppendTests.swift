@@ -364,4 +364,55 @@ final class ParagraphStreamingAppendTests: XCTestCase {
         )
         XCTAssertEqual(view.textStorage.string, completed.string)
     }
+
+    func testLineCountGatedDirectAppendSuppressesMidLineInvalidationAndWrapsCleanly() {
+        let width: CGFloat = 337
+        let measureSize = CGSize(width: width, height: .greatestFiniteMagnitude)
+        let config = MarkdownRenderConfig.default
+        let proseAttrs: [NSAttributedString.Key: Any] = [
+            .font: config.paragraphStyle.textFonts.normal,
+            .typography: config.paragraphStyle.textFonts,
+            .foregroundColor: config.paragraphStyle.textColor
+        ]
+
+        let view = TextKit1IntrinsicInvalidationProbe.makeProbe()
+        view.frame = CGRect(x: 0, y: 0, width: width, height: 30)
+        view.setGatesStreamingHeightByLineCount(true)
+        let base = NSMutableAttributedString(string: "Hello ", attributes: proseAttrs)
+        view.setParagraphContents(base, lineSpacing: 4, animatedByWord: false)
+        view.layoutIfNeeded()
+        let oneLineSize = view.sizeThatFits(measureSize)
+        let baselineInvalidations = view.invalidationCount
+
+        // Mid-line CJK + emoji fallback on line 1 must not trigger intrinsic height invalidation
+        // while line count remains 1.
+        XCTAssertEqual(
+            view.appendStreamingPlainTail("中文🙂", animatedByWord: true, appendsTailFadeAsUnit: true),
+            .appendedSameLine
+        )
+        XCTAssertEqual(base.string, "Hello ", "直接追加不得原地污染 RenderableDocument 持有的基准属性串")
+        XCTAssertTrue(view.isUpToDate(with: base, lineSpacing: 4), "解析尚未追上前必须保护已直接追加的尾部不被回退")
+        XCTAssertEqual(view.invalidationCount, baselineInvalidations, "同行内追加不应触发外层高度失效")
+        XCTAssertEqual(view.sizeThatFits(measureSize).height, oneLineSize.height, "同行内测量高度应保持稳定")
+
+        // Wrapping onto line 2 must report the new line height immediately.
+        let wrappingTail = String(repeating: "继续追加直到折入第二行验证行变化高度上报", count: 3)
+        XCTAssertEqual(
+            view.appendStreamingPlainTail(wrappingTail, animatedByWord: true, appendsTailFadeAsUnit: true),
+            .appendedHeightChanged
+        )
+        XCTAssertGreaterThan(view.invalidationCount, baselineInvalidations, "跨行折行时必须上报新高度")
+        XCTAssertGreaterThan(view.sizeThatFits(measureSize).height, oneLineSize.height)
+
+        // Turning off line-count gating on completion reconciles exact final geometry.
+        view.setGatesStreamingHeightByLineCount(false)
+        let batchView = ParagraphUIView.makeTextKit1View()
+        batchView.frame = CGRect(x: 0, y: 0, width: width, height: 30)
+        let expected = NSMutableAttributedString(string: "Hello 中文🙂" + wrappingTail, attributes: proseAttrs)
+        batchView.setParagraphContents(expected, lineSpacing: 4, animatedByWord: false)
+        XCTAssertEqual(view.textStorage.string, expected.string)
+        XCTAssertEqual(view.sizeThatFits(measureSize), batchView.sizeThatFits(measureSize))
+        XCTAssertTrue(view.isUpToDate(with: expected, lineSpacing: 4))
+        XCTAssertFalse(view.hasDirectAppendedTail, "权威解析追平后应原地收口基准引用")
+    }
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftStreamingMarkdown
 import UIKit
 
 private struct ChatPacesStreamingTextBlocksKey: EnvironmentKey {
@@ -7,6 +8,10 @@ private struct ChatPacesStreamingTextBlocksKey: EnvironmentKey {
 
 private struct ChatIsActivelyPacingRevealKey: EnvironmentKey {
     static let defaultValue = false
+}
+
+private struct ChatStreamingTailCoordinatorKey: EnvironmentKey {
+    static let defaultValue: ChatStreamingTailCoordinator? = nil
 }
 
 extension EnvironmentValues {
@@ -18,6 +23,278 @@ extension EnvironmentValues {
     var chatIsActivelyPacingReveal: Bool {
         get { self[ChatIsActivelyPacingRevealKey.self] }
         set { self[ChatIsActivelyPacingRevealKey.self] = newValue }
+    }
+
+    var chatStreamingTailCoordinator: ChatStreamingTailCoordinator? {
+        get { self[ChatStreamingTailCoordinatorKey.self] }
+        set { self[ChatStreamingTailCoordinatorKey.self] = newValue }
+    }
+}
+
+/// Coordinates direct plain-text character appends from `ChatStreamingRevealPacer`
+/// into the active trailing `ParagraphUIView`, bypassing per-tick Markdown re-parsing
+/// and SwiftUI subtree invalidation until a block or inline syntax boundary appears.
+@MainActor
+final class ChatStreamingTailCoordinator: Equatable {
+    nonisolated static func == (lhs: ChatStreamingTailCoordinator, rhs: ChatStreamingTailCoordinator) -> Bool {
+        lhs === rhs
+    }
+
+    private weak var sink: SwiftStreamingMarkdown.MarkdownStreamingTailSink?
+    private var syncedBaseText: String?
+    private var syncedUTF16Count = 0
+    private var syncedEndsWithTrimmedWhitespace = false
+    private var lastVerifiedSourceText: String?
+    private var lastVerifiedSourceUTF16Count = 0
+
+    nonisolated init() {}
+
+    func bindSink(_ sink: SwiftStreamingMarkdown.MarkdownStreamingTailSink) {
+        guard self.sink !== sink else { return }
+        self.sink?.setGatesHeightByLineCount(false)
+        self.sink = sink
+        invalidateSync()
+    }
+
+    func invalidateSync() {
+        syncedBaseText = nil
+        syncedUTF16Count = 0
+        syncedEndsWithTrimmedWhitespace = false
+        lastVerifiedSourceText = nil
+        lastVerifiedSourceUTF16Count = 0
+    }
+
+    func didSyncRenderedText(_ text: String) {
+        if syncedBaseText == text, syncedUTF16Count >= text.utf16.count {
+            return
+        }
+        syncedBaseText = text
+        syncedUTF16Count = text.utf16.count
+        if let lastUnit = text.utf16.last, lastUnit == 0x20 || lastUnit == 0x09 {
+            syncedEndsWithTrimmedWhitespace = true
+        } else {
+            syncedEndsWithTrimmedWhitespace = false
+        }
+        lastVerifiedSourceText = text
+        lastVerifiedSourceUTF16Count = text.utf16.count
+    }
+
+    func setGatesHeightByLineCount(_ enabled: Bool) {
+        sink?.setGatesHeightByLineCount(enabled)
+    }
+
+    func tryDirectAppend(
+        in fullText: String,
+        from currentUTF16: Int,
+        to nextUTF16: Int
+    ) -> SwiftStreamingMarkdown.MarkdownStreamingTailSink.PlainTailAppendResult {
+        guard currentUTF16 > 0,
+              nextUTF16 > currentUTF16,
+              let sink,
+              syncedUTF16Count == currentUTF16,
+              !syncedEndsWithTrimmedWhitespace,
+              let syncedBaseText,
+              !syncedBaseText.isEmpty else {
+            return .notAppended
+        }
+        let totalUTF16 = fullText.utf16.count
+        guard nextUTF16 <= totalUTF16 else { return .notAppended }
+
+        if totalUTF16 != lastVerifiedSourceUTF16Count {
+            if let previousSource = lastVerifiedSourceText,
+               Self.hasUTF16Prefix(fullText, matching: previousSource, length: currentUTF16) {
+                lastVerifiedSourceText = fullText
+                lastVerifiedSourceUTF16Count = totalUTF16
+            } else if currentUTF16 == syncedBaseText.utf16.count,
+                      Self.hasUTF16Prefix(fullText, matching: syncedBaseText, length: currentUTF16) {
+                lastVerifiedSourceText = fullText
+                lastVerifiedSourceUTF16Count = totalUTF16
+            } else {
+                invalidateSync()
+                return .notAppended
+            }
+        }
+
+        guard sink.canDirectAppend(),
+              Self.canDirectAppendSlice(in: fullText, from: currentUTF16, to: nextUTF16) else {
+            return .notAppended
+        }
+
+        let nsText = fullText as NSString
+        let suffix = nsText.substring(with: NSRange(location: currentUTF16, length: nextUTF16 - currentUTF16))
+        // Suppress out-of-band UIKit intrinsic invalidation on line wraps: when
+        // `.appendedHeightChanged` is returned, `ChatStreamingRevealPacer` advances
+        // `revealedUTF16Count` so SwiftUI measures and pins `.sizeChanges` in one
+        // atomic `UIUpdateCycle` layout pass.
+        let result = sink.appendPlainTailWithResult(suffix, suppressIntrinsicInvalidation: true)
+        guard result != .notAppended else {
+            return .notAppended
+        }
+        syncedUTF16Count = nextUTF16
+        if lastVerifiedSourceUTF16Count != totalUTF16 {
+            lastVerifiedSourceText = fullText
+            lastVerifiedSourceUTF16Count = totalUTF16
+        }
+        ChatRenderProbe.record("pacer-direct-append")
+        return result
+    }
+
+    private static func hasUTF16Prefix(_ fullText: String, matching previous: String, length: Int) -> Bool {
+        guard length > 0 else { return true }
+        let nsFull = fullText as NSString
+        let nsPrev = previous as NSString
+        guard nsFull.length >= length, nsPrev.length >= length else { return false }
+        if nsPrev.length == length {
+            return nsFull.compare(
+                previous,
+                options: .literal,
+                range: NSRange(location: 0, length: length)
+            ) == .orderedSame
+        }
+        let prefixSlice = nsPrev.substring(with: NSRange(location: 0, length: length))
+        return nsFull.compare(
+            prefixSlice,
+            options: .literal,
+            range: NSRange(location: 0, length: length)
+        ) == .orderedSame
+    }
+
+    static func canDirectAppendSlice(in fullText: String, from currentUTF16: Int, to nextUTF16: Int) -> Bool {
+        let nsText = fullText as NSString
+        let totalLength = nsText.length
+        guard currentUTF16 > 0, nextUTF16 > currentUTF16, nextUTF16 <= totalLength else {
+            return false
+        }
+        // Backslash before the slice means the next ASCII punctuation character can form an escape.
+        if nsText.character(at: currentUTF16 - 1) == 0x5C {
+            return false
+        }
+
+        for idx in currentUTF16..<nextUTF16 {
+            let unit = nsText.character(at: idx)
+            if unit < 0x20 || unit == 0x2028 || unit == 0x2029 {
+                return false
+            }
+            switch unit {
+            case 0x21, // !
+                 0x23, // #
+                 0x24, // $
+                 0x26, // &
+                 0x29, // )
+                 0x2A, // *
+                 0x2F, // /
+                 0x3B, // ;
+                 0x3C, // <
+                 0x3E, // >
+                 0x5B, // [
+                 0x5C, // \
+                 0x5D, // ]
+                 0x5F, // _
+                 0x60, // `
+                 0x7C, // |
+                 0x7E: // ~
+                return false
+            default:
+                break
+            }
+        }
+
+        var lineStart = currentUTF16
+        while lineStart > 0 {
+            let prev = nsText.character(at: lineStart - 1)
+            if prev == 0x0A || prev == 0x0D || prev == 0x2028 || prev == 0x2029 {
+                break
+            }
+            lineStart -= 1
+        }
+        guard currentUTF16 > lineStart else { return false }
+
+        var leadingSpaces = 0
+        var pos = lineStart
+        while pos < currentUTF16 {
+            let unit = nsText.character(at: pos)
+            if unit == 0x20 {
+                leadingSpaces += 1
+                if leadingSpaces >= 4 {
+                    return false
+                }
+                pos += 1
+            } else if unit == 0x09 {
+                return false
+            } else {
+                break
+            }
+        }
+        guard pos < currentUTF16 else { return false }
+
+        let first = nsText.character(at: pos)
+        switch first {
+        case 0x3E, 0x7C, 0x60, 0x7E, 0x3D:
+            return false
+        case 0x23:
+            var hashEnd = pos
+            while hashEnd < currentUTF16, hashEnd - pos < 6, nsText.character(at: hashEnd) == 0x23 {
+                hashEnd += 1
+            }
+            guard hashEnd < currentUTF16 else { return false }
+            let afterHash = nsText.character(at: hashEnd)
+            guard afterHash == 0x20 || afterHash == 0x09 else {
+                return true
+            }
+            var contentStart = hashEnd + 1
+            while contentStart < currentUTF16 {
+                let c = nsText.character(at: contentStart)
+                if c != 0x20 && c != 0x09 {
+                    return true
+                }
+                contentStart += 1
+            }
+            return false
+        case 0x2D, 0x2A, 0x2B:
+            var i = pos + 1
+            while i < currentUTF16 {
+                let c = nsText.character(at: i)
+                if c != first && c != 0x20 && c != 0x09 {
+                    return true
+                }
+                i += 1
+            }
+            return false
+        case 0x30...0x39:
+            var digitEnd = pos
+            while digitEnd < currentUTF16, digitEnd - pos < 10 {
+                let c = nsText.character(at: digitEnd)
+                if c >= 0x30 && c <= 0x39 {
+                    digitEnd += 1
+                } else {
+                    break
+                }
+            }
+            if digitEnd == currentUTF16 {
+                return (currentUTF16 - pos) > 9
+            }
+            let delim = nsText.character(at: digitEnd)
+            if (delim == 0x2E || delim == 0x29), digitEnd - pos <= 9 {
+                let afterDelimIndex = digitEnd + 1
+                guard afterDelimIndex < currentUTF16 else { return false }
+                let afterDelim = nsText.character(at: afterDelimIndex)
+                if afterDelim != 0x20 && afterDelim != 0x09 {
+                    return true
+                }
+                var contentPos = afterDelimIndex + 1
+                while contentPos < currentUTF16 {
+                    let c = nsText.character(at: contentPos)
+                    if c != 0x20 && c != 0x09 {
+                        return true
+                    }
+                    contentPos += 1
+                }
+                return false
+            }
+            return true
+        default:
+            return true
+        }
     }
 }
 
@@ -80,6 +357,8 @@ struct ChatStreamingRevealPacer<Content: View>: View {
     let isStreaming: Bool
     /// 无障碍「减弱动态效果」：不做逐字推进，也不做高度过渡。
     let reduceMotion: Bool
+    /// 远滚冻结时暂停离屏逐字推进并对齐当前可见前缀，保持冻结快照与高度稳定。
+    let liveRenderingEnabled: Bool
     /// 分块前已显示的正文保持原样；新尾块即使随最终快照到达也需排空。
     private let initiallyRevealedUTF16Count: Int?
     private let completionFeedback: ChatCompletionFeedback?
@@ -107,6 +386,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         text: String,
         isStreaming: Bool,
         reduceMotion: Bool,
+        liveRenderingEnabled: Bool = true,
         initiallyRevealedUTF16Count: Int? = nil,
         pacePendingText: Bool = false,
         completionFeedback: ChatCompletionFeedback? = nil,
@@ -118,6 +398,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
             text: text,
             isStreaming: isStreaming,
             reduceMotion: reduceMotion,
+            liveRenderingEnabled: liveRenderingEnabled,
             initiallyRevealedUTF16Count: initiallyRevealedUTF16Count,
             pacePendingText: pacePendingText,
             completionFeedback: completionFeedback,
@@ -131,6 +412,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         text: String,
         isStreaming: Bool,
         reduceMotion: Bool,
+        liveRenderingEnabled: Bool = true,
         initiallyRevealedUTF16Count: Int? = nil,
         pacePendingText: Bool = false,
         completionFeedback: ChatCompletionFeedback? = nil,
@@ -141,6 +423,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         self.text = text
         self.isStreaming = isStreaming
         self.reduceMotion = reduceMotion
+        self.liveRenderingEnabled = liveRenderingEnabled
         self.initiallyRevealedUTF16Count = initiallyRevealedUTF16Count
         self.completionFeedback = completionFeedback
         let resolvedRunID = completionFeedback?.runID(forMessageID: messageID) ?? completionFeedback?.untrackedCurrentRunID()
@@ -148,10 +431,12 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         self.messageID = messageID
         self.textPartIndex = textPartIndex
         self.content = content
-        self._revealedUTF16Count = State(initialValue: initiallyRevealedUTF16Count ?? 0)
+        let initialUTF16 = initiallyRevealedUTF16Count ?? 0
+        self._revealedUTF16Count = State(initialValue: initialUTF16)
         let initialPacing = (isStreaming || pacePendingText) && !reduceMotion
         self._isActivelyPacing = State(initialValue: initialPacing)
         self._latchedCompletionRunID = State(initialValue: resolvedRunID)
+        self._pacerBox = State(initialValue: ChatStreamingRevealPacerBox(initialUTF16Count: initialUTF16))
     }
 
     /// 是否仍按帧吐字。流式结束后若还有尾巴没吐完，继续按同一节奏吐。
@@ -163,20 +448,23 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         // 若外层再按 60fps 逐字切片并对整张 `TableView` 施加 `.frame(height: displayedHeight)` 动画，
         // 会导致数百个单元格每 16ms 触发多遍 `TableLayout` 与滚动几何反馈环（单帧卡死 200-330ms）。
         let bypassPacingForTable = activePacing && pacerBox.containsTable(in: text)
-        let localPendingReveal = activePacing && !bypassPacingForTable && (revealedUTF16Count < text.utf16.count || isActivelyPacing)
+        let effectiveRevealedUTF16 = liveRenderingEnabled
+            ? revealedUTF16Count
+            : max(revealedUTF16Count, pacerBox.currentUTF16Count)
+        let localPendingReveal = activePacing && !bypassPacingForTable && (effectiveRevealedUTF16 < text.utf16.count || isActivelyPacing)
         let hasPendingReveal = isStreaming || localPendingReveal
         let isActivelyRevealing = isStreaming || localPendingReveal
         let displayedText: String
         let heightTransitionActive: Bool
         if activePacing && !bypassPacingForTable {
             let totalUTF16 = text.utf16.count
-            let clampedUTF16 = min(max(0, revealedUTF16Count), totalUTF16)
+            let clampedUTF16 = min(max(0, effectiveRevealedUTF16), totalUTF16)
             if clampedUTF16 < totalUTF16 {
                 displayedText = ChatStreamingRevealTiming.slicedPrefix(of: text, utf16Count: clampedUTF16)
             } else {
                 displayedText = text
             }
-            heightTransitionActive = clampedUTF16 < totalUTF16 || isStreaming || isActivelyPacing
+            heightTransitionActive = liveRenderingEnabled && (clampedUTF16 < totalUTF16 || isStreaming || isActivelyPacing)
         } else {
             displayedText = text
             heightTransitionActive = false
@@ -228,6 +516,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
             .clipped()
             .environment(\.chatPacesStreamingTextBlocks, bypassPacingForTable)
             .environment(\.chatIsActivelyPacingReveal, isActivelyRevealing)
+            .environment(\.chatStreamingTailCoordinator, activePacing && liveRenderingEnabled && !bypassPacingForTable ? pacerBox.tailCoordinator : nil)
             .modifier(ChatStreamingRevealProgressModifier(progress: .init(
                 isMounted: true, hasPendingReveal: hasPendingReveal)))
             .onPreferenceChange(ChatStreamingRevealProgressKey.self) { progress in
@@ -249,14 +538,18 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                 guard isPacing, revealedUTF16Count == 0 else { return }
                 guard initiallyRevealedUTF16Count == nil else { return }
                 if pacerBox.containsTable(in: text) {
-                    revealedUTF16Count = text.utf16.count
+                    let fullCount = text.utf16.count
+                    pacerBox.currentUTF16Count = fullCount
+                    revealedUTF16Count = fullCount
                     return
                 }
                 // 流式中途重进入：只补尾部，不要把已有正文整段重打。
-                revealedUTF16Count = ChatStreamingRevealTiming.reentryStartUTF16Offset(
+                let startOffset = ChatStreamingRevealTiming.reentryStartUTF16Offset(
                     in: text,
                     tailCharacterBudget: ChatStreamingRevealTiming.reentryTailBudget
                 )
+                pacerBox.currentUTF16Count = startOffset
+                revealedUTF16Count = startOffset
                 displayedHeight = contentHeight
                 isActivelyPacing = true
             }
@@ -265,11 +558,32 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                     latchedCompletionRunID = newValue
                 }
             }
+            .onChange(of: liveRenderingEnabled) { _, enabled in
+                if !enabled {
+                    pacerBox.lastTickUptime = nil
+                    pacerBox.tailCoordinator.setGatesHeightByLineCount(false)
+                    let synced = min(pacerBox.currentUTF16Count, text.utf16.count)
+                    if revealedUTF16Count != synced {
+                        revealedUTF16Count = synced
+                    }
+                } else if isPacing, !pacerBox.containsTable(in: text) {
+                    let floorOffset = ChatStreamingRevealTiming.reentryStartUTF16Offset(
+                        in: text,
+                        tailCharacterBudget: ChatStreamingRevealTiming.reentryTailBudget
+                    )
+                    if pacerBox.currentUTF16Count < floorOffset {
+                        pacerBox.currentUTF16Count = floorOffset
+                        pacerBox.tailCoordinator.invalidateSync()
+                        revealedUTF16Count = floorOffset
+                    }
+                }
+            }
             .task(
                 id: PacingKey(
                     targetUTF16Count: activePacing && !bypassPacingForTable ? text.utf16.count : 0,
                     isStreaming: isStreaming,
-                    reduceMotion: reduceMotion
+                    reduceMotion: reduceMotion,
+                    liveRenderingEnabled: liveRenderingEnabled
                 )
             ) {
                 await drain()
@@ -299,16 +613,31 @@ struct ChatStreamingRevealPacer<Content: View>: View {
     private func drain() async {
         guard !reduceMotion else {
             pacerBox.lastTickUptime = nil
+            pacerBox.tailCoordinator.setGatesHeightByLineCount(false)
             if isActivelyPacing { isActivelyPacing = false }
             return
         }
         guard isStreaming || isActivelyPacing else {
             pacerBox.lastTickUptime = nil
+            pacerBox.tailCoordinator.setGatesHeightByLineCount(false)
+            return
+        }
+        guard liveRenderingEnabled else {
+            pacerBox.lastTickUptime = nil
+            pacerBox.tailCoordinator.setGatesHeightByLineCount(false)
+            let synced = min(pacerBox.currentUTF16Count, text.utf16.count)
+            if revealedUTF16Count != synced {
+                revealedUTF16Count = synced
+            }
             return
         }
         if pacerBox.containsTable(in: text) {
             pacerBox.lastTickUptime = nil
-            revealedUTF16Count = text.utf16.count
+            pacerBox.tailCoordinator.setGatesHeightByLineCount(false)
+            pacerBox.tailCoordinator.invalidateSync()
+            let fullCount = text.utf16.count
+            pacerBox.currentUTF16Count = fullCount
+            revealedUTF16Count = fullCount
             // 分块子树持有各正文尾块的排空状态。完成事件后仍保留委托，
             // 包括只随最终快照新增的正文，不能拆掉其 pacer 后一次性露出全文。
             return
@@ -317,15 +646,27 @@ struct ChatStreamingRevealPacer<Content: View>: View {
             isActivelyPacing = true
         }
         let totalUTF16 = text.utf16.count
-        guard revealedUTF16Count < totalUTF16 else {
+        if pacerBox.currentUTF16Count > totalUTF16 {
+            pacerBox.currentUTF16Count = min(revealedUTF16Count, totalUTF16)
+            pacerBox.tailCoordinator.invalidateSync()
+        } else if pacerBox.currentUTF16Count < revealedUTF16Count {
+            pacerBox.currentUTF16Count = min(revealedUTF16Count, totalUTF16)
+        }
+        guard pacerBox.currentUTF16Count < totalUTF16 else {
             pacerBox.lastTickUptime = nil
+            if !isStreaming {
+                pacerBox.tailCoordinator.setGatesHeightByLineCount(false)
+            }
+            if revealedUTF16Count != totalUTF16 {
+                revealedUTF16Count = totalUTF16
+            }
             await settleTailGrowthIfNeeded(totalUTF16: totalUTF16)
             return
         }
         let tickSeconds = Double(ChatStreamingRevealTiming.tickNanos) / 1_000_000_000
         let maxCatchUpTicks = ChatStreamingRevealTiming.maxCatchUpTicksPerWake
         let maxCreditWindow = Double(maxCatchUpTicks) * tickSeconds
-        while !Task.isCancelled, revealedUTF16Count < totalUTF16 {
+        while !Task.isCancelled, pacerBox.currentUTF16Count < totalUTF16 {
             let now = ProcessInfo.processInfo.systemUptime
             let stepsToAdvance: Int
             if let lastTick = pacerBox.lastTickUptime {
@@ -346,7 +687,8 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                 pacerBox.lastTickUptime = now
             }
 
-            var nextUTF16 = revealedUTF16Count
+            let currentUTF16 = pacerBox.currentUTF16Count
+            var nextUTF16 = currentUTF16
             for _ in 0..<stepsToAdvance {
                 guard nextUTF16 < totalUTF16 else { break }
                 let candidate = ChatStreamingRevealTiming.nextStepUTF16Offset(
@@ -359,9 +701,24 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                 }
                 nextUTF16 = min(candidate, totalUTF16)
             }
-            revealedUTF16Count = nextUTF16
+            let caughtUpToCurrentTarget = nextUTF16 >= totalUTF16
+            let reachedTerminalEnd = !isStreaming && caughtUpToCurrentTarget
+            let appendResult = pacerBox.tailCoordinator.tryDirectAppend(
+                in: text,
+                from: currentUTF16,
+                to: nextUTF16
+            )
+            pacerBox.currentUTF16Count = nextUTF16
+            if reachedTerminalEnd {
+                pacerBox.tailCoordinator.setGatesHeightByLineCount(false)
+            }
+            if caughtUpToCurrentTarget || appendResult != .appendedSameLine {
+                if revealedUTF16Count != nextUTF16 {
+                    revealedUTF16Count = nextUTF16
+                }
+            }
             ChatRenderProbe.record("pacer-tick")
-            if revealedUTF16Count >= totalUTF16 {
+            if pacerBox.currentUTF16Count >= totalUTF16 {
                 pacerBox.lastTickUptime = nil
                 break
             }
@@ -371,17 +728,21 @@ struct ChatStreamingRevealPacer<Content: View>: View {
     }
 
     private func settleTailGrowthIfNeeded(totalUTF16: Int) async {
-        guard !Task.isCancelled, !isStreaming, revealedUTF16Count >= totalUTF16, isActivelyPacing else {
+        guard !Task.isCancelled, !isStreaming, pacerBox.currentUTF16Count >= totalUTF16, isActivelyPacing else {
             return
         }
         pacerBox.lastTickUptime = nil
+        pacerBox.tailCoordinator.setGatesHeightByLineCount(false)
+        if revealedUTF16Count != totalUTF16 {
+            revealedUTF16Count = totalUTF16
+        }
         if let lastGrowth = pacerBox.lastGrowthUptime {
             let remaining = ChatStreamingRevealTiming.heightSettleSeconds - (ProcessInfo.processInfo.systemUptime - lastGrowth)
             if remaining > 0 {
                 try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
             }
         }
-        guard !Task.isCancelled, !isStreaming, revealedUTF16Count >= text.utf16.count else { return }
+        guard !Task.isCancelled, !isStreaming, pacerBox.currentUTF16Count >= text.utf16.count else { return }
         isActivelyPacing = false
     }
 
@@ -389,14 +750,21 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         let targetUTF16Count: Int
         let isStreaming: Bool
         let reduceMotion: Bool
+        let liveRenderingEnabled: Bool
     }
 }
 
 private final class ChatStreamingRevealPacerBox {
     var naturalHeight: CGFloat = 0
+    var currentUTF16Count: Int
     var lastTickUptime: TimeInterval?
     var lastGrowthUptime: TimeInterval?
+    let tailCoordinator = ChatStreamingTailCoordinator()
     private var tableDetector = ChatStreamingTableDetectionState()
+
+    init(initialUTF16Count: Int = 0) {
+        self.currentUTF16Count = initialUTF16Count
+    }
 
     func containsTable(in text: String) -> Bool {
         tableDetector.update(with: text)

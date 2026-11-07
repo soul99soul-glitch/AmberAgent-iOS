@@ -418,6 +418,7 @@ struct MessageBubbleView: View {
                             text: textPart.text,
                             isStreaming: isGenerating && isLastMessage,
                             reduceMotion: reduceMotion,
+                            liveRenderingEnabled: liveMarkdownRenderingEnabled,
                             completionFeedback: completionFeedback,
                             messageID: message.id.toHexDashString(),
                             textPartIndex: partIndex
@@ -579,6 +580,7 @@ struct MessageBubbleView: View {
                             text: textPart.text,
                             isStreaming: isGenerating && isLastMessage,
                             reduceMotion: reduceMotion,
+                            liveRenderingEnabled: liveMarkdownRenderingEnabled,
                             completionFeedback: completionFeedback,
                             messageID: message.id.toHexDashString(),
                             textPartIndex: partIndex
