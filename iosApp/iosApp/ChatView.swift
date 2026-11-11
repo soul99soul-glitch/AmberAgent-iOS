@@ -370,7 +370,8 @@ struct ChatView: View {
                 gateway: MacGatewayStore.shared,
                 subAgentStore: activityStore,
                 onOpenFullTaskBoard: { router.navigate(to: .macTasks) },
-                onOpenTask: { task in openUnifiedTask(task) }
+                onOpenTask: { task in openUnifiedTask(task) },
+                onFollowupTask: { task in followupTaskInChat(task) }
             )
             .amberFloatingSheet(detents: [.medium, .large])
         }

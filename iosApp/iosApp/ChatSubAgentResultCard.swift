@@ -560,8 +560,12 @@ struct AmberTaskDeliverablePreviewContent: View {
 
     private func destinationActionLabel(for destination: AmberTaskDestination) -> String {
         switch destination {
-        case .subAgentConversation, .wakeConversation:
+        case .subAgentConversation:
             return IOSAppLocalization.string("打开对应子会话", defaultValue: "打开对应子会话")
+        case .wakeConversation:
+            return IOSAppLocalization.string("打开所属会话", defaultValue: "打开所属会话")
+        case .cloudDialogueWorkItem:
+            return IOSAppLocalization.string("打开云端对话", defaultValue: "打开云端对话")
         case .executionRecord:
             return IOSAppLocalization.string("查看执行记录", defaultValue: "查看执行记录")
         case .cloudTaskDetail:

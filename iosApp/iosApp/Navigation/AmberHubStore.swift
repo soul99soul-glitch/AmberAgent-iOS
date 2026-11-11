@@ -171,6 +171,7 @@ enum AmberTaskOwnership: String, Equatable, Sendable {
 /// the work, so a card can never open a conversation invented for it.
 enum AmberTaskDestination: Equatable, Sendable {
     case cloudTaskDetail(requestId: String)
+    case cloudDialogueWorkItem(workItemId: String)
     case subAgentConversation(conversationId: String)
     case executionRecord(recordId: String)
     case wakeConversation(conversationId: String)
@@ -239,6 +240,7 @@ struct AmberDeliverableSummary: Equatable, Sendable {
 struct AmberUnifiedTaskItem: Identifiable, Equatable {
     enum SourceKind: Equatable {
         case cloudTask(String)
+        case cloudDialogueWorkItem(String)
         case localSubAgent(String)
         case executionRecord(String)
         case wakeTask(String)
@@ -391,12 +393,59 @@ final class AmberHubStore {
     /// Resolve by the run's conversation binding; the visible Hub may have changed.
     func allowsGlobalMemory(conversationId: String?) -> Bool {
         guard let conversationId else { return true }
-        return !hubs.contains { $0.memoryPolicy == .hubIsolated && $0.conversationIds.contains(conversationId) }
+        let trimmed = conversationId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+        return !hubs.contains { hub in
+            hub.memoryPolicy == .hubIsolated && hub.conversationIds.contains {
+                $0.caseInsensitiveCompare(trimmed) == .orderedSame
+            }
+        }
     }
 
     func inheritConversationBinding(from parentId: String, to childId: String) {
-        let hubIds = hubs.filter { $0.conversationIds.contains(parentId) }.map(\.id)
+        let hubIds = hubs.filter { hub in
+            hub.conversationIds.contains { $0.caseInsensitiveCompare(parentId) == .orderedSame }
+        }.map(\.id)
         for hubId in hubIds { bindConversation(childId, toHub: hubId) }
+    }
+
+    func resolvedHubId(
+        explicitHubIds: [String] = [],
+        conversationIds: [String] = [],
+        taskIds: [String] = []
+    ) -> String? {
+        let cleanHubIds = explicitHubIds
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !cleanHubIds.isEmpty,
+           let matched = hubs.first(where: { hub in
+               cleanHubIds.contains { $0.caseInsensitiveCompare(hub.id) == .orderedSame }
+           }) {
+            return matched.id
+        }
+        let cleanTaskIds = taskIds
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !cleanTaskIds.isEmpty,
+           let matched = hubs.first(where: { hub in
+               hub.taskIds.contains { candidate in
+                   cleanTaskIds.contains { candidate.caseInsensitiveCompare($0) == .orderedSame }
+               }
+           }) {
+            return matched.id
+        }
+        let cleanConvIds = conversationIds
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !cleanConvIds.isEmpty,
+           let matched = hubs.first(where: { hub in
+               hub.conversationIds.contains { candidate in
+                   cleanConvIds.contains { candidate.caseInsensitiveCompare($0) == .orderedSame }
+               }
+           }) {
+            return matched.id
+        }
+        return nil
     }
 
     var activeHub: AmberHubItem? {
@@ -559,7 +608,12 @@ final class AmberHubStore {
         if let override = hub.statusSummaryOverride, !override.isEmpty {
             return override
         }
-        let hubTasks = activeTasks.filter { $0.hubId == hub.id || (hub.id == activeHubId && $0.hubId == nil) }
+        let hubTasks: [AmberUnifiedTaskItem]
+        if hub.memoryPolicy == .hubIsolated {
+            hubTasks = activeTasks.filter { $0.hubId == hub.id }
+        } else {
+            hubTasks = activeTasks.filter { $0.hubId == hub.id || (hub.id == activeHubId && $0.hubId == nil) }
+        }
         let runningCount = hubTasks.filter { $0.phase == .running || $0.phase == .needsAttention }.count
 
         if hub.memoryPolicy == .hubIsolated {
@@ -583,8 +637,12 @@ final class AmberHubStore {
 
         if runningCount > 0 {
             let hasCloud = hubTasks.contains {
-                if case .cloudTask = $0.source { return true }
-                return $0.subtitle.contains("云端")
+                switch $0.source {
+                case .cloudTask, .cloudDialogueWorkItem:
+                    return true
+                default:
+                    return $0.subtitle.contains("云端")
+                }
             }
             parts.append(hasCloud ? "\(runningCount) 项云端运行中" : "\(runningCount) 项任务")
         } else if !hub.taskIds.isEmpty {
@@ -733,7 +791,6 @@ enum AmberUnifiedTaskBuilder {
     ) -> Groups {
         var all: [AmberUnifiedTaskItem] = []
         var seenIdentities = Set<String>()
-        let defaultHubId = hubStore.activeHubId
 
         // 1. Cloud work items the user explicitly handed off (/v2/work-items).
         for record in gateway.cloudTasks {
@@ -814,7 +871,9 @@ enum AmberUnifiedTaskBuilder {
                 }
             }
 
-            let matchedHubId = hubStore.hubs.first(where: { $0.taskIds.contains(record.requestId) })?.id ?? defaultHubId
+            let matchedHubId = hubStore.resolvedHubId(
+                taskIds: [record.requestId, "cloud:\(record.requestId)"] + (record.workItemId.map { [$0] } ?? [])
+            )
             all.append(
                 AmberUnifiedTaskItem(
                     id: "cloud:\(record.requestId)",
@@ -833,6 +892,139 @@ enum AmberUnifiedTaskBuilder {
                     rawResultMarkdown: rawMarkdown,
                     destination: .cloudTaskDetail(requestId: record.requestId),
                     source: .cloudTask(record.requestId)
+                )
+            )
+        }
+
+        // 1b. Cloud main dialogue delegated WorkItems (/v2/dialogue/* background work).
+        let gatewayScope = gateway.connection?.gatewayId ?? "unpaired"
+        for key in gateway.cloudDialogueProgressByWorkItem.keys.sorted() {
+            guard let progress = gateway.cloudDialogueProgressByWorkItem[key] else { continue }
+            let workItemId = progress.workItemId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.hasPrefix("topic:"), !workItemId.isEmpty, !workItemId.hasPrefix("topic:") else { continue }
+            guard seenIdentities.insert("cloud-work:\(gatewayScope):\(workItemId)").inserted else { continue }
+
+            let directEvents = gateway.cloudDialogueEvents.filter { $0.workItemId == workItemId }
+            let topicUserEvents = progress.topicId.isEmpty
+                ? []
+                : gateway.cloudDialogueEvents.filter { $0.topicId == progress.topicId && $0.kind == .userMessage }
+            let rawTitleSource = directEvents.first(where: { $0.kind == .userMessage })?.text
+                ?? topicUserEvents.first?.text
+            let cleanUserLine = rawTitleSource
+                .map { IOSContextCompactionFidelity.redactCredentials($0) }?
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first(where: { !$0.isEmpty })
+            let dialogueTitle: String
+            if let cleanUserLine, !cleanUserLine.isEmpty {
+                dialogueTitle = cleanUserLine.count > 36 ? String(cleanUserLine.prefix(36)) + "…" : cleanUserLine
+            } else {
+                dialogueTitle = "云端对话任务"
+            }
+
+            let latestResultText = directEvents
+                .last(where: { $0.kind == .taskResult || ($0.kind == .assistantReply && !$0.isUpfrontAcknowledgement) })?
+                .text
+            let sanitizedResult = latestResultText.map {
+                IOSContextCompactionFidelity.redactCredentials(
+                    IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope($0)
+                )
+            }
+            let sanitizedStatus = IOSContextCompactionFidelity.redactCredentials(
+                IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope(progress.statusLine)
+            ).trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawMarkdown = Self.userFacingResultMarkdown(from: sanitizedResult)
+            let summary = Self.extractDeliverableSummary(
+                from: sanitizedResult ?? (sanitizedStatus.isEmpty ? nil : sanitizedStatus)
+            )
+
+            let phase: AmberUnifiedTaskPhase
+            let statusText: String
+            let subtitle: String
+            var actionTitle: String? = nil
+            var decisionPrompt: String? = nil
+            var quickActions: [AmberTaskQuickDecision] = []
+
+            switch progress.outcome {
+            case .completed:
+                if summary.needsDecision {
+                    phase = .needsAttention
+                    statusText = "等我拍板"
+                    decisionPrompt = summary.decisionPrompt ?? summary.headline ?? "前序阶段已完成，等待拍板"
+                    subtitle = "\(summary.headline ?? "前序阶段已就绪") · 云端对话"
+                    actionTitle = "拍板继续"
+                    quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
+                } else {
+                    phase = .completed
+                    statusText = "已完成"
+                    subtitle = summary.headline ?? (sanitizedStatus.isEmpty ? "云端对话 · 已完成" : sanitizedStatus)
+                }
+            case .blocked:
+                phase = .needsAttention
+                statusText = "等我拍板"
+                decisionPrompt = summary.decisionPrompt
+                    ?? summary.headline
+                    ?? (sanitizedStatus.isEmpty ? nil : sanitizedStatus)
+                    ?? "云端执行受阻，等待补充指示"
+                subtitle = "\(summary.headline ?? (sanitizedStatus.isEmpty ? "等待补充指示" : Self.compactReason(sanitizedStatus))) · 云端对话"
+                actionTitle = "拍板继续"
+                quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
+            case .failed:
+                phase = .needsAttention
+                statusText = "执行失败"
+                let reason = Self.compactReason(sanitizedStatus.isEmpty ? (sanitizedResult ?? "云端执行异常") : sanitizedStatus)
+                subtitle = "\(reason) · 云端对话"
+                let suggested = Self.suggestedActionButtonTitle(for: dialogueTitle, reason: reason)
+                actionTitle = suggested
+                quickActions = Self.failureQuickActions(primaryTitle: suggested)
+            case .cancelled:
+                phase = .cancelled
+                statusText = "已取消"
+                subtitle = "云端对话 · 已停止"
+            case nil:
+                if progress.isStopRequested {
+                    phase = .running
+                    statusText = "停止请求中"
+                    subtitle = "云端对话 · 已请求停止"
+                } else if summary.needsDecision {
+                    phase = .needsAttention
+                    statusText = "等我拍板"
+                    decisionPrompt = summary.decisionPrompt ?? summary.headline ?? "前序阶段已完成，等待拍板"
+                    subtitle = "\(summary.headline ?? "前序阶段已就绪") · 云端对话"
+                    actionTitle = "拍板继续"
+                    quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
+                } else {
+                    phase = .running
+                    statusText = "运行中"
+                    subtitle = sanitizedStatus.isEmpty ? "云端对话 · 执行中" : "云端对话 · \(sanitizedStatus)"
+                }
+            }
+
+            let updatedAt = directEvents
+                .compactMap { gateway.cloudDialogueFirstSeenAtByEventId[$0.id] }
+                .max()
+                ?? Date(timeIntervalSince1970: TimeInterval(max(0, progress.lastEventSeq)))
+            let matchedHubId = hubStore.resolvedHubId(
+                taskIds: [workItemId, "cloud-dialogue:\(workItemId)"]
+            )
+            all.append(
+                AmberUnifiedTaskItem(
+                    id: "cloud-dialogue:\(workItemId)",
+                    title: dialogueTitle,
+                    subtitle: subtitle,
+                    statusText: statusText,
+                    actionButtonTitle: actionTitle,
+                    phase: phase,
+                    ownership: .delegated,
+                    hubId: matchedHubId,
+                    updatedAt: updatedAt,
+                    resultText: summary.headline ?? Self.resultPreview(from: rawMarkdown),
+                    decisionPrompt: decisionPrompt,
+                    quickActions: quickActions,
+                    deliverableBullets: summary.bullets,
+                    rawResultMarkdown: rawMarkdown,
+                    destination: .cloudDialogueWorkItem(workItemId: workItemId),
+                    source: .cloudDialogueWorkItem(workItemId)
                 )
             )
         }
@@ -958,6 +1150,20 @@ enum AmberUnifiedTaskBuilder {
                 subagentSubtitle = "本机后台 · \(item.statusTitle)"
             }
 
+            let childConvId = item.taskId.hasPrefix("thread:")
+                ? String(item.taskId.dropFirst("thread:".count))
+                : nil
+            let subAgentHubId = hubStore.resolvedHubId(
+                explicitHubIds: [backingRecord?.metadata["hub_id"]].compactMap { $0 },
+                conversationIds: [
+                    item.sourceConversationId,
+                    backingRecord?.metadata["source_conversation_id"],
+                    backingRecord?.metadata["conversation_id"],
+                    backingRecord?.metadata["child_conversation_id"],
+                    childConvId
+                ].compactMap { $0 },
+                taskIds: [item.id, item.taskId, "subagent:\(item.id)"]
+            )
             all.append(
                 AmberUnifiedTaskItem(
                     id: "subagent:\(item.id)",
@@ -967,7 +1173,7 @@ enum AmberUnifiedTaskBuilder {
                     actionButtonTitle: actionTitle,
                     phase: phase,
                     ownership: .backgroundRun,
-                    hubId: defaultHubId,
+                    hubId: subAgentHubId,
                     updatedAt: item.endedAt ?? item.startedAt,
                     resultText: summary.headline ?? Self.resultPreview(from: outcome ?? backingRecord?.error),
                     decisionPrompt: decisionPrompt,
@@ -1081,6 +1287,14 @@ enum AmberUnifiedTaskBuilder {
                 execSubtitle = "\(record.kind.title) · \(record.status.title)"
             }
 
+            let execHubId = hubStore.resolvedHubId(
+                explicitHubIds: [record.metadata["hub_id"]].compactMap { $0 },
+                conversationIds: [
+                    record.metadata["source_conversation_id"],
+                    record.metadata["conversation_id"]
+                ].compactMap { $0 },
+                taskIds: [record.id, "exec:\(record.id)"]
+            )
             all.append(
                 AmberUnifiedTaskItem(
                     id: "exec:\(record.id)",
@@ -1090,7 +1304,7 @@ enum AmberUnifiedTaskBuilder {
                     actionButtonTitle: actionTitle,
                     phase: phase,
                     ownership: .backgroundRun,
-                    hubId: defaultHubId,
+                    hubId: execHubId,
                     updatedAt: record.updatedAt,
                     resultText: summary.headline ?? Self.resultPreview(from: outcome ?? record.error),
                     decisionPrompt: decisionPrompt,
@@ -1172,6 +1386,10 @@ enum AmberUnifiedTaskBuilder {
                 subtitle = "本机定时 · \(task.status.title)"
             }
             guard seenIdentities.insert("wake:\(task.id)").inserted else { continue }
+            let wakeHubId = hubStore.resolvedHubId(
+                conversationIds: [task.conversationID],
+                taskIds: [task.id, "wake:\(task.id)"]
+            )
             all.append(
                 AmberUnifiedTaskItem(
                     id: "wake:\(task.id)",
@@ -1181,7 +1399,7 @@ enum AmberUnifiedTaskBuilder {
                     actionButtonTitle: actionTitle,
                     phase: phase,
                     ownership: .scheduledMonitor,
-                    hubId: defaultHubId,
+                    hubId: wakeHubId,
                     updatedAt: task.finishedAt ?? task.startedAt ?? task.createdAt,
                     resultText: summary.headline ?? Self.resultPreview(from: task.resultText),
                     decisionPrompt: decisionPrompt,
@@ -1202,6 +1420,9 @@ enum AmberUnifiedTaskBuilder {
                 : (schedule.enabled ? .scheduled : .cancelled)
             let summary = Self.extractDeliverableSummary(from: schedule.lastStatus)
             guard seenIdentities.insert("schedule:\(schedule.id)").inserted else { continue }
+            let scheduleHubId = hubStore.resolvedHubId(
+                taskIds: [schedule.id, "schedule:\(schedule.id)"]
+            )
             all.append(
                 AmberUnifiedTaskItem(
                     id: "schedule:\(schedule.id)",
@@ -1211,7 +1432,7 @@ enum AmberUnifiedTaskBuilder {
                     statusText: schedule.running ? "运行中" : (schedule.enabled ? "已排定" : "已停用"),
                     phase: phase,
                     ownership: .scheduledMonitor,
-                    hubId: defaultHubId,
+                    hubId: scheduleHubId,
                     updatedAt: schedule.lastRunAt ?? schedule.nextRunAt ?? Date(timeIntervalSince1970: 0),
                     resultText: summary.headline ?? schedule.lastStatus,
                     deliverableBullets: summary.bullets,
@@ -1270,6 +1491,9 @@ enum AmberUnifiedTaskBuilder {
             case .timedOutOrFailedTerminal: statusText = "执行失败"
             case .cancelled: statusText = "已取消"
             }
+            let boardHubId = hubStore.resolvedHubId(
+                taskIds: [boardItem.id, "board:\(boardItem.id)"]
+            )
             all.append(
                 AmberUnifiedTaskItem(
                     id: "board:\(boardItem.id)",
@@ -1279,7 +1503,7 @@ enum AmberUnifiedTaskBuilder {
                     actionButtonTitle: actionTitle,
                     phase: phase,
                     ownership: boardItem.kind == .schedule ? .scheduledMonitor : .backgroundRun,
-                    hubId: defaultHubId,
+                    hubId: boardHubId,
                     updatedAt: boardItem.updatedAt,
                     resultText: phase == .completed ? summary.headline : nil,
                     decisionPrompt: decisionPrompt,

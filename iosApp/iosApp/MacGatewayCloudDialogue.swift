@@ -690,6 +690,36 @@ extension MacGatewayStore {
         return event
     }
 
+    private static func redactedEnvelopeForPersistence(
+        _ source: MacGatewayCloudDialoguePersistedEnvelope
+    ) -> MacGatewayCloudDialoguePersistedEnvelope {
+        var copy = source
+        copy.events = source.events.map { raw in
+            var event = cloudDialogueDisplayEvent(raw)
+            event.text = IOSContextCompactionFidelity.redactCredentials(event.text)
+            return event
+        }
+        copy.followups = source.followups.map { raw in
+            var followup = raw
+            followup.text = IOSContextCompactionFidelity.redactCredentials(followup.text)
+            followup.lastError = followup.lastError.map(IOSContextCompactionFidelity.redactCredentials)
+            return followup
+        }
+        copy.progressByWorkItem = source.progressByWorkItem.mapValues { raw in
+            var progress = raw
+            let sanitized = IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope(progress.statusLine)
+            progress.statusLine = IOSContextCompactionFidelity.redactCredentials(sanitized)
+            return progress
+        }
+        copy.submissions = source.submissions.map { raw in
+            var submission = raw
+            submission.text = submission.text.map(IOSContextCompactionFidelity.redactCredentials)
+            submission.lastError = submission.lastError.map(IOSContextCompactionFidelity.redactCredentials)
+            return submission
+        }
+        return copy
+    }
+
     func loadPersistedCloudDialogueState() {
         guard let connection else {
             resetCloudDialogueMemoryState()
@@ -703,19 +733,16 @@ extension MacGatewayStore {
             defaults.removeObject(forKey: Self.cloudDialogueStateKey)
             return
         }
-        isCloudMainDialogueSelected = envelope.isCloudMainDialogueSelected
-        cloudDialogueCursor = envelope.cursor
-        cloudDialogueEvents = envelope.events.map(Self.cloudDialogueDisplayEvent)
-        cloudDialogueReceipts = envelope.receipts
-        cloudDialogueFollowups = envelope.followups
-        cloudDialogueProgressByWorkItem = envelope.progressByWorkItem.mapValues { stored in
-            var progress = stored
-            progress.statusLine = IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope(stored.statusLine)
-            return progress
-        }
-        cloudDialogueSubmissions = envelope.submissions
+        let normalized = Self.redactedEnvelopeForPersistence(envelope)
+        isCloudMainDialogueSelected = normalized.isCloudMainDialogueSelected
+        cloudDialogueCursor = normalized.cursor
+        cloudDialogueEvents = normalized.events
+        cloudDialogueReceipts = normalized.receipts
+        cloudDialogueFollowups = normalized.followups
+        cloudDialogueProgressByWorkItem = normalized.progressByWorkItem
+        cloudDialogueSubmissions = normalized.submissions
         for event in cloudDialogueEvents { updateCloudSuggestionTrigger(event) }
-        if cloudDialogueEvents != envelope.events || cloudDialogueProgressByWorkItem != envelope.progressByWorkItem {
+        if normalized != envelope {
             persistCloudDialogueState()
         }
     }
@@ -737,11 +764,13 @@ extension MacGatewayStore {
             }
             return
         }
-        let envelope = MacGatewayCloudDialoguePersistedEnvelope(
-            gatewayId: connection.gatewayId, deviceId: connection.deviceId,
-            isCloudMainDialogueSelected: isCloudMainDialogueSelected, cursor: cloudDialogueCursor,
-            events: cloudDialogueEvents, receipts: cloudDialogueReceipts, followups: cloudDialogueFollowups,
-            progressByWorkItem: cloudDialogueProgressByWorkItem, submissions: cloudDialogueSubmissions
+        let envelope = Self.redactedEnvelopeForPersistence(
+            MacGatewayCloudDialoguePersistedEnvelope(
+                gatewayId: connection.gatewayId, deviceId: connection.deviceId,
+                isCloudMainDialogueSelected: isCloudMainDialogueSelected, cursor: cloudDialogueCursor,
+                events: cloudDialogueEvents, receipts: cloudDialogueReceipts, followups: cloudDialogueFollowups,
+                progressByWorkItem: cloudDialogueProgressByWorkItem, submissions: cloudDialogueSubmissions
+            )
         )
         let writeBlock: @Sendable () -> Void = {
             guard coordinator.canCommit(epoch: epoch, identity: identity) else { return }
@@ -1007,8 +1036,9 @@ extension MacGatewayStore {
                 cloudDialogueFollowups[fIdx].state = receipt.state
             }
             persistCloudDialogueState()
-            if let rev = receipt.soulRevision, rev > AgentSoulStore.shared.lastSyncedRevision {
-                await syncCloudSoulIfNeeded(observedRevision: rev)
+            let soulStore = boundSoulStore ?? .shared
+            if let rev = receipt.soulRevision {
+                await syncCloudSoulIfNeeded(observedRevision: rev, soulStore: soulStore)
             }
             return .success(receipt)
         } catch {
@@ -1037,12 +1067,21 @@ extension MacGatewayStore {
             guard self.client === client else { return .failure(CancellationError()) }
             cloudDialogueTransportState = .healthy
             isReachable = true
-            if !page.items.isEmpty {
-                ingestCloudDialogueEventsPage(page, requestedAfter: currentCursor)
-                persistCloudDialogueState()
+            let soulStore = boundSoulStore ?? .shared
+            var pulledAuthoritativeSoul = false
+            if let rev = page.soulRevision {
+                pulledAuthoritativeSoul = await syncCloudSoulIfNeeded(
+                    observedRevision: rev,
+                    soulStore: soulStore
+                )
             }
-            if let rev = page.soulRevision, rev > AgentSoulStore.shared.lastSyncedRevision {
-                await syncCloudSoulIfNeeded(observedRevision: rev)
+            if !page.items.isEmpty {
+                ingestCloudDialogueEventsPage(
+                    page,
+                    requestedAfter: currentCursor,
+                    skipSoulSync: pulledAuthoritativeSoul
+                )
+                persistCloudDialogueState()
             }
             return .success(page)
         } catch {
@@ -1105,9 +1144,14 @@ extension MacGatewayStore {
         }
     }
 
-    func ingestCloudDialogueEventsPage(_ page: MacGatewayCloudDialogueEventsPage, requestedAfter: Int64) {
+    func ingestCloudDialogueEventsPage(
+        _ page: MacGatewayCloudDialogueEventsPage,
+        requestedAfter: Int64,
+        skipSoulSync: Bool = false
+    ) {
         // Empty page must NOT advance cursor.
         guard !page.items.isEmpty else { return }
+        let pageHasAuthoritativeSoulRevision = page.soulRevision != nil
 
         var eventsById = Dictionary(uniqueKeysWithValues: cloudDialogueEvents.map { ($0.id, $0) })
         let now = Date()
@@ -1144,7 +1188,11 @@ extension MacGatewayStore {
                     if !event.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         var syntheticProgress = event
                         syntheticProgress.kind = .processEvent
-                        applyCloudDialogueEvent(syntheticProgress)
+                        applyCloudDialogueEvent(
+                            syntheticProgress,
+                            allowHeuristicSoulFallback: !pageHasAuthoritativeSoulRevision,
+                            skipSoulSync: skipSoulSync
+                        )
                     }
                     continue
                 }
@@ -1159,7 +1207,11 @@ extension MacGatewayStore {
             lhs.seq != rhs.seq ? lhs.seq < rhs.seq : lhs.id < rhs.id
         }
         for event in newlyAcceptedEvents {
-            applyCloudDialogueEvent(event)
+            applyCloudDialogueEvent(
+                event,
+                allowHeuristicSoulFallback: !pageHasAuthoritativeSoulRevision,
+                skipSoulSync: skipSoulSync
+            )
             updateCloudSuggestionTrigger(event)
         }
         let maxSeenSeq = page.items.map(\.seq).max() ?? requestedAfter
@@ -1192,7 +1244,11 @@ extension MacGatewayStore {
         return (key, resolved)
     }
 
-    private func applyCloudDialogueEvent(_ event: MacGatewayCloudDialogueEvent) {
+    private func applyCloudDialogueEvent(
+        _ event: MacGatewayCloudDialogueEvent,
+        allowHeuristicSoulFallback: Bool = true,
+        skipSoulSync: Bool = false
+    ) {
         switch event.kind {
         case .processEvent:
             var (key, resolved) = resolveWorkItemProgress(for: event, defaultOutcome: nil)
@@ -1222,7 +1278,9 @@ extension MacGatewayStore {
                 markUnconsumedFollowupsCancelled(forWorkItemId: workItemId)
             }
             markMainMessageReceiptsConsumed(forTopicId: event.topicId, upToSeq: event.seq)
-            syncCloudDialogueSoulIfNeeded(for: event)
+            if !skipSoulSync {
+                syncCloudDialogueSoulIfNeeded(for: event, allowHeuristicFallback: allowHeuristicSoulFallback)
+            }
 
         case .stopRequested:
             if let workItemId = event.workItemId {
@@ -1258,7 +1316,9 @@ extension MacGatewayStore {
         case .assistantReply:
             if !event.isUpfrontAcknowledgement {
                 markMainMessageReceiptsConsumed(forTopicId: event.topicId, upToSeq: event.seq)
-                syncCloudDialogueSoulIfNeeded(for: event)
+                if !skipSoulSync {
+                    syncCloudDialogueSoulIfNeeded(for: event, allowHeuristicFallback: allowHeuristicSoulFallback)
+                }
             }
         }
     }
@@ -1346,10 +1406,14 @@ extension MacGatewayStore {
         return error.localizedDescription
     }
 
-    private func syncCloudDialogueSoulIfNeeded(for event: MacGatewayCloudDialogueEvent) {
-        if let rev = event.soulRevision, rev > AgentSoulStore.shared.lastSyncedRevision, client != nil {
+    private func syncCloudDialogueSoulIfNeeded(
+        for event: MacGatewayCloudDialogueEvent,
+        allowHeuristicFallback: Bool = true
+    ) {
+        let soulStore = boundSoulStore ?? .shared
+        if let rev = event.soulRevision, client != nil {
             Task { @MainActor in
-                await self.syncCloudSoulIfNeeded(observedRevision: rev, forcePull: true)
+                await self.syncCloudSoulIfNeeded(observedRevision: rev, soulStore: soulStore)
             }
             return
         }
@@ -1364,7 +1428,8 @@ extension MacGatewayStore {
             userText: latestUserText,
             assistantText: event.text,
             recentConversationContext: recentContext,
-            store: AgentSoulStore.shared
+            allowHeuristicInference: allowHeuristicFallback && event.soulRevision == nil,
+            store: soulStore
         )
     }
 
@@ -1423,8 +1488,9 @@ extension MacGatewayStore {
             upsertFollowupRecord(requestId: receipt.requestId, eventId: receipt.eventId, workItemId: workItemId,
                                  topicId: receipt.topicId, text: text ?? "", state: receipt.state, lastError: nil)
         }
-        if let rev = receipt.soulRevision, rev > AgentSoulStore.shared.lastSyncedRevision {
-            Task { @MainActor in await self.syncCloudSoulIfNeeded(observedRevision: rev) }
+        let soulStore = boundSoulStore ?? .shared
+        if let rev = receipt.soulRevision {
+            Task { @MainActor in await self.syncCloudSoulIfNeeded(observedRevision: rev, soulStore: soulStore) }
         }
     }
 

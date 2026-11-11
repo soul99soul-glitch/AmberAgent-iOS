@@ -566,7 +566,19 @@ extension ChatView {
         case .subAgentConversation(let conversationId):
             router.navigate(to: .subAgentConversation(id: conversationId))
         case .wakeConversation(let conversationId):
-            router.navigate(to: .subAgentConversation(id: conversationId))
+            if MacGatewayStore.shared.isCloudMainDialogueSelected {
+                MacGatewayStore.shared.setCloudMainDialogueSelected(false)
+            }
+            router.navigate(to: .chat)
+            Task { @MainActor in
+                _ = await openSubAgentSourceConversation(conversationId)
+            }
+        case .cloudDialogueWorkItem(let workItemId):
+            if MacGatewayStore.shared.connection != nil {
+                MacGatewayStore.shared.selectedCloudDialogueWorkItemId = workItemId
+                MacGatewayStore.shared.setCloudMainDialogueSelected(true)
+            }
+            router.navigate(to: .chat)
         case .executionRecord(let recordId):
             router.navigate(to: .executionTask(id: recordId))
         case .macBoard:

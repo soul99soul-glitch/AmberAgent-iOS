@@ -145,6 +145,8 @@ final class AgentSoulStore {
     private(set) var source: AgentSoulSource
     private(set) var snapshots: [AgentSoulSnapshot]
     private(set) var lastSyncedRevision: Int64
+    private(set) var syncedGatewayId: String?
+    private(set) var originGatewayId: String?
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let notePoster: (String) -> Void
@@ -162,6 +164,8 @@ final class AgentSoulStore {
         static let source = "app.amber.ios.agentSoul.source"
         static let snapshots = "app.amber.ios.agentSoul.snapshots"
         static let lastSyncedRevision = "app.amber.ios.agentSoul.lastSyncedRevision"
+        static let syncedGatewayId = "app.amber.ios.agentSoul.syncedGatewayId"
+        static let originGatewayId = "app.amber.ios.agentSoul.originGatewayId"
     }
 
     /// - Parameters:
@@ -187,6 +191,8 @@ final class AgentSoulStore {
         self.updatedAtMs = Int64(userDefaults.double(forKey: Keys.updatedAt) * 1000)
         self.source = AgentSoulSource(rawValue: userDefaults.string(forKey: Keys.source) ?? "") ?? .manual
         self.lastSyncedRevision = Int64(userDefaults.integer(forKey: Keys.lastSyncedRevision))
+        self.syncedGatewayId = userDefaults.string(forKey: Keys.syncedGatewayId)
+        self.originGatewayId = userDefaults.string(forKey: Keys.originGatewayId)
         if let data = userDefaults.data(forKey: Keys.snapshots),
            let decoded = try? JSONDecoder().decode([AgentSoulSnapshot].self, from: data) {
             self.snapshots = decoded
@@ -273,6 +279,7 @@ final class AgentSoulStore {
         soulPrompt = soul
         updatedAtMs = Self.nowMs()
         source = newSource
+        originGatewayId = syncedGatewayId
         persist()
         publishSystemPrompt()
         let cloudSource = (newSource == .conversation) ? "chat_self_update" : "ios_ui"
@@ -290,6 +297,7 @@ final class AgentSoulStore {
         soulPrompt = snapshot.soulPrompt
         updatedAtMs = Self.nowMs()
         source = .manual
+        originGatewayId = syncedGatewayId
         persist()
         publishSystemPrompt()
         localMutationHandler?(self, "ios_ui")
@@ -306,6 +314,7 @@ final class AgentSoulStore {
         soulPrompt = ""
         updatedAtMs = Self.nowMs()
         source = .manual
+        originGatewayId = syncedGatewayId
         persist()
         publishSystemPrompt()
         localMutationHandler?(self, "ios_ui")
@@ -313,6 +322,55 @@ final class AgentSoulStore {
     }
 
     // MARK: - C-SOUL-V1 云端双向同步 (`GET /v2/soul` & `PUT /v2/soul`)
+
+    func handleGatewayUnpaired() {
+        if let gw = syncedGatewayId, !gw.isEmpty, originGatewayId == nil, !isDefault {
+            originGatewayId = gw
+        }
+        syncedGatewayId = nil
+        lastSyncedRevision = 0
+        persist()
+    }
+
+    func prepareForGatewayIfNeeded(_ gatewayId: String) {
+        guard !gatewayId.isEmpty, syncedGatewayId != gatewayId else { return }
+        if let previousGatewayId = syncedGatewayId, !previousGatewayId.isEmpty, originGatewayId == nil, !isDefault {
+            originGatewayId = previousGatewayId
+        }
+        syncedGatewayId = gatewayId
+        lastSyncedRevision = 0
+        persist()
+    }
+
+    func canBootstrapToUninitializedGateway(_ gatewayId: String?) -> Bool {
+        guard !isDefault, !soulPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        if let originGatewayId, !originGatewayId.isEmpty {
+            return gatewayId == originGatewayId
+        }
+        return true
+    }
+
+    func adoptUninitializedForeignGatewayIfNeeded(_ gatewayId: String?) {
+        if let gatewayId, !gatewayId.isEmpty {
+            syncedGatewayId = gatewayId
+        }
+        lastSyncedRevision = 0
+        if let originGatewayId, !originGatewayId.isEmpty, originGatewayId != gatewayId, !isDefault {
+            pushSnapshot(summary: "切换网关前自动保存")
+            displayName = Self.defaultDisplayName
+            tagline = ""
+            soulPrompt = ""
+            updatedAtMs = Self.nowMs()
+            source = .manual
+            self.originGatewayId = nil
+            persist()
+            publishSystemPrompt()
+        } else {
+            persist()
+        }
+    }
 
     func makeCloudPutRequest(source cloudSource: String = "ios_ui") -> CloudSoulPutRequestPayload {
         CloudSoulPutRequestPayload(
@@ -327,13 +385,23 @@ final class AgentSoulStore {
 
     /// 应用来自远端 `GET /v2/soul` 或 `PUT /v2/soul` 的权威快照。
     /// - 重要：本方法带有同步来源守卫，绝不会触发 `localMutationHandler`，防止反向触发 `PUT /v2/soul` 死循环。
-    /// - 若远端返回 `revision == 0` 且本地已有非默认自定义人设，自动触发一次 `localMutationHandler` 将本地人设上云初始化。
+    /// - 若远端返回 `revision == 0` 且本地已有未绑定旧网关的自定义人设，自动触发一次 `localMutationHandler` 将本地人设上云初始化。
     @discardableResult
-    func applyCloudSoulSnapshot(_ remote: CloudSoulSnapshotPayload) -> Bool {
+    func applyCloudSoulSnapshot(
+        _ remote: CloudSoulSnapshotPayload,
+        gatewayId: String? = nil,
+        acceptAuthoritativeRevision: Bool = false
+    ) -> Bool {
+        let effectiveGatewayId = gatewayId ?? syncedGatewayId
+        if let gatewayId, !gatewayId.isEmpty, syncedGatewayId != gatewayId {
+            prepareForGatewayIfNeeded(gatewayId)
+        }
         if remote.revision == 0 {
-            if !isDefault, !soulPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if canBootstrapToUninitializedGateway(effectiveGatewayId) {
                 let bootstrapSource = (source == .conversation) ? "chat_self_update" : "ios_ui"
                 localMutationHandler?(self, bootstrapSource)
+            } else {
+                adoptUninitializedForeignGatewayIfNeeded(effectiveGatewayId)
             }
             return false
         }
@@ -387,11 +455,28 @@ final class AgentSoulStore {
             updatedAtMs = resolvedUpdatedAtMs
         }
         if source != resolvedSource { source = resolvedSource }
-        let revisionChanged = remote.revision > lastSyncedRevision
+        var metadataChanged = false
+        if let effectiveGatewayId, !effectiveGatewayId.isEmpty {
+            if syncedGatewayId != effectiveGatewayId {
+                syncedGatewayId = effectiveGatewayId
+                metadataChanged = true
+            }
+            let nextOrigin: String? = remote.isDefault ? nil : effectiveGatewayId
+            if originGatewayId != nextOrigin {
+                originGatewayId = nextOrigin
+                metadataChanged = true
+            }
+        }
+        let revisionChanged: Bool
+        if acceptAuthoritativeRevision {
+            revisionChanged = remote.revision != lastSyncedRevision
+        } else {
+            revisionChanged = remote.revision > lastSyncedRevision
+        }
         if revisionChanged {
             lastSyncedRevision = remote.revision
         }
-        if contentChanged || snapshotsChanged || revisionChanged {
+        if contentChanged || snapshotsChanged || revisionChanged || metadataChanged {
             persist()
         }
         if contentChanged {
@@ -459,6 +544,16 @@ final class AgentSoulStore {
         defaults.set(Double(updatedAtMs) / 1000, forKey: Keys.updatedAt)
         defaults.set(source.rawValue, forKey: Keys.source)
         defaults.set(Int(lastSyncedRevision), forKey: Keys.lastSyncedRevision)
+        if let syncedGatewayId, !syncedGatewayId.isEmpty {
+            defaults.set(syncedGatewayId, forKey: Keys.syncedGatewayId)
+        } else {
+            defaults.removeObject(forKey: Keys.syncedGatewayId)
+        }
+        if let originGatewayId, !originGatewayId.isEmpty {
+            defaults.set(originGatewayId, forKey: Keys.originGatewayId)
+        } else {
+            defaults.removeObject(forKey: Keys.originGatewayId)
+        }
         if let data = try? JSONEncoder().encode(snapshots) {
             defaults.set(data, forKey: Keys.snapshots)
         }

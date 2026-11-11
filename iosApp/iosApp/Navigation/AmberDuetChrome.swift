@@ -893,7 +893,21 @@ struct AmberDuetTaskCenterCard: View {
                 .padding(.leading, 16)
             } else if let actionTitle = item.actionTitle {
                 Button {
-                    if let onFollowupTask {
+                    if actionTitle == "去确认" {
+                        Task {
+                            await handleQuickDecision(
+                                AmberTaskQuickDecision(title: actionTitle, kind: .confirmApproval),
+                                for: item
+                            )
+                        }
+                    } else if actionTitle == "重试" {
+                        Task {
+                            await handleQuickDecision(
+                                AmberTaskQuickDecision(title: actionTitle, kind: .retry),
+                                for: item
+                            )
+                        }
+                    } else if let onFollowupTask {
                         onDismissPanel?()
                         onFollowupTask(item)
                     } else {
@@ -942,13 +956,73 @@ struct AmberDuetTaskCenterCard: View {
     }
 
     func handleQuickDecision(_ decision: AmberTaskQuickDecision, for item: AmberUnifiedTaskItem) async {
-        if decision.kind == .retry, case .cloudTask(let requestId) = item.source {
-            _ = await gateway.retryCloudTask(requestId: requestId)
-            return
-        }
-        if decision.kind == .openDetail {
+        if decision.kind == .openDetail || decision.kind == .confirmApproval {
             openDestinationDirectly(item)
             return
+        }
+        if case .gatewayBoardItem = item.source {
+            openDestinationDirectly(item)
+            return
+        }
+        if case .gatewaySchedule = item.source {
+            openDestinationDirectly(item)
+            return
+        }
+        if decision.kind == .retry {
+            switch item.source {
+            case .cloudTask(let requestId):
+                if let record = gateway.cloudTasks.first(where: { $0.requestId == requestId }),
+                   !record.needsSubmissionRetry {
+                    openDestinationDirectly(item)
+                } else {
+                    _ = await gateway.retryCloudTask(requestId: requestId)
+                }
+                return
+            default:
+                if item.destination != .none {
+                    openDestinationDirectly(item)
+                    return
+                }
+            }
+        }
+        if decision.kind == .approveAndContinue {
+            switch item.source {
+            case .cloudTask(let requestId):
+                if let record = gateway.cloudTasks.first(where: { $0.requestId == requestId }),
+                   let workItemId = record.workItemId,
+                   !record.isTerminal {
+                    let text = decision.followupInstruction ?? decision.title
+                    let result = await gateway.sendCloudWorkItemInput(workItemId: workItemId, text: text)
+                    if case .success = result {
+                        await gateway.refreshCloudTask(workItemId: workItemId)
+                    }
+                } else {
+                    openDestinationDirectly(item)
+                }
+                return
+            case .cloudDialogueWorkItem(let workItemId):
+                let text = decision.followupInstruction ?? decision.title
+                _ = await gateway.sendCloudWorkItemInput(workItemId: workItemId, text: text)
+                return
+            case .localSubAgent, .executionRecord:
+                if item.destination != .none {
+                    openDestinationDirectly(item.applyingQuickDecision(decision))
+                    return
+                }
+            default:
+                break
+            }
+        }
+        if decision.kind == .adjustDirection {
+            switch item.source {
+            case .localSubAgent, .executionRecord, .cloudDialogueWorkItem:
+                if item.destination != .none {
+                    openDestinationDirectly(item.applyingQuickDecision(decision))
+                    return
+                }
+            default:
+                break
+            }
         }
         let updated = item.applyingQuickDecision(decision)
         if let onFollowupTask {
@@ -981,7 +1055,7 @@ struct AmberDuetTaskCenterCard: View {
         switch item.destination {
         case .cloudTaskDetail(let requestId):
             selectedCloudTask = AmberCloudTaskSelection(requestId: requestId)
-        case .subAgentConversation, .executionRecord, .wakeConversation, .macBoard:
+        case .subAgentConversation, .executionRecord, .wakeConversation, .cloudDialogueWorkItem, .macBoard:
             onDismissPanel?()
             onOpenTask?(item)
         case .none:
