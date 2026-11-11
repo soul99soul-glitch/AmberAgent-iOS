@@ -210,9 +210,15 @@ struct MacGatewayCloudTaskDetailSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var copiedResult = false
+    @State private var resubmittedRequestId: String?
+    @State private var isResubmitting = false
+
+    private var effectiveRequestId: String {
+        resubmittedRequestId ?? requestId
+    }
 
     private var record: MacGatewayCloudTaskRecord? {
-        store.cloudTasks.first(where: { $0.requestId == requestId })
+        store.cloudTasks.first(where: { $0.requestId == effectiveRequestId })
     }
 
     var body: some View {
@@ -255,7 +261,7 @@ struct MacGatewayCloudTaskDetailSheet: View {
                 guard let workItemId = record?.workItemId else { return }
                 await store.refreshCloudTask(workItemId: workItemId)
                 while !Task.isCancelled {
-                    guard let current = store.cloudTasks.first(where: { $0.requestId == requestId }),
+                    guard let current = store.cloudTasks.first(where: { $0.requestId == effectiveRequestId }),
                           let id = current.workItemId,
                           !current.isTerminal else {
                         break
@@ -298,6 +304,25 @@ struct MacGatewayCloudTaskDetailSheet: View {
                     Task { _ = await store.retryCloudTask(requestId: record.requestId) }
                 }
                 .disabled(store.busyCloudTaskIds.contains(record.requestId))
+            } else if record.state == .failed {
+                Button(macGatewayL("重新发起任务")) {
+                    let freshId = UUID().uuidString.lowercased()
+                    let request = MacGatewayCloudTaskRequest(
+                        requestId: freshId,
+                        text: record.briefText,
+                        agentId: record.agentId,
+                        title: record.displayTitle
+                    )
+                    isResubmitting = true
+                    Task { @MainActor in
+                        let result = await store.submitCloudTask(request)
+                        isResubmitting = false
+                        if case .success(let submitted) = result {
+                            resubmittedRequestId = submitted.requestId
+                        }
+                    }
+                }
+                .disabled(isResubmitting || store.busyCloudTaskIds.contains(record.requestId))
             }
             if let workItemId = record.workItemId {
                 Button(macGatewayL("刷新状态")) {

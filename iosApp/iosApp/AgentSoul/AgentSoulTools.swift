@@ -18,6 +18,9 @@ enum AgentSoulToolCatalog {
 @MainActor
 struct AgentSoulToolService {
     let store: AgentSoulStore
+    var conversationId: String? = nil
+    var isOrchestratedChild: Bool = false
+    var hubStore: AmberHubStore = .shared
 
     func execute(toolName: String, arguments: String) -> String {
         let args = ChatToolCallParsing.jsonObject(arguments) ?? [:]
@@ -47,6 +50,9 @@ struct AgentSoulToolService {
     }
 
     private func update(_ args: [String: Any]) -> String {
+        guard !isOrchestratedChild, hubStore.allowsGlobalMemory(conversationId: conversationId) else {
+            return Self.errorJSON("isolated_scope", "当前会话处于独立记忆沙箱或子代理上下文，不允许修改全局形象人设。")
+        }
         let displayName = (args["displayName"] as? String) ?? ""
         let tagline = args["tagline"] as? String
         let soulPrompt = (args["soulPrompt"] as? String) ?? ""
@@ -118,18 +124,57 @@ enum AgentSoulCloudBridge {
 
         if lower.contains(startTag) { return true }
 
-        let targetKeywords = ["人设", "soul", "形象人设", "角色设定", "性格设定", "自我设定"]
-        let actionKeywords = [
-            "换", "改", "弄个", "弄一个", "写个", "写一个", "设定", "变成", "换成",
-            "写进", "写入", "存进", "存入", "保存", "更新", "给自己", "当我的", "认了", "就这么来"
-        ]
-        let hasTarget = targetKeywords.contains { lower.contains($0) }
-        let hasAction = actionKeywords.contains { lower.contains($0) }
-        if hasTarget && hasAction { return true }
-
         // 追认场景：用户在建议气泡点按「认，就这么来，性格归性格，底线归底线」
         if normalized.contains("性格归性格") && normalized.contains("底线归底线") {
             return true
+        }
+
+        // 按长度降序匹配，先剥离命中的目标词再检查动作词，消除 "角色设定"/"性格设定"/"自我设定" 自含 "设定" 的子串自触发。
+        let targetKeywords = ["形象人设", "角色设定", "性格设定", "自我设定", "人设", "soul"]
+        let actionKeywords = [
+            "弄一个", "写一个", "弄个", "写个", "换成", "变成", "设定",
+            "写进", "写入", "存进", "存入", "保存", "更新", "给自己", "当我的", "认了", "就这么来",
+            "换", "改"
+        ]
+        let thirdPartySubjects = [
+            "男主", "女主", "主角", "反派", "配角", "小说", "剧本", "故事", "游戏", "人物", "npc", "他的", "她的"
+        ]
+        let agentSelfMarkers = [
+            "你的", "把你", "给你", "让你", "替你", "你自己", "给自己", "叫自己", "自称", "当我的", "作为我的"
+        ]
+        let negationPattern = try? NSRegularExpression(
+            pattern: #"(?:不要|不用|不必|别|勿|禁止|不需要|无需|没让你|不是让你|先别|千万别)[^，,。！？!?;；\n]{0,8}?(?:改|换|动|修改|更新|设定|弄|写|重置)|(?:人设|soul)[^，,。！？!?;；\n]{0,6}?(?:不要|不用|不必|别|勿|禁止)(?:改|换|动|变)"#,
+            options: [.caseInsensitive]
+        )
+
+        let clauseSeparators = CharacterSet(charactersIn: "，,。！？!?;；\n")
+        let clauses = lower.components(separatedBy: clauseSeparators)
+        for rawClause in clauses {
+            let clause = rawClause.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !clause.isEmpty else { continue }
+
+            if let negationPattern,
+               negationPattern.firstMatch(in: clause, range: NSRange(clause.startIndex..., in: clause)) != nil {
+                continue
+            }
+
+            let hasThirdPartySubject = thirdPartySubjects.contains { clause.contains($0) }
+            let hasAgentSelfMarker = agentSelfMarkers.contains { clause.contains($0) }
+            if hasThirdPartySubject && !hasAgentSelfMarker {
+                continue
+            }
+
+            var matchedTarget = false
+            var strippedClause = clause
+            for target in targetKeywords where strippedClause.contains(target) {
+                matchedTarget = true
+                strippedClause = strippedClause.replacingOccurrences(of: target, with: " ")
+            }
+            guard matchedTarget else { continue }
+
+            if actionKeywords.contains(where: { strippedClause.contains($0) }) {
+                return true
+            }
         }
         return false
     }
@@ -158,14 +203,26 @@ enum AgentSoulCloudBridge {
         userText: String,
         assistantText: String,
         recentConversationContext: String = "",
+        allowHeuristicInference: Bool = true,
+        isOrchestratedChild: Bool = false,
+        conversationId: String? = nil,
+        hubStore: AmberHubStore = .shared,
         store: AgentSoulStore = .shared
     ) -> Bool {
+        guard !isOrchestratedChild, hubStore.allowsGlobalMemory(conversationId: conversationId) else {
+            return false
+        }
         // 1. 优先识别显式结构化指令块 `<amber_soul_update>{...}</amber_soul_update>`
         for candidate in [assistantText, userText] {
             if let (_, payload) = extractStructuredDirective(from: candidate),
                let data = try? JSONSerialization.data(withJSONObject: payload),
                let json = String(data: data, encoding: .utf8) {
-                let result = AgentSoulToolService(store: store).execute(
+                let result = AgentSoulToolService(
+                    store: store,
+                    conversationId: conversationId,
+                    isOrchestratedChild: isOrchestratedChild,
+                    hubStore: hubStore
+                ).execute(
                     toolName: AgentSoulToolCatalog.updateToolName,
                     arguments: json
                 )
@@ -176,7 +233,7 @@ enum AgentSoulCloudBridge {
         }
 
         // 2. 若用户本轮明确提出改人设/写入 soul（或追认上一轮人设），则从双端文本提取人设并落盘
-        guard isExplicitSoulUpdateRequest(userText) else { return false }
+        guard allowHeuristicInference, isExplicitSoulUpdateRequest(userText) else { return false }
         let combinedContext = [recentConversationContext, userText, assistantText]
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .joined(separator: "\n")
@@ -315,6 +372,7 @@ extension MacGatewayClient {
 extension MacGatewayStore {
     /// 绑定本地 `AgentSoulStore` 的主动变更回调，使 iOS 手动编辑、快照回退、恢复默认或本地工具更新自动上云。
     func bindCloudSoulStoreIfNeeded(_ soulStore: AgentSoulStore = .shared) {
+        boundSoulStore = soulStore
         soulStore.localMutationHandler = { [weak self] updatedStore, cloudSource in
             guard let self else { return }
             Task { @MainActor in
@@ -325,7 +383,7 @@ extension MacGatewayStore {
 
     /// 按需同步远端 `/v2/soul`：
     /// - 当 `forcePull == true`（打开「形象人设」面板或首次连接）或 `observedRevision > soulStore.lastSyncedRevision` 时拉取 `GET /v2/soul`。
-    /// - 若远端 `revision == 0` 且本地已有非默认自定义人设，自动执行一次 `PUT /v2/soul` 将本地人设上云。
+    /// - 若远端 `revision == 0` 且本地已有未绑定其他网关的自定义人设，自动执行一次 `PUT /v2/soul` 将本地人设上云。
     /// - 若远端返回 404（旧版网关）或网络不可达，静默降级保留本地缓存，不报错、不重试循环。
     @discardableResult
     func syncCloudSoulIfNeeded(
@@ -335,10 +393,18 @@ extension MacGatewayStore {
     ) async -> Bool {
         bindCloudSoulStoreIfNeeded(soulStore)
         guard let client else { return false }
+        let gatewayId = connection?.gatewayId
+        if let gatewayId, !gatewayId.isEmpty {
+            soulStore.prepareForGatewayIfNeeded(gatewayId)
+        }
 
         if !forcePull {
             guard let observedRevision else { return false }
-            let needsBootstrap = (observedRevision == 0 && !soulStore.isDefault && soulStore.lastSyncedRevision == 0)
+            let needsBootstrap = (
+                observedRevision == 0
+                    && soulStore.lastSyncedRevision == 0
+                    && soulStore.canBootstrapToUninitializedGateway(gatewayId)
+            )
             guard observedRevision > soulStore.lastSyncedRevision || needsBootstrap else {
                 return false
             }
@@ -347,16 +413,21 @@ extension MacGatewayStore {
         do {
             let remote = try await client.fetchCloudSoul()
             guard self.client === client else { return false }
+            let currentGatewayId = connection?.gatewayId ?? gatewayId
             if remote.revision == 0 {
-                if !soulStore.isDefault,
-                   !soulStore.soulPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if soulStore.canBootstrapToUninitializedGateway(currentGatewayId) {
                     let bootstrapSource = (soulStore.source == .conversation) ? "chat_self_update" : "ios_ui"
                     return await pushCloudSoul(from: soulStore, source: bootstrapSource)
                 }
+                soulStore.adoptUninitializedForeignGatewayIfNeeded(currentGatewayId)
                 return false
             }
             if forcePull || remote.revision > soulStore.lastSyncedRevision {
-                return soulStore.applyCloudSoulSnapshot(remote)
+                return soulStore.applyCloudSoulSnapshot(
+                    remote,
+                    gatewayId: currentGatewayId,
+                    acceptAuthoritativeRevision: forcePull
+                )
             }
             return false
         } catch is CancellationError {
@@ -379,7 +450,11 @@ extension MacGatewayStore {
         do {
             let updated = try await client.putCloudSoul(request)
             guard self.client === client else { return false }
-            _ = soulStore.applyCloudSoulSnapshot(updated)
+            _ = soulStore.applyCloudSoulSnapshot(
+                updated,
+                gatewayId: connection?.gatewayId,
+                acceptAuthoritativeRevision: true
+            )
             return true
         } catch is CancellationError {
             return false

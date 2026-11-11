@@ -126,6 +126,7 @@ final class MacGatewayStore {
     /// the refresh after a decision overlap).
     @ObservationIgnored var requestGeneration = (status: 0, schedules: 0, board: 0, cloudAgents: 0)
     @ObservationIgnored var hasCheckedCloudSoulOnConnect = false
+    @ObservationIgnored weak var boundSoulStore: AgentSoulStore?
     @ObservationIgnored let persistenceCoordinator = MacGatewayPersistenceCoordinator()
     @ObservationIgnored let defaults: UserDefaults
 
@@ -151,12 +152,13 @@ final class MacGatewayStore {
 
     func configureForTesting(connection: MacGatewayConnection, client: MacGatewayClient) {
         persistenceCoordinator.advance(connection: connection)
+        let previousSoulStore = boundSoulStore ?? .shared
         self.connection = connection
         self.client = client
         self.isReachable = true
         self.cloudDialogueTransportState = .unknown
         self.hasCheckedCloudSoulOnConnect = false
-        bindCloudSoulStoreIfNeeded()
+        bindCloudSoulStoreIfNeeded(previousSoulStore)
         loadPersistedCloudTasks()
         loadPersistedCloudDialogueState()
     }
@@ -355,7 +357,11 @@ final class MacGatewayStore {
             isReachable = true
             let forceSoulPull = !hasCheckedCloudSoulOnConnect
             hasCheckedCloudSoulOnConnect = true
-            await syncCloudSoulIfNeeded(observedRevision: latest.soulRevision, forcePull: forceSoulPull)
+            await syncCloudSoulIfNeeded(
+                observedRevision: latest.soulRevision,
+                forcePull: forceSoulPull,
+                soulStore: boundSoulStore ?? .shared
+            )
             await refreshCloudAgents()
             await refreshCloudConfig()
             _ = await pollCloudDialogueEvents()
@@ -659,6 +665,7 @@ final class MacGatewayStore {
         pendingImportOperation = IOSCloudPendingOperation()
         cloudDialogueTransportState = .unknown
         hasCheckedCloudSoulOnConnect = false
+        (boundSoulStore ?? .shared).handleGatewayUnpaired()
         isReachable = nil
         pushError = nil
     }

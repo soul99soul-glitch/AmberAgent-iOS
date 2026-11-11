@@ -215,4 +215,295 @@ final class AgentSoulStoreTests: XCTestCase {
         XCTAssertTrue(soulSystemText.contains("You are 赵大哥, a personal agent on the user's device."))
         XCTAssertFalse(soulSystemText.contains("You are Amber, a personal agent on the user's device."))
     }
+
+    func testExplicitSoulUpdateRequestRejectsKeywordOverlapNegationAndIsolatedHubTurns() throws {
+        // 1. 子串自触发（"角色设定"/"性格设定" 自含 "设定"）、否定句与小说第三方人设不得被判定为改 Agent 人设
+        XCTAssertFalse(AgentSoulCloudBridge.isExplicitSoulUpdateRequest("帮我分析一下这部小说的角色设定"))
+        XCTAssertFalse(AgentSoulCloudBridge.isExplicitSoulUpdateRequest("这个人物的性格设定很有张力"))
+        XCTAssertFalse(AgentSoulCloudBridge.isExplicitSoulUpdateRequest("不要改你的人设"))
+        XCTAssertFalse(AgentSoulCloudBridge.isExplicitSoulUpdateRequest("别换人设，保持现在这样"))
+        XCTAssertFalse(AgentSoulCloudBridge.isExplicitSoulUpdateRequest("帮我给男主写个腹黑反派人设"))
+
+        // 真实改 Agent 自身人设的表达仍须命中
+        XCTAssertTrue(AgentSoulCloudBridge.isExplicitSoulUpdateRequest("把你的人设改成逗逼靠谱的赵大哥"))
+        XCTAssertTrue(AgentSoulCloudBridge.isExplicitSoulUpdateRequest("给自己弄个毒舌管家人设，写进你的 soul"))
+        XCTAssertTrue(AgentSoulCloudBridge.isExplicitSoulUpdateRequest("认，就这么来，性格归性格，底线归底线"))
+
+        // 2. `.hubIsolated` 独立记忆中心与子代理回合不得污染全局 AgentSoulStore.shared
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let sharedSoul = AgentSoulStore.shared
+        let savedName = sharedSoul.displayName
+        let savedTagline = sharedSoul.tagline
+        let savedPrompt = sharedSoul.soulPrompt
+        let savedHubs = AmberHubStore.shared.hubs
+        let savedActiveHubId = AmberHubStore.shared.activeHubId
+        let savedMutationHandler = sharedSoul.localMutationHandler
+        defer {
+            sharedSoul.localMutationHandler = nil
+            _ = sharedSoul.resetToDefault()
+            if savedName != AgentSoulStore.defaultDisplayName || !savedTagline.isEmpty || !savedPrompt.isEmpty {
+                _ = sharedSoul.update(displayName: savedName, tagline: savedTagline, soulPrompt: savedPrompt, summary: "restore")
+            }
+            sharedSoul.localMutationHandler = savedMutationHandler
+            AmberHubStore.shared.replaceForPreview(hubs: savedHubs, activeHubId: savedActiveHubId, collections: AmberHubStore.shared.smartCollections)
+        }
+        sharedSoul.localMutationHandler = nil
+        _ = sharedSoul.resetToDefault()
+
+        let isolatedConvUuid = KotlinUuid.companion.random()
+        let isolatedHub = AmberHubItem(
+            id: "hub-isolated-novel-test",
+            title: "长篇小说",
+            thesis: "独立世界观",
+            template: .novel,
+            memoryPolicy: .hubIsolated,
+            conversationIds: [isolatedConvUuid.toHexDashString()]
+        )
+        AmberHubStore.shared.replaceForPreview(hubs: [isolatedHub], activeHubId: isolatedHub.id, collections: [])
+
+        let legacySettings = SettingsStore(userDefaults: defaults)
+        let sharedSettings = IOSSharedSettingsStore(userDefaults: defaults)
+        let viewModel = ChatViewModel(settingsStore: legacySettings, sharedSettings: sharedSettings)
+
+        let isolatedState = ChatConversationRunState(conversationId: isolatedConvUuid)
+        isolatedState.messages = [
+            UIMessage.companion.user(prompt: "把你的人设改成逗逼靠谱的赵大哥"),
+            UIMessage(
+                id: KotlinUuid.companion.random(),
+                role: MessageRole.assistant,
+                parts: [UIMessagePart.Text(text: "好嘞，从下一句起就按赵大哥的性子来！", metadata: nil)],
+                annotations: [],
+                createdAt: chatNowLocalDateTime(),
+                finishedAt: chatNowLocalDateTime(),
+                modelId: nil,
+                usage: nil,
+                translation: nil
+            )
+        ]
+        viewModel.onGenerationCompleted(state: isolatedState)
+        XCTAssertTrue(sharedSoul.isDefault, "独立记忆中心（.hubIsolated）会话不得写入全局 AgentSoulStore.shared")
+
+        let childState = ChatConversationRunState(conversationId: KotlinUuid.companion.random())
+        childState.isOrchestratedChild = true
+        childState.messages = isolatedState.messages
+        viewModel.onGenerationCompleted(state: childState)
+        XCTAssertTrue(sharedSoul.isDefault, "子代理会话（isOrchestratedChild）不得写入全局 AgentSoulStore.shared")
+    }
+
+    func testCloudDialoguePollWithServerSoulRevisionDoesNotReverseOverwriteAuthoritativeSoul() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let sharedSoul = AgentSoulStore.shared
+        let savedName = sharedSoul.displayName
+        let savedTagline = sharedSoul.tagline
+        let savedPrompt = sharedSoul.soulPrompt
+        let savedMutationHandler = sharedSoul.localMutationHandler
+        defer {
+            sharedSoul.localMutationHandler = nil
+            _ = sharedSoul.resetToDefault()
+            if savedName != AgentSoulStore.defaultDisplayName || !savedTagline.isEmpty || !savedPrompt.isEmpty {
+                _ = sharedSoul.update(displayName: savedName, tagline: savedTagline, soulPrompt: savedPrompt, summary: "restore")
+            }
+            sharedSoul.localMutationHandler = savedMutationHandler
+        }
+        sharedSoul.localMutationHandler = nil
+        _ = sharedSoul.resetToDefault()
+
+        actor CloudSoulRecorder {
+            var putBodies: [String] = []
+            func recordPut(_ body: String) { putBodies.append(body) }
+        }
+        let recorder = CloudSoulRecorder()
+
+        let client = MacGatewayClient(
+            addrs: ["cloud.example"],
+            port: 443,
+            fingerprint: "fp",
+            token: "tok",
+            transport: { req, _ in
+                let url = req.url!
+                let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+                switch (req.httpMethod ?? "GET", url.path) {
+                case ("GET", "/v2/dialogue/events"):
+                    let pageJSON = #"""
+                    {
+                      "items": [
+                        {"seq": 1, "id": "ev-u1", "kind": "user_message", "role": "user", "text": "把你的人设改成诸葛亮，自称孔明", "topicId": "topic-1"},
+                        {"seq": 2, "id": "ev-a1", "kind": "assistant_reply", "role": "assistant", "text": "亮谨遵钧命，已为你切换为卧龙先生人设。", "topicId": "topic-1"}
+                      ],
+                      "nextCursor": 2,
+                      "soulRevision": 5
+                    }
+                    """#
+                    return (Data(pageJSON.utf8), resp)
+                case ("GET", "/v2/soul"):
+                    let soulJSON = #"""
+                    {
+                      "revision": 5,
+                      "displayName": "孔明",
+                      "tagline": "鞠躬尽瘁的蜀汉丞相",
+                      "soulMarkdown": "服务端工具精修完整诸葛亮设定，不可被客户端正则模板覆盖。",
+                      "isDefault": false,
+                      "updatedAtMs": 1793500010000,
+                      "source": "chat_self_update",
+                      "history": []
+                    }
+                    """#
+                    return (Data(soulJSON.utf8), resp)
+                case ("PUT", "/v2/soul"):
+                    let body = req.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                    await recorder.recordPut(body)
+                    let overriddenJSON = #"""
+                    {
+                      "revision": 6,
+                      "displayName": "被客户端覆盖",
+                      "tagline": "bad",
+                      "soulMarkdown": "bad",
+                      "isDefault": false,
+                      "updatedAtMs": 1793500011000,
+                      "source": "chat_self_update",
+                      "history": []
+                    }
+                    """#
+                    return (Data(overriddenJSON.utf8), resp)
+                default:
+                    let notFound = HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: nil)!
+                    return (Data(#"{"error":"not_found"}"#.utf8), notFound)
+                }
+            }
+        )
+        let store = MacGatewayStore(defaults: defaults)
+        store.configureForTesting(
+            connection: .init(gatewayId: "gw-soul-1", name: "Cloud", addrs: ["cloud.example"], port: 443, fingerprint: "fp", deviceId: "dev-1"),
+            client: client
+        )
+        store.bindCloudSoulStoreIfNeeded(sharedSoul)
+
+        let pollResult = await store.pollCloudDialogueEvents()
+        if case .failure(let error) = pollResult {
+            XCTFail("Expected pollCloudDialogueEvents to succeed, got \(error)")
+        }
+        try await Task.sleep(for: .milliseconds(80))
+
+        let puts = await recorder.putBodies
+        XCTAssertTrue(puts.isEmpty, "服务端已返回新 soulRevision 时，客户端绝不能反向 PUT /v2/soul 覆盖权威人设，实际 PUT=\(puts)")
+        XCTAssertEqual(sharedSoul.displayName, "孔明")
+        XCTAssertEqual(sharedSoul.soulPrompt, "服务端工具精修完整诸葛亮设定，不可被客户端正则模板覆盖。")
+    }
+
+    func testGatewayUnpairResetsSoulRevisionAndPreventsCrossGatewayPersonaLeak() async throws {
+        let (defaults, suite) = try isolatedDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let soulStore = AgentSoulStore(userDefaults: defaults, notePoster: { _ in })
+        let gatewayStore = MacGatewayStore(defaults: defaults)
+
+        // 1. 配对网关 A（revision = 10），拉取权威人设
+        let clientA = MacGatewayClient(
+            addrs: ["gwa.example"],
+            port: 443,
+            fingerprint: "fp-a",
+            token: "tok-a",
+            transport: { req, _ in
+                let resp = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+                let json = #"""
+                {
+                  "revision": 10,
+                  "displayName": "网关A老哥",
+                  "tagline": "网关A签名",
+                  "soulMarkdown": "网关A专属设定正文",
+                  "isDefault": false,
+                  "updatedAtMs": 1793500020000,
+                  "source": "mac_ui",
+                  "history": []
+                }
+                """#
+                return (Data(json.utf8), resp)
+            }
+        )
+        gatewayStore.configureForTesting(
+            connection: .init(gatewayId: "gw-a", name: "Mac A", addrs: ["gwa.example"], port: 443, fingerprint: "fp-a", deviceId: "dev-a"),
+            client: clientA
+        )
+        let pulledA = await gatewayStore.syncCloudSoulIfNeeded(forcePull: true, soulStore: soulStore)
+        XCTAssertTrue(pulledA)
+        XCTAssertEqual(soulStore.displayName, "网关A老哥")
+        XCTAssertEqual(soulStore.lastSyncedRevision, 10)
+
+        // 2. 解绑网关 A 后重配对网关 B（revision = 2 < 10），observedRevision = 2 仍须成功拉取并对齐 revision = 2
+        await gatewayStore.unpair()
+        let clientB = MacGatewayClient(
+            addrs: ["gwb.example"],
+            port: 443,
+            fingerprint: "fp-b",
+            token: "tok-b",
+            transport: { req, _ in
+                let resp = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+                let json = #"""
+                {
+                  "revision": 2,
+                  "displayName": "网关B管家",
+                  "tagline": "网关B签名",
+                  "soulMarkdown": "网关B专属设定正文",
+                  "isDefault": false,
+                  "updatedAtMs": 1793500030000,
+                  "source": "mac_ui",
+                  "history": []
+                }
+                """#
+                return (Data(json.utf8), resp)
+            }
+        )
+        gatewayStore.configureForTesting(
+            connection: .init(gatewayId: "gw-b", name: "Mac B", addrs: ["gwb.example"], port: 443, fingerprint: "fp-b", deviceId: "dev-b"),
+            client: clientB
+        )
+        let pulledB = await gatewayStore.syncCloudSoulIfNeeded(observedRevision: 2, soulStore: soulStore)
+        XCTAssertTrue(pulledB, "切换到低 revision 网关 B 后，observedRevision=2 必须能正常拉取同步")
+        XCTAssertEqual(soulStore.displayName, "网关B管家")
+        XCTAssertEqual(soulStore.lastSyncedRevision, 2)
+
+        // 3. 解绑网关 B 后重配对全新未初始化网关 C（revision = 0），绝不能把网关 B 的旧人设静默 PUT 外泄到网关 C
+        await gatewayStore.unpair()
+        actor PutCounter {
+            var count = 0
+            func inc() { count += 1 }
+        }
+        let putCounterC = PutCounter()
+        let clientC = MacGatewayClient(
+            addrs: ["gwc.example"],
+            port: 443,
+            fingerprint: "fp-c",
+            token: "tok-c",
+            transport: { req, _ in
+                let resp = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+                if req.httpMethod == "PUT" && req.url?.path == "/v2/soul" {
+                    await putCounterC.inc()
+                }
+                let json = #"""
+                {
+                  "revision": 0,
+                  "displayName": "Amber",
+                  "tagline": "",
+                  "soulMarkdown": "",
+                  "isDefault": true,
+                  "updatedAtMs": 0,
+                  "source": "default",
+                  "history": []
+                }
+                """#
+                return (Data(json.utf8), resp)
+            }
+        )
+        gatewayStore.configureForTesting(
+            connection: .init(gatewayId: "gw-c", name: "Cloud C", addrs: ["gwc.example"], port: 443, fingerprint: "fp-c", deviceId: "dev-c"),
+            client: clientC
+        )
+        _ = await gatewayStore.syncCloudSoulIfNeeded(forcePull: true, soulStore: soulStore)
+        let leakedPuts = await putCounterC.count
+        XCTAssertEqual(leakedPuts, 0, "前序网关同步得到的人设不得在重配对全新网关（revision=0）时静默自动上传外泄")
+    }
 }

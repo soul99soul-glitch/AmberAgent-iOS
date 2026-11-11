@@ -1597,4 +1597,333 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             XCTAssertLessThanOrEqual(primaryScrollView.frame.height, 540)
         }
     }
+
+    func testWakeTaskNavigationSwitchesMainConversationInsteadOfSubAgentRoute() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let composerSource = try String(
+            contentsOf: root.appendingPathComponent("iosApp/iosApp/Chat/Composer/ChatViewComposer.swift"),
+            encoding: .utf8
+        )
+        let start = try XCTUnwrap(composerSource.range(of: "func openUnifiedTask(_ task: AmberUnifiedTaskItem)"))
+        let tail = composerSource[start.lowerBound...]
+        let end = tail.range(of: "var isCloudMainDialogueActive") ?? tail.endIndex..<tail.endIndex
+        let openUnifiedTaskBody = String(tail[..<end.lowerBound])
+
+        if let wakeRange = openUnifiedTaskBody.range(of: "case .wakeConversation") {
+            let afterWake = openUnifiedTaskBody[wakeRange.lowerBound...]
+            let nextCase = afterWake.dropFirst().range(of: "case .")
+            let wakeBranch = nextCase.map { String(afterWake[..<$0.lowerBound]) } ?? String(afterWake)
+            XCTAssertFalse(
+                wakeBranch.contains("router.navigate(to: .subAgentConversation"),
+                "本地唤醒任务属于主会话（或由 openSubAgentSourceConversation 自动判别），不得直接路由至 SubAgentConversationView 导致追问报 unknown_target"
+            )
+            XCTAssertTrue(
+                wakeBranch.contains("openSubAgentSourceConversation"),
+                "唤醒任务跳转应复用 openSubAgentSourceConversation 切换回真实所属会话"
+            )
+        } else {
+            XCTFail("Expected case .wakeConversation in openUnifiedTask")
+        }
+    }
+
+    func testQuickDecisionsRouteApprovalsAndCloudInputsToTrueOwnersWithoutFakingApproval() async throws {
+        let suite = "AmberQuickDecisionRouting.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        actor CloudInputCapture {
+            var workItemInputs: [(path: String, body: String)] = []
+            func record(path: String, body: String) {
+                workItemInputs.append((path, body))
+            }
+        }
+        let capture = CloudInputCapture()
+        let client = MacGatewayClient(
+            addrs: ["cloud.example"],
+            port: 443,
+            fingerprint: "fp",
+            token: "tok",
+            transport: { req, _ in
+                let url = req.url!
+                let resp = HTTPURLResponse(url: url, statusCode: 202, httpVersion: "HTTP/1.1", headerFields: nil)!
+                if req.httpMethod == "POST" && url.path.hasPrefix("/v2/work-items/") && url.path.hasSuffix("/inputs") {
+                    let body = req.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                    await capture.record(path: url.path, body: body)
+                    let receiptJSON = #"""
+                    {
+                      "eventId": "ev-in-1",
+                      "requestId": "req-in-1",
+                      "topicId": "topic-1",
+                      "workItemIds": ["work-wait-1"],
+                      "state": "received",
+                      "replayed": false
+                    }
+                    """#
+                    return (Data(receiptJSON.utf8), resp)
+                }
+                if req.httpMethod == "GET" && url.path == "/v2/work-items/work-wait-1" {
+                    let detailJSON = #"""
+                    {
+                      "workItem": {"id": "work-wait-1", "agentId": "main", "title": "云端架构评审", "state": "WORKING", "progress": "继续推进中", "updatedAtMs": 1793500050000},
+                      "brief": "评审跨端协议",
+                      "sessionArchived": false
+                    }
+                    """#
+                    let ok = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+                    return (Data(detailJSON.utf8), ok)
+                }
+                let notFound = HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: nil)!
+                return (Data(#"{"error":"not_found"}"#.utf8), notFound)
+            }
+        )
+
+        let gateway = MacGatewayStore(defaults: defaults)
+        gateway.configureForTesting(
+            connection: .init(gatewayId: "gw-1", name: "Cloud", addrs: ["cloud.example"], port: 443, fingerprint: "fp", deviceId: "dev-1"),
+            client: client
+        )
+        gateway.cloudTasks = [
+            MacGatewayCloudTaskRecord(
+                gatewayId: "gw-1",
+                deviceId: "dev-1",
+                request: MacGatewayCloudTaskRequest(requestId: "req-wait-1", text: "评审跨端协议", title: "云端架构评审"),
+                workItemId: "work-wait-1",
+                workItem: MacGatewayCloudWorkItem(id: "work-wait-1", agentId: "main", title: "云端架构评审", state: .waiting, progress: "等待拍板", updatedAtMs: 1793500040000),
+                detail: nil,
+                replayed: false,
+                lastError: nil,
+                createdAt: Date(),
+                updatedAt: Date()
+            )
+        ]
+
+        let hubStore = AmberHubStore(defaults: defaults)
+        let tasksStore = IOSAdvancedTaskStore(userDefaults: defaults)
+        let subAgentStore = IOSSubAgentActivityStore(tasks: tasksStore, defaults: defaults, loadRuns: { [] })
+
+        var openedTasks: [AmberUnifiedTaskItem] = []
+        var followups: [AmberUnifiedTaskItem] = []
+        let panel = AmberDuetTaskCenterCard(
+            gateway: gateway,
+            subAgentStore: subAgentStore,
+            taskStore: tasksStore,
+            hubStore: hubStore,
+            onOpenFullTaskBoard: {},
+            onOpenTask: { openedTasks.append($0) },
+            onFollowupTask: { followups.append($0) }
+        )
+
+        // 1. 待审批项点「去确认」（confirmApproval）必须打开真实审批所有者（如 .macBoard），绝不能塞入本地聊天框伪造审批
+        let approvalItem = AmberUnifiedTaskItem(
+            id: "board:approval-high-risk-1",
+            title: "生产库迁移脚本执行",
+            subtitle: "等待工具审批 · Mac",
+            statusText: "待你确认",
+            actionButtonTitle: "去确认",
+            phase: .needsAttention,
+            ownership: .backgroundRun,
+            quickActions: AmberUnifiedTaskBuilder.approvalQuickActions(),
+            destination: .macBoard,
+            source: .gatewayBoardItem("approval-high-risk-1")
+        )
+        await panel.handleQuickDecision(approvalItem.quickActions[0], for: approvalItem)
+        XCTAssertTrue(followups.isEmpty, "confirmApproval 绝不能写入聊天输入框伪造授权")
+        XCTAssertEqual(openedTasks.map(\.destination), [.macBoard])
+
+        // 2. 云端 WAITING 任务点「拍板继续」（approveAndContinue）应直投真实 POST /v2/work-items/{id}/inputs
+        openedTasks.removeAll()
+        let cloudWaitingItem = AmberUnifiedTaskItem(
+            id: "cloud:req-wait-1",
+            title: "云端架构评审",
+            subtitle: "前序阶段已就绪 · 云端",
+            statusText: "等我拍板",
+            actionButtonTitle: "拍板继续",
+            phase: .needsAttention,
+            ownership: .delegated,
+            decisionPrompt: "是否按方案 A 继续？",
+            quickActions: AmberUnifiedTaskBuilder.decisionQuickActions(decisionPrompt: "是否按方案 A 继续？"),
+            destination: .cloudTaskDetail(requestId: "req-wait-1"),
+            source: .cloudTask("req-wait-1")
+        )
+        await panel.handleQuickDecision(cloudWaitingItem.quickActions[0], for: cloudWaitingItem)
+        gateway.stopCloudDialoguePolling()
+        gateway.stopCloudTaskPolling()
+        let recordedInputs = await capture.workItemInputs
+        XCTAssertEqual(recordedInputs.count, 1, "云端待拍板任务的拍板继续应发送到真实 /v2/work-items/work-wait-1/inputs")
+        XCTAssertEqual(recordedInputs.first?.path, "/v2/work-items/work-wait-1/inputs")
+        XCTAssertTrue(followups.isEmpty)
+
+        // 3. 本地子代理（thread:<childId>）拍板应路由到真实子会话而非塞进当前无关主会话输入框
+        let childId = UUID().uuidString.lowercased()
+        let subAgentDecisionItem = AmberUnifiedTaskItem(
+            id: "subagent:run-child-1",
+            title: "检索论文引用",
+            subtitle: "前序步骤已就绪 · 本机后台",
+            statusText: "等我拍板",
+            actionButtonTitle: "拍板继续",
+            phase: .needsAttention,
+            ownership: .backgroundRun,
+            decisionPrompt: "是否扩展到 2026 年预印本？",
+            quickActions: AmberUnifiedTaskBuilder.decisionQuickActions(decisionPrompt: "是否扩展到 2026 年预印本？"),
+            destination: .subAgentConversation(conversationId: childId),
+            source: .localSubAgent("run-child-1")
+        )
+        await panel.handleQuickDecision(subAgentDecisionItem.quickActions[0], for: subAgentDecisionItem)
+        XCTAssertTrue(followups.isEmpty, "子代理拍板应进入其真实所属子会话而非塞入无关主聊天框")
+        XCTAssertEqual(openedTasks.map(\.destination), [.subAgentConversation(conversationId: childId)])
+    }
+
+    func testUnifiedTaskBuilderIncludesCloudDialogueWorkItemsRedactsSecretsAndResolvesTrueHubOwnership() async throws {
+        let suite = "AmberTaskBuilderCloudAndHub.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let schedulesJSON = #"{"schedules":[{"id":"sched-global-1","name":"每日健康巡检","rule":"每天 09:00","enabled":true,"running":false,"autoApprovesHighRisk":false}]}"#
+        let client = MacGatewayClient(
+            addrs: ["cloud.example"],
+            port: 443,
+            fingerprint: "fp",
+            token: "tok",
+            transport: { req, _ in
+                let url = req.url!
+                let ok = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+                if url.path.hasSuffix("/schedules") {
+                    return (Data(schedulesJSON.utf8), ok)
+                }
+                let notFound = HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: nil)!
+                return (Data(#"{"error":"not_found"}"#.utf8), notFound)
+            }
+        )
+        let gateway = MacGatewayStore(defaults: defaults)
+        gateway.configureForTesting(
+            connection: .init(gatewayId: "gw-task-5", name: "Cloud", addrs: ["cloud.example"], port: 443, fingerprint: "fp", deviceId: "dev-5"),
+            client: client
+        )
+        await gateway.refreshSchedules()
+
+        // 注入云主对话派生的后台 WorkItem 事件（含敏感凭据 sk-... 与 Bearer token）
+        let secretToken = "sk-live-secret-credential-99887766"
+        let page = MacGatewayCloudDialogueEventsPage(
+            items: [
+                MacGatewayCloudDialogueEvent(
+                    seq: 1,
+                    id: "ev-u-secret",
+                    kind: .userMessage,
+                    role: "user",
+                    text: "帮我巡检线上网关，测试密钥 api_key=\(secretToken)",
+                    topicId: "topic-ops",
+                    workItemId: "work-dlg-42",
+                    outcome: nil,
+                    soulRevision: nil
+                ),
+                MacGatewayCloudDialogueEvent(
+                    seq: 2,
+                    id: "ev-p-secret",
+                    kind: .processEvent,
+                    role: "assistant",
+                    text: "正在用 Authorization: Bearer \(secretToken) 校验上游连通性",
+                    topicId: "topic-ops",
+                    workItemId: "work-dlg-42",
+                    outcome: nil,
+                    soulRevision: nil
+                )
+            ],
+            nextCursor: 2,
+            soulRevision: nil
+        )
+        gateway.ingestCloudDialogueEventsPage(page, requestedAfter: 0)
+        gateway.persistCloudDialogueState(immediately: true)
+
+        // 1. 验证 UserDefaults 落盘快照已脱敏，不含明文凭据
+        let persistedData = try XCTUnwrap(defaults.data(forKey: MacGatewayStore.cloudDialogueStateKey))
+        let persistedRawString = try XCTUnwrap(String(data: persistedData, encoding: .utf8))
+        XCTAssertFalse(
+            persistedRawString.contains(secretToken),
+            "macGateway.cloudDialogue.v1 落盘数据必须脱敏，不得将明文密钥写入 UserDefaults"
+        )
+
+        // 2. 配置两个 Hub：京都旅行（绑定 convKyoto）与当前激活的小说中心（.hubIsolated，无绑定任务）
+        let hubStore = AmberHubStore(defaults: defaults)
+        let convKyoto = UUID().uuidString.lowercased()
+        let hubKyoto = hubStore.createHub(
+            title: "京都旅行",
+            template: .general,
+            memoryPolicy: .sharedWithGlobal,
+            conversationIds: [convKyoto],
+            makeActive: false
+        )
+        let hubNovel = hubStore.createHub(
+            title: "雾港长篇小说",
+            template: .novel,
+            memoryPolicy: .hubIsolated,
+            conversationIds: [],
+            makeActive: true
+        )
+        XCTAssertEqual(hubStore.activeHubId, hubNovel.id)
+
+        let wakeStore = IOSWakeTaskStore(fileURL: directory.appendingPathComponent("wake-hub.json"))
+        _ = try wakeStore.schedule(
+            conversationID: convKyoto,
+            sourceRunID: "run-kyoto",
+            origin: IOSWakeOrigin(userMessageID: "m-kyoto", userText: "明早提醒我查岚山余票"),
+            title: "查岚山小火车余票",
+            prompt: "查询余票",
+            fireAt: Date().addingTimeInterval(1_800),
+            event: nil,
+            requiresForeground: false,
+            requestID: "req-kyoto-wake"
+        )
+        let tasksStore = IOSAdvancedTaskStore(userDefaults: defaults)
+        let subAgentStore = IOSSubAgentActivityStore(tasks: tasksStore, defaults: defaults, loadRuns: { [] })
+
+        // 3. 全部中心视图必须能看到云主对话派生的后台 WorkItem（work-dlg-42）
+        let allGroups = AmberUnifiedTaskBuilder.buildTasks(
+            gateway: gateway,
+            subAgentStore: subAgentStore,
+            taskStore: tasksStore,
+            wakeStore: wakeStore,
+            hubStore: hubStore,
+            filterHubId: nil
+        )
+        XCTAssertTrue(
+            allGroups.running.contains { $0.id.contains("work-dlg-42") },
+            "云主对话派生的后台 WorkItem 必须纳入统一任务面板 running 组"
+        )
+
+        // 4. 按「京都旅行」筛选时，即使当前 activeHubId 是小说中心，也必须命中绑定 convKyoto 的唤醒任务
+        let kyotoGroups = AmberUnifiedTaskBuilder.buildTasks(
+            gateway: gateway,
+            subAgentStore: subAgentStore,
+            taskStore: tasksStore,
+            wakeStore: wakeStore,
+            hubStore: hubStore,
+            filterHubId: hubKyoto.id
+        )
+        XCTAssertEqual(kyotoGroups.scheduled.map(\.title), ["查岚山小火车余票"])
+        XCTAssertTrue(kyotoGroups.running.isEmpty)
+
+        // 5. 按「雾港长篇小说」（.hubIsolated）筛选时，不得混入全局 Mac 定时或云端未绑定任务
+        let novelGroups = AmberUnifiedTaskBuilder.buildTasks(
+            gateway: gateway,
+            subAgentStore: subAgentStore,
+            taskStore: tasksStore,
+            wakeStore: wakeStore,
+            hubStore: hubStore,
+            filterHubId: hubNovel.id
+        )
+        XCTAssertTrue(novelGroups.isEmpty, "未绑定到当前 Hub 的本地/Mac/云对话任务不得因 activeHubId 被硬编码归入隔离 Hub")
+        let activeTasks = allGroups.needsAttention + allGroups.running
+        XCTAssertFalse(
+            hubStore.subtitle(for: hubNovel, activeTasks: activeTasks).contains("项任务"),
+            "独立记忆 Hub 的副标题不得被全局未绑定任务污染"
+        )
+    }
 }

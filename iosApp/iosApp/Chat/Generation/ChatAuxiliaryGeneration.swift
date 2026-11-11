@@ -68,7 +68,7 @@ extension ChatViewModel {
         guard let last = state.messages.last, last.role == MessageRole.assistant,
               !last.toText().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
-        syncSoulFromCompletedTurnIfNeeded(messages: state.messages)
+        syncSoulFromCompletedTurnIfNeeded(state: state)
 
         if isCurrentConversation(state.conversationId) { generateChatSuggestions(state: state) }
         let userMessageCount = state.messages.filter { $0.role == MessageRole.user }.count
@@ -98,7 +98,13 @@ extension ChatViewModel {
 
     /// 兜底：若用户在本轮明确要求改人设/写入 soul，但模型仅在回复中答应而漏调 `agent_soul_update`，
     /// 自动把新设定同步进 `AgentSoulStore.shared`，确保顶部形象人设立即生效。
-    private func syncSoulFromCompletedTurnIfNeeded(messages: [UIMessage]) {
+    private func syncSoulFromCompletedTurnIfNeeded(state: ChatConversationRunState) {
+        let conversationId = state.conversationId?.toHexDashString()
+        guard !state.isOrchestratedChild,
+              AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else {
+            return
+        }
+        let messages = state.messages
         guard let lastUserIdx = messages.lastIndex(where: { $0.role == MessageRole.user }) else { return }
         let trailingSlice = messages[lastUserIdx...]
         let didCallSoulUpdateTool = trailingSlice.contains { msg in
@@ -122,6 +128,8 @@ extension ChatViewModel {
             userText: userText,
             assistantText: assistantText,
             recentConversationContext: recentContext,
+            isOrchestratedChild: state.isOrchestratedChild,
+            conversationId: conversationId,
             store: AgentSoulStore.shared
         )
     }
