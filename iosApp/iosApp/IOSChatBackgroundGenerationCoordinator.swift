@@ -1021,6 +1021,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             executionPolicy: handoff.executionPolicy,
             subAgentTimeoutSeconds: handoff.subAgentTimeoutSeconds,
             phoneAutomaticReasoning: handoff.phoneAutomaticReasoning,
+            canClaimPhoneControl: handoff.canClaimPhoneControl,
             conversationStore: conversationStore,
             toolRuntime: toolRuntime,
             liveActivityController: liveActivityController,
@@ -1067,12 +1068,17 @@ final class IOSChatBackgroundGenerationCoordinator {
     static func routingPhoneActivity(
         executors: [String: any IOSToolExecutor],
         runID: String,
-        events: AsyncStream<AgentActivityPresentation>.Continuation
+        events: AsyncStream<AgentActivityPresentation>.Continuation,
+        ensureClaimedOnFirstUse: (@MainActor () -> Bool)? = nil
     ) -> [String: any IOSToolExecutor] {
         var routed = executors
-        let phoneExecutor = IOSPhoneControlToolExecutor(runID: runID, reportActivity: { phase in
-            events.yield(.phoneControl(phase))
-        })
+        let phoneExecutor = IOSPhoneControlToolExecutor(
+            runID: runID,
+            reportActivity: { phase in
+                events.yield(.phoneControl(phase))
+            },
+            ensureClaimedOnFirstUse: ensureClaimedOnFirstUse
+        )
         for name in IOSPhoneControlToolCatalog.toolNames where routed[name] != nil {
             routed[name] = phoneExecutor
         }

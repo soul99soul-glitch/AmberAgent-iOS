@@ -744,6 +744,7 @@ final class ChatViewModel {
             changesConversation = true
         }
         if changesConversation {
+            startDeferredGenerationNow()
             configurationError = nil
             invalidateSuggestionRequest()
             discardSelectedFileContextForConversationChange()

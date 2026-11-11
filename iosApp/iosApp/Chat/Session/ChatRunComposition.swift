@@ -471,6 +471,9 @@ extension ChatViewModel {
                 recordStreamHeartbeat: { [weak taskSlot] in
                     guard let taskSlot, !taskSlot.isTerminal else { return }
                     taskSlot.lastActivityUptime = ProcessInfo.processInfo.systemUptime
+                },
+                abandonCompletionFeedback: { runId in
+                    state.completionFeedback.finishWithoutFeedback(runID: runId)
                 }
         )
     }

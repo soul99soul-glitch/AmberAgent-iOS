@@ -100,6 +100,7 @@ final class ChatRunKernelAdapter {
         var executionPolicy: IOSExecutionPolicySnapshot? = nil
         var phoneAutomaticReasoning: Bool = false
         var phoneControl: IOSPhoneControlController? = nil
+        var ensurePhoneControlClaimed: (@MainActor () -> Bool)? = nil
         var fastFirstReasoning: Bool = false
         var routerReasoningName: String? = "OFF"
         var workerReasoningName: String? = nil
@@ -495,6 +496,22 @@ final class ChatRunKernelAdapter {
                             self.callbacks.onAssistantMessageSnapshot(box.value)
                         }
                     },
+                    onToolBatchProgress: { [weak self] messages in
+                        guard let self else { return }
+                        self.snapshotSeq += 1
+                        let seq = self.snapshotSeq
+                        let box = UncheckedMessagesBox(messages)
+                        await MainActor.run {
+                            guard !self.isStoppedByHost,
+                                  self.durabilityFailureMessage == nil,
+                                  seq >= self.lastAppliedSnapshotSeq else { return }
+                            self.lastAppliedSnapshotSeq = seq
+                            if self.working != box.value {
+                                self.working = box.value
+                                self.callbacks.onMessagesUpdated(box.value)
+                            }
+                        }
+                    },
                     onMessagesUpdated: { [weak self] messages in
                         // 引擎在非 MainActor 上下文串行回调;序号在此同步递增
                         // (nonisolated(unsafe),与 working 同一纪律),消息经盒
@@ -521,6 +538,9 @@ final class ChatRunKernelAdapter {
             // Keep completed tool outcomes frozen while accepting only the
             // interrupted assistant snapshot returned by the cancelled driver.
             if isCancelledByHost {
+                if let unknown = toolOutcomeUnknownSignal ?? result.toolOutcomeUnknown {
+                    callbacks.onToolOutcomeUnknown(unknown)
+                }
                 guard !didReportTerminal else { return working }
                 // Cancellation freezes existing tool outcomes. Only a new in-flight
                 // assistant turn from the engine may extend that snapshot.
@@ -599,7 +619,12 @@ final class ChatRunKernelAdapter {
                     promptBox: promptBox
                 )
                 // 审批等待期间 Host 取消:取消优先,不再走失败收口。
-                if isStoppedByHost { return working }
+                if isStoppedByHost {
+                    if isCancelledByHost, let unknown = toolOutcomeUnknownSignal {
+                        callbacks.onToolOutcomeUnknown(unknown)
+                    }
+                    return working
+                }
                 if !didContinue {
                     didReportTerminal = true
                     if let unknown = toolOutcomeUnknownSignal {
@@ -719,7 +744,7 @@ final class ChatRunKernelAdapter {
         nestedOutcomeUnknownProvider: @escaping @MainActor () -> IOSToolOutcomeUnknownSignal?,
         recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?
     ) -> [String: any IOSToolExecutor] {
-        runtime.foregroundToolExecutors(
+        var executors = runtime.foregroundToolExecutors(
             providerSetting: request.providerSetting,
             params: params,
             runId: request.runId,
@@ -735,6 +760,66 @@ final class ChatRunKernelAdapter {
             executionPolicy: request.executionPolicy,
             phoneControl: request.phoneControl
         )
+        if let ensureClaimed = request.ensurePhoneControlClaimed {
+            let controller = request.phoneControl ?? .shared
+            for name in Array(executors.keys) where IOSPhoneControlToolCatalog.isPhoneTool(name: name) {
+                if executors[name] is IOSPhoneControlToolExecutor {
+                    executors[name] = IOSPhoneControlToolExecutor(
+                        runID: request.runId,
+                        controller: controller,
+                        ensureClaimedOnFirstUse: ensureClaimed
+                    )
+                } else if let underlying = executors[name] {
+                    executors[name] = LazyClaimingPhoneToolExecutor(
+                        runID: request.runId,
+                        controller: controller,
+                        ensureClaimedOnFirstUse: ensureClaimed,
+                        underlying: underlying
+                    )
+                }
+            }
+        }
+        return executors
+    }
+
+    nonisolated private final class LazyClaimingPhoneToolExecutor: IOSToolExecutor, @unchecked Sendable {
+        private let runID: String
+        private let controller: IOSPhoneControlController
+        private let ensureClaimedOnFirstUse: @MainActor () -> Bool
+        private let underlying: any IOSToolExecutor
+
+        init(
+            runID: String,
+            controller: IOSPhoneControlController,
+            ensureClaimedOnFirstUse: @escaping @MainActor () -> Bool,
+            underlying: any IOSToolExecutor
+        ) {
+            self.runID = runID
+            self.controller = controller
+            self.ensureClaimedOnFirstUse = ensureClaimedOnFirstUse
+            self.underlying = underlying
+        }
+
+        private func claimIfNeeded() async {
+            let runID = self.runID
+            let controller = self.controller
+            let claim = self.ensureClaimedOnFirstUse
+            await MainActor.run {
+                if controller.ownerRunID != runID {
+                    _ = claim()
+                }
+            }
+        }
+
+        func execute(name: String, arguments: String, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
+            await claimIfNeeded()
+            return await underlying.execute(name: name, arguments: arguments, isUserInitiated: isUserInitiated)
+        }
+
+        func execute(tool: UIMessagePart.Tool, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
+            await claimIfNeeded()
+            return await underlying.execute(tool: tool, isUserInitiated: isUserInitiated)
+        }
     }
 
     /// `exec` 内调用仍走当前 Kernel 的真实 runtime/ledger/审批边界；白名单
@@ -1011,8 +1096,10 @@ final class ChatRunKernelAdapter {
             case .rePause(let nextPrompt):
                 prompt = nextPrompt
             case .outcomeUnknown(let messages):
-                working = messages
-                callbacks.onMessagesUpdated(messages)
+                if !isStoppedByHost {
+                    working = messages
+                    callbacks.onMessagesUpdated(messages)
+                }
                 toolOutcomeUnknownSignal = IOSToolOutcomeUnknownSignal(
                     toolCallId: approval.toolCallId,
                     toolName: approval.toolName
@@ -1043,7 +1130,11 @@ final class ChatRunKernelAdapter {
         approvalExecutionTask = execution
         let resolution = await execution.value
         approvalExecutionTask = nil
-        // 已发出的工具仍记录真实终态；迟到结果不能夺回取消或后台交接的快照。
+        // 已发出的工具仍记录真实终态；迟到结果不能夺回取消或后台交接的快照，
+        // 但若副作用工具已跨过执行边界并落入 outcomeUnknown，仍须保留恢复信号。
+        if case .outcomeUnknown = resolution {
+            return resolution
+        }
         guard !isStoppedByHost else { return .failed }
         return resolution
     }

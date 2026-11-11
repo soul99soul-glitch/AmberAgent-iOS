@@ -250,6 +250,7 @@ extension IOSChatBackgroundGenerationCoordinator {
             executionPolicy: job.executionPolicy,
             subAgentTimeoutSeconds: job.subAgentTimeoutSeconds,
             phoneAutomaticReasoning: job.phoneAutomaticReasoning,
+            canClaimPhoneControl: job.canClaimPhoneControl,
             runDisplayBaseline: job.runDisplayBaseline
         )
         guard job.mode == .resumeResponse,
@@ -465,6 +466,7 @@ extension IOSChatBackgroundGenerationCoordinator {
                 executionPolicy: job.executionPolicy,
                 subAgentTimeoutSeconds: job.subAgentTimeoutSeconds,
                 phoneAutomaticReasoning: job.phoneAutomaticReasoning,
+                canClaimPhoneControl: job.canClaimPhoneControl,
                 runDisplayBaseline: job.runDisplayBaseline
             )
             do {
@@ -577,6 +579,7 @@ extension IOSChatBackgroundGenerationCoordinator {
             executionPolicy: job.executionPolicy,
             subAgentTimeoutSeconds: job.subAgentTimeoutSeconds,
             phoneAutomaticReasoning: job.phoneAutomaticReasoning,
+            canClaimPhoneControl: job.canClaimPhoneControl,
             runDisplayBaseline: job.runDisplayBaseline
         )
     }

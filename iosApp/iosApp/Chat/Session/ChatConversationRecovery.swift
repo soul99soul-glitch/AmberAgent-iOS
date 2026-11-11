@@ -45,8 +45,8 @@ extension ChatViewModel {
         guard let store = conversationStore else { return }
         invalidateSuggestionRequest()
         let selectedRun = currentRun
-        // Keep live deltas and approval continuations when returning to an active run.
-        if selectedRun.host?.isRunning != true {
+        // Keep live deltas, queued concurrency placeholders, and approval continuations when returning to an active/queued run.
+        if !selectedRun.hasActiveOrQueuedTask {
             let storedMessages = store.currentMessages
             messages = messagesByTerminatingStaleSearches(in: storedMessages, store: store) ?? storedMessages
             // 历史消息的 token 估算在后台预热，发送时的请求准备只剩查表。

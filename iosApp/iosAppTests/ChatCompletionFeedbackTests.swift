@@ -1,4 +1,5 @@
 import Combine
+import Observation
 import Shared
 import SwiftUI
 import XCTest
@@ -223,6 +224,41 @@ final class ChatCompletionFeedbackTests: XCTestCase {
         owner.complete(runID: "visible-terminal", messageID: "reply", textParts: [0: "正文"])
         owner.didDrain(runID: "visible-terminal", messageID: "reply", partIndex: 0, text: "正文")
         XCTAssertEqual(count, 1)
+    }
+
+    func testHasActiveOrDrainingRunNotifiesObservationWhenDrainClearsPending() {
+        final class FlagBox: @unchecked Sendable {
+            var value = false
+        }
+        let owner = ChatCompletionFeedback(trigger: {})
+        owner.setForegroundVisible(true)
+        XCTAssertFalse(owner.hasActiveOrDrainingRun)
+
+        let beginNotified = FlagBox()
+        _ = withObservationTracking {
+            owner.hasActiveOrDrainingRun
+        } onChange: {
+            beginNotified.value = true
+        }
+        owner.begin(runID: "obs-drain")
+        XCTAssertTrue(owner.hasActiveOrDrainingRun)
+        XCTAssertTrue(beginNotified.value)
+
+        owner.complete(runID: "obs-drain", messageID: "msg-1", textParts: [0: "尾段正文"])
+        XCTAssertTrue(owner.hasActiveOrDrainingRun)
+
+        let drainNotified = FlagBox()
+        _ = withObservationTracking {
+            owner.hasActiveOrDrainingRun
+        } onChange: {
+            drainNotified.value = true
+        }
+        owner.didDrain(runID: "obs-drain", messageID: "msg-1", partIndex: 0, text: "尾段正文")
+        XCTAssertFalse(owner.hasActiveOrDrainingRun)
+        XCTAssertTrue(
+            drainNotified.value,
+            "排空尾段使 hasActiveOrDrainingRun 变为 false 时必须触发 @Observable 变更通知，否则顶栏会卡在生成态"
+        )
     }
 
     private final class Events {

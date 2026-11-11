@@ -51,8 +51,8 @@ final class IOSChatKernelRunHostPhoneProgressTests: IOSChatKernelRunHostTestCase
         defer { fixture.clear() }
         let started = await waitForCondition { fixture.provider.callCount == 1 }
         XCTAssertTrue(started)
-        let runID = try XCTUnwrap(fixture.host.currentRunId)
-        XCTAssertEqual(fixture.controller.ownerRunID, runID)
+        _ = try XCTUnwrap(fixture.host.currentRunId)
+        XCTAssertNil(fixture.controller.ownerRunID)
         fixture.provider.emit(F.streamChunk(delta: F.assistantText("普通回答")))
         fixture.provider.finishRound()
         let completed = await waitForHostIdle(fixture.host)
@@ -134,12 +134,13 @@ final class IOSChatKernelRunHostPhoneProgressTests: IOSChatKernelRunHostTestCase
             let started = await waitForCondition { provider.callCount == 1 }
             XCTAssertTrue(started)
             let runID = try XCTUnwrap(host.currentRunId)
-            XCTAssertEqual(controller.ownerRunID == runID, userInitiated)
+            XCTAssertNil(controller.ownerRunID)
             XCTAssertFalse(controller.hasRequestedSession(runID: runID))
             XCTAssertEqual(provider.capturedParams.first?.reasoningLevel, resolvedLevel,
                            "A reserved phone scope must not change an ordinary first request")
             XCTAssertTrue(host.handoffCurrentGenerationToBackground(conversationStore: store))
             XCTAssertEqual(transferred?.phoneAutomaticReasoning, storedLevel == "auto" && userInitiated)
+            XCTAssertEqual(transferred?.canClaimPhoneControl, userInitiated)
             XCTAssertEqual(transferred?.params.reasoningLevel, resolvedLevel)
             XCTAssertEqual(harness.dependencies.sharedSettings.snapshot.getCurrentAssistant().reasoningLevel.name.lowercased(), storedLevel)
             await controller.stop(runID: runID)

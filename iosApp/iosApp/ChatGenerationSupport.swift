@@ -175,6 +175,7 @@ struct ChatGenerationBindings {
     var recordTaskReasoning: @MainActor (String?) -> Void = { _ in }
     var setProvisionalAssistant: @MainActor (UIMessage) -> Bool = { _ in false }
     var recordStreamHeartbeat: @MainActor () -> Void = {}
+    var abandonCompletionFeedback: @MainActor (String) -> Void = { _ in }
 }
 
 struct IOSGenerativeUiRequirement: Equatable {

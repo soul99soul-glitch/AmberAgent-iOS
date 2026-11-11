@@ -465,8 +465,8 @@ extension ChatViewModel {
         )
     }
 
-    /// 需要 run 已存在的入口（再次发送、停止、新建会话、Watch 提问）先立即启动。
-    private func startDeferredGenerationNow() {
+    /// 需要 run 已存在的入口（再次发送、停止、新建会话、会话切换、Watch 提问）先立即启动。
+    func startDeferredGenerationNow() {
         guard let token = deferredGenerationStart?.token else { return }
         startDeferredGeneration(token: token)
     }
@@ -802,7 +802,8 @@ extension ChatViewModel {
             let digest = chatInputDigest(for: regenerateDigestSeed())
             generateResponse(inputDigest: digest, conversationId: conversation.id, phoneControlUserInitiated: true)
         }
-        let didStart = host(for: conversationId)?.isRunning == true
+        let didStart = (runRegistry.run(for: conversationId)?.hasActiveOrQueuedTask == true)
+            || (host(for: conversationId)?.isRunning == true)
         if !didStart {
             state.pendingAssistantRegeneration = nil
             if targetNode.role != MessageRole.user,

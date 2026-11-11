@@ -23,6 +23,7 @@ enum IOSPhoneControlReturnPreference {
 final class IOSPhoneControlToolExecutor: IOSToolExecutor {
     private let runID: String
     private let controller: IOSPhoneControlController
+    private let ensureClaimedOnFirstUse: (@MainActor () -> Bool)?
     private let reportActivity: @MainActor (AgentPhoneControlActivityPhase) async -> Void
     private let jev: IOSJevPhoneControlService
     struct ClipboardAccess {
@@ -46,11 +47,13 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
     init(runID: String, controller: IOSPhoneControlController = .shared,
          jev: IOSJevPhoneControlService = .shared,
          clipboard: ClipboardAccess = .system,
-         reportActivity: (@MainActor (AgentPhoneControlActivityPhase) async -> Void)? = nil) {
+         reportActivity: (@MainActor (AgentPhoneControlActivityPhase) async -> Void)? = nil,
+         ensureClaimedOnFirstUse: (@MainActor () -> Bool)? = nil) {
         self.runID = runID
         self.controller = controller
         self.jev = jev
         self.clipboard = clipboard
+        self.ensureClaimedOnFirstUse = ensureClaimedOnFirstUse
         self.reportActivity = reportActivity ?? { phase in
             // Each phone phase is real work: it keeps the run's liveness heartbeat beating
             // through long goal/flow tool calls that report no model or tool-result progress.
@@ -73,8 +76,13 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
 
         let outcome: IOSAgentToolOutcome
         switch request {
-        case .status, .stop: outcome = await perform(request)
-        default: outcome = await performWithHandoff(request)
+        case .status:
+            if controller.ownerRunID != runID { _ = ensureClaimedOnFirstUse?() }
+            outcome = await perform(request)
+        case .stop:
+            outcome = await perform(request)
+        default:
+            outcome = await performWithHandoff(request)
         }
         let completion = Self.completionActivity(request: request, outcome: outcome)
         // Cancellation after dispatch must not hide an unknown action outcome.
@@ -83,6 +91,9 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
     }
 
     private func performWithHandoff(_ request: Request) async -> IOSAgentToolOutcome {
+        if controller.ownerRunID != runID {
+            _ = ensureClaimedOnFirstUse?()
+        }
         let lease: IOSPhoneControlToolLease
         do { lease = try controller.beginPhoneTool(runID: runID) }
         catch { return .denied(Self.denial(error)) }

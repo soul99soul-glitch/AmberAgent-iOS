@@ -8,6 +8,7 @@ final class ChatCompletionFeedback: Equatable {
         lhs === rhs
     }
     private(set) var runID: String?
+    private(set) var hasActiveOrDrainingRun = false
     @ObservationIgnored private var isForegroundVisible = false
     @ObservationIgnored private var runs: [String: RunState] = [:]
     @ObservationIgnored private var messageRunIDs: [String: String] = [:]
@@ -33,8 +34,11 @@ final class ChatCompletionFeedback: Equatable {
         self.trigger = trigger
     }
 
-    var hasActiveOrDrainingRun: Bool {
-        runs.values.contains { !$0.terminalReceived || $0.pending != nil }
+    private func syncActiveOrDrainingState() {
+        let next = runs.values.contains { !$0.terminalReceived || $0.pending != nil }
+        if hasActiveOrDrainingRun != next {
+            hasActiveOrDrainingRun = next
+        }
     }
 
     /// Reads the latest `runID` without registering an `@Observable` access on the calling SwiftUI view,
@@ -56,6 +60,7 @@ final class ChatCompletionFeedback: Equatable {
         guard self.runID != runID else { return }
         self.runID = runID
         runs[runID] = RunState()
+        syncActiveOrDrainingState()
     }
 
     func setForegroundVisible(_ visible: Bool) {
@@ -64,6 +69,7 @@ final class ChatCompletionFeedback: Equatable {
             for key in runs.keys {
                 runs[key]?.pending = nil
             }
+            syncActiveOrDrainingState()
         }
     }
 
@@ -73,11 +79,13 @@ final class ChatCompletionFeedback: Equatable {
         messageRunIDs[messageID] = runID
         guard isForegroundVisible, !textParts.isEmpty else {
             runs[runID] = state
+            syncActiveOrDrainingState()
             return
         }
         state.pending = Pending(messageID: messageID, textParts: textParts)
         runs[runID] = state
         deliverIfDrained(for: runID)
+        syncActiveOrDrainingState()
     }
 
     func finishWithoutFeedback(runID: String) {
@@ -85,6 +93,7 @@ final class ChatCompletionFeedback: Equatable {
         state.terminalReceived = true
         state.pending = nil
         runs[runID] = state
+        syncActiveOrDrainingState()
     }
 
     func didDrain(runID: String, messageID: String, partIndex: Int, text: String) {
@@ -103,6 +112,7 @@ final class ChatCompletionFeedback: Equatable {
               }) else { return }
         state.pending = nil
         runs[runID] = state
+        syncActiveOrDrainingState()
         // Read the preference at delivery, including changes made while the tail drained.
         trigger()
     }

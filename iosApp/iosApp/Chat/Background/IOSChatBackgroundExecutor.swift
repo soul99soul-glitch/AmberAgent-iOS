@@ -190,6 +190,37 @@ extension IOSChatBackgroundGenerationCoordinator {
         )
 
         let presentationEvents = AsyncStream<AgentActivityPresentation>.makeStream()
+        @MainActor final class BackgroundPhoneClaimGate {
+            var attempted: Bool
+            init(attempted: Bool) { self.attempted = attempted }
+        }
+        let claimGate = BackgroundPhoneClaimGate(
+            attempted: IOSPhoneControlController.shared.ownerRunID == job.runId
+        )
+        let jobRunId = job.runId
+        let requestId = backgroundTask.identifier
+        let conversationHex = job.conversationId.toHexDashString()
+        let ensureBackgroundPhoneClaimed: (@MainActor () -> Bool)? = job.canClaimPhoneControl ? { @MainActor [weak self] in
+            let controller = IOSPhoneControlController.shared
+            if controller.ownerRunID == jobRunId { return true }
+            guard let self,
+                  self.activeJobs[requestId]?.runId == jobRunId,
+                  self.activeRunStates[requestId] === runState,
+                  runState.allowsRunningPresentation,
+                  !claimGate.attempted else { return false }
+            claimGate.attempted = true
+            let claimed = controller.claim(
+                runID: jobRunId,
+                conversationID: conversationHex
+            ) { [weak self] in
+                guard IOSPhoneControlController.shared.hasRequestedSession(runID: jobRunId) else { return }
+                _ = self?.cancelJob(runId: jobRunId)
+            }
+            guard claimed else { return false }
+            self.activeBackgroundTasks[requestId]?.progress.totalUnitCount = -1
+            self.keepAlive.enableLivenessHeartbeat(self.chatBackgroundAudioLeaseId(for: requestId))
+            return true
+        } : nil
         @MainActor func makeExecutors(_ params: TextGenerationParams) -> [String: any IOSToolExecutor] {
             let executors = job.toolRuntime.backgroundToolExecutors(
                 providerSetting: requestProvider,
@@ -204,7 +235,8 @@ extension IOSChatBackgroundGenerationCoordinator {
             return Self.routingPhoneActivity(
                 executors: executors,
                 runID: job.runId,
-                events: presentationEvents.continuation
+                events: presentationEvents.continuation,
+                ensureClaimedOnFirstUse: ensureBackgroundPhoneClaimed
             )
         }
         let engine = IOSAgentToolEngine(

@@ -32,6 +32,7 @@ enum ChatRunBackgroundHandoffBuilder {
             executionPolicy: handoff.executionPolicy,
             subAgentTimeoutSeconds: handoff.subAgentTimeoutSeconds,
             phoneAutomaticReasoning: handoff.phoneAutomaticReasoning,
+            canClaimPhoneControl: handoff.canClaimPhoneControl,
             runDisplayBaseline: handoff.runDisplayBaseline ?? baseline
         )
     }
@@ -50,6 +51,7 @@ enum ChatRunBackgroundHandoffBuilder {
             fullToolNames: source.fullToolNames, dynamicToolSnapshot: source.dynamicToolSnapshot,
             executionPolicy: source.executionPolicy, subAgentTimeoutSeconds: source.subAgentTimeoutSeconds,
             phoneAutomaticReasoning: source.phoneAutomaticReasoning,
+            canClaimPhoneControl: source.canClaimPhoneControl,
             runDisplayBaseline: source.runDisplayBaseline ?? source.displayMessages
         )
     }
@@ -68,6 +70,7 @@ enum ChatRunBackgroundHandoffBuilder {
         dynamicSnapshot: IOSDynamicToolCatalogSnapshot?,
         executionPolicy: IOSExecutionPolicySnapshot?,
         phoneAutomaticReasoning: Bool,
+        canClaimPhoneControl: Bool = false,
         generativeUiRequirement: IOSGenerativeUiRequirement,
         generativeUiFallbackAttempted: Bool
     ) -> IOSChatBackgroundHandoff {
@@ -104,6 +107,7 @@ enum ChatRunBackgroundHandoffBuilder {
             dynamicToolSnapshot: dynamicSnapshot,
             executionPolicy: executionPolicy,
             phoneAutomaticReasoning: phoneAutomaticReasoning,
+            canClaimPhoneControl: canClaimPhoneControl,
             runDisplayBaseline: displayBaseline
         )
     }

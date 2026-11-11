@@ -413,13 +413,21 @@ final class ChatScheduledWakeTests: XCTestCase {
             runID: runID, isClaimCurrent: { true }, isForeground: { true }
         )
         XCTAssertEqual(result, .started)
-        XCTAssertEqual(controller.ownerRunID, runID)
-        XCTAssertEqual(controller.phase, .authorized)
-        XCTAssertTrue(controller.statusText(runID: runID).contains("scope=app.example.current-target"))
-        XCTAssertFalse(controller.hasRequestedSession(runID: runID), "A fresh claim must not restore or launch an old runner")
-        let executor = IOSPhoneControlToolExecutor(runID: runID, controller: controller, reportActivity: { _ in })
+        XCTAssertNil(controller.ownerRunID)
+        XCTAssertEqual(controller.phase, .idle)
+        let executor = IOSPhoneControlToolExecutor(
+            runID: runID,
+            controller: controller,
+            reportActivity: { _ in },
+            ensureClaimedOnFirstUse: {
+                viewModel.host(runId: runID)?.ensurePhoneControlClaimedOnFirstUse(runId: runID) ?? false
+            }
+        )
         let status = await executor.execute(name: "phone_status", arguments: "{}", isUserInitiated: false)
         guard case .filled(let text) = status else { return XCTFail("Fresh phone tools should be authorized: \(status)") }
+        XCTAssertEqual(controller.ownerRunID, runID)
+        XCTAssertEqual(controller.phase, .authorized)
+        XCTAssertFalse(controller.hasRequestedSession(runID: runID), "A fresh claim must not restore or launch an old runner")
         XCTAssertTrue(text.contains("scope=app.example.current-target"))
         XCTAssertTrue(viewModel.cancelWakeRun(runID: runID))
         _ = try await waitForTerminal(viewModel, runID: runID)

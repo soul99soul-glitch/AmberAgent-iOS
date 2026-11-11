@@ -61,6 +61,7 @@ extension IOSChatBackgroundGenerationCoordinator {
             executionPolicy: job.executionPolicy,
             subAgentTimeoutSeconds: job.subAgentTimeoutSeconds,
             phoneAutomaticReasoning: job.phoneAutomaticReasoning,
+            canClaimPhoneControl: job.canClaimPhoneControl,
             runDisplayBaseline: job.runDisplayBaseline
         )
         do {

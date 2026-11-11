@@ -50,8 +50,16 @@ extension ChatViewModel {
         writeBaseline: IOSConversationWriteBaseline?,
         state: ChatConversationRunState? = nil
     ) async -> Bool {
-        await ChatConversationPersistence.commit(
-            snapshot, targetConversationId: targetConversationId,
+        let queuedPlaceholderIds = Set(
+            runRegistry.allRuns.flatMap { run in
+                run.orderedSlots.compactMap(\.queuedPlaceholderMessageId)
+            }
+        )
+        let persistableSnapshot = queuedPlaceholderIds.isEmpty
+            ? snapshot
+            : snapshot.filter { !queuedPlaceholderIds.contains(ChatMessageProjector.messageId(for: $0)) }
+        return await ChatConversationPersistence.commit(
+            persistableSnapshot, targetConversationId: targetConversationId,
             pendingRegeneration: pendingRegeneration, store: store,
             writeBaseline: writeBaseline, state: state ?? currentRun.state,
             isCurrentConversation: { self.isCurrentConversation($0) },

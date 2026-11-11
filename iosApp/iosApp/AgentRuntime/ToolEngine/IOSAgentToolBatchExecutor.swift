@@ -50,7 +50,8 @@ struct IOSAgentToolBatchExecutor {
     func executePreExistingPendingTools(
         in messages: [UIMessage],
         loopGuard: inout IOSToolLoopGuard,
-        onToolExecutionStarted: (@MainActor @Sendable (String, String) async -> Void)?
+        onToolExecutionStarted: (@MainActor @Sendable (String, String) async -> Void)?,
+        onPartialMessagesUpdated: (@Sendable ([UIMessage]) async -> Void)? = nil
     ) async -> PreExistingExecutionResult {
         let preExisting = messages.flatMap { message -> [UIMessagePart.Tool] in
             guard message.role == MessageRole.assistant else { return [] }
@@ -78,7 +79,9 @@ struct IOSAgentToolBatchExecutor {
             executable,
             isUserInitiated: false,
             loopGuard: &loopGuard,
-            onToolExecutionStarted: onToolExecutionStarted
+            onToolExecutionStarted: onToolExecutionStarted,
+            baseMessages: messages,
+            onPartialMessagesUpdated: onPartialMessagesUpdated
         )
         // 前台审批恢复会以新 Engine 实例继续同一批剩余调用；这里必须把第二个
         // needsApproval 继续向 Adapter 冒泡。后台配置关闭 honorApprovalPause，
@@ -119,14 +122,21 @@ struct IOSAgentToolBatchExecutor {
         isUserInitiated: Bool,
         loopGuard: inout IOSToolLoopGuard,
         resolveUnexposedToolCall: (@Sendable (UIMessagePart.Tool) async -> [UIMessagePart]?)? = nil,
-        onToolExecutionStarted: (@MainActor @Sendable (String, String) async -> Void)?
+        onToolExecutionStarted: (@MainActor @Sendable (String, String) async -> Void)?,
+        baseMessages: [UIMessage]? = nil,
+        onPartialMessagesUpdated: (@Sendable ([UIMessage]) async -> Void)? = nil
     ) async -> BatchExecutionResult {
         var outputs: [(UIMessagePart.Tool, [UIMessagePart])] = []
         var firstApproval: IOSPendingToolApproval?
         var guardStopped = false
         var requiresReplan = false
+        var lastFlushedCount = 0
 
         for tool in tools {
+            if let baseMessages, let onPartialMessagesUpdated, outputs.count > lastFlushedCount {
+                lastFlushedCount = outputs.count
+                await onPartialMessagesUpdated(applyToolOutputs(outputs, to: baseMessages))
+            }
             if requiresReplan {
                 // These calls were planned before the human changed the state.
                 // Fill them before any exposure, guard, or ledger hook can run.

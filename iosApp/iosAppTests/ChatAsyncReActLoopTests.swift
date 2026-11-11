@@ -1388,4 +1388,120 @@ final class ChatAsyncReActLoopTests: XCTestCase {
             "Duplicate/variant zero-info waiting replies in cloud dialogue must update in-place progress instead of adding prose bubbles"
         )
     }
+
+    func testQueuedTaskExcludesPlaceholderFromDiskSurvivesSwitchAndPreservesAssistantRegenerateVariant() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        await store.bootstrap()
+
+        let defaults = makeDefaults()
+        let sharedSettings = makeSharedSettings(defaults: defaults)
+        let provider = ScriptedAsyncLoopProvider(gatedLabels: ["A", "B"])
+        let viewModel = makeViewModel(defaults: defaults, sharedSettings: sharedSettings, store: store)
+        viewModel.kernelTextProviderOverrideForTesting = provider
+        viewModel.reloadFromStore()
+
+        // 1. Seed conversation C with one completed user+assistant pair for branch regeneration later.
+        let convC = try XCTUnwrap(store.currentConversation?.id)
+        viewModel.inputText = "TASK_C seed"
+        XCTAssertTrue(viewModel.sendMessage())
+        let cSeeded = await waitForCondition {
+            !viewModel.isLoading && viewModel.messages.last?.toText() == "C final reply"
+        }
+        XCTAssertTrue(cSeeded)
+        let seededC = await waitForCondition {
+            store.currentConversation?.messageNodes.count == 2
+        }
+        XCTAssertTrue(seededC)
+
+        // 2. Occupy both foreground concurrency slots (maxConcurrentLocalRuns == 2) in convA and convB.
+        XCTAssertTrue(viewModel.prepareForConversationChange())
+        let createdA = await store.startNewConversationReusingEmpty()
+        XCTAssertTrue(createdA)
+        let convA = try XCTUnwrap(store.currentConversation?.id)
+        viewModel.reloadFromStore()
+        viewModel.inputText = "TASK_A hold"
+        XCTAssertTrue(viewModel.sendMessage())
+        let aStarted = await waitForCondition { provider.hasStarted("A") }
+        XCTAssertTrue(aStarted)
+
+        XCTAssertTrue(viewModel.prepareForConversationChange())
+        let createdB = await store.startNewConversationReusingEmpty()
+        XCTAssertTrue(createdB)
+        let convB = try XCTUnwrap(store.currentConversation?.id)
+        viewModel.reloadFromStore()
+        viewModel.inputText = "TASK_B hold"
+        XCTAssertTrue(viewModel.sendMessage())
+        let bStarted = await waitForCondition { provider.hasStarted("B") }
+        XCTAssertTrue(bStarted)
+        XCTAssertEqual(viewModel.activeForegroundLocalRunCount, 2)
+
+        // 3. Send in convD while slots are full -> task queues with synthetic placeholder.
+        XCTAssertTrue(viewModel.prepareForConversationChange())
+        let createdD = await store.startNewConversationReusingEmpty()
+        XCTAssertTrue(createdD)
+        let convD = try XCTUnwrap(store.currentConversation?.id)
+        viewModel.reloadFromStore()
+        viewModel.inputText = "TASK_C queued in D"
+        XCTAssertTrue(viewModel.sendMessage())
+        XCTAssertTrue(viewModel.messages.contains { $0.toText() == ChatViewModel.queuedTaskPlaceholderText })
+
+        let dUserSaved = await waitForCondition {
+            store.currentMessages.contains { $0.toText().contains("TASK_C queued in D") }
+        }
+        XCTAssertTrue(dUserSaved)
+        try await Task.sleep(nanoseconds: 80_000_000)
+
+        let rawDiskMessagesD = await store.messages(for: convD)
+        let diskMessagesD = try XCTUnwrap(rawDiskMessagesD)
+        XCTAssertFalse(
+            diskMessagesD.contains { $0.toText() == ChatViewModel.queuedTaskPlaceholderText },
+            "queued synthetic placeholder must never be persisted to disk"
+        )
+
+        // Switching away and returning via reloadFromStore must preserve the queued placeholder in memory.
+        XCTAssertTrue(viewModel.prepareForConversationChange(to: convA))
+        await store.selectConversation(id: convA)
+        viewModel.reloadFromStore()
+        XCTAssertTrue(viewModel.prepareForConversationChange(to: convD))
+        await store.selectConversation(id: convD)
+        viewModel.reloadFromStore()
+        XCTAssertTrue(
+            viewModel.messages.contains { $0.toText() == ChatViewModel.queuedTaskPlaceholderText },
+            "reloadFromStore must preserve in-memory queued task state when host is not yet running"
+        )
+
+        // Cancel convD's queued task so convC's regeneration will be next in queue.
+        viewModel.cancelGeneration()
+        XCTAssertFalse(viewModel.isLoading)
+
+        // 4. Switch to convC and regenerate assistant reply (index 1) while A & B still hold all slots.
+        XCTAssertTrue(viewModel.prepareForConversationChange(to: convC))
+        await store.selectConversation(id: convC)
+        viewModel.reloadFromStore()
+        let convCSnapshot = try XCTUnwrap(store.currentConversation)
+        XCTAssertEqual(convCSnapshot.messageNodes.count, 2)
+
+        let didQueueRegenerate = await viewModel.regenerateImmediately(
+            atMessageIndex: 1,
+            conversation: convCSnapshot,
+            state: viewModel.currentRun.state
+        )
+        XCTAssertTrue(didQueueRegenerate, "assistant regeneration queued for concurrency must report didStart == true")
+        XCTAssertNotNil(
+            viewModel.currentRun.state.pendingAssistantRegeneration,
+            "queued assistant regeneration must retain pendingAssistantRegeneration until completion"
+        )
+
+        provider.release("A")
+        let regenFinished = await waitForCondition {
+            !viewModel.isLoading && store.variantInfo(forMessageIndex: 1)?.variantCount == 2
+        }
+        XCTAssertTrue(regenFinished, "dequeued assistant regeneration must append a second variant instead of a linear message")
+        XCTAssertEqual(store.currentConversation?.messageNodes.count, 2)
+
+        provider.release("B")
+        let allSettled = await waitForCondition { viewModel.activeForegroundLocalRunCount == 0 }
+        XCTAssertTrue(allSettled)
+    }
 }

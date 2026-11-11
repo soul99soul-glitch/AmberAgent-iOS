@@ -201,6 +201,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         onAssistantText: (@Sendable (String) -> Void)? = nil,
         onAssistantReasoning: (@Sendable (String) -> Void)? = nil,
         onAssistantMessageSnapshot: (@Sendable (UIMessage) -> Void)? = nil,
+        onToolBatchProgress: (@Sendable ([UIMessage]) async -> Void)? = nil,
         onMessagesUpdated: (@Sendable ([UIMessage]) -> Void)? = nil
     ) async -> IOSAgentToolEngineResult {
         let result = await runInternal(
@@ -224,6 +225,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             onAssistantText: onAssistantText,
             onAssistantReasoning: onAssistantReasoning,
             onAssistantMessageSnapshot: onAssistantMessageSnapshot,
+            onToolBatchProgress: onToolBatchProgress,
             onMessagesUpdated: onMessagesUpdated
         )
         return Self.finishingCitation(result, tracker: citationTracker)
@@ -286,6 +288,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         onAssistantText: (@Sendable (String) -> Void)?,
         onAssistantReasoning: (@Sendable (String) -> Void)?,
         onAssistantMessageSnapshot: (@Sendable (UIMessage) -> Void)?,
+        onToolBatchProgress: (@Sendable ([UIMessage]) async -> Void)?,
         onMessagesUpdated: (@Sendable ([UIMessage]) -> Void)?
     ) async -> IOSAgentToolEngineResult {
         var working = messages
@@ -314,7 +317,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         let preExistingResult = await batchExecutor.executePreExistingPendingTools(
             in: working,
             loopGuard: &loopGuard,
-            onToolExecutionStarted: onToolExecutionStarted
+            onToolExecutionStarted: onToolExecutionStarted,
+            onPartialMessagesUpdated: onToolBatchProgress
         )
         working = preExistingResult.messages
         onMessagesUpdated?(working)
@@ -695,7 +699,9 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 isUserInitiated: false,
                 loopGuard: &loopGuard,
                 resolveUnexposedToolCall: resolveUnexposedToolCall,
-                onToolExecutionStarted: onToolExecutionStarted
+                onToolExecutionStarted: onToolExecutionStarted,
+                baseMessages: working,
+                onPartialMessagesUpdated: onToolBatchProgress
             )
             if let durabilityFailure = batchResult.durabilityFailureMessage {
                 working = batchExecutor.applyToolOutputs(batchResult.outputs, to: working)

@@ -144,7 +144,7 @@ final class IOSChatKernelRunHostHandoffTests: IOSChatKernelRunHostTestCase {
         XCTAssertEqual(phoneControl.phase, .idle)
         XCTAssertNil(phoneControl.ownerRunID)
         let gate = try XCTUnwrap(IOSBackgroundLifecycleLog.recentEntries.last { $0.line.contains("phoneControlRunGate") })
-        XCTAssertTrue(gate.line.contains("declared=true claimed=true"))
+        XCTAssertTrue(gate.line.contains("declared=true claimed=false"))
         XCTAssertFalse(gate.line.contains("private_key"))
         await phoneControl.stopCurrent()
     }
@@ -466,5 +466,335 @@ final class IOSChatKernelRunHostHandoffTests: IOSChatKernelRunHostTestCase {
         XCTAssertFalse(imageOutput.contains("User cancelled."))
 
         executionGate.released = true
+    }
+
+    func testAdapterCancelMidMultiToolBatchPreservesCompletedSiblingToolOutput() async {
+        final class FirstFastSecondBlockingSearchTransport: IOSSearchHTTPTransport, @unchecked Sendable {
+            private let lock = NSLock()
+            private var secondEntered = false
+            private var released = false
+            private var continuations: [CheckedContinuation<Void, Never>] = []
+
+            var isSecondExecuting: Bool { lock.withLock { secondEntered } }
+
+            private static let threeResultsHTML = """
+            <html><body>
+            <a class="result__a" href="https://example.test/1">Amber Result 1</a>
+            <a class="result__a" href="https://example.test/2">Amber Result 2</a>
+            <a class="result__a" href="https://example.test/3">Amber Result 3</a>
+            </body></html>
+            """
+
+            func send(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
+                let urlText = request.url?.absoluteString ?? ""
+                let bodyText = request.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                let isSecondSearch = urlText.localizedCaseInsensitiveContains("second")
+                    || bodyText.localizedCaseInsensitiveContains("second")
+                if !isSecondSearch {
+                    return (
+                        IOSForegroundNoopSearchTransport.okResponse(for: request),
+                        Data(Self.threeResultsHTML.utf8)
+                    )
+                }
+                await withCheckedContinuation { continuation in
+                    let shouldResume = lock.withLock {
+                        secondEntered = true
+                        if released { return true }
+                        continuations.append(continuation)
+                        return false
+                    }
+                    if shouldResume { continuation.resume() }
+                }
+                return (
+                    IOSForegroundNoopSearchTransport.okResponse(for: request),
+                    Data(Self.threeResultsHTML.utf8)
+                )
+            }
+
+            func release() {
+                let pending = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+                    released = true
+                    defer { continuations.removeAll() }
+                    return continuations
+                }
+                pending.forEach { $0.resume() }
+            }
+        }
+
+        let transport = FirstFastSecondBlockingSearchTransport()
+        let harness = makeHarness(searchTransport: transport)
+        let runtime = makeHost(harness: harness, provider: HostScriptedProvider(rounds: [])).toolRuntimeForTesting
+        let multiToolRound = HostScriptedProvider.Round(
+            message: F.assistantMessage(parts: [
+                UIMessagePart.Tool(
+                    toolCallId: "fast-search-1",
+                    toolName: "search_web",
+                    input: #"{"query":"first completed search","maxResults":1}"#,
+                    output: [],
+                    approvalState: ToolApprovalState.Auto.shared,
+                    streamIndex: nil,
+                    metadata: nil
+                ),
+                UIMessagePart.Tool(
+                    toolCallId: "blocking-search-2",
+                    toolName: "search_web",
+                    input: #"{"query":"second cancelled search","maxResults":1}"#,
+                    output: [],
+                    approvalState: ToolApprovalState.Auto.shared,
+                    streamIndex: nil,
+                    metadata: nil
+                ),
+            ]),
+            finishReason: "tool_calls"
+        )
+        let provider = HostScriptedProvider(rounds: [
+            multiToolRound,
+            textRound("must not run after cancel"),
+        ])
+        var terminals: [String] = []
+        var published = harness.messages
+        var callbacks = ChatRunKernelAdapter.Callbacks()
+        callbacks.onRunTerminal = { terminals.append($0) }
+        callbacks.onMessagesUpdated = { published = $0 }
+        let adapter = ChatRunKernelAdapter(runtime: runtime, ledger: harness.ledger, callbacks: callbacks)
+        let task = Task { @MainActor in
+            await adapter.run(.init(
+                provider: provider, providerSetting: harness.providerSetting, params: harness.params,
+                runId: "multi-tool-cancel", startedAt: 1, inputDigest: "test", conversationId: harness.conversationId,
+                initialMessages: harness.messages, toolExposureBridge: harness.toolExposureBridge,
+                executionPolicy: IOSExecutionPolicySnapshot(
+                    capabilityPolicies: [:], globalAutoApproveEnabled: true,
+                    highRiskAutoApproveEnabled: false, execJavaScriptEnabled: false, webSearchEnabled: true
+                ),
+                maxToolResumeCount: 4, drainSteer: nil, mailboxDrain: nil, citationTracker: nil,
+                prepareUploadMessages: nil, nestedToolRunner: nil, approvalDecider: { _ in .approve }
+            ))
+        }
+
+        let secondStarted = await waitForCondition { transport.isSecondExecuting }
+        XCTAssertTrue(secondStarted)
+
+        adapter.cancel()
+        XCTAssertEqual(terminals, [AgentRunStatus.cancelled.wireName])
+
+        let firstOutput = F.toolOutputText(toolCallId: "fast-search-1", in: published)
+        let secondOutput = F.toolOutputText(toolCallId: "blocking-search-2", in: published)
+        XCTAssertFalse(
+            firstOutput.contains("User cancelled."),
+            "earlier completed tool in the same batch must keep its real output instead of being overwritten with User cancelled."
+        )
+        XCTAssertFalse(firstOutput.isEmpty)
+        XCTAssertTrue(secondOutput.contains("User cancelled."))
+
+        transport.release()
+        _ = await task.value
+        XCTAssertEqual(F.toolOutputText(toolCallId: "fast-search-1", in: published), firstOutput)
+        XCTAssertTrue(F.toolOutputText(toolCallId: "blocking-search-2", in: published).contains("User cancelled."))
+    }
+
+    func testOrdinaryReplyWithPhoneDeclarationsDoesNotClaimPhoneControlOrEnableHeartbeat() async throws {
+        let suite = "KernelHostOrdinaryNoClaim-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let phoneControl = IOSPhoneControlController(
+            defaults: defaults,
+            credentials: HostPhonePairingStore(),
+            localTunnel: PhoneControlTunnelStub()
+        )
+        await phoneControl.refreshPreparation()
+        phoneControl.enabled = true
+        phoneControl.selectedBundleIDs = ["app.example.target"]
+
+        let harness = makeHarness()
+        let provider = IOSChatProgressStreamingProvider()
+        let host = makeHost(harness: harness, provider: provider, phoneControl: phoneControl)
+        let bridge = IosToolExposureBridge(tools: IOSPhoneControlToolCatalog.declarations)
+        bridge.exposeToolNames(names: Array(IOSPhoneControlToolCatalog.toolNames).sorted())
+
+        host.start(
+            providerSetting: harness.providerSetting,
+            params: F.makeParams(toolNames: [], tools: bridge.visibleTools()),
+            inputDigest: "ordinary-no-phone-claim",
+            conversationId: harness.conversationId,
+            uploadMessages: harness.messages,
+            toolExposureBridge: bridge,
+            phoneControlUserInitiated: true
+        )
+        let started = await waitForCondition { provider.callCount == 1 }
+        XCTAssertTrue(started)
+        let runID = try XCTUnwrap(host.currentRunId)
+
+        XCTAssertNil(phoneControl.ownerRunID, "Ordinary Q&A must not eagerly claim global phoneControl slot")
+        XCTAssertFalse(phoneControl.isOccupied)
+        XCTAssertFalse(harness.keepAlive.hasLivenessHeartbeat(runID))
+        XCTAssertEqual(try iosChatBackgroundLeaseProgress(harness.keepAlive, runID: runID)?.total, 4)
+
+        provider.emit(F.streamChunk(delta: F.assistantText("普通问答回复")))
+        provider.finishRound()
+        let idle = await waitForHostIdle(host)
+        XCTAssertTrue(idle)
+        XCTAssertEqual(harness.log.terminalStatus(), AgentRunStatus.completed.wireName)
+        XCTAssertEqual(harness.messages.last?.toText(), "普通问答回复")
+        XCTAssertNil(phoneControl.ownerRunID)
+        XCTAssertEqual(phoneControl.phase, .idle)
+        XCTAssertFalse(harness.keepAlive.hasLivenessHeartbeat(runID))
+        await phoneControl.stopCurrent()
+    }
+
+    func testFirstPhoneToolLazilyClaimsOwnershipAndOccupiedControllerIsNotPreempted() async throws {
+        actor StaticPhoneAppDiscoverer: PhoneControlApplicationDiscovering {
+            let apps: [PhoneControlInstalledApp]
+            init(_ apps: [PhoneControlInstalledApp]) { self.apps = apps }
+            func installedApplications(pairing: Data, connectionMode: IOSPhoneControlConnectionMode) async throws -> [PhoneControlInstalledApp] {
+                apps
+            }
+        }
+
+        let suite = "KernelHostLazyPhoneClaim-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let discoverer = StaticPhoneAppDiscoverer([
+            PhoneControlInstalledApp(bundleID: "app.example.target", name: "Target App")
+        ])
+        let phoneControl = IOSPhoneControlController(
+            defaults: defaults,
+            credentials: HostPhonePairingStore(),
+            applications: discoverer,
+            localTunnel: PhoneControlTunnelStub()
+        )
+        await phoneControl.refreshPreparation()
+        phoneControl.enabled = true
+        phoneControl.selectedBundleIDs = ["app.example.target"]
+
+        let combinedDeclarations = IOSPhoneControlToolCatalog.declarations + ToolKt.iosToolDeclarations(names: ["search_web"])
+        let exposedNames = (Array(IOSPhoneControlToolCatalog.toolNames) + ["search_web"]).sorted()
+
+        // 1) Idle phoneControl: keeps phone_* tools exposed, stays unclaimed until first phone_* tool runs, then lazily claims.
+        let harness1 = makeHarness(exposedToolNames: ["search_web"])
+        let provider1 = IOSChatProgressStreamingProvider()
+        let host1 = makeHost(harness: harness1, provider: provider1, phoneControl: phoneControl)
+        let bridge1 = IosToolExposureBridge(tools: combinedDeclarations)
+        bridge1.exposeToolNames(names: exposedNames)
+        host1.start(
+            providerSetting: harness1.providerSetting,
+            params: F.makeParams(toolNames: [], tools: bridge1.visibleTools()),
+            inputDigest: "lazy-claim-first-phone-tool",
+            conversationId: harness1.conversationId,
+            uploadMessages: harness1.messages,
+            toolExposureBridge: bridge1,
+            phoneControlUserInitiated: true
+        )
+        let started1 = await waitForCondition { provider1.callCount == 1 }
+        XCTAssertTrue(started1)
+        let runID1 = try XCTUnwrap(host1.currentRunId)
+        let firstRoundTools1 = Set(provider1.capturedParams.first?.tools.map(\.name) ?? [])
+        XCTAssertTrue(IOSPhoneControlToolCatalog.toolNames.isSubset(of: firstRoundTools1))
+        XCTAssertNil(phoneControl.ownerRunID, "Idle phoneControl must remain unclaimed before any phone_* tool runs")
+        XCTAssertFalse(harness1.keepAlive.hasLivenessHeartbeat(runID1))
+
+        let phoneToolTurn = F.assistantMessage(parts: [
+            UIMessagePart.Tool(
+                toolCallId: "lazy-status",
+                toolName: "phone_status",
+                input: "{}",
+                output: [],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            ),
+            UIMessagePart.Tool(
+                toolCallId: "lazy-apps",
+                toolName: "phone_apps",
+                input: "{}",
+                output: [],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            ),
+        ])
+        provider1.emit(F.streamChunk(delta: phoneToolTurn))
+        provider1.finishRound()
+        let round2Started1 = await waitForCondition { provider1.callCount == 2 }
+        XCTAssertTrue(round2Started1)
+        XCTAssertEqual(phoneControl.ownerRunID, runID1)
+        XCTAssertTrue(phoneControl.isOccupied)
+        XCTAssertTrue(harness1.keepAlive.hasLivenessHeartbeat(runID1))
+        XCTAssertEqual(try iosChatBackgroundLeaseProgress(harness1.keepAlive, runID: runID1)?.total, -1)
+        XCTAssertTrue(F.toolOutputText(toolCallId: "lazy-status", in: harness1.messages).contains("scope=app.example.target"))
+        XCTAssertTrue(F.toolOutputText(toolCallId: "lazy-apps", in: harness1.messages).contains("app.example.target"))
+
+        provider1.emit(F.streamChunk(delta: F.assistantText("手机查询完成")))
+        provider1.finishRound()
+        let idle1 = await waitForHostIdle(host1)
+        XCTAssertTrue(idle1)
+        XCTAssertNil(phoneControl.ownerRunID)
+
+        // 2) Occupied by another run at start: strips phone_* tools without preempting existing owner.
+        XCTAssertTrue(phoneControl.claim(runID: "other-active-run", onStop: {}))
+        let harness2 = makeHarness(exposedToolNames: ["search_web"])
+        let provider2 = IOSChatProgressStreamingProvider()
+        let host2 = makeHost(harness: harness2, provider: provider2, phoneControl: phoneControl)
+        let bridge2 = IosToolExposureBridge(tools: combinedDeclarations)
+        bridge2.exposeToolNames(names: exposedNames)
+        host2.start(
+            providerSetting: harness2.providerSetting,
+            params: F.makeParams(toolNames: [], tools: bridge2.visibleTools()),
+            inputDigest: "occupied-no-preempt",
+            conversationId: harness2.conversationId,
+            uploadMessages: harness2.messages,
+            toolExposureBridge: bridge2,
+            phoneControlUserInitiated: true
+        )
+        let started2 = await waitForCondition { provider2.callCount == 1 }
+        XCTAssertTrue(started2)
+        XCTAssertEqual(phoneControl.ownerRunID, "other-active-run")
+        let firstRoundTools2 = Set(provider2.capturedParams.first?.tools.map(\.name) ?? [])
+        XCTAssertTrue(IOSPhoneControlToolCatalog.toolNames.isDisjoint(with: firstRoundTools2),
+                      "Occupied phoneControl must strip phone_* tools from a competing run")
+        XCTAssertTrue(firstRoundTools2.contains("search_web"))
+        provider2.emit(F.streamChunk(delta: F.assistantText("不抢占直接回复")))
+        provider2.finishRound()
+        let idle2 = await waitForHostIdle(host2)
+        XCTAssertTrue(idle2)
+        XCTAssertEqual(phoneControl.ownerRunID, "other-active-run")
+        await phoneControl.stop(runID: "other-active-run")
+        XCTAssertNil(phoneControl.ownerRunID)
+
+        // 3) Race after start: idle when Round 1 starts, occupied before phone_apps executes -> denied cleanly without preemption.
+        let harness3 = makeHarness(exposedToolNames: ["search_web"])
+        let provider3 = IOSChatProgressStreamingProvider()
+        let host3 = makeHost(harness: harness3, provider: provider3, phoneControl: phoneControl)
+        let bridge3 = IosToolExposureBridge(tools: combinedDeclarations)
+        bridge3.exposeToolNames(names: exposedNames)
+        host3.start(
+            providerSetting: harness3.providerSetting,
+            params: F.makeParams(toolNames: [], tools: bridge3.visibleTools()),
+            inputDigest: "race-no-preempt",
+            conversationId: harness3.conversationId,
+            uploadMessages: harness3.messages,
+            toolExposureBridge: bridge3,
+            phoneControlUserInitiated: true
+        )
+        let started3 = await waitForCondition { provider3.callCount == 1 }
+        XCTAssertTrue(started3)
+        let runID3 = try XCTUnwrap(host3.currentRunId)
+        XCTAssertNil(phoneControl.ownerRunID)
+        XCTAssertTrue(phoneControl.claim(runID: "race-owner-run", onStop: {}))
+
+        provider3.emit(F.streamChunk(delta: toolRound("race-apps", "phone_apps", "{}").message))
+        provider3.finishRound()
+        let round2Started3 = await waitForCondition { provider3.callCount == 2 }
+        XCTAssertTrue(round2Started3)
+        XCTAssertEqual(phoneControl.ownerRunID, "race-owner-run")
+        XCTAssertFalse(harness3.keepAlive.hasLivenessHeartbeat(runID3))
+        XCTAssertTrue(F.toolOutputText(toolCallId: "race-apps", in: harness3.messages).contains("run_not_authorized"))
+
+        provider3.emit(F.streamChunk(delta: F.assistantText("已处理占用冲突")))
+        provider3.finishRound()
+        let idle3 = await waitForHostIdle(host3)
+        XCTAssertTrue(idle3)
+        XCTAssertEqual(phoneControl.ownerRunID, "race-owner-run")
+        await phoneControl.stop(runID: "race-owner-run")
+        XCTAssertNil(phoneControl.ownerRunID)
     }
 }
