@@ -15,6 +15,7 @@ struct ChatSubAgentResultCard: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.markdownLayoutInvalidationID) private var layoutInvalidationID
     @State private var isExpanded: Bool
 
     init(message: UIMessage, displaySetting: DisplaySetting? = nil) {
@@ -24,7 +25,8 @@ struct ChatSubAgentResultCard: View {
             sender: bridge.sender(message: message)
                 ?? (bridge.kind(message: message) == "FINAL_ANSWER" ? "subagent" : "agent"),
             displayText: textParts
-                .map { bridge.displayText(part: $0) }
+                .map { IOSSubAgentOutputProjection.userFacingMailboxDisplayText(part: $0) }
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 .joined(separator: "\n\n"),
             displaySetting: displaySetting
         )
@@ -36,6 +38,7 @@ struct ChatSubAgentResultCard: View {
         displaySetting: DisplaySetting? = nil,
         initiallyExpanded: Bool = false
     ) {
+        // `displayText` is already projected; render-time initialization must not decode envelopes.
         self.sender = sender
         self.displayText = displayText
         self.displaySetting = displaySetting
@@ -44,8 +47,15 @@ struct ChatSubAgentResultCard: View {
     }
 
     var body: some View {
-        ChatSubAgentResultCardLayout(isExpanded: isExpanded) {
-            VStack(alignment: .leading, spacing: 0) {
+        let cardID = layoutInvalidationID ?? sender
+        let _ = ChatTimelineRowLayoutInvalidation.markRowDirty(layoutInvalidationID)
+        #if DEBUG
+        let _ = ChatTimelineRowLayoutInvalidation.registerSubAgentCardToggle(id: cardID) {
+            toggleExpansion()
+        }
+        #endif
+        ChatSubAgentResultCardLayout(isExpanded: isExpanded, cardID: cardID) {
+            ChatSubAgentResultStackLayout(isExpanded: isExpanded) {
                 header
 
                 if isExpanded {
@@ -64,15 +74,20 @@ struct ChatSubAgentResultCard: View {
         .environment(\.openURL, ChatMarkdownOpenURLPolicy.openURLAction)
     }
 
+    private func toggleExpansion() {
+        ChatTimelineRowLayoutInvalidation.markRowDirty(layoutInvalidationID)
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
+            isExpanded.toggle()
+        }
+    }
+
     private var resultShape: ChatSubAgentResultShape {
         ChatSubAgentResultShape(expansion: isExpanded ? 1 : 0)
     }
 
     private var header: some View {
         Button {
-            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) {
-                isExpanded.toggle()
-            }
+            toggleExpansion()
         } label: {
             HStack(spacing: 6) {
                 ChatSubAgentPixelAvatar(
@@ -196,8 +211,49 @@ struct ChatSubAgentResultCard: View {
 /// Keep the collapsed capsule compact while letting an expanded report use the
 /// same proposed chat-column width as ordinary assistant content. Unlike a
 /// fixed frame, short collapsed results can still hug their content.
+/// Measures only the header when collapsed so an outgoing `.transition(.opacity)`
+/// body fades inside the shrinking card clip without holding the row height open.
+private struct ChatSubAgentResultStackLayout: Layout {
+    let isExpanded: Bool
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let header = subviews.first else { return .zero }
+        let widthProposal = ProposedViewSize(width: proposal.width, height: nil)
+        let headerSize = header.sizeThatFits(widthProposal)
+        guard isExpanded, subviews.count > 1 else {
+            return headerSize
+        }
+        var totalHeight = headerSize.height
+        var maxWidth = headerSize.width
+        for bodySubview in subviews.dropFirst() {
+            let bodySize = bodySubview.sizeThatFits(widthProposal)
+            totalHeight += bodySize.height
+            maxWidth = max(maxWidth, bodySize.width)
+        }
+        return CGSize(width: maxWidth, height: totalHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let header = subviews.first else { return }
+        let rowProposal = ProposedViewSize(width: bounds.width, height: nil)
+        let headerSize = header.sizeThatFits(rowProposal)
+        header.place(at: bounds.origin, anchor: .topLeading, proposal: rowProposal)
+        var y = bounds.minY + headerSize.height
+        for bodySubview in subviews.dropFirst() {
+            let bodySize = bodySubview.sizeThatFits(rowProposal)
+            bodySubview.place(
+                at: CGPoint(x: bounds.minX, y: y),
+                anchor: .topLeading,
+                proposal: rowProposal
+            )
+            y += bodySize.height
+        }
+    }
+}
+
 private struct ChatSubAgentResultCardLayout: Layout {
     let isExpanded: Bool
+    var cardID: String = ""
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         guard let content = subviews.first else { return .zero }
@@ -213,9 +269,15 @@ private struct ChatSubAgentResultCardLayout: Layout {
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let contentProposal = ProposedViewSize(width: bounds.width, height: nil)
+        #if DEBUG
+        if !cardID.isEmpty, let content = subviews.first {
+            ChatTimelineRowLayoutInvalidation.placedSubAgentCardSizes[cardID] = content.sizeThatFits(contentProposal)
+        }
+        #endif
         subviews.first?.place(
             at: bounds.origin, anchor: .topLeading,
-            proposal: ProposedViewSize(width: bounds.width, height: nil)
+            proposal: contentProposal
         )
     }
 }
@@ -312,22 +374,10 @@ struct AmberTaskDeliverablePreviewContent: View {
         item.deliverableBullets.filter { $0 != item.resultText }
     }
 
-    private var cleanedMarkdownBody: String? {
-        guard let raw = item.rawResultMarkdown?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !raw.isEmpty else {
-            return nil
-        }
-        let lines = raw.split(whereSeparator: \.isNewline)
-            .map { String($0) }
-            .filter { line in
-                let trimmed = line.replacingOccurrences(of: "#", with: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .lowercased()
-                return !trimmed.hasPrefix("settlement report") && trimmed != "subagent report"
-            }
-        let joined = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !joined.isEmpty, joined != item.resultText else { return nil }
-        return joined
+    var cleanedMarkdownBody: String? {
+        guard let markdown = AmberUnifiedTaskBuilder.userFacingResultMarkdown(from: item.rawResultMarkdown),
+              markdown != item.resultText else { return nil }
+        return markdown
     }
 
     var body: some View {

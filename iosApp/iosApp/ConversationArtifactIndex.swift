@@ -39,6 +39,14 @@ struct ConversationArtifactIndex: Equatable {
         let source: Source
     }
 
+    struct WebPageGroup: Equatable, Identifiable {
+        var id: String { "web-turn-\(turn)" }
+        let turn: Int
+        let pages: [WebPage]
+
+        var latestSource: Source? { pages.last?.source }
+    }
+
     /// 助手产出的 HTML：正文里的生成式 UI（full_html / 幻灯片 / 图表 / 内联卡片）与小程序。
     struct HTMLPage: Equatable, Identifiable {
         enum Content: Equatable {
@@ -114,10 +122,25 @@ struct ConversationArtifactIndex: Equatable {
     let files: [FileGroup]
     let webPages: [WebPage]
     var htmlPages: [HTMLPage] = []
+    let webPageGroups: [WebPageGroup]
 
-    /// 同一路径的多版文件在产物架里仍算一个产物。
+    init(
+        images: [Image],
+        files: [FileGroup],
+        webPages: [WebPage],
+        htmlPages: [HTMLPage] = []
+    ) {
+        self.images = images
+        self.files = files
+        self.webPages = webPages
+        self.htmlPages = htmlPages
+        self.webPageGroups = Self.groupWebPagesByTurn(webPages)
+    }
+
+    /// 同一路径的多版文件、同一轮次的临时检索网页在产物架里各算一个逻辑项，
+    /// 避免单轮或多轮检索的数十条原始链接把顶栏徽标与产物架计数无限撑大。
     var count: Int {
-        images.count + files.count + webPages.count + htmlPages.count
+        images.count + files.count + webPageGroups.count + htmlPages.count
     }
 
     /// `widgetSettings.enabled == false` 时与聊天气泡一致，不收录生成式 UI。
@@ -127,11 +150,30 @@ struct ConversationArtifactIndex: Equatable {
         contentCache: ConversationArtifactContentCache? = nil
     ) -> ConversationArtifactIndex {
         var images: [Image] = []
-        var seenImageURLs: Set<String> = []
+        var imageIndicesByKey: [String: Int] = [:]
         func appendImage(_ item: ChatMediaItem, source: Source, id: String? = nil, prompt: String? = nil) {
-            guard seenImageURLs.insert(item.url).inserted else { return }
-            let stableID = id ?? "media:" + SHA256.hash(data: Data(item.url.utf8)).map { String(format: "%02x", $0) }.joined()
-            images.append(Image(id: stableID, url: item.url, prompt: prompt ?? nonBlank(item.title), source: source))
+            let resolvedPrompt = prompt ?? nonBlank(item.title)
+            let canonical = canonicalImageIdentity(item.url)
+            if let existingIndex = imageIndicesByKey[canonical.dedupKey] {
+                let existing = images[existingIndex]
+                let updatedURL = existing.url.lowercased().hasPrefix("https://")
+                    ? existing.url
+                    : canonical.displayURL
+                let updatedPrompt = existing.prompt ?? resolvedPrompt
+                if updatedURL != existing.url || updatedPrompt != existing.prompt {
+                    images[existingIndex] = Image(
+                        id: existing.id,
+                        url: updatedURL,
+                        prompt: updatedPrompt,
+                        source: existing.source
+                    )
+                }
+                return
+            }
+            let displayURL = canonical.displayURL
+            let stableID = id ?? "media:" + SHA256.hash(data: Data(displayURL.utf8)).map { String(format: "%02x", $0) }.joined()
+            imageIndicesByKey[canonical.dedupKey] = images.count
+            images.append(Image(id: stableID, url: displayURL, prompt: resolvedPrompt, source: source))
         }
         var files: [FileGroup] = []
         var fileIndices: [String: Int] = [:]
@@ -139,6 +181,7 @@ struct ConversationArtifactIndex: Equatable {
         var webPageIndices: [String: Int] = [:]
         var htmlPages: [HTMLPage] = []
         var miniAppIndices: [String: Int] = [:]
+        var widgetIndices: [String: Int] = [:]
         var seenTools: Set<ToolIdentity> = []
         var turn = 0
 
@@ -181,12 +224,19 @@ struct ConversationArtifactIndex: Equatable {
                         compute: { openableWidgets(in: text.text, settings: widgetSettings) }
                     ) ?? openableWidgets(in: text.text, settings: widgetSettings)
                     for widget in widgets {
-                        htmlPages.append(HTMLPage(
+                        let page = HTMLPage(
                             id: "\(messageID):\(partIndex):\(widget.id)",
                             title: nonBlank(widget.title) ?? "未命名可视化",
                             content: .widget(widget),
                             source: messageSource
-                        ))
+                        )
+                        let widgetKey = "\(widget.renderer):\(page.title):\(widget.specJson ?? widget.widgetCode)"
+                        if let existing = widgetIndices[widgetKey] {
+                            htmlPages[existing] = page
+                        } else {
+                            widgetIndices[widgetKey] = htmlPages.count
+                            htmlPages.append(page)
+                        }
                     }
                 }
             }
@@ -247,28 +297,30 @@ struct ConversationArtifactIndex: Equatable {
                 case "scrape_web":
                     let output = ChatToolOutputFormatter.analysis(for: tool).firstJSONObject
                     guard let output, isSuccessful(output),
-                          let url = nonBlank(output["url"] as? String) else { continue }
-                    let title = nonBlank(output["title"] as? String) ?? url
+                          let rawURL = nonBlank(output["url"] as? String) else { continue }
+                    let canonical = canonicalWebIdentity(rawURL)
+                    let title = nonBlank(output["title"] as? String) ?? canonical.displayURL
                     appendWebPage(WebPage(
-                        id: "web:\(url)",
+                        id: "web:\(canonical.displayURL)",
                         title: title,
-                        url: url,
+                        url: canonical.displayURL,
                         preview: nonBlank(output["content"] as? String).map(preview),
                         source: source
-                    ), url: url, pages: &webPages, indices: &webPageIndices)
+                    ), dedupKey: canonical.dedupKey, pages: &webPages, indices: &webPageIndices)
                 case "wm_open", "wm_extract":
                     let output = ChatToolOutputFormatter.analysis(for: tool).firstJSONObject
                     guard let output, let page = webMountPage(output),
-                          let url = nonBlank(page.url) ?? nonBlank(page.currentURL),
+                          let rawURL = nonBlank(page.url) ?? nonBlank(page.currentURL),
                           isSuccessful(output) else { continue }
-                    let title = nonBlank(page.title) ?? url
+                    let canonical = canonicalWebIdentity(rawURL)
+                    let title = nonBlank(page.title) ?? canonical.displayURL
                     appendWebPage(WebPage(
-                        id: "web:\(url)",
+                        id: "web:\(canonical.displayURL)",
                         title: title,
-                        url: url,
+                        url: canonical.displayURL,
                         preview: nonBlank(page.preview).map(preview),
                         source: source
-                    ), url: url, pages: &webPages, indices: &webPageIndices)
+                    ), dedupKey: canonical.dedupKey, pages: &webPages, indices: &webPageIndices)
                 default:
                     continue
                 }
@@ -332,16 +384,103 @@ struct ConversationArtifactIndex: Equatable {
         let toolCallID: String
     }
 
+    private static let trackingQueryParameterNames: Set<String> = [
+        "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_id",
+        "gclid", "fbclid", "msclkid", "mc_cid", "mc_eid", "spm", "from", "isappinstalled",
+        "share_token", "tt_from", "igshid", "si", "ref", "ref_src"
+    ]
+
+    private static func groupWebPagesByTurn(_ webPages: [WebPage]) -> [WebPageGroup] {
+        guard !webPages.isEmpty else { return [] }
+        var pagesByTurn: [Int: [WebPage]] = [:]
+        for page in webPages {
+            pagesByTurn[page.source.turn, default: []].append(page)
+        }
+        return pagesByTurn.keys.sorted(by: >).map { turn in
+            WebPageGroup(turn: turn, pages: pagesByTurn[turn] ?? [])
+        }
+    }
+
+    private static func canonicalWebIdentity(_ rawURL: String) -> (displayURL: String, dedupKey: String) {
+        let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = components.host?.lowercased(),
+              !host.isEmpty else {
+            return (trimmed, trimmed)
+        }
+        components.scheme = scheme
+        components.host = host
+        if (scheme == "http" && components.port == 80) || (scheme == "https" && components.port == 443) {
+            components.port = nil
+        }
+        components.fragment = nil
+        if !components.path.isEmpty {
+            let collapsed = components.path
+                .split(separator: "/", omittingEmptySubsequences: true)
+                .joined(separator: "/")
+            components.path = collapsed.isEmpty ? "" : "/" + collapsed
+        }
+        if let queryItems = components.queryItems {
+            let filtered = queryItems
+                .filter { !trackingQueryParameterNames.contains($0.name.lowercased()) }
+                .sorted { lhs, rhs in
+                    if lhs.name != rhs.name { return lhs.name < rhs.name }
+                    return (lhs.value ?? "") < (rhs.value ?? "")
+                }
+            components.queryItems = filtered.isEmpty ? nil : filtered
+        }
+        let displayURL = components.string ?? trimmed
+        var dedupComponents = components
+        dedupComponents.scheme = "https"
+        if dedupComponents.port == 80 || dedupComponents.port == 443 {
+            dedupComponents.port = nil
+        }
+        let dedupKey = dedupComponents.string ?? displayURL.lowercased()
+        return (displayURL, dedupKey)
+    }
+
+    private static func canonicalImageIdentity(_ rawURL: String) -> (displayURL: String, dedupKey: String) {
+        let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.lowercased().hasPrefix("http://") || trimmed.lowercased().hasPrefix("https://") {
+            return canonicalWebIdentity(trimmed)
+        }
+        if trimmed.lowercased().hasPrefix("file://"),
+           let fileURL = URL(string: trimmed) {
+            let normalized = fileURL.standardizedFileURL.absoluteString
+            return (normalized, normalized)
+        }
+        return (trimmed, trimmed)
+    }
+
     private static func appendWebPage(
         _ page: WebPage,
-        url: String,
+        dedupKey: String,
         pages: inout [WebPage],
         indices: inout [String: Int]
     ) {
-        if let index = indices[url] {
-            pages[index] = page
+        if let index = indices[dedupKey] {
+            let existing = pages[index]
+            let resolvedURL: String?
+            if let existingURL = existing.url, existingURL.lowercased().hasPrefix("https://") {
+                resolvedURL = existingURL
+            } else {
+                resolvedURL = page.url ?? existing.url
+            }
+            let resolvedID = resolvedURL.map { "web:\($0)" } ?? page.id
+            let hasMeaningfulNewTitle = !page.title.isEmpty && page.title != page.url
+            let resolvedTitle = hasMeaningfulNewTitle ? page.title : existing.title
+            let resolvedPreview = page.preview ?? existing.preview
+            pages[index] = WebPage(
+                id: resolvedID,
+                title: resolvedTitle,
+                url: resolvedURL,
+                preview: resolvedPreview,
+                source: page.source
+            )
         } else {
-            indices[url] = pages.count
+            indices[dedupKey] = pages.count
             pages.append(page)
         }
     }
@@ -359,7 +498,13 @@ struct ConversationArtifactIndex: Equatable {
             content: content
         )
         if let index = fileIndices[path] {
-            files[index].versions.append(version)
+            if let content,
+               let last = files[index].versions.last,
+               last.content == content {
+                files[index].versions[files[index].versions.count - 1] = version
+            } else {
+                files[index].versions.append(version)
+            }
         } else {
             fileIndices[path] = files.count
             files.append(FileGroup(path: path, versions: [version]))

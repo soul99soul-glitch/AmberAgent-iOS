@@ -12,7 +12,9 @@ extension MacGatewayStore {
         switch event.kind {
         case .userMessage, .followup, .stopRequested: reply = nil
         case .assistantReply, .taskResult:
-            reply = event.role == "assistant" && !event.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            reply = event.role == "assistant"
+                && !event.isUpfrontAcknowledgement
+                && !event.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 && event.outcome != .failed && event.outcome != .cancelled ? event.id : nil
         default: return
         }

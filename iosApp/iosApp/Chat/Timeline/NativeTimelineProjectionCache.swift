@@ -26,6 +26,41 @@ final class NativeTimelineProjectionCache {
     private var cachedIsGenerationActive = false
     private(set) var lastResetRevision: Int?
 
+    /// Called by the message-event owner, before publishing any render signal.
+    /// Reuse the existing facts/identity cache; body-side projection only reads prepared text.
+    func prepareDisplayTexts(messages: [UIMessage]) {
+        var prepared: [ObjectIdentifier: NativeTimelineMessageFacts] = [:]
+        for (index, message) in messages.enumerated() {
+            ChatRenderProbe.record("display-facts:visit")
+            let key = ObjectIdentifier(message)
+            if let cached = factsByObjectID[key], cached.hasPreparedDisplayTexts, cached.identity.matches(message) {
+                prepared[key] = cached
+            } else {
+                prepared[key] = NativeTimelineMessageFacts(
+                    message: message, identity: ChatMessageContentIdentity(message, index: index),
+                    displayTexts: IOSSubAgentOutputProjection.displayTexts(in: message)
+                )
+            }
+        }
+        factsByObjectID = prepared
+    }
+
+    func prepareTailDisplayTexts(_ message: UIMessage, replacing previous: UIMessage) {
+        ChatRenderProbe.record("display-facts:visit")
+        factsByObjectID.removeValue(forKey: ObjectIdentifier(previous))
+        factsByObjectID[ObjectIdentifier(message)] = NativeTimelineMessageFacts(
+            message: message, identity: ChatMessageContentIdentity(message),
+            displayTexts: IOSSubAgentOutputProjection.displayTexts(in: message)
+        )
+    }
+
+    func displayTexts(for message: UIMessage) -> [Int: String] {
+        guard let facts = factsByObjectID[ObjectIdentifier(message)], facts.identity.matches(message) else {
+            return IOSSubAgentOutputProjection.unpreparedDisplayTexts(in: message)
+        }
+        return facts.displayTexts
+    }
+
     func projection(
         messages: [UIMessage],
         event: ChatEvent,
@@ -121,7 +156,7 @@ final class NativeTimelineProjectionCache {
             factsByObjectID: factsByObjectID
            ) {
             if let tail = messages.last {
-                let tailFacts = NativeTimelineMessageFacts(message: tail, index: messages.count - 1)
+                let tailFacts = factsByObjectID[ObjectIdentifier(tail)] ?? NativeTimelineMessageFacts(message: tail, index: messages.count - 1)
                 if orderedFacts.count == messages.count {
                     orderedFacts[messages.count - 1] = tailFacts
                 }
@@ -509,7 +544,7 @@ final class NativeTimelineProjectionCache {
         return groupIDs
     }
 
-    func reset(forRevision revision: Int? = nil) {
+    func reset(forRevision revision: Int? = nil, preservingPreparedFacts: Bool = false) {
         cachedProjection = nil
         structuralKey = nil
         cachedBaseConfigKey = nil
@@ -518,7 +553,7 @@ final class NativeTimelineProjectionCache {
         sourceRevision = nil
         sourceMessages = []
         orderedFacts = []
-        factsByObjectID.removeAll()
+        if !preservingPreparedFacts { factsByObjectID.removeAll() }
         compactBoundaries = []
         liveTaskTailIDs = []
         cachedStreamedMessageIDs.removeAll()

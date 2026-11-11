@@ -11,13 +11,17 @@ struct IOSAgentTaskEvidence: Codable, Equatable {
     let observation: String
 }
 
-struct IOSAgentExperienceCandidate: Decodable {
+struct IOSAgentExperienceCandidate: Codable {
     let content: String
     let toolCallId: String
     let quote: String
     /// A host, project, or task phrase copied from the task/tool evidence.
     let context: String
     let expiresInDays: Int?
+
+    var isCredentialSafe: Bool {
+        [content, quote, context].allSatisfy { IOSContextCompactionFidelity.redactCredentials($0) == $0 }
+    }
 }
 
 /// Task/tool learning is deliberately separate from user facts and wiki notes.
@@ -53,6 +57,7 @@ final class IOSAgentExperienceStore {
     /// permission and daily budget gates; no extra model request or scheduler.
     func save(_ candidates: [IOSAgentExperienceCandidate], evidence: [IOSAgentTaskEvidence],
               conversationId: String, now: Int64) throws {
+        guard !candidates.isEmpty else { return }
         guard errorMessage == nil else { throw IOSMemoryCorrection.Failure(errorMessage!) }
         var next = records
         for candidate in candidates.prefix(2) {
@@ -62,7 +67,7 @@ final class IOSAgentExperienceStore {
                   let source = evidence.first(where: { $0.toolCallId == candidate.toolCallId }),
                   source.observation.contains(candidate.quote),
                   (source.task + "\n" + source.observation).localizedCaseInsensitiveContains(candidate.context),
-                  IOSContextCompactionFidelity.redactCredentials(candidate.content) == candidate.content,
+                  candidate.isCredentialSafe,
                   IOSMemoryExtractionCoordinator.isGrounded(content: candidate.content, evidence: candidate.quote,
                                                             context: source.task + "\n" + source.toolName) else { continue }
             let expiresAt = now + Int64(min(max(candidate.expiresInDays ?? 30, 1), 90)) * 86_400_000
@@ -85,7 +90,8 @@ final class IOSAgentExperienceStore {
     func recall(task: String, toolNames: Set<String>, now: Int64, limit: Int = 2) -> [IOSAgentExperience] {
         guard !task.isEmpty || !toolNames.isEmpty else { return [] }
         return records.filter { record in
-            guard record.expiresAt > now else { return false }
+            guard record.expiresAt > now,
+                  [record.content, record.context, record.quote].allSatisfy({ IOSContextCompactionFidelity.redactCredentials($0) == $0 }) else { return false }
             let contextMatch = task.localizedCaseInsensitiveContains(record.context)
             let tokens = Set(ChatMemoryContextBuilder.recallTokens(from: task))
             let overlap = tokens.intersection(ChatMemoryContextBuilder.recallTokens(from: record.content)).count
@@ -99,20 +105,26 @@ final class IOSAgentExperienceStore {
         value.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
     }
 
+    static func isInherited(_ message: UIMessage) -> Bool {
+        message.parts.contains { IosToolOutputJsonBridge.shared.metadataString(part: $0, key: "amber.memory.inherited") == "true" }
+    }
+
     static func evidence(messages: [UIMessage], sourceIds: Set<String>) -> [IOSAgentTaskEvidence] {
         var result: [IOSAgentTaskEvidence] = []
         var source: UIMessage?
         var remaining = 6000
         for (index, message) in messages.enumerated() {
             if message.role == .user {
-                source = sourceIds.contains(message.id.toHexDashString()) && IosMailboxMessageBridge.shared.kind(message: message) == nil ? message : nil
+                source = sourceIds.contains(message.id.toHexDashString()) && !isInherited(message) && IosMailboxMessageBridge.shared.kind(message: message) == nil ? message : nil
             }
             guard let source else { continue }
-            let task = String(source.toText().prefix(400))
+            let task = String(IOSContextCompactionFidelity.redactCredentials(source.toText()).prefix(400))
             let end = messages[(index + 1)...].firstIndex(where: { $0.role == .user }) ?? messages.endIndex
             let completion = messages[index..<end].last(where: { $0.role == .assistant })?.id.toHexDashString() ?? message.id.toHexDashString()
             for case let tool as UIMessagePart.Tool in message.parts where tool.isExecuted && tool.toolName != "memory_tool" {
-                let raw = tool.input + "\n" + tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
+                let input = ChatToolCallParsing.jsonObject(tool.input) != nil
+                    ? IOSSecretArgumentRedaction.redactedArgumentsJSON(tool.input) : tool.input
+                let raw = input + "\n" + tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
                 let observation = String(IOSContextCompactionFidelity.redactCredentials(raw).prefix(min(1200, remaining)))
                 guard !observation.isEmpty else { continue }
                 result.append(.init(sourceMessageId: source.id.toHexDashString(), completionMessageId: completion, task: task,

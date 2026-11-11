@@ -19,6 +19,7 @@ extension ChatRenderProbe {
             ("renderIdentity", lhs.model.renderIdentity != rhs.model.renderIdentity),
             ("phoneGroup", lhs.model.phoneToolGroup?.signature != rhs.model.phoneToolGroup?.signature),
             ("assistantTurn", lhs.model.assistantTurn != rhs.model.assistantTurn),
+            ("screenshotGroup", lhs.model.automationScreenshotGroup?.signature != rhs.model.automationScreenshotGroup?.signature),
             ("taskLive", lhs.model.isTaskLive != rhs.model.isTaskLive),
             ("independentTasks", lhs.model.usesIndependentTasks != rhs.model.usesIndependentTasks),
             ("displaySignature", lhs.displaySettingSignature != rhs.displaySettingSignature),

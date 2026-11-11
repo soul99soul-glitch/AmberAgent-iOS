@@ -296,6 +296,44 @@ struct MacGatewayTests {
         #expect(!session.hasPendingApproval)
     }
 
+    @Test @MainActor func unifiedBoardKeepsDistinctRunsWithSameTitleAndMergesOnlyScheduleIdentity() async throws {
+        let suite = "UnifiedBoardIdentity.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let board = #"{"board":[{"id":"run:A","kind":"run","column":"running","title":"同名任务","detail":"执行 A","updatedAt":1800000000,"scheduleId":"schedule-one","waitingForReply":false,"failed":false},{"id":"run:B","kind":"run","column":"needsYou","title":"同名任务","detail":"待回复","updatedAt":1800000001,"waitingForReply":true,"failed":false},{"id":"schedule:schedule-one","kind":"schedule","column":"scheduled","title":"同名任务","detail":"每日","updatedAt":1800000000,"scheduleId":"schedule-one","waitingForReply":false,"failed":false}]}"#
+        let schedules = #"{"schedules":[{"id":"schedule-one","name":"同名任务","rule":"每日","enabled":true,"running":false,"autoApprovesHighRisk":false}]}"#
+        let client = MacGatewayClient(addrs: ["fixture.invalid"], port: 443, fingerprint: "fixture", token: "fixture",
+            transport: { request, _ in
+                let url = request.url!
+                let json = url.path.hasSuffix("/board") ? board : schedules
+                return (Data(json.utf8), HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            })
+        let gateway = MacGatewayStore(defaults: defaults)
+        gateway.configureForTesting(connection: .init(gatewayId: "g", name: "Mac", addrs: ["fixture.invalid"],
+            port: 443, fingerprint: "fixture", deviceId: "d"), client: client)
+        await gateway.refreshBoard()
+        await gateway.refreshSchedules()
+        let tasks = IOSAdvancedTaskStore(userDefaults: defaults)
+        let activity = IOSSubAgentActivityStore(tasks: tasks, defaults: defaults, loadRuns: { [] })
+        let wake = IOSWakeTaskStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(suite))
+        let groups = AmberUnifiedTaskBuilder.buildTasks(gateway: gateway, subAgentStore: activity,
+            taskStore: tasks, wakeStore: wake, hubStore: AmberHubStore(defaults: defaults))
+        #expect(groups.running.map(\.id) == ["board:run:A"])
+        #expect(groups.needsAttention.map(\.id) == ["board:run:B"])
+        #expect(groups.scheduled.map(\.id) == ["schedule:schedule-one"])
+        #expect(groups.activeCount == 2)
+
+        let boardOnly = MacGatewayStore(defaults: defaults)
+        boardOnly.configureForTesting(connection: .init(gatewayId: "g", name: "Mac", addrs: ["fixture.invalid"],
+            port: 443, fingerprint: "fixture", deviceId: "d"), client: client)
+        await boardOnly.refreshBoard()
+        let fallback = AmberUnifiedTaskBuilder.buildTasks(gateway: boardOnly, subAgentStore: activity,
+            taskStore: tasks, wakeStore: wake, hubStore: AmberHubStore(defaults: defaults))
+        #expect(fallback.scheduled.map(\.id) == ["board:schedule:schedule-one"],
+                "a board schedule stays visible until the same schedule owner has been fetched")
+        #expect(fallback.running.count == 1 && fallback.needsAttention.count == 1)
+    }
+
     @Test func cloudTaskRequestEncodesStrictContractFieldsAndValidates() throws {
         let req = MacGatewayCloudTaskRequest(
             requestId: "550e8400-e29b-41d4-a716-446655440000",
@@ -447,8 +485,21 @@ struct MacGatewayTests {
         #expect(store.cloudTasks[0].needsSubmissionRetry)
 
         // 3. Retry uses the exact same requestId and payload, succeeds with 202, and saves workItem.id
-        let retryAttempt = await store.retryCloudTask(requestId: "req-fixed-1")
-        let acceptedRecord = try retryAttempt.get()
+        let suiteHub = AmberHubStore(defaults: defaults)
+        let tasks = IOSAdvancedTaskStore(userDefaults: defaults)
+        let activity = IOSSubAgentActivityStore(tasks: tasks, defaults: defaults, loadRuns: { [] })
+        var followups: [AmberUnifiedTaskItem] = []
+        var dismissals = 0
+        let panel = AmberDuetTaskCenterCard(gateway: store, subAgentStore: activity, hubStore: suiteHub,
+            onOpenFullTaskBoard: {}, onFollowupTask: { followups.append($0) },
+            onDismissPanel: { dismissals += 1 })
+        let item = AmberUnifiedTaskItem(id: "cloud:req-fixed-1", title: taskRequest.title,
+            subtitle: "", statusText: "提交未完成", phase: .needsAttention, ownership: .delegated,
+            source: .cloudTask("req-fixed-1"))
+        await panel.handleQuickDecision(.init(title: "重试", kind: .retry), for: item)
+        #expect(followups.isEmpty, "retry must replay the owner request rather than fill the chat composer")
+        #expect(dismissals == 0, "keep the retry result/error visible in the panel")
+        let acceptedRecord = try #require(store.cloudTasks.first)
         store.stopCloudTaskPolling()
         #expect(acceptedRecord.workItemId == "work:opaque-1")
         #expect(acceptedRecord.state == .working)
@@ -459,6 +510,10 @@ struct MacGatewayTests {
         #expect(submitBodies.count >= 2)
         #expect(Set(submitBodies).count == 1, "address fallback and retry must send identical requestId and JSON body")
         #expect(seen.allSatisfy { $0.auth == "Bearer paired-token-1" })
+        await panel.handleQuickDecision(.init(title: "调整方向", kind: .adjustDirection,
+            followupInstruction: "带入这条任务"), for: item)
+        #expect(followups.count == 1 && followups.first?.actionTitle == "带入这条任务",
+                "ordinary followup keeps its independent composer action")
 
         // 4. Refresh transitions to COMPLETED and preserves Markdown/code/JSON in resultMarkdown
         await server.markCompleted()
@@ -505,5 +560,205 @@ struct MacGatewayTests {
         )
         store.configureForTesting(connection: newConnection, client: client)
         #expect(store.cloudTasks.isEmpty, "re-pairing produces a new deviceId and must not reuse old device records")
+    }
+
+    @Test @MainActor func cloudTaskMergeRejectsOlderSnapshotsAndNonTerminalAfterTerminalInGetAndCancelRace() async throws {
+        let suiteName = "MacGatewayCloudTaskTests.P207.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        actor RaceTaskServer {
+            var getDetailJSON: String = #"""
+            {"workItem":{"id":"work:race-1","agentId":"main","title":"竞态任务","state":"WORKING","progress":"运行中","updatedAtMs":1793500001000},"brief":"合成简报","sessionArchived":false}
+            """#
+            var cancelDetailJSON: String = #"""
+            {"workItem":{"id":"work:race-1","agentId":"main","title":"竞态任务","state":"CANCELLED","updatedAtMs":1793500003000},"brief":"合成简报","sessionArchived":true}
+            """#
+
+            func setGetDetailJSON(_ json: String) { getDetailJSON = json }
+            func setCancelDetailJSON(_ json: String) { cancelDetailJSON = json }
+
+            func handle(_ request: URLRequest) -> (Data, URLResponse) {
+                let url = request.url!
+                let method = request.httpMethod ?? "GET"
+                let path = url.path
+                let json: String
+                switch (method, path) {
+                case ("POST", "/v2/work-items"):
+                    json = #"""
+                    {"workItem":{"id":"work:race-1","agentId":"main","title":"竞态任务","state":"WORKING","progress":"刚启动","updatedAtMs":1793500002000},"replayed":false}
+                    """#
+                case ("GET", "/v2/work-items/work:race-1"):
+                    json = getDetailJSON
+                case ("POST", "/v2/work-items/work:race-1/cancel"):
+                    json = cancelDetailJSON
+                default:
+                    json = #"{"error":"not found"}"#
+                }
+                let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+                return (Data(json.utf8), resp)
+            }
+        }
+
+        let server = RaceTaskServer()
+        let connection = MacGatewayConnection(
+            gatewayId: "gw-p207", name: "Amber Cloud", addrs: ["cloud.example"],
+            port: 443, fingerprint: "fp", deviceId: "device-p207"
+        )
+        let client = MacGatewayClient(
+            addrs: ["cloud.example"], port: 443, fingerprint: "fp", token: "token-p207",
+            transport: { req, _ in await server.handle(req) }
+        )
+        let store = MacGatewayStore(defaults: defaults)
+        store.configureForTesting(connection: connection, client: client)
+
+        // 1. Submit receives updatedAtMs = 2000, while the immediate follow-up GET returns a stale snapshot (updatedAtMs = 1000).
+        let req = MacGatewayCloudTaskRequest(
+            requestId: "00000000-0000-4000-8000-000000000707",
+            text: "测试云任务版本与终态收敛",
+            agentId: "main",
+            title: "竞态任务"
+        )
+        _ = try await store.submitCloudTask(req).get()
+        store.stopCloudTaskPolling()
+        #expect(store.cloudTasks.first?.effectiveWorkItem?.updatedAtMs == 1793500002000,
+                "Stale GET with older updatedAtMs (1000 < 2000) must not overwrite newer workItem snapshot")
+        #expect(store.cloudTasks.first?.effectiveWorkItem?.progress == "刚启动")
+
+        // 2. Cancel settles the task at CANCELLED (updatedAtMs = 3000).
+        await store.cancelCloudTask(workItemId: "work:race-1")
+        #expect(store.cloudTasks.first?.state == .cancelled)
+        #expect(store.cloudTasks.first?.isTerminal == true)
+
+        // 3. A late GET returning non-terminal WORKING (even with updatedAtMs = 4000) must be rejected once terminal is established.
+        await server.setGetDetailJSON(#"""
+        {"workItem":{"id":"work:race-1","agentId":"main","title":"竞态任务","state":"WORKING","progress":"迟到的运行态","updatedAtMs":1793500004000},"brief":"合成简报","sessionArchived":false}
+        """#)
+        await store.refreshCloudTask(workItemId: "work:race-1")
+        #expect(store.cloudTasks.first?.state == .cancelled, "Non-terminal GET must not regress an already terminal task")
+        #expect(store.cloudTasks.first?.isTerminal == true)
+
+        // 4. Authoritative COMPLETED terminal update with newer updatedAtMs (5000) succeeds, and a stale older CANCELLED (3000) is rejected.
+        await server.setGetDetailJSON(#"""
+        {"workItem":{"id":"work:race-1","agentId":"main","title":"竞态任务","state":"COMPLETED","updatedAtMs":1793500005000},"brief":"合成简报","sessionArchived":true,"resultMarkdown":"最终结果正文"}
+        """#)
+        await store.refreshCloudTask(workItemId: "work:race-1")
+        #expect(store.cloudTasks.first?.state == .completed)
+        #expect(store.cloudTasks.first?.detail?.resultMarkdown == "最终结果正文")
+
+        await store.cancelCloudTask(workItemId: "work:race-1")
+        #expect(store.cloudTasks.first?.state == .completed, "Older cancel snapshot (3000 < 5000) must not overwrite newer COMPLETED terminal state")
+    }
+
+    @Test @MainActor func unpairSerializesWithQueuedPersistenceAndProtectsImmediateRepair() async throws {
+        let suiteName = "MacGatewayCloudTaskTests.P208.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let connectionA = MacGatewayConnection(
+            gatewayId: "gw-a", name: "Cloud A", addrs: ["a.example"],
+            port: 443, fingerprint: "fp-a", deviceId: "device-a"
+        )
+        let clientA = MacGatewayClient(
+            addrs: ["a.example"], port: 443, fingerprint: "fp-a", token: "token-a",
+            transport: { req, _ in
+                let resp = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+                return (Data(#"{}"#.utf8), resp)
+            }
+        )
+        let store = MacGatewayStore(defaults: defaults)
+        store.configureForTesting(connection: connectionA, client: clientA)
+
+        let taskA = MacGatewayCloudTaskRecord(
+            gatewayId: connectionA.gatewayId,
+            deviceId: connectionA.deviceId,
+            request: MacGatewayCloudTaskRequest(requestId: "req-a", text: "任务 A"),
+            workItemId: "work:a",
+            workItem: nil,
+            detail: nil,
+            replayed: false,
+            lastError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+        store.cloudTasks = [taskA]
+        let eventA = MacGatewayCloudDialogueEvent(
+            seq: 1, id: "evt-a", kind: .userMessage, role: "user",
+            text: "连接 A 消息", topicId: "topic-a", workItemId: nil, outcome: nil, soulRevision: nil
+        )
+        store.ingestCloudDialogueEventsPage(
+            MacGatewayCloudDialogueEventsPage(items: [eventA], nextCursor: 1, soulRevision: nil),
+            requestedAfter: 0
+        )
+
+        // Hold MacGatewayStore.persistenceQueue briefly while queueing an async snapshot from connectionA,
+        // then call unpair() on MainActor so unpair() races ahead of the queued write.
+        let gate = DispatchSemaphore(value: 0)
+        MacGatewayStore.persistenceQueue.async {
+            _ = gate.wait(timeout: .now() + 2.0)
+        }
+        store.persistCloudTasks(forceAsync: true)
+        store.persistCloudDialogueState(forceAsync: true)
+
+        await store.unpair()
+        gate.signal()
+        MacGatewayStore.persistenceQueue.sync {}
+
+        #expect(store.connection == nil)
+        #expect(defaults.data(forKey: MacGatewayStore.cloudTasksKey) == nil,
+                "Stale queued cloudTasks snapshot from connectionA must not recreate cache after unpair()")
+        #expect(defaults.data(forKey: MacGatewayStore.cloudDialogueStateKey) == nil,
+                "Stale queued cloudDialogue snapshot from connectionA must not recreate cache after unpair()")
+
+        // Now test immediate re-pair to connectionB while a stale connectionA snapshot and unpair are in the queue.
+        store.configureForTesting(connection: connectionA, client: clientA)
+        store.cloudTasks = [taskA]
+        let gate2 = DispatchSemaphore(value: 0)
+        MacGatewayStore.persistenceQueue.async {
+            _ = gate2.wait(timeout: .now() + 2.0)
+        }
+        store.persistCloudTasks(forceAsync: true)
+        store.persistCloudDialogueState(forceAsync: true)
+        await store.unpair()
+
+        let connectionB = MacGatewayConnection(
+            gatewayId: "gw-b", name: "Cloud B", addrs: ["b.example"],
+            port: 443, fingerprint: "fp-b", deviceId: "device-b"
+        )
+        let clientB = MacGatewayClient(
+            addrs: ["b.example"], port: 443, fingerprint: "fp-b", token: "token-b",
+            transport: { req, _ in
+                let resp = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+                return (Data(#"{}"#.utf8), resp)
+            }
+        )
+        store.configureForTesting(connection: connectionB, client: clientB)
+        let taskB = MacGatewayCloudTaskRecord(
+            gatewayId: connectionB.gatewayId,
+            deviceId: connectionB.deviceId,
+            request: MacGatewayCloudTaskRequest(requestId: "req-b", text: "任务 B"),
+            workItemId: "work:b",
+            workItem: nil,
+            detail: nil,
+            replayed: false,
+            lastError: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+        store.cloudTasks = [taskB]
+        store.persistCloudTasks(forceAsync: true)
+        store.setCloudMainDialogueSelected(true)
+        store.stopCloudDialoguePolling()
+
+        gate2.signal()
+        MacGatewayStore.persistenceQueue.sync {}
+
+        let savedTasksData = try #require(defaults.data(forKey: MacGatewayStore.cloudTasksKey))
+        let savedTasks = try JSONDecoder().decode([MacGatewayCloudTaskRecord].self, from: savedTasksData)
+        #expect(savedTasks.map(\.requestId) == ["req-b"], "Immediate re-pair to connectionB must keep connectionB's tasks without connectionA leakage or unpair erasure")
+
+        let savedDialogueData = try #require(defaults.data(forKey: MacGatewayStore.cloudDialogueStateKey))
+        let savedDialogue = try JSONDecoder().decode(MacGatewayCloudDialoguePersistedEnvelope.self, from: savedDialogueData)
+        #expect(savedDialogue.gatewayId == "gw-b" && savedDialogue.deviceId == "device-b")
     }
 }

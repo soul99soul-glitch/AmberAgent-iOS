@@ -8,6 +8,7 @@ import Shared
 @MainActor
 final class ChatTimelineUpdates {
     let signals = PassthroughSubject<ChatMessageUpdateSignal, Never>()
+    let projectionCache = NativeTimelineProjectionCache()
     private(set) var structuralMessages: [UIMessage] = []
     private(set) var latestSignal = ChatMessageUpdateSignal()
     private var sourceIdentities: [ChatMessageContentIdentity] = []
@@ -40,6 +41,7 @@ final class ChatTimelineUpdates {
         defer { signals.send(signal) }
         if signal.event == .assistantStreamDelta {
             guard let tail = messages.last else {
+                projectionCache.prepareDisplayTexts(messages: messages)
                 ChatRenderProbe.record("tail-fastpath:fail-no-tail")
                 structuralMessages = messages
                 sourceIdentities = []
@@ -48,6 +50,7 @@ final class ChatTimelineUpdates {
                 return true
             }
             guard canBypassNextStreamDelta, let previousTailIdentity = sourceIdentities.last else {
+                projectionCache.prepareDisplayTexts(messages: messages)
                 ChatRenderProbe.record("tail-fastpath:fail-no-prev-identity")
                 structuralMessages = messages
                 sourceIdentities = nextIdentities(for: messages)
@@ -55,13 +58,19 @@ final class ChatTimelineUpdates {
                 canBypassNextStreamDelta = Self.canPrepareStreamBypass(for: tail)
                 return true
             }
-            if canUpdateOnlyTail(messages, previousTailIdentity: previousTailIdentity),
-               consume?(tail, signal) == true {
-                sourceIdentities[sourceIdentities.count - 1] = ChatMessageContentIdentity(
-                    reusingMetadataFrom: previousTailIdentity,
-                    message: tail
-                )
-                return false
+            if canUpdateOnlyTail(messages, previousTailIdentity: previousTailIdentity) {
+                // The identity check above also validates history and mutable metadata.
+                // Only this replaced tail needs new display facts before the live consumer runs.
+                projectionCache.prepareTailDisplayTexts(tail, replacing: previousTailIdentity.message)
+                if consume?(tail, signal) == true {
+                    sourceIdentities[sourceIdentities.count - 1] = ChatMessageContentIdentity(
+                        reusingMetadataFrom: previousTailIdentity,
+                        message: tail
+                    )
+                    return false
+                }
+            } else {
+                projectionCache.prepareDisplayTexts(messages: messages)
             }
             structuralMessages = messages
             sourceIdentities = nextIdentities(for: messages)
@@ -69,6 +78,7 @@ final class ChatTimelineUpdates {
             canBypassNextStreamDelta = Self.canPrepareStreamBypass(for: tail)
             return true
         }
+        projectionCache.prepareDisplayTexts(messages: messages)
         structuralMessages = messages
         if let tail = messages.last, Self.canPrepareStreamBypass(for: tail) {
             sourceIdentities = nextIdentities(for: messages)

@@ -7,6 +7,33 @@ import SQLite3
 /// Spawn bootstrap, child limits, and thread ancestry.
 @MainActor
 final class IOSOrchestrationToolTests: IOSOrchestrationToolTestCase {
+    func testSpawnInheritsIsolatedHubBindingAndPollutedMemoryMode() async throws {
+        let base = makeTempDirectory("SpawnMemoryBoundary")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let parentId = try XCTUnwrap(store.currentConversation?.id)
+        await store.saveCurrent(messages: [UIMessage.companion.user(prompt: "parent fact")])
+        let marked = await store.markConversationMemoryPolluted(parentId)
+        XCTAssertTrue(marked)
+        let hubs = AmberHubStore.shared
+        let old = hubs.hubs
+        defer { hubs.hubs = old }
+        let hub = AmberHubItem(title: "sandbox", memoryPolicy: .hubIsolated, conversationIds: [parentId.toHexDashString()])
+        hubs.hubs.append(hub)
+        let db = makeDatabase(directory: base)
+        let scheduler = FakeBackgroundScheduler()
+        let service = makeService(store: store, db: db, scheduler: scheduler, currentConversationId: { parentId })
+        let result = parseJSON(await service.execute(toolName: "spawn_agent", arguments: spawnArguments(taskName: "memory_child"),
+                                                    providerSetting: makeProviderSetting(), params: makeParams(), runId: "parent"))
+        XCTAssertEqual(result["ok"] as? Bool, true)
+        let edges = try await db.threadEdgeDao().allEdges()
+        let edge = try XCTUnwrap(edges.first)
+        XCTAssertTrue(hubs.hubs.first { $0.id == hub.id }?.conversationIds.contains(edge.childThreadId) == true)
+        let child = try await store.loadConversationForOrchestration(KotlinUuid.companion.parse(uuidString: edge.childThreadId))
+        XCTAssertEqual(child?.memoryMode, .polluted)
+    }
+
     // MARK: - spawn 全链路
 
     func testSpawnDoesNotSaveChildOrStartWhenEdgeWriteFails() async throws {

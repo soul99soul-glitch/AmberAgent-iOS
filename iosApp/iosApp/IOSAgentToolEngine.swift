@@ -410,12 +410,18 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 #endif
                 var requestMessages = try await prepareRequestMessages?(plannedMessages) ?? plannedMessages
                 let normalParams = await phoneRequestParams(effectiveParams, providerSetting: providerSetting)
+                let phoneCappedReasoning = normalParams !== effectiveParams
                 let requestParams: TextGenerationParams
                 if configuration.fastFirstReasoning && params.reasoningLevel != .off {
-                    let level: ReasoningLevel = steps == 0 && !configuration.resumesWorker
-                        ? Self.workerReasoning(named: configuration.routerReasoningName, fallback: normalParams.reasoningLevel)
-                        : Self.workerReasoning(named: configuration.workerReasoningName, fallback: normalParams.reasoningLevel)
-                    requestParams = normalParams.replacingReasoningLevel(level)
+                    if steps == 0 && !configuration.resumesWorker {
+                        let level = Self.workerReasoning(named: configuration.routerReasoningName, fallback: normalParams.reasoningLevel)
+                        requestParams = normalParams.replacingReasoningLevel(level)
+                    } else if phoneCappedReasoning {
+                        requestParams = normalParams
+                    } else {
+                        let level = Self.workerReasoning(named: configuration.workerReasoningName, fallback: normalParams.reasoningLevel)
+                        requestParams = normalParams.replacingReasoningLevel(level)
+                    }
                 } else {
                     requestParams = normalParams
                 }

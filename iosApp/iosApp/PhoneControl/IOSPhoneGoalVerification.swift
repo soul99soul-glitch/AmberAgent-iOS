@@ -141,34 +141,61 @@ enum IOSPhoneGoalVerification {
         return collapseLabelChildMatches(matches, in: observation)
     }
 
-    /// Removes only a named StaticText that is a DFS descendant of a matching
-    /// named control whose frame contains it. The depth stack checks active
-    /// ancestry only, keeping sibling matches distinct without rescanning the tree.
+    private static let concreteLabeledControlTypes: Set<String> = [
+        "XCUIElementTypeButton", "XCUIElementTypeLink", "XCUIElementTypeSwitch",
+        "XCUIElementTypeToggle", "XCUIElementTypeTab", "XCUIElementTypeTabBarItem",
+        "XCUIElementTypeMenuItem",
+    ]
+
+    /// Removes a named StaticText or non-editable label TextView (`value == nil && !focused`)
+    /// that is a DFS descendant of a matching named control whose frame contains it, and drops
+    /// unidentified outer `Other`/`Group` wrappers whose frame encloses a matched concrete
+    /// control with the exact same label. Sibling controls in other branches/positions remain distinct.
     static func collapseLabelChildMatches(
         _ matches: [(offset: Int, element: PhoneObservationNode)],
         in observation: PhoneObservation
     ) -> [(node: PhoneObservationNode, index: Int)] {
         let matchingIndices = Set(matches.map { $0.offset })
         var ancestors: [Int] = []
-        var childIndices = Set<Int>()
+        var collapsedIndices = Set<Int>()
         for (index, node) in observation.nodes.enumerated() {
             while let last = ancestors.last, observation.nodes[last].depth >= node.depth {
                 ancestors.removeLast()
             }
-            if matchingIndices.contains(index), node.type == "XCUIElementTypeStaticText",
+            let isLabelLeaf = node.type == "XCUIElementTypeStaticText"
+                || (node.type == "XCUIElementTypeTextView" && node.value == nil && !node.focused)
+            if matchingIndices.contains(index), isLabelLeaf,
                let label = node.label, !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                ancestors.contains(where: { parentIndex in
                    let parent = observation.nodes[parentIndex]
-                   return matchingIndices.contains(parentIndex) && parent.type != "XCUIElementTypeStaticText"
-                       && parent.label == label && rectContains(parent.rect, node.rect)
+                   return matchingIndices.contains(parentIndex)
+                       && parent.type != "XCUIElementTypeStaticText"
+                       && parent.type != "XCUIElementTypeTextView"
+                       && parent.label == label
+                       && rectContains(parent.rect, node.rect)
                }) {
-                childIndices.insert(index)
+                collapsedIndices.insert(index)
             }
             ancestors.append(index)
         }
 
+        let remaining = matches.filter { !collapsedIndices.contains($0.offset) }
+        for candidate in remaining {
+            let wrapper = candidate.element
+            guard (wrapper.type == "XCUIElementTypeOther" || wrapper.type == "XCUIElementTypeGroup"),
+                  (wrapper.identifier ?? "").isEmpty,
+                  let label = wrapper.label, !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  remaining.contains(where: { other in
+                      other.offset != candidate.offset
+                          && concreteLabeledControlTypes.contains(other.element.type)
+                          && other.element.label == label
+                          && rectContains(wrapper.rect, other.element.rect)
+                  }) else { continue }
+            collapsedIndices.insert(candidate.offset)
+        }
+
         return matches.compactMap { match in
-            childIndices.contains(match.offset) ? nil : (node: match.element, index: match.offset)
+            collapsedIndices.contains(match.offset) ? nil : (node: match.element, index: match.offset)
         }
     }
 

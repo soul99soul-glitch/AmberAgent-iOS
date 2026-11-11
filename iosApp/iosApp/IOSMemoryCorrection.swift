@@ -42,13 +42,15 @@ enum IOSMemoryCorrection {
         for conversationId in Set(recent.map(\.conversationId)).sorted() {
             let id = KotlinUuid.companion.parse(uuidString: conversationId)
             guard let conversation = try? await conversations.loadConversationForOrchestration(id),
-                  conversation.memoryMode != .disabled else { continue }
+                  conversation.memoryMode != .disabled,
+                  AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else { continue }
             let messages = conversation.currentMessages
             let relevant = recent.filter { $0.conversationId == conversationId }
             for message in messages.reversed() where message.role == .user {
                 let messageId = message.id.toHexDashString()
                 guard let episode = relevant.first(where: { $0.messageIds.contains(messageId) }),
                       IosMailboxMessageBridge.shared.kind(message: message) == nil,
+                      !IOSAgentExperienceStore.isInherited(message),
                       let stamp = episodes.resolvedTimestampMillis(for: message, conversationId: conversationId) else { continue }
                 let text = String(message.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n").prefix(2000))
                 guard !text.isEmpty, text.count <= remaining,

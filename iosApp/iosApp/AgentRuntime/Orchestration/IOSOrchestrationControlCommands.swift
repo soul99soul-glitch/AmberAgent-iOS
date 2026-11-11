@@ -667,7 +667,7 @@ final class IOSOrchestrationControlCommands {
 
             [Amber host: child result excerpt]
             \(reference)
-            This child run has ended. The report above is a delivery excerpt, not a promise of another message. Read the stored full message with native session_read using the reference above, then follow next_offset until null. If the tool is hidden, use tool_search first; do not call it through mcp_call. Do not request regeneration or wait for more mail just because this excerpt was truncated.
+            This child run has ended. The report above is a delivery excerpt, not a promise of another message. Read the stored full message with native session_read using the reference above, then follow next_offset until null. If the tool is hidden, use tool_search first; do not call it through mcp_call. Do not request regeneration or wait for more mail just because this excerpt was truncated. Never copy or quote the [Amber host: ...] block, raw JSON metadata, or session_read UUIDs in your user-facing reply.
             """
         } else if !terminalMetadata.isEmpty {
             payload = """

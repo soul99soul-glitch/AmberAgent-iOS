@@ -128,7 +128,7 @@ final class IOSJevSettingsTests: XCTestCase {
         XCTAssertEqual(decoded.policy.phoneActionsMinConfidence, 0.6)
         XCTAssertEqual(decoded.mode(for: .phoneVerification), .off)
         XCTAssertEqual(decoded.mode(for: .phoneActions), .off)
-        XCTAssertEqual(decoded.policy.activeWaitBudgetMs(for: .phoneVerification), decoded.policy.deadlineMs)
+        XCTAssertEqual(decoded.policy.activeWaitBudgetMs(for: .phoneVerification), decoded.policy.webActionsDeadlineMs)
         XCTAssertEqual(decoded.policy.activeWaitBudgetMs(for: .phoneActions), decoded.policy.webActionsDeadlineMs)
     }
 

@@ -34,12 +34,13 @@ struct NativeTimelineChunk: Identifiable {
             for entry in entries {
                 hash.combine(entry.id); hash.combine(entry.renderDigest)
                 hash.combine(entry.renderToken); hash.combine(String(describing: entry.kind))
-                hash.combine(entry.isLastMessage); hash.combine(entry.isStreaming)
+                if entry.isGenerating && entry.isLastMessage { hash.combine(true) }
+                hash.combine(entry.isStreaming)
                 hash.combine(entry.hasEverStreamed); hash.combine(entry.canAnimateInsertion)
                 hash.combine(entry.isAssistantContinuation); hash.combine(entry.isGlobalStatusOnly)
                 hash.combine(entry.isCompactedHistory); hash.combine(entry.isTaskLive)
                 hash.combine(entry.variantInfo?.variantCount); hash.combine(entry.variantInfo?.selectedIndex)
-                hash.combine(entry.phoneToolGroup?.signature); hash.combine(entry.assistantTurn?.signature)
+                hash.combine(entry.phoneToolGroup?.signature); hash.combine(entry.assistantTurn?.signature); hash.combine(entry.automationScreenshotGroup?.signature)
                 hash.combine(entry.renderState?.rendererMode.rawValue)
                 hash.combine(entry.renderState?.liveRenderingEnabled)
                 hash.combine(entry.renderState?.hasEverStreamed)

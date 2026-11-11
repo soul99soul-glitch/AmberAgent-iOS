@@ -2,6 +2,38 @@ import Foundation
 import Observation
 import UIKit
 
+final class MacGatewayPersistenceCoordinator: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sessionEpoch: UInt64 = 0
+    private var activeIdentity: String?
+
+    static func identity(for connection: MacGatewayConnection?) -> String? {
+        guard let connection else { return nil }
+        return "\(connection.gatewayId)\u{0000}\(connection.deviceId)"
+    }
+
+    @discardableResult
+    func advance(connection: MacGatewayConnection?) -> (epoch: UInt64, identity: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        sessionEpoch &+= 1
+        activeIdentity = Self.identity(for: connection)
+        return (sessionEpoch, activeIdentity)
+    }
+
+    func snapshot() -> (epoch: UInt64, identity: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (sessionEpoch, activeIdentity)
+    }
+
+    func canCommit(epoch: UInt64, identity: String?) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return epoch == sessionEpoch && identity == activeIdentity
+    }
+}
+
 /// Owns the Mac Gateway pairing: persistence, APNs token upload and the status shown in Settings.
 @MainActor
 @Observable
@@ -13,8 +45,8 @@ final class MacGatewayStore {
         var isError: Bool
     }
 
-    private static let connectionKey = "macGateway.connection.v1"
-    private static let tokenKey = "macGateway.deviceToken"
+    private nonisolated static let connectionKey = "macGateway.connection.v1"
+    private nonisolated static let tokenKey = "macGateway.deviceToken"
 
     /// Debug builds are signed with `aps-environment = development` (project.yml), Release with production.
     static var apnsEnvironment: String {
@@ -94,6 +126,7 @@ final class MacGatewayStore {
     /// the refresh after a decision overlap).
     @ObservationIgnored var requestGeneration = (status: 0, schedules: 0, board: 0, cloudAgents: 0)
     @ObservationIgnored var hasCheckedCloudSoulOnConnect = false
+    @ObservationIgnored let persistenceCoordinator = MacGatewayPersistenceCoordinator()
     @ObservationIgnored let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -102,17 +135,22 @@ final class MacGatewayStore {
         if let data = defaults.data(forKey: Self.connectionKey),
            let saved = try? JSONDecoder().decode(MacGatewayConnection.self, from: data),
            let token = IOSCredentialSideTable.load(key: Self.tokenKey) {
+            persistenceCoordinator.advance(connection: saved)
             connection = saved
             client = MacGatewayClient(addrs: saved.addrs, port: saved.port, fingerprint: saved.fingerprint, token: token)
             loadPersistedCloudTasks()
             loadPersistedCloudDialogueState()
+        } else {
+            persistenceCoordinator.advance(connection: nil)
         }
         #if DEBUG
         if ProcessInfo.processInfo.environment["AMBER_MAC_BOARD_FIXTURE"] == "1" { loadBoardFixture() }
+        if ProcessInfo.processInfo.environment["AMBER_CLOUD_CONFIG_FIXTURE"] == "1" { loadCloudConfigFixture() }
         #endif
     }
 
     func configureForTesting(connection: MacGatewayConnection, client: MacGatewayClient) {
+        persistenceCoordinator.advance(connection: connection)
         self.connection = connection
         self.client = client
         self.isReachable = true
@@ -172,6 +210,47 @@ final class MacGatewayStore {
         schedules = nil
         notice = nil
     }
+
+    func loadCloudConfigFixture() {
+        connection = MacGatewayConnection(
+            gatewayId: "fixture-cloud",
+            name: "Amber Cloud",
+            addrs: [],
+            port: 1,
+            fingerprint: "",
+            deviceId: "d"
+        )
+        client = nil
+        isReachable = true
+        cloudConfig = IOSCloudConfigSnapshot(
+            gatewayId: "fixture-cloud",
+            revision: 4,
+            model: .init(
+                provider: "openai",
+                modelId: "deepseek-v4.1-flash",
+                baseUrl: "https://opencode.ai/zen/v1",
+                keyConfigured: true
+            ),
+            search: [
+                .init(type: "bing", name: "Bing", enabled: true, requiresKey: false, keyConfigured: false),
+                .init(type: "duckduckgo", name: "DuckDuckGo", enabled: true, requiresKey: false, keyConfigured: false),
+                .init(type: "exa", name: "Exa", enabled: false, requiresKey: true, keyConfigured: false),
+                .init(type: "brave", name: "Brave", enabled: false, requiresKey: true, keyConfigured: false),
+            ],
+            searchSources: ["bing", "duckduckgo"],
+            searchMode: "fallback",
+            supportedModelProviders: ["openai", "claude"],
+            supportedSearchSources: ["bing", "duckduckgo", "exa", "brave"]
+        )
+    }
+
+    func applyDebugFixtureModelSwitch(provider: String, providerName: String, modelId: String, baseUrl: String) {
+        guard var next = cloudConfig else { return }
+        next.revision += 1
+        next.model = .init(provider: provider, modelId: modelId, baseUrl: baseUrl, keyConfigured: true)
+        cloudConfig = next
+        notice = Notice(text: "已切换云端配置为 \(providerName) · \(modelId)，新任务开始使用", isError: false)
+    }
     #endif
 
     // MARK: - App lifecycle
@@ -223,7 +302,16 @@ final class MacGatewayStore {
             }
             let saved = MacGatewayConnection(gatewayId: response.gatewayId, name: response.gatewayName, addrs: payload.addrs,
                                              port: payload.port, fingerprint: payload.fp, deviceId: response.deviceId)
-            defaults.set(try? JSONEncoder().encode(saved), forKey: Self.connectionKey)
+            let (epoch, identity) = persistenceCoordinator.advance(connection: saved)
+            let targetDefaults = defaults
+            nonisolated(unsafe) let sendableDefaults = targetDefaults
+            let coordinator = persistenceCoordinator
+            let savedData = try? JSONEncoder().encode(saved)
+            targetDefaults.set(savedData, forKey: Self.connectionKey)
+            Self.persistenceQueue.async {
+                guard coordinator.canCommit(epoch: epoch, identity: identity) else { return }
+                sendableDefaults.set(savedData, forKey: Self.connectionKey)
+            }
             connection = saved
             client = MacGatewayClient(addrs: saved.addrs, port: saved.port, fingerprint: saved.fingerprint, token: response.token)
             loadPersistedCloudTasks()
@@ -295,8 +383,9 @@ final class MacGatewayStore {
         do {
             try await client.setMonitored(taskKey: session.key, monitored: monitored)
         } catch {
+            guard self.client === client else { return }
             if let i = status?.sessions.firstIndex(where: { $0.key == session.key }) { status?.sessions[i].monitored = !monitored }
-            if !forgetIfRevoked(error) { notice = Notice(text: error.localizedDescription, isError: true) }
+            if !forgetIfRevoked(error, for: client) { notice = Notice(text: error.localizedDescription, isError: true) }
         }
     }
 
@@ -306,9 +395,11 @@ final class MacGatewayStore {
         defer { isSendingTestPush = false }
         do {
             try await client.testPush()
+            guard self.client === client else { return }
             notice = Notice(text: localized("测试推送已发出，锁屏后留意通知"), isError: false)
         } catch {
-            if !forgetIfRevoked(error) { notice = Notice(text: error.localizedDescription, isError: true) }
+            guard self.client === client else { return }
+            if !forgetIfRevoked(error, for: client) { notice = Notice(text: error.localizedDescription, isError: true) }
         }
     }
 
@@ -327,11 +418,13 @@ final class MacGatewayStore {
         defer { decidingCalls.remove(toolCallId) }
         do {
             try await client.decide(sessionKey: sessionKey, toolCallId: toolCallId, allow: allow)
+            guard self.client === client else { return false }
             notice = Notice(text: localized(allow ? "已批准，Mac 上的任务继续运行" : "已拒绝这次调用"), isError: false)
             await refresh()
             return true
         } catch {
-            if !forgetIfRevoked(error) { notice = Notice(text: error.localizedDescription, isError: true) }
+            guard self.client === client else { return false }
+            if !forgetIfRevoked(error, for: client) { notice = Notice(text: error.localizedDescription, isError: true) }
             await refresh()
             return false
         }
@@ -467,12 +560,14 @@ final class MacGatewayStore {
         guard let client else { return localized("未与 Mac 配对") }
         do {
             try await client.createSchedule(draft)
+            guard self.client === client else { return nil }
             notice = Notice(text: localized("已在 Mac 上创建定时任务"), isError: false)
             await refreshSchedules()
             await refreshBoard()
             return nil
         } catch {
-            if forgetIfRevoked(error) { return MacGatewayError.unauthorized.localizedDescription }
+            guard self.client === client else { return nil }
+            if forgetIfRevoked(error, for: client) { return MacGatewayError.unauthorized.localizedDescription }
             return error.localizedDescription
         }
     }
@@ -482,9 +577,11 @@ final class MacGatewayStore {
         defer { busySchedules.remove(id) }
         do {
             try await body(client)
+            guard self.client === client else { return }
             if let success { notice = Notice(text: success, isError: false) }
         } catch {
-            if !forgetIfRevoked(error) { notice = Notice(text: error.localizedDescription, isError: true) }
+            guard self.client === client else { return }
+            if !forgetIfRevoked(error, for: client) { notice = Notice(text: error.localizedDescription, isError: true) }
         }
         await refreshSchedules()
         await refreshBoard()
@@ -506,17 +603,22 @@ final class MacGatewayStore {
         guard let client else { return }
         do {
             try await client.registerPushToken(hex, environment: Self.apnsEnvironment)
+            guard self.client === client else { return }
             pushError = nil
             if status?.device.pushRegistered == false { status?.device.pushRegistered = true }
         } catch is CancellationError {
         } catch {
-            if !forgetIfRevoked(error) { pushError = error.localizedDescription }
+            guard self.client === client else { return }
+            if !forgetIfRevoked(error, for: client) { pushError = error.localizedDescription }
         }
     }
 
     /// 401 means the Mac revoked this device: drop the pairing everywhere, with the same explanation.
-    func forgetIfRevoked(_ error: Error) -> Bool {
-        guard case MacGatewayError.unauthorized = error else { return false }
+    func forgetIfRevoked(_ error: Error, for expectedClient: MacGatewayClient? = nil) -> Bool {
+        if let expectedClient, self.client !== expectedClient {
+            return false
+        }
+        guard self.client != nil, case MacGatewayError.unauthorized = error else { return false }
         forget()
         notice = Notice(text: MacGatewayError.unauthorized.localizedDescription, isError: true)
         return true
@@ -524,11 +626,21 @@ final class MacGatewayStore {
 
     private func forget() {
         stopCloudTaskPolling()
+        let (epoch, _) = persistenceCoordinator.advance(connection: nil)
         resetCloudDialogueMemoryState()
         IOSCredentialSideTable.delete(key: Self.tokenKey)
-        defaults.removeObject(forKey: Self.connectionKey)
-        defaults.removeObject(forKey: Self.cloudTasksKey)
-        defaults.removeObject(forKey: Self.cloudDialogueStateKey)
+        let targetDefaults = defaults
+        targetDefaults.removeObject(forKey: Self.connectionKey)
+        targetDefaults.removeObject(forKey: Self.cloudTasksKey)
+        targetDefaults.removeObject(forKey: Self.cloudDialogueStateKey)
+        nonisolated(unsafe) let sendableDefaults = targetDefaults
+        let coordinator = persistenceCoordinator
+        Self.persistenceQueue.async {
+            guard coordinator.canCommit(epoch: epoch, identity: nil) else { return }
+            sendableDefaults.removeObject(forKey: Self.connectionKey)
+            sendableDefaults.removeObject(forKey: Self.cloudTasksKey)
+            sendableDefaults.removeObject(forKey: Self.cloudDialogueStateKey)
+        }
         connection = nil
         client = nil
         status = nil

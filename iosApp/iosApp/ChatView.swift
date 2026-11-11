@@ -23,7 +23,7 @@ struct ChatView: View {
     @State private var personalContextPhotoLoadID: UUID?
     @State private var artifactPinHandler = ChatArtifactPinHandler()
     @Environment(RouterPath.self)  var router
-    @AppStorage(IOSDisplayPreferenceKeys.followGeneration) private var followGeneration = true
+    private var followGeneration: Bool { IOSChatRenderPreferences.shared.followGeneration }
     @State var viewportState = ChatViewportState()
     @State var scrollToBottomTrigger = 0
     /// iPhone Duo 外屏右侧竖条是否承载了返回 / 新对话等操作。
@@ -97,11 +97,8 @@ struct ChatView: View {
             AmberThemePageBackground(surface: .app)
             ChatDialogueHostContent(isCloudSelected: isCloudHostActive) {
                 messageList
-                    .safeAreaBar(edge: .top, spacing: 0) {
-                        Color.clear
-                            .frame(height: ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight)
-                            .allowsHitTesting(false)
-                    }
+                    // Reserve actual viewport space so scrolled messages cannot paint underneath the title capsule.
+                    .padding(.top, ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight)
                     .opacity(composerState.activeDuetTab == .chat ? 1 : 0)
                     .allowsHitTesting(composerState.activeDuetTab == .chat)
             } cloud: {
@@ -274,7 +271,7 @@ struct ChatView: View {
             } onCancel: {
                 messageEditDraft = nil
             }
-            .amberFloatingSheet(detents: [.large])
+            .amberFloatingSheet(detents: ChatMessageEditSheet.presentationDetents(for: draft.text))
         }
         .sheet(isPresented: $browserState.showWebMountDesktopBackends, onDismiss: {
             browserState.focusedRemoteWebMountSessionId = nil

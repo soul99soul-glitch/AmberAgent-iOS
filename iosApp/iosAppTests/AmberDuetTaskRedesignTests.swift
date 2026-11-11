@@ -7,6 +7,126 @@ import UIKit
 @MainActor
 final class AmberDuetTaskRedesignTests: XCTestCase {
 
+    private func withTaskProjectionStores(_ body: (MacGatewayStore, IOSAdvancedTaskStore, IOSSubAgentActivityStore, IOSWakeTaskStore, AmberHubStore) throws -> Void) throws {
+        let suite = "TaskOwnership.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let tasks = IOSAdvancedTaskStore(userDefaults: defaults)
+        let activity = IOSSubAgentActivityStore(tasks: tasks, defaults: defaults, loadRuns: { [] })
+        try body(MacGatewayStore(defaults: defaults), tasks, activity,
+                 IOSWakeTaskStore(fileURL: directory.appendingPathComponent("wake.json")),
+                 AmberHubStore(defaults: defaults))
+    }
+
+    func testTaskArchiveProjectionKeepsMarkdownAndIntentionalJSON() throws {
+        let body = "# 检查结果\n\n- **通过**\n\n```json\n{\"answer\":42}\n```"
+        let archive = "# Settlement Report · work:one\n- TaskKey: hidden-key\n- Title: hidden-title\n- Outcome: completed\n\n## Summary\n" + body
+        XCTAssertEqual(AmberUnifiedTaskBuilder.userFacingResultMarkdown(from: body), body)
+        let intentionalJSON = #"{"answer":42,"taskKey":"user-output"}"#
+        XCTAssertEqual(AmberUnifiedTaskBuilder.userFacingResultMarkdown(from: intentionalJSON), intentionalJSON)
+        let ordinaryReport = "# 用户报告\n- TaskKey: 用户有意输出\n## Summary\n正文"
+        XCTAssertEqual(AmberUnifiedTaskBuilder.userFacingResultMarkdown(from: ordinaryReport), ordinaryReport)
+        try withTaskProjectionStores { gateway, tasks, activity, wake, hub in
+            _ = tasks.startTask(id: "archive", kind: .remoteCommand, title: "检查", objective: "检查")
+            _ = tasks.updateTask(id: "archive", status: .completed, resultSummary: archive)
+            let groups = AmberUnifiedTaskBuilder.buildTasks(gateway: gateway, subAgentStore: activity,
+                taskStore: tasks, wakeStore: wake, hubStore: hub)
+            let item = try XCTUnwrap(groups.recent.first { $0.id == "exec:archive" })
+            XCTAssertEqual(item.rawResultMarkdown, body, "preview/copy must receive the user report without archive metadata")
+            XCTAssertEqual(AmberTaskDeliverablePreviewContent(item: item).cleanedMarkdownBody, body)
+            XCTAssertEqual(item.deliverableBullets, ["通过"])
+            XCTAssertEqual(tasks.task(id: "archive")?.resultSummary, archive, "stored report stays lossless")
+            XCTAssertEqual(AmberUnifiedTaskBuilder.extractDeliverableSummary(from: body).bullets, ["通过"])
+        }
+    }
+
+    func testTaskIdentityKeepsSameTitleAcrossOwnersAndExecutions() throws {
+        try withTaskProjectionStores { gateway, tasks, activity, wake, hub in
+            for id in ["first", "second"] {
+                _ = tasks.startTask(id: id, kind: .remoteCommand, title: "同名任务", objective: "独立执行")
+            }
+            let sub = tasks.startTask(id: "child", kind: .subAgent, title: "同名任务", objective: "独立子任务")
+            activity.reconcile([try XCTUnwrap(IOSSubAgentActivityStore.activity(sub))])
+            let now = Date()
+            gateway.cloudTasks = ["cloud-one", "cloud-two"].map { id in
+                MacGatewayCloudTaskRecord(gatewayId: "gateway", deviceId: "device",
+                    request: .init(requestId: id, text: "独立请求", title: "同名任务"),
+                    createdAt: now, updatedAt: now)
+            }
+            gateway.cloudTasks.append(try XCTUnwrap(gateway.cloudTasks.first))
+            let groups = AmberUnifiedTaskBuilder.buildTasks(gateway: gateway, subAgentStore: activity,
+                taskStore: tasks, wakeStore: wake, hubStore: hub)
+            XCTAssertEqual(groups.needsAttention.count, 2, "same request identity is represented once")
+            XCTAssertEqual(Set(groups.running.map(\.id)), ["exec:first", "exec:second", "subagent:\(try XCTUnwrap(activity.items.first).id)"])
+            XCTAssertEqual(Set(groups.needsAttention.map(\.id)), ["cloud:cloud-one", "cloud:cloud-two"])
+            XCTAssertEqual(groups.activeCount, 3)
+        }
+    }
+
+    func testDecisionClassificationRejectsNegationCodeAndStructuredFalse() throws {
+        for text in ["无需等待拍板，已完成。", "不需要拍板。", "无需你拍板", "No needs_decision required.", "[待拍板] 无需再确认。",
+                     "```json\n{\"needs_decision\": false}\n```", "~~~json\n{\"needs_decision\":true}\n~~~",
+                     "{\"needs_decision\":false}", "````markdown\n```text\n[待拍板] 示例\n```\n````"] {
+            XCTAssertFalse(AmberUnifiedTaskBuilder.extractDeliverableSummary(from: text).needsDecision, text)
+        }
+        XCTAssertTrue(AmberUnifiedTaskBuilder.extractDeliverableSummary(from: "[待拍板] 选择 A 还是 B？").needsDecision)
+        try withTaskProjectionStores { gateway, tasks, activity, wake, hub in
+            _ = tasks.startTask(id: "decided", kind: .remoteCommand, title: "已决策", objective: "检查")
+            _ = tasks.updateTask(id: "decided", status: .completed, resultSummary: "[待拍板] 历史问题？",
+                                 metadata: ["needs_decision": "false"])
+            _ = tasks.startTask(id: "pending", kind: .remoteCommand, title: "待决策", objective: "检查")
+            _ = tasks.updateTask(id: "pending", status: .completed, resultSummary: "方案已完成。",
+                                 metadata: ["needs_decision": "true", "decision_prompt": "选择哪一个？"])
+            let structuredFalse = #"{"structured_summary":{"needs_user_decision":false,"formatted_summary":"[待拍板] 历史问题？"}}"#
+            let workItem = MacGatewayCloudWorkItem(id: "work-decided", agentId: "main", title: "云端已决策",
+                state: .completed, progress: "[待拍板] 历史进度", updatedAtMs: 1800000000000)
+            gateway.cloudTasks = [.init(gatewayId: "gateway", deviceId: "device",
+                request: .init(requestId: "cloud-decided", text: "检查"), workItemId: workItem.id,
+                detail: .init(workItem: workItem, brief: "检查", sessionArchived: true, resultMarkdown: structuredFalse),
+                createdAt: Date(), updatedAt: Date())]
+            let child = tasks.startTask(id: "child-decided", kind: .subAgent, title: "子代理已决策", objective: "检查")
+            _ = tasks.updateTask(id: child.id, status: .completed, resultSummary: structuredFalse)
+            var projection = try XCTUnwrap(IOSSubAgentActivityStore.activity(try XCTUnwrap(tasks.task(id: child.id))))
+            projection.statusDetail = "[待拍板] 历史进度"
+            activity.reconcile([projection])
+            let groups = AmberUnifiedTaskBuilder.buildTasks(gateway: gateway, subAgentStore: activity,
+                taskStore: tasks, wakeStore: wake, hubStore: hub)
+            XCTAssertTrue(groups.recent.contains { $0.id == "cloud:cloud-decided" })
+            XCTAssertTrue(groups.recent.contains { $0.id == "subagent:\(projection.id)" })
+            XCTAssertTrue(groups.recent.contains { $0.id == "exec:decided" })
+            XCTAssertEqual(groups.needsAttention.map(\.id), ["exec:pending"])
+            XCTAssertEqual(groups.needsAttention.first?.decisionPrompt, "选择哪一个？")
+        }
+    }
+
+    func testStructuredDigestDoesNotPromoteNegationOrCodeToDecisionFacts() throws {
+        for text in ["已完成。\n不需要你拍板。", "已完成。\n```text\n需要你拍板\n```",
+                     "已完成。\n~~~text\n需要您决定\n~~~", "已完成。\n````text\n```text\n请拍板\n```\n````",
+                     #"{"summary":"完成","needs_decision":false,"decision_prompt":"历史问题"}"#] {
+            let digest = try XCTUnwrap(IOSSubAgentOutputProjection.structuredDigest(from: text))
+            XCTAssertFalse(digest.needsUserDecision, text)
+        }
+        XCTAssertTrue(try XCTUnwrap(IOSSubAgentOutputProjection.structuredDigest(from: "已完成。\n请拍板：选择 A 还是 B？")).needsUserDecision)
+        XCTAssertTrue(try XCTUnwrap(IOSSubAgentOutputProjection.structuredDigest(from: "[待拍板] 选择 A 还是 B？")).needsUserDecision)
+        XCTAssertFalse(try XCTUnwrap(IOSSubAgentOutputProjection.structuredDigest(from: "[待拍板] 无需再确认。")).needsUserDecision)
+        try withTaskProjectionStores { gateway, tasks, activity, wake, hub in
+            _ = tasks.startTask(id: "checkpoint-transition", kind: .subAgent, title: "阶段确认", objective: "检查")
+            for (text, expectedAttention) in [("[待拍板] 选择 A 还是 B？", true), ("不需要你拍板，已经完成。", false)] {
+                let record = try XCTUnwrap(IOSSubAgentOutputProjection.syncTaskResultSummary(in: tasks,
+                    taskId: "checkpoint-transition", rawText: text, status: .completed))
+                activity.reconcile([try XCTUnwrap(IOSSubAgentActivityStore.activity(record))])
+                let groups = AmberUnifiedTaskBuilder.buildTasks(gateway: gateway, subAgentStore: activity,
+                    taskStore: tasks, wakeStore: wake, hubStore: hub)
+                XCTAssertEqual(groups.needsAttention.count, expectedAttention ? 1 : 0, text)
+                XCTAssertEqual(groups.recent.count, expectedAttention ? 0 : 1, text)
+            }
+        }
+    }
+
     private func makeReasoning(_ text: String, finished: Bool = true, seconds: Int64 = 5) -> UIMessagePart.Reasoning {
         let start = KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 1_700_000_000_000)
         let end = finished
@@ -16,36 +136,19 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
     }
 
     private func makeTool(
-        id: String,
-        name: String,
-        input: String = "{}",
-        outputJSON: String? = nil,
+        id: String, name: String, input: String = "{}", outputJSON: String? = nil,
         approval: ToolApprovalState = ToolApprovalState.Auto.shared
     ) -> UIMessagePart.Tool {
         let outputs: [UIMessagePart] = outputJSON.map { [UIMessagePart.Text(text: $0, metadata: nil)] } ?? []
-        return UIMessagePart.Tool(
-            toolCallId: id,
-            toolName: name,
-            input: input,
-            output: outputs,
-            approvalState: approval,
-            streamIndex: nil,
-            metadata: nil
-        )
+        return UIMessagePart.Tool(toolCallId: id, toolName: name, input: input, output: outputs,
+            approvalState: approval, streamIndex: nil, metadata: nil)
     }
 
     private func makeAssistantMessage(parts: [UIMessagePart], finished: Bool = true) -> UIMessage {
-        UIMessage(
-            id: KotlinUuid.companion.random(),
-            role: MessageRole.assistant,
-            parts: parts,
-            annotations: [],
-            createdAt: chatNowLocalDateTime(),
+        UIMessage(id: KotlinUuid.companion.random(), role: MessageRole.assistant, parts: parts,
+            annotations: [], createdAt: chatNowLocalDateTime(),
             finishedAt: finished ? chatNowLocalDateTime() : nil,
-            modelId: nil,
-            usage: nil,
-            translation: nil
-        )
+            modelId: nil, usage: nil, translation: nil)
     }
 
     func testUnknownToolOutcomeCacheTracksExactOutputSnapshot() {
@@ -1124,108 +1227,134 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         let recessedCardSize = CGSize(width: 402, height: 812)
 
         // 1. Initial layout accepted when no modal sheet is presented
-        XCTAssertTrue(
-            ChatSheetDismissSmoothnessPolicy.shouldAcceptChatGeometryUpdate(
-                currentSize: .zero,
-                proposedSize: initialSize,
-                safeAreaTop: 62,
-                isModalSheetPresented: false
-            )
-        )
+        XCTAssertTrue(ChatSheetDismissSmoothnessPolicy.shouldAcceptChatGeometryUpdate(
+            currentSize: .zero, proposedSize: initialSize, safeAreaTop: 62, isModalSheetPresented: false))
 
-        // 2. While any modal sheet (形象人设 / 导航与历史 / 选择模型) is presented or being swiped down,
-        // underlying ChatView geometry updates are rejected so ChatView.body does not re-layout mid-swipe.
-        XCTAssertFalse(
-            ChatSheetDismissSmoothnessPolicy.shouldAcceptChatGeometryUpdate(
-                currentSize: initialSize,
-                proposedSize: recessedCardSize,
-                safeAreaTop: 0,
-                isModalSheetPresented: true
-            )
-        )
-        XCTAssertFalse(
-            ChatSheetDismissSmoothnessPolicy.shouldAcceptChatGeometryUpdate(
-                currentSize: initialSize,
-                proposedSize: recessedCardSize,
-                safeAreaTop: 62,
-                isModalSheetPresented: true
-            )
-        )
+        // 2. While any modal sheet is presented or being swiped down, underlying ChatView geometry updates are rejected.
+        XCTAssertFalse(ChatSheetDismissSmoothnessPolicy.shouldAcceptChatGeometryUpdate(
+            currentSize: initialSize, proposedSize: recessedCardSize, safeAreaTop: 0, isModalSheetPresented: true))
+        XCTAssertFalse(ChatSheetDismissSmoothnessPolicy.shouldAcceptChatGeometryUpdate(
+            currentSize: initialSize, proposedSize: recessedCardSize, safeAreaTop: 62, isModalSheetPresented: true))
 
         // 3. Even if a transient card-recess pass arrives with safeAreaTop == 0 on portrait, ignore it.
-        XCTAssertFalse(
-            ChatSheetDismissSmoothnessPolicy.shouldAcceptChatGeometryUpdate(
-                currentSize: initialSize,
-                proposedSize: recessedCardSize,
-                safeAreaTop: 0,
-                isModalSheetPresented: false
-            )
-        )
-        XCTAssertFalse(
-            ChatSheetDismissSmoothnessPolicy.shouldAcceptApprovalContainerHeightUpdate(
-                currentHeight: 778,
-                proposedHeight: 840,
-                safeAreaTop: 0,
-                isModalSheetPresented: false
-            )
-        )
-        XCTAssertFalse(
-            ChatSheetDismissSmoothnessPolicy.shouldAcceptApprovalContainerHeightUpdate(
-                currentHeight: 778,
-                proposedHeight: 840,
-                safeAreaTop: 62,
-                isModalSheetPresented: true
-            )
-        )
+        XCTAssertFalse(ChatSheetDismissSmoothnessPolicy.shouldAcceptChatGeometryUpdate(
+            currentSize: initialSize, proposedSize: recessedCardSize, safeAreaTop: 0, isModalSheetPresented: false))
+        XCTAssertFalse(ChatSheetDismissSmoothnessPolicy.shouldAcceptApprovalContainerHeightUpdate(
+            currentHeight: 778, proposedHeight: 840, safeAreaTop: 0, isModalSheetPresented: false))
+        XCTAssertFalse(ChatSheetDismissSmoothnessPolicy.shouldAcceptApprovalContainerHeightUpdate(
+            currentHeight: 778, proposedHeight: 840, safeAreaTop: 62, isModalSheetPresented: true))
 
-        // 4. Global tap-region frame observers short-circuit to .null without evaluating closure
-        // when top-bar panel is closed or a modal sheet is presented.
+        // 4. Global tap-region frame observers short-circuit to .null without evaluating closure when closed or covered.
         var evaluatedCount = 0
         let sampleFrame = CGRect(x: 20, y: 60, width: 200, height: 44)
         let suppressedWhenPanelClosed = ChatSheetDismissSmoothnessPolicy.effectiveGlobalTapFrame(
-            { evaluatedCount += 1; return sampleFrame }(),
-            isPanelOpen: false,
-            isModalSheetPresented: false
-        )
+            { evaluatedCount += 1; return sampleFrame }(), isPanelOpen: false, isModalSheetPresented: false)
         XCTAssertTrue(suppressedWhenPanelClosed.isNull)
         XCTAssertEqual(evaluatedCount, 0)
 
         let suppressedWhenSheetPresented = ChatSheetDismissSmoothnessPolicy.effectiveGlobalTapFrame(
-            { evaluatedCount += 1; return sampleFrame }(),
-            isPanelOpen: true,
-            isModalSheetPresented: true
-        )
+            { evaluatedCount += 1; return sampleFrame }(), isPanelOpen: true, isModalSheetPresented: true)
         XCTAssertTrue(suppressedWhenSheetPresented.isNull)
         XCTAssertEqual(evaluatedCount, 0)
 
         let activeWhenPanelOpenAndNoSheet = ChatSheetDismissSmoothnessPolicy.effectiveGlobalTapFrame(
-            { evaluatedCount += 1; return sampleFrame }(),
-            isPanelOpen: true,
-            isModalSheetPresented: false
-        )
+            { evaluatedCount += 1; return sampleFrame }(), isPanelOpen: true, isModalSheetPresented: false)
         XCTAssertEqual(activeWhenPanelOpenAndNoSheet, sampleFrame)
         XCTAssertEqual(evaluatedCount, 1)
 
-        // 5. Inline Duet floating panels (任务 / 中心) support downward swipe-to-dismiss and mid-drag reversal.
-        XCTAssertTrue(
-            ChatSheetDismissSmoothnessPolicy.shouldDismissInlineDuetPanel(
-                translationY: 72,
-                predictedEndTranslationY: 80
-            )
-        )
-        XCTAssertTrue(
-            ChatSheetDismissSmoothnessPolicy.shouldDismissInlineDuetPanel(
-                translationY: 32,
-                predictedEndTranslationY: 140
-            )
-        )
-        XCTAssertFalse(
-            ChatSheetDismissSmoothnessPolicy.shouldDismissInlineDuetPanel(
-                translationY: 18,
-                predictedEndTranslationY: 12
-            ),
-            "Mid-drag upward reversal must spring back instead of dismissing"
-        )
+        // 5. Inline Duet floating panels (任务 / 中心) support downward swipe-to-dismiss, mid-drag reversal,
+        // and cancelled/failed pan gestures must spring back without dismissing.
+        XCTAssertEqual(ChatSheetDismissSmoothnessPolicy.inlinePanelDragCoordinateSpace, .global)
+        var simulatedOffsetY: CGFloat = 0
+        for globalDeltaY in [CGFloat(24), 68, 124, 180] {
+            simulatedOffsetY = ChatSheetDismissSmoothnessPolicy.updatedInlineDuetPanelDragOffsetY(
+                currentOffsetY: simulatedOffsetY, translation: CGSize(width: 4, height: globalDeltaY))
+            XCTAssertEqual(simulatedOffsetY, globalDeltaY)
+        }
+        simulatedOffsetY = ChatSheetDismissSmoothnessPolicy.updatedInlineDuetPanelDragOffsetY(
+            currentOffsetY: simulatedOffsetY, translation: CGSize(width: 12, height: 4))
+        XCTAssertEqual(simulatedOffsetY, 4, "Active panel drag must track upward reversal even when |dy| < |dx| near origin")
+        XCTAssertTrue(ChatSheetDismissSmoothnessPolicy.shouldDismissInlineDuetPanel(translationY: 72, predictedEndTranslationY: 80))
+        XCTAssertTrue(ChatSheetDismissSmoothnessPolicy.shouldDismissInlineDuetPanel(translationY: 32, predictedEndTranslationY: 140))
+        XCTAssertFalse(ChatSheetDismissSmoothnessPolicy.shouldDismissInlineDuetPanel(translationY: 18, predictedEndTranslationY: 12),
+            "Mid-drag upward reversal must spring back instead of dismissing")
+
+        final class SyntheticInlinePanelPanGesture: UIPanGestureRecognizer {
+            var syntheticState: UIGestureRecognizer.State = .possible
+            var syntheticTranslation: CGPoint = .zero
+            var syntheticVelocity: CGPoint = .zero
+            override var state: UIGestureRecognizer.State {
+                get { syntheticState }
+                set { syntheticState = newValue }
+            }
+            override func translation(in view: UIView?) -> CGPoint { syntheticTranslation }
+            override func velocity(in view: UIView?) -> CGPoint { syntheticVelocity }
+        }
+        let callbacks = AmberInlinePanelDragCallbacks()
+        let sameIdentityRef = callbacks
+        var bridgeOffsetY: CGFloat = 0
+        var dismissCount = 0
+        var cancelCount = 0
+        callbacks.onChanged = { delta in
+            bridgeOffsetY = ChatSheetDismissSmoothnessPolicy.updatedInlineDuetPanelDragOffsetY(
+                currentOffsetY: bridgeOffsetY, translation: delta)
+        }
+        callbacks.onEnded = { y, predY in
+            if ChatSheetDismissSmoothnessPolicy.shouldDismissInlineDuetPanel(translationY: y, predictedEndTranslationY: predY) {
+                dismissCount += 1
+            }
+            bridgeOffsetY = 0
+        }
+        callbacks.onCancelled = {
+            cancelCount += 1
+            bridgeOffsetY = 0
+        }
+        XCTAssertEqual(callbacks, sameIdentityRef, "Callback owner must preserve reference equality across closure updates")
+        let bridgeScrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 500))
+        let bridgeCoordinator = AmberInlinePanelScrollDismissBridge.Coordinator(callbacks: callbacks)
+        bridgeCoordinator.attach(to: bridgeScrollView)
+        let pan = SyntheticInlinePanelPanGesture()
+        func sendPan(_ state: UIGestureRecognizer.State, y: CGFloat, vy: CGFloat = 0) {
+            pan.syntheticState = state
+            pan.syntheticTranslation = CGPoint(x: 0, y: y)
+            pan.syntheticVelocity = CGPoint(x: 0, y: vy)
+            bridgeCoordinator.handlePan(pan)
+        }
+        // 5a. Cancelled / failed after crossing threshold must reset offset and NEVER dismiss.
+        sendPan(.began, y: 0)
+        sendPan(.changed, y: 110)
+        XCTAssertEqual(bridgeOffsetY, 110)
+        sendPan(.cancelled, y: 110, vy: 400)
+        XCTAssertEqual(bridgeOffsetY, 0)
+        XCTAssertEqual(dismissCount, 0, "Cancelled pan past threshold must not dismiss inline panel")
+        XCTAssertEqual(cancelCount, 1)
+        sendPan(.began, y: 0)
+        sendPan(.changed, y: 96)
+        sendPan(.failed, y: 96, vy: 300)
+        XCTAssertEqual(bridgeOffsetY, 0)
+        XCTAssertEqual(dismissCount, 0, "Failed pan past threshold must not dismiss inline panel")
+        XCTAssertEqual(cancelCount, 2)
+        // 5b. Mid-drag reversal then .ended springs back without dismissing; normal .ended past threshold dismisses.
+        sendPan(.began, y: 0)
+        sendPan(.changed, y: 88)
+        sendPan(.changed, y: 14)
+        sendPan(.ended, y: 14, vy: -80)
+        XCTAssertEqual(dismissCount, 0)
+        sendPan(.began, y: 0)
+        sendPan(.changed, y: 92)
+        sendPan(.ended, y: 92, vy: 120)
+        XCTAssertEqual(dismissCount, 1)
+        // 5c. Content scroll handoff: starting scrolled down or scrolling into content first does not drag panel.
+        bridgeScrollView.contentOffset = CGPoint(x: 0, y: 48)
+        sendPan(.began, y: 0)
+        sendPan(.changed, y: 80)
+        XCTAssertEqual(bridgeOffsetY, 0)
+        XCTAssertEqual(bridgeScrollView.contentOffset.y, 48)
+        bridgeScrollView.contentOffset = .zero
+        sendPan(.began, y: 0)
+        sendPan(.changed, y: -32)
+        sendPan(.changed, y: 80)
+        XCTAssertEqual(bridgeOffsetY, 0, "Scrolling into content first must not hijack reversal into panel drag")
 
         // 6. AmberSheetScrollDismissBridge binds contentScrollView(for: .top) on both direct UIViewController
         // and UINavigationController so UISheetPresentationController coordinates pull-to-dismiss from frame 0.
@@ -1318,18 +1447,23 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
 
         // 2c. Advanced remote command that failed and is retryable -> needsAttention ("执行失败")
         let failedExecRecord = tasksStore.startTask(
-            id: "exec-ssh-jump",
-            kind: .remoteCommand,
-            title: "同步跳板机日志归档",
-            objective: "拉取最近 24h nginx 日志"
-        )
+            id: "exec-ssh-jump", kind: .remoteCommand, title: "同步跳板机日志归档", objective: "拉取最近 24h nginx 日志")
         _ = tasksStore.updateTask(
-            id: failedExecRecord.id,
-            status: .failed,
-            error: "SSH 私钥格式校验未通过",
-            retryable: true,
-            now: Date().addingTimeInterval(10)
-        )
+            id: failedExecRecord.id, status: .failed, error: "SSH 私钥格式校验未通过", retryable: true, now: Date().addingTimeInterval(10))
+
+        // 2c-ii. Historical Model Council ("自由群聊 · ...") failures/interruptions must settle into recent instead of polluting needsAttention.
+        let failedCouncilRecord = tasksStore.startTask(
+            id: "council-freechat-empty-topic", kind: .modelCouncil,
+            title: "自由群聊 · Synthetic council topic alpha", objective: "Synthetic council objective alpha")
+        _ = tasksStore.updateTask(
+            id: failedCouncilRecord.id, status: .failed, resultSummary: "最终议题没有返回内容。",
+            error: "最终议题没有返回内容。", retryable: true, now: Date().addingTimeInterval(9))
+        let interruptedCouncilRecord = tasksStore.startTask(
+            id: "council-freechat-interrupted", kind: .modelCouncil,
+            title: "自由群聊 · Synthetic council topic beta", objective: "Synthetic council objective beta")
+        _ = tasksStore.updateTask(
+            id: interruptedCouncilRecord.id, status: .interrupted, resultSummary: "模型议会因应用进程结束而中断。",
+            retryable: false, metadata: ["interruption_reason": "process_terminated"], now: Date().addingTimeInterval(8))
 
         // 2d. Completed SubAgent with clean Markdown deliverable -> recent ("已完成" + usable conclusion & bullets)
         let completedDeliverableMarkdown = """
@@ -1341,17 +1475,9 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         3. 部署方式：导出 CoreML INT8 权重，单帧推理耗时 4.2ms
         """
         let completedSubAgentRecord = tasksStore.startTask(
-            id: "thread:conv-video-model",
-            kind: .subAgent,
-            title: "整理机房闪烁检测模型方案",
-            objective: "输出轻量训练与部署参数"
-        )
+            id: "thread:conv-video-model", kind: .subAgent, title: "整理机房闪烁检测模型方案", objective: "输出轻量训练与部署参数")
         _ = tasksStore.updateTask(
-            id: completedSubAgentRecord.id,
-            status: .completed,
-            resultSummary: completedDeliverableMarkdown,
-            now: Date().addingTimeInterval(5)
-        )
+            id: completedSubAgentRecord.id, status: .completed, resultSummary: completedDeliverableMarkdown, now: Date().addingTimeInterval(5))
         let updatedCompletedRecord = try XCTUnwrap(tasksStore.task(id: completedSubAgentRecord.id))
 
         subAgentStore.reconcile([
@@ -1361,12 +1487,7 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         ])
 
         let groups = AmberUnifiedTaskBuilder.buildTasks(
-            gateway: MacGatewayStore.shared,
-            subAgentStore: subAgentStore,
-            taskStore: tasksStore,
-            wakeStore: wakeStore,
-            hubStore: hubStore
-        )
+            gateway: MacGatewayStore.shared, subAgentStore: subAgentStore, taskStore: tasksStore, wakeStore: wakeStore, hubStore: hubStore)
 
         // Repeated bottom-badge reads must not rescan the same completed output.
         let previouslyEnabled = ChatRenderProbe.enabled
@@ -1385,6 +1506,7 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         ChatRenderProbe.enabled = previouslyEnabled
         let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("build/StreamingPerfEvidence/promotion-120")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try JSONSerialization.data(withJSONObject: ["repeatedReads": 20, "mainCPUMs": cpuMs,
             "wallMs": wallMs, "summaryParses": parses, "sameGroups": true], options: .prettyPrinted)
             .write(to: folder.appendingPathComponent("task-badge-repeated-reads.json"))
@@ -1406,6 +1528,19 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         let failedItem = try XCTUnwrap(groups.needsAttention.first { $0.title == "同步跳板机日志归档" })
         XCTAssertEqual(failedItem.statusText, "执行失败")
         XCTAssertEqual(failedItem.quickActions.first?.title, "重试")
+
+        XCTAssertFalse(
+            groups.needsAttention.contains { $0.title.hasPrefix("自由群聊 · ") },
+            "Model council terminal failures/interruptions must not stick in 等你处理 or trigger the red attention badge"
+        )
+        let recentFailedCouncil = try XCTUnwrap(groups.recent.first { $0.id == "exec:council-freechat-empty-topic" })
+        XCTAssertEqual(recentFailedCouncil.phase, .timedOutOrFailedTerminal)
+        XCTAssertEqual(recentFailedCouncil.statusText, "执行失败")
+        XCTAssertNil(recentFailedCouncil.actionTitle)
+        XCTAssertFalse(recentFailedCouncil.hasDeliverablePreview)
+        let recentInterruptedCouncil = try XCTUnwrap(groups.recent.first { $0.id == "exec:council-freechat-interrupted" })
+        XCTAssertEqual(recentInterruptedCouncil.phase, .timedOutOrFailedTerminal)
+        XCTAssertNil(recentInterruptedCouncil.actionTitle)
 
         let completedItem = try XCTUnwrap(groups.recent.first { $0.title == "整理机房闪烁检测模型方案" })
         XCTAssertEqual(completedItem.statusText, "已完成")

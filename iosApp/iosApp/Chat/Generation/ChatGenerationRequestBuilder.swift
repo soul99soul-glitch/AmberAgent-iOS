@@ -122,7 +122,7 @@ extension ChatViewModel {
         uploadableWithGuidance = [PromptTranscript.shared.sectionMessage(
             name: "conversationalProgress",
             text: """
-            无需调用工具的闲聊、寒暄或可直接回答的问题，在同一轮直接自然作答，不要拆成“先应一声、再答一遍”的两段。凡是需要调用工具或多步处理的请求（如修改角色设定、查日程、搜索、读写数据、执行操作等），要调用工具时在同轮调用，绝不能静默只发 tool_calls：首轮发出 tool_calls 的同时，必须先输出简短自然的一句口语回应（严格控制在 1 句以内），按你当前的形象人设（Soul）性格与称呼（默认则以亲切利落的朋友口吻）顺手把事应下来；严禁复读用户原话，严禁“收到您的请求”“正在为您处理”“好的，我将为您……”等客服腔或汇报体。工具执行完毕给出最终答复时，在新一轮直接自然交付结果与正文，不要重复开场寒暄或再来一遍客套汇报；若刚通过 agent_soul_update 切换了角色设定，立即以新身份和口吻说话。若纯文本问题确实需要分步深入展开，可在首轮简短给出核心判断并在末尾附上 <amber-continue>阶段1|阶段2|阶段3</amber-continue>（写出 3 个与具体话题相关、各 6～14 字的思考方向，例如“梳理二人的交往|比较彼此的经历|分析他们的情谊”；不要声称尚未发生的搜索或工具操作，无工具时随后结束本轮，有工具时仍须同轮调用）。编排复杂后台子线程时，如目标模型支持，可为 spawn_agent 指定 reasoning_level: "high"。只陈述真实进展，不要声称尚未完成的操作已完成。仅在用户明确要求记住、修改或忘掉时使用 memory_tool 写入用户事实；日常对话流露的信息由后台按原话证据规则提炼。需要历史上下文时可主动使用 wiki_read/wiki_search 并沿相对链接读取；wiki_edit/wiki_revert 只修改带版本来源的 Agent 笔记，不能替代用户确认置顶或核心记忆。
+            无需调用工具的闲聊、寒暄或可直接回答的问题，在同一轮直接自然作答，不要拆成“先应一声、再答一遍”的两段。凡是需要调用工具或多步处理的请求（如修改角色设定、查日程、搜索、读写数据、执行操作等），要调用工具时在同轮调用，绝不能在首轮静默只发 tool_calls：首轮发出 tool_calls 的同时，必须先输出简短自然的一句口语回应（严格控制在 1 句以内），按你当前的形象人设（Soul）性格与称呼（默认则以亲切利落的朋友口吻）顺手把事应下来；严禁复读用户原话，严禁“收到您的请求”“正在为您处理”“好的，我将为您……”等客服腔或汇报体。后续第 2 轮起的连续工具调用轮次：同一阶段内的常规工具调用直接静默发出 tool_calls（界面已有单行状态实时显示工具进度），不要每次调用工具或几字一句都冒泡；只有出现阶段变化、关键实际发现、方向调整、遇到阻塞或需要用户拍板决定等有意义节点时，才把同一阶段的说明聚合成完整意思输出一条中途正文。工具执行完毕给出最终答复时，在新一轮直接自然交付结果与正文，不要重复开场寒暄或再来一遍客套汇报；若刚通过 agent_soul_update 切换了角色设定，立即以新身份和口吻说话。若纯文本问题确实需要分步深入展开，可在首轮简短给出核心判断并在末尾附上 <amber-continue>阶段1|阶段2|阶段3</amber-continue>（写出 3 个与具体话题相关、各 6～14 字的思考方向，例如“梳理二人的交往|比较彼此的经历|分析他们的情谊”；不要声称尚未发生的搜索或工具操作，无工具时随后结束本轮，有工具时仍须同轮调用）。编排复杂后台子线程时，如目标模型支持，可为 spawn_agent 指定 reasoning_level: "high"。只陈述真实进展，不要声称尚未完成的操作已完成。仅在用户明确要求记住、修改或忘掉时使用 memory_tool 写入用户事实；日常对话流露的信息由后台按原话证据规则提炼。需要历史上下文时可主动使用 wiki_read/wiki_search 并沿相对链接读取；wiki_edit/wiki_revert 只修改带版本来源的 Agent 笔记，不能替代用户确认置顶或核心记忆。
 
             \(Self.managerDelegationContractPrompt)
             """
@@ -164,26 +164,29 @@ extension ChatViewModel {
 
     func memoryRecordIdsForRuntimeContext(
         _ messages: [UIMessage],
-        override: ChatMemoryContextBuilder.RecallResult? = nil
+        override: ChatMemoryContextBuilder.RecallResult? = nil,
+        state: ChatConversationRunState? = nil
     ) -> [Int32] {
         let uploadableMessages = messages.filter { !Self.isLocalGenerationError($0) }
         return ChatRuntimeContextBuilder(
             sharedSettings: sharedSettings,
             mcpTools: mcpManager.tools,
             miniAppRepository: miniAppRepository,
-            miniAppRuntimeEnabled: isMiniAppRuntimeEnabled
+            miniAppRuntimeEnabled: isMiniAppRuntimeEnabled,
+            conversationId: (state ?? currentRun.state).conversationId?.toHexDashString()
         ).memoryRecallResult(for: uploadableMessages, override: override).ids
     }
 
     /// P3a：Jev 关闭/未提供覆盖时的兜底记忆召回结果，供 `ChatKernelRunHost`
     /// 在一次请求准备内计算一次并复用（见 `memoryRecallResultForRun` 绑定）。
-    func memoryRecallResultForRun(_ messages: [UIMessage]) -> ChatMemoryContextBuilder.RecallResult {
+    func memoryRecallResultForRun(_ messages: [UIMessage], state: ChatConversationRunState? = nil) -> ChatMemoryContextBuilder.RecallResult {
         let uploadableMessages = messages.filter { !Self.isLocalGenerationError($0) }
         return ChatRuntimeContextBuilder(
             sharedSettings: sharedSettings,
             mcpTools: mcpManager.tools,
             miniAppRepository: miniAppRepository,
-            miniAppRuntimeEnabled: isMiniAppRuntimeEnabled
+            miniAppRuntimeEnabled: isMiniAppRuntimeEnabled,
+            conversationId: (state ?? currentRun.state).conversationId?.toHexDashString()
         ).memoryRecallResult(for: uploadableMessages)
     }
 
@@ -193,15 +196,19 @@ extension ChatViewModel {
     /// 返回本轮的统一选中集合（nil = off/shadow/失败回退）。
     func prepareJevMemoryRecallSelection(
         _ messages: [UIMessage],
-        runId: String?
+        runId: String?,
+        state: ChatConversationRunState? = nil
     ) async -> ChatMemoryContextBuilder.RecallResult? {
         let uploadableMessages = messages.filter { !Self.isLocalGenerationError($0) }
-        return await IOSJevMemoryRecallService.shared.prepareTurnSelection(
+        let conversationId = (state ?? currentRun.state).conversationId?.toHexDashString()
+        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else { return nil }
+        let result = await IOSJevMemoryRecallService.shared.prepareTurnSelection(
             messages: uploadableMessages,
             records: IosMemoryFactory.shared.getAllRecords(),
             runtime: sharedSettings.agentRuntime,
             identity: IOSJevMemoryRecallService.RunIdentity(runId: runId)
         )
+        return AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) ? result : nil
     }
 
     func recordMemoryUsage(_ ids: [Int32], force: Bool = false, state: ChatConversationRunState) {
@@ -209,6 +216,7 @@ extension ChatViewModel {
         // 原会话的 state 持有本 run 的去抖；切会话后仍绑定该 state 的 host。
         // P2-c 修复 2：模型显式引用（citation flush）传 force: true，绕过
         // 同集去抖——引用是模型信号，与召回标记语义不同，应始终生效。
+        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: state.conversationId?.toHexDashString()) else { return }
         let ownerKey = state.conversationId?.toHexDashString() ?? ""
         state.recordMemoryUsage(
             ids: Set(ids), runId: runRegistry.run(forHex: ownerKey)?.host?.currentRunId, force: force
@@ -432,7 +440,8 @@ extension ChatViewModel {
             toolDeclarations.append(ToolKt.createSearchWebToolDeclaration())
             toolDeclarations.append(ToolKt.createScrapeWebToolDeclaration())
         }
-        if IOSMemoryToolExecutor.isEnabled(runtime: sharedSettings.agentRuntime) {
+        if AmberHubStore.shared.allowsGlobalMemory(conversationId: state.conversationId?.toHexDashString()),
+           IOSMemoryToolExecutor.isEnabled(runtime: sharedSettings.agentRuntime) {
             toolDeclarations.append(MemoryWikiToolKt.createMemoryWikiEnabledToolDeclaration())
         }
         if imageGenerationConfigured {

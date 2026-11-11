@@ -5,14 +5,21 @@ import UIKit
 /// The timeline takes its natural height immediately. Only its presentation
 /// transform interpolates, keeping bottom-anchored text moving at the old pace.
 @MainActor
-final class ChatTimelineGrowth: ObservableObject {
+final class ChatTimelineGrowth: ObservableObject, Equatable {
+    nonisolated static func == (lhs: ChatTimelineGrowth, rhs: ChatTimelineGrowth) -> Bool {
+        lhs === rhs
+    }
     @Published private(set) var totalGrowth: CGFloat = 0
+    var onContentGrew: ((CGFloat) -> Void)?
     private var enabled = false
     private weak var presentationLayer: CALayer?
     private static let animationKey = "amber.timeline-growth"
 
     func setEnabled(_ enabled: Bool) {
         self.enabled = enabled
+        if !enabled {
+            presentationLayer?.removeAnimation(forKey: Self.animationKey)
+        }
     }
 
     func reset() {
@@ -31,16 +38,14 @@ final class ChatTimelineGrowth: ObservableObject {
         ChatRenderProbe.record("growth-add")
         #endif
         totalGrowth += delta
-        guard let layer = presentationLayer else { return }
-        let previous = (layer.presentation()?.transform.m42 ?? layer.transform.m42) - layer.transform.m42
-        let animation = CABasicAnimation(keyPath: "transform.translation.y")
-        animation.isAdditive = true
-        animation.fromValue = previous + delta
-        animation.toValue = 0
-        animation.duration = ChatStreamingRevealTiming.heightSettleSeconds
-        animation.timingFunction = CAMediaTimingFunction(name: .linear)
-        animation.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
-        layer.add(animation, forKey: Self.animationKey)
+        // Bottom-anchored streaming bubbles must keep their bottom edge at a fixed
+        // distance above the composer while new content pushes the top upward.
+        // Applying a positive downward `transform.translation.y` on the already-grown
+        // content layer pushed the bubble's bottom border downward into the composer
+        // and then slid it back up; instead, notify the scroll driver to lock the
+        // bottom offset synchronously in the same layout pass.
+        presentationLayer?.removeAnimation(forKey: Self.animationKey)
+        onContentGrew?(delta)
     }
 
     func attachPresentationLayer(_ layer: CALayer?) {

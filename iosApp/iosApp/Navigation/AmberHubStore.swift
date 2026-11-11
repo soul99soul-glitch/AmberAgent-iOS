@@ -279,7 +279,8 @@ struct AmberUnifiedTaskItem: Identifiable, Equatable {
     }
 
     var hasDeliverablePreview: Bool {
-        (resultText?.isEmpty == false)
+        guard phase == .completed || isNeedsDecision else { return false }
+        return (resultText?.isEmpty == false)
             || !deliverableBullets.isEmpty
             || (rawResultMarkdown?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
     }
@@ -385,6 +386,17 @@ final class AmberHubStore {
 
     convenience init(defaults: UserDefaults) {
         self.init(userDefaults: defaults)
+    }
+
+    /// Resolve by the run's conversation binding; the visible Hub may have changed.
+    func allowsGlobalMemory(conversationId: String?) -> Bool {
+        guard let conversationId else { return true }
+        return !hubs.contains { $0.memoryPolicy == .hubIsolated && $0.conversationIds.contains(conversationId) }
+    }
+
+    func inheritConversationBinding(from parentId: String, to childId: String) {
+        let hubIds = hubs.filter { $0.conversationIds.contains(parentId) }.map(\.id)
+        for hubId in hubIds { bindConversation(childId, toHub: hubId) }
     }
 
     var activeHub: AmberHubItem? {
@@ -720,18 +732,21 @@ enum AmberUnifiedTaskBuilder {
         filterHubId: String?
     ) -> Groups {
         var all: [AmberUnifiedTaskItem] = []
-        var seenTitles = Set<String>()
+        var seenIdentities = Set<String>()
         let defaultHubId = hubStore.activeHubId
 
         // 1. Cloud work items the user explicitly handed off (/v2/work-items).
         for record in gateway.cloudTasks {
-            let rawMarkdown = record.detail?.resultMarkdown
+            let identity = record.workItemId.map { "cloud-work:\(record.gatewayId):\($0)" }
+                ?? "cloud-request:\(record.gatewayId):\(record.deviceId):\(record.requestId)"
+            guard seenIdentities.insert(identity).inserted else { continue }
+            let rawResult = record.detail?.resultMarkdown
+            let rawMarkdown = Self.userFacingResultMarkdown(from: rawResult)
             let progressText = record.effectiveWorkItem?.progress
-            let summary = Self.extractDeliverableSummary(from: rawMarkdown ?? progressText)
+            let summary = Self.extractDeliverableSummary(from: rawResult ?? progressText)
             let progressDecision = Self.extractDeliverableSummary(from: progressText)
             let isAwaitingDecision = record.state == .waiting
-                || summary.needsDecision
-                || progressDecision.needsDecision
+                || (Self.structuredDecision(in: rawResult) ?? (summary.needsDecision || progressDecision.needsDecision))
 
             let phase: AmberUnifiedTaskPhase
             let statusText: String
@@ -800,7 +815,6 @@ enum AmberUnifiedTaskBuilder {
             }
 
             let matchedHubId = hubStore.hubs.first(where: { $0.taskIds.contains(record.requestId) })?.id ?? defaultHubId
-            seenTitles.insert(record.displayTitle)
             all.append(
                 AmberUnifiedTaskItem(
                     id: "cloud:\(record.requestId)",
@@ -829,7 +843,7 @@ enum AmberUnifiedTaskBuilder {
             let backingRecord = subAgentStore.taskRecord(for: item)
             let resolvedTitle = backingRecord?.title.trimmingCharacters(in: .whitespacesAndNewlines)
             let displayTitle = (resolvedTitle?.isEmpty == false) ? resolvedTitle! : item.title
-            guard seenTitles.insert(displayTitle).inserted else { continue }
+            guard seenIdentities.insert("subagent:\(item.id)").inserted else { continue }
 
             let outcome = backingRecord.flatMap { $0.resultSummary.isEmpty ? nil : $0.resultSummary }
                 ?? backingRecord.flatMap { $0.logTail.isEmpty ? nil : $0.logTail }
@@ -837,11 +851,10 @@ enum AmberUnifiedTaskBuilder {
             let detailSummary = Self.extractDeliverableSummary(from: item.statusDetail)
             let metadataDecision = backingRecord?.metadata["decision_prompt"]
                 ?? backingRecord?.metadata["checkpoint"]
-            let metadataNeedsDecision = (backingRecord?.metadata["needs_decision"]?.lowercased() == "true")
-                || (metadataDecision?.isEmpty == false)
-            let hasDecisionCheckpoint = metadataNeedsDecision
-                || summary.needsDecision
-                || detailSummary.needsDecision
+            let hasDecisionCheckpoint = Self.needsDecision(
+                metadata: backingRecord?.metadata ?? [:],
+                fallback: Self.structuredDecision(in: outcome) ?? (summary.needsDecision || detailSummary.needsDecision)
+            )
 
             let phase: AmberUnifiedTaskPhase
             let statusText: String
@@ -960,7 +973,7 @@ enum AmberUnifiedTaskBuilder {
                     decisionPrompt: decisionPrompt,
                     quickActions: quickActions,
                     deliverableBullets: summary.bullets,
-                    rawResultMarkdown: outcome,
+                    rawResultMarkdown: Self.userFacingResultMarkdown(from: outcome),
                     destination: Self.subAgentDestination(taskId: item.taskId),
                     source: .localSubAgent(item.id)
                 )
@@ -972,17 +985,18 @@ enum AmberUnifiedTaskBuilder {
         // receipts are decisions, not work, so they never become cards here.
         for record in taskStore.tasks
         where record.kind != .subAgent && record.kind != .toolApproval {
-            guard seenTitles.insert(record.title).inserted else { continue }
+            guard seenIdentities.insert("exec:\(record.id)").inserted else { continue }
             let outcome = record.resultSummary.isEmpty ? (record.logTail.isEmpty ? nil : record.logTail) : record.resultSummary
             let summary = Self.extractDeliverableSummary(from: outcome)
             let metadataDecision = record.metadata["decision_prompt"] ?? record.metadata["checkpoint"]
-            let hasDecisionCheckpoint = (record.metadata["needs_decision"]?.lowercased() == "true")
-                || (metadataDecision?.isEmpty == false)
-                || summary.needsDecision
+            let hasDecisionCheckpoint = record.kind != .modelCouncil && Self.needsDecision(
+                metadata: record.metadata, fallback: summary.needsDecision
+            )
+            let isRetryableInTaskBoard = record.retryable && record.kind != .modelCouncil
 
             let phase: AmberUnifiedTaskPhase
             let statusText: String
-            var actionTitle: String? = record.canRetry ? "重试" : nil
+            var actionTitle: String? = isRetryableInTaskBoard ? "重试" : nil
             var decisionPrompt: String? = nil
             var quickActions: [AmberTaskQuickDecision] = []
 
@@ -1007,9 +1021,15 @@ enum AmberUnifiedTaskBuilder {
                     quickActions = Self.approvalQuickActions()
                 }
             case .interrupted:
-                phase = .needsAttention
-                statusText = "等我拍板"
-                actionTitle = "拍板继续"
+                if hasDecisionCheckpoint || (isRetryableInTaskBoard && record.metadata["interruption_reason"] != "process_terminated") {
+                    phase = .needsAttention
+                    statusText = "等我拍板"
+                    actionTitle = "拍板继续"
+                } else {
+                    phase = .timedOutOrFailedTerminal
+                    statusText = record.status.title
+                    actionTitle = nil
+                }
             case .completed:
                 if hasDecisionCheckpoint {
                     phase = .needsAttention
@@ -1018,9 +1038,10 @@ enum AmberUnifiedTaskBuilder {
                 } else {
                     phase = .completed
                     statusText = "已完成"
+                    actionTitle = nil
                 }
             case .failed:
-                if record.retryable {
+                if isRetryableInTaskBoard {
                     phase = .needsAttention
                     statusText = "执行失败"
                     actionTitle = "重试"
@@ -1028,13 +1049,16 @@ enum AmberUnifiedTaskBuilder {
                 } else {
                     phase = .timedOutOrFailedTerminal
                     statusText = "执行失败"
+                    actionTitle = nil
                 }
             case .timedOut:
                 phase = .timedOutOrFailedTerminal
                 statusText = record.status.title
+                actionTitle = nil
             case .cancelled:
                 phase = .cancelled
                 statusText = "已取消"
+                actionTitle = nil
             }
 
             if statusText == "等我拍板" {
@@ -1072,7 +1096,7 @@ enum AmberUnifiedTaskBuilder {
                     decisionPrompt: decisionPrompt,
                     quickActions: quickActions,
                     deliverableBullets: summary.bullets,
-                    rawResultMarkdown: outcome,
+                    rawResultMarkdown: Self.userFacingResultMarkdown(from: outcome),
                     destination: .executionRecord(recordId: record.id),
                     source: .executionRecord(record.id)
                 )
@@ -1147,7 +1171,7 @@ enum AmberUnifiedTaskBuilder {
             } else {
                 subtitle = "本机定时 · \(task.status.title)"
             }
-            seenTitles.insert(task.title)
+            guard seenIdentities.insert("wake:\(task.id)").inserted else { continue }
             all.append(
                 AmberUnifiedTaskItem(
                     id: "wake:\(task.id)",
@@ -1163,7 +1187,7 @@ enum AmberUnifiedTaskBuilder {
                     decisionPrompt: decisionPrompt,
                     quickActions: quickActions,
                     deliverableBullets: summary.bullets,
-                    rawResultMarkdown: task.resultText,
+                    rawResultMarkdown: Self.userFacingResultMarkdown(from: task.resultText),
                     nextRunAt: phase == .scheduled ? task.fireAt : nil,
                     destination: .wakeConversation(conversationId: task.conversationID),
                     source: .wakeTask(task.id)
@@ -1172,12 +1196,12 @@ enum AmberUnifiedTaskBuilder {
         }
 
         // 5. Mac-owned schedules. `schedules` is authoritative and also covers
-        // the disabled ones the board omits, so board schedule rows are skipped.
+        // the disabled ones the board omits. Board rows merge only by schedule ID.
         for schedule in gateway.schedules ?? [] {
             let phase: AmberUnifiedTaskPhase = schedule.running ? .running
                 : (schedule.enabled ? .scheduled : .cancelled)
             let summary = Self.extractDeliverableSummary(from: schedule.lastStatus)
-            seenTitles.insert(schedule.name)
+            guard seenIdentities.insert("schedule:\(schedule.id)").inserted else { continue }
             all.append(
                 AmberUnifiedTaskItem(
                     id: "schedule:\(schedule.id)",
@@ -1191,7 +1215,7 @@ enum AmberUnifiedTaskBuilder {
                     updatedAt: schedule.lastRunAt ?? schedule.nextRunAt ?? Date(timeIntervalSince1970: 0),
                     resultText: summary.headline ?? schedule.lastStatus,
                     deliverableBullets: summary.bullets,
-                    rawResultMarkdown: schedule.lastStatus,
+                    rawResultMarkdown: Self.userFacingResultMarkdown(from: schedule.lastStatus),
                     nextRunAt: schedule.enabled ? schedule.nextRunAt : nil,
                     destination: .macBoard,
                     source: .gatewaySchedule(schedule.id)
@@ -1200,8 +1224,14 @@ enum AmberUnifiedTaskBuilder {
         }
 
         // 6. Mac board runs and agent sessions.
-        for boardItem in gateway.boardItems where boardItem.kind != .schedule {
-            guard seenTitles.insert(boardItem.title).inserted else { continue }
+        let knownScheduleIds = Set((gateway.schedules ?? []).map(\.id))
+        for boardItem in gateway.boardItems {
+            if boardItem.kind == .schedule {
+                let scheduleId = boardItem.scheduleId
+                    ?? (boardItem.id.hasPrefix("schedule:") ? String(boardItem.id.dropFirst("schedule:".count)) : nil)
+                if let scheduleId, knownScheduleIds.contains(scheduleId) { continue }
+            }
+            guard seenIdentities.insert("board:\(boardItem.id)").inserted else { continue }
             let summary = Self.extractDeliverableSummary(from: boardItem.detail)
             let phase: AmberUnifiedTaskPhase
             switch boardItem.column {
@@ -1248,14 +1278,14 @@ enum AmberUnifiedTaskBuilder {
                     statusText: statusText,
                     actionButtonTitle: actionTitle,
                     phase: phase,
-                    ownership: .backgroundRun,
+                    ownership: boardItem.kind == .schedule ? .scheduledMonitor : .backgroundRun,
                     hubId: defaultHubId,
                     updatedAt: boardItem.updatedAt,
                     resultText: phase == .completed ? summary.headline : nil,
                     decisionPrompt: decisionPrompt,
                     quickActions: quickActions,
                     deliverableBullets: summary.bullets,
-                    rawResultMarkdown: boardItem.detail.isEmpty ? nil : boardItem.detail,
+                    rawResultMarkdown: Self.userFacingResultMarkdown(from: boardItem.detail.isEmpty ? nil : boardItem.detail),
                     nextRunAt: boardItem.nextRunAt,
                     destination: .macBoard,
                     source: .gatewayBoardItem(boardItem.id)

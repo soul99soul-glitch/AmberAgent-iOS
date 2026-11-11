@@ -627,4 +627,43 @@ final class IOSCouncilRoomExecutionTests: IOSCouncilMechanicsTestCase {
         XCTAssertNil(runner.taskStatus(taskId: "missing-task"))
     }
 
+    func testEmptyOpeningTopicFailureIsNotMarkedRetryableAndNewRunSettlesPriorRetryableCouncil() async throws {
+        let defaults = isolatedDefaults()
+        let taskStore = IOSAdvancedTaskStore(userDefaults: defaults, storageKey: "tasks")
+        let stalePrior = taskStore.startTask(
+            id: "stale-council",
+            kind: .modelCouncil,
+            title: "自由群聊 · 旧议题",
+            objective: "旧议题"
+        )
+        _ = taskStore.updateTask(
+            id: stalePrior.id,
+            status: .failed,
+            resultSummary: "最终议题没有返回内容。",
+            error: "最终议题没有返回内容。",
+            retryable: true
+        )
+
+        let runner = IOSCouncilRoomRunner(
+            streamer: ScriptedCouncilStreamer([.success("   ")]),
+            researcher: StaticCouncilResearcher(),
+            taskStore: taskStore
+        )
+        let summary = await runner.run(
+            request: roomRequest(
+                mode: .freeChat,
+                settings: compactRoomSettings(defaultRounds: 1),
+                researchConsent: .unavailable
+            )
+        )
+
+        XCTAssertEqual(summary.status, .failed)
+        let latest = try XCTUnwrap(taskStore.task(id: summary.taskId))
+        XCTAssertEqual(latest.status, .failed)
+        XCTAssertEqual(latest.error, "最终议题没有返回内容。")
+        XCTAssertFalse(latest.retryable, "A run that failed before establishing a finalTopic cannot be continued and must not stay retryable")
+        let updatedPrior = try XCTUnwrap(taskStore.task(id: stalePrior.id))
+        XCTAssertFalse(updatedPrior.retryable, "Starting a new council run must settle retryable on superseded terminal council records")
+    }
+
 }

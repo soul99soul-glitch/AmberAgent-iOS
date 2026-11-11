@@ -2,16 +2,163 @@ import Foundation
 
 extension IOSCloudImportDraft {
     /// Structured "当前 → 目标（服务商 / 模型 / Base URL）" summary for switching the cloud model.
-    func modelTransitionSummary(remote: IOSCloudConfigSnapshot?) -> IOSCloudModelTransitionSummary? {
+    func modelTransitionSummary(
+        remote: IOSCloudConfigSnapshot?,
+        localProviders: [IOSCloudProviderExportItem]? = nil
+    ) -> IOSCloudModelTransitionSummary? {
         guard let provider = selectedProvider, let model = selectedModel else { return nil }
+        let matchedRemoteFriendlyName = Self.matchedLocalProviderName(
+            for: remote?.model,
+            in: localProviders ?? providers
+        )
         return IOSCloudModelTransitionSummary.build(
             remote: remote,
+            remoteFriendlyProviderName: matchedRemoteFriendlyName,
             targetProviderLabel: "\(provider.name) (\(provider.kind.rawValue))",
+            targetFriendlyProviderName: provider.name,
             targetProviderKind: provider.kind.rawValue,
             targetModelId: model.modelId,
             targetBaseUrl: provider.baseUrl,
             hasTargetKey: provider.hasApiKey
         )
+    }
+
+    private static func matchedLocalProviderName(
+        for remoteModel: IOSCloudConfigSnapshot.Model?,
+        in candidates: [IOSCloudProviderExportItem]
+    ) -> String? {
+        guard let remoteModel, !remoteModel.provider.isEmpty else { return nil }
+        let remoteKind = remoteModel.provider.lowercased()
+        let remoteEffectiveUrl = IOSCloudConfigWire.effectiveBaseUrl(
+            provider: remoteModel.provider,
+            baseUrl: remoteModel.baseUrl
+        )
+        return candidates.first { item in
+            item.kind.rawValue.lowercased() == remoteKind
+                && IOSCloudConfigWire.effectiveBaseUrl(provider: item.kind.rawValue, baseUrl: item.baseUrl) == remoteEffectiveUrl
+        }?.name
+    }
+
+    /// Aligns the primary cloud-switch picker to the cloud's active (provider, model)
+    /// when a matching exportable local provider/model exists, so opening the page shows
+    /// "已在使用" for the cloud's real active model instead of a false diff against local chat.
+    func alignedToRemoteModelIfMatched(_ remote: IOSCloudConfigSnapshot?) -> IOSCloudImportDraft {
+        guard let remoteModel = remote?.model,
+              !remoteModel.provider.isEmpty,
+              !remoteModel.modelId.isEmpty else {
+            return self
+        }
+        let remoteKind = remoteModel.provider.lowercased()
+        let remoteEffectiveUrl = IOSCloudConfigWire.effectiveBaseUrl(
+            provider: remoteModel.provider,
+            baseUrl: remoteModel.baseUrl
+        )
+        let orderedCandidates: [IOSCloudProviderExportItem]
+        if let current = selectedProvider, current.isExportable {
+            orderedCandidates = [current] + exportableProviders.filter { $0.providerId != current.providerId }
+        } else {
+            orderedCandidates = exportableProviders
+        }
+        for provider in orderedCandidates {
+            guard provider.kind.rawValue.lowercased() == remoteKind else { continue }
+            let localEffectiveUrl = IOSCloudConfigWire.effectiveBaseUrl(
+                provider: provider.kind.rawValue,
+                baseUrl: provider.baseUrl
+            )
+            guard localEffectiveUrl == remoteEffectiveUrl,
+                  let matchedModel = provider.chatModels.first(where: { $0.modelId == remoteModel.modelId }) else {
+                continue
+            }
+            var aligned = self
+            aligned.providerId = provider.providerId
+            aligned.modelUuid = matchedModel.uuid
+            return aligned
+        }
+        return self
+    }
+
+    /// Prepares the primary "云端模型" switcher selection:
+    /// 1. Prefers aligning to the cloud's active (provider, model) when matched locally;
+    /// 2. When local active chat is OAuth/non-exportable (`providerId == nil`) and cloud is
+    ///    unconfigured or unmatched, falls back to the first exportable provider so the
+    ///    model picker & switch CTA never collapse into an incomplete card.
+    func alignedForPrimarySwitch(remote: IOSCloudConfigSnapshot?) -> IOSCloudImportDraft {
+        var aligned = alignedToRemoteModelIfMatched(remote)
+        if aligned.selectedProvider?.isExportable == true {
+            return aligned
+        }
+        if let fallback = aligned.exportableProviders.first {
+            aligned.providerId = fallback.providerId
+            aligned.modelUuid = fallback.defaultModelUuid
+        }
+        return aligned
+    }
+}
+
+/// Pure UI state for the primary "云端模型" card footer row:
+/// - `.inUse`: plain non-clickable status text ("已在使用"), never a button.
+/// - `.readyToSwitch`: concise single-line change hint + sole primary button "切换并使用".
+/// - `.switching`: in-flight progress indicator.
+enum IOSCloudPrimarySwitchState: Equatable, Sendable {
+    case switching
+    case inUse(missingKey: Bool)
+    case readyToSwitch(changeHint: String)
+
+    var showsPrimaryActionButton: Bool {
+        if case .readyToSwitch = self { return true }
+        return false
+    }
+
+    var statusText: String? {
+        switch self {
+        case .switching:
+            return macGatewayL("正在切换…")
+        case .inUse(let missingKey):
+            return missingKey ? macGatewayL("已在使用 · 缺少 Key") : macGatewayL("已在使用")
+        case .readyToSwitch:
+            return nil
+        }
+    }
+
+    static func resolve(
+        transition: IOSCloudModelTransitionSummary,
+        remote: IOSCloudConfigSnapshot?,
+        isLoadingRemote: Bool,
+        isSubmitting: Bool
+    ) -> IOSCloudPrimarySwitchState {
+        if isSubmitting {
+            return .switching
+        }
+        if !transition.changesEndpointOrModel, transition.current != nil {
+            let missingKey = (remote?.model?.keyConfigured == false)
+            if missingKey && transition.replacesOrSetsKey {
+                return .readyToSwitch(changeHint: macGatewayL("云端当前缺少 API Key"))
+            }
+            return .inUse(missingKey: missingKey)
+        }
+        let hint: String
+        if remote == nil && isLoadingRemote {
+            hint = macGatewayL("正在读取云端状态…")
+        } else if let current = transition.current {
+            let endpointChanged = current.providerKind != transition.target.providerKind
+                || current.effectiveBaseUrl != transition.target.effectiveBaseUrl
+            if endpointChanged {
+                let currentProvider = current.friendlyProviderName
+                    ?? IOSCloudConfigWire.shortProtocolName(for: current.providerKind)
+                if currentProvider != transition.target.friendlyProviderName || current.modelId != transition.target.modelId {
+                    hint = macGatewayL("当前：\(currentProvider) · \(current.modelId)")
+                } else {
+                    hint = macGatewayL("将切换接入地址")
+                }
+            } else if current.modelId != transition.target.modelId {
+                hint = macGatewayL("当前：\(current.modelId)")
+            } else {
+                hint = macGatewayL("将切换接入地址")
+            }
+        } else {
+            hint = macGatewayL("尚未设置云端模型")
+        }
+        return .readyToSwitch(changeHint: hint)
     }
 }
 
@@ -22,6 +169,7 @@ extension IOSCloudImportDraft {
 struct IOSCloudModelTransitionSummary: Equatable, Sendable {
     struct Endpoint: Equatable, Sendable {
         var providerLabel: String
+        var friendlyProviderName: String? = nil
         var providerKind: String
         var modelId: String
         var baseUrlDisplay: String
@@ -72,7 +220,9 @@ struct IOSCloudModelTransitionSummary: Equatable, Sendable {
 
     static func build(
         remote: IOSCloudConfigSnapshot?,
+        remoteFriendlyProviderName: String? = nil,
         targetProviderLabel: String,
+        targetFriendlyProviderName: String? = nil,
         targetProviderKind: String,
         targetModelId: String,
         targetBaseUrl: String,
@@ -83,6 +233,7 @@ struct IOSCloudModelTransitionSummary: Equatable, Sendable {
            !remoteModel.provider.isEmpty || !remoteModel.modelId.isEmpty {
             currentEndpoint = Endpoint(
                 providerLabel: IOSCloudConfigWire.providerDisplayName(for: remoteModel.provider),
+                friendlyProviderName: remoteFriendlyProviderName,
                 providerKind: remoteModel.provider.lowercased(),
                 modelId: remoteModel.modelId,
                 baseUrlDisplay: IOSCloudConfigWire.displayBaseUrl(provider: remoteModel.provider, baseUrl: remoteModel.baseUrl),
@@ -105,6 +256,7 @@ struct IOSCloudModelTransitionSummary: Equatable, Sendable {
 
         let targetEndpoint = Endpoint(
             providerLabel: targetProviderLabel,
+            friendlyProviderName: targetFriendlyProviderName,
             providerKind: targetProviderKind.lowercased(),
             modelId: targetModelId,
             baseUrlDisplay: IOSCloudConfigWire.displayBaseUrl(provider: targetProviderKind, baseUrl: targetBaseUrl),

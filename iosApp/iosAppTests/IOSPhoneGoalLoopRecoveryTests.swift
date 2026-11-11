@@ -123,6 +123,36 @@ extension IOSPhoneGoalLoopTests {
         XCTAssertEqual(fixture.waitCount, 0)
     }
 
+    func testLiveNeedsScreenshotHandsBackImmediatelyAndExcludesScrollbarIndicators() async {
+        let screen = observation("duolingo-translate", [
+            node("chip-1", id: "", type: "XCUIElementTypeOther", label: "ワンピース", y: 563, x: 50, width: 120, height: 44),
+            PhoneObservationNode(ref: "scroll-1", depth: 4, type: "XCUIElementTypeOther", identifier: nil,
+                                 label: "水平滚动条, 1页", value: "0%",
+                                 rect: .init(x: 62, y: 581, width: 96, height: 13), enabled: true, focused: false),
+            PhoneObservationNode(ref: "scroll-en", depth: 4, type: "XCUIElementTypeOther", identifier: nil,
+                                 label: "Horizontal scroll bar, 1 page", value: "0%",
+                                 rect: .init(x: 62, y: 595, width: 96, height: 13), enabled: true, focused: false),
+            node("chip-2", id: "", type: "XCUIElementTypeOther", label: "くし", y: 615, x: 169, width: 64, height: 45),
+        ])
+        let candidateSet = IOSPhoneGoalLoop.liveCandidateSet(in: screen)
+        XCTAssertEqual(candidateSet.candidates.map(\.action), [.tap(ref: "chip-1"), .tap(ref: "chip-2")],
+                       "系统滚动条指示器不应进入 Jev 点击候选")
+
+        let fixture = Fixture([screen, screen, screen])
+        fixture.selections = [.needsScreenshot]
+        let request = IOSPhoneGoalRequest(
+            goal: "点击梳子对应的词块",
+            bundleID: "app.test",
+            completion: .init(kind: .enabled, target: .init(identifier: "challenge_check_button"))
+        )
+        let result = await fixture.loop().run(request)
+        XCTAssertEqual(result.status, .handback)
+        XCTAssertEqual(result.reasonCode, .screenshotRequired)
+        XCTAssertTrue(result.needsScreenshot)
+        XCTAssertEqual(fixture.chooseCount, 1, "needs_screenshot 代表 chooseGoalAction 已尝试或无法截图，不应空转重读 3 轮")
+        XCTAssertEqual(fixture.waitCount, 0)
+    }
+
     func testLiveCandidatesFilterDedupeDescribeAndCap() {
         let screen = observation("browse", [
             node("list", id: "list", type: "XCUIElementTypeTable", label: nil, y: 100, x: 0, width: 402, height: 700),

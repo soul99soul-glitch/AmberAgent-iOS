@@ -69,6 +69,37 @@ struct IOSShareSupportTests {
 
     // MARK: - 取数
 
+    @Test func assistantEnvelopeCopyShareAndExportsMatchPublishedDisplayText() throws {
+        let samples: [(raw: String, expected: String)] = [
+            ("Synthetic ordinary answer", "Synthetic ordinary answer"),
+            (#"{"structured_summary":{"conclusion":"Synthetic readable result"},"run_ended":true,"session_read":{"offset":0}}"#, "Synthetic readable result"),
+            ("[Synthetic reference](https://example.invalid/ref)\n\nSynthetic answer\n\n[Amber host: child run ended]\n{\"run_ended\":true}",
+             "[Synthetic reference](https://example.invalid/ref)\n\nSynthetic answer"),
+            (#"{"run_ended":true,"session_read":{"offset":0}}"#, "")
+        ]
+        for sample in samples {
+            let message = IOSChatForegroundFixtures.assistantText(sample.raw)
+            let updates = ChatTimelineUpdates()
+            updates.publish(.init(revision: 1, reason: .initialLoad), messages: [message])
+            let displayed = try #require(updates.projectionCache.displayTexts(for: message)[0])
+            #expect(displayed == sample.expected)
+            #expect(MessageBubbleView.copyText(for: message) == displayed)
+            #expect(IOSConversationExporter.shareText(for: message) == displayed)
+            let entries = IOSConversationExporter.entries(from: [message])
+            #expect(entries == (displayed.isEmpty ? [] : [.init(role: .assistant, text: displayed, imageCount: 0)]))
+            let markdown = IOSConversationExporter.markdown(title: "Synthetic export", entries: entries)
+            let pdfHTML = IOSConversationExporter.html(title: "Synthetic export", entries: entries)
+            for output in [markdown, pdfHTML] {
+                #expect(!output.contains("run_ended"))
+                #expect(!output.contains("session_read"))
+                #expect(!output.contains("[Amber host:"))
+            }
+            #expect(message.toText() == sample.raw, "Display/copy/export must not change protocol storage")
+        }
+        let literalUser = IOSChatForegroundFixtures.userMessage("Synthetic literal {\"run_ended\":true}")
+        #expect(MessageBubbleView.copyText(for: literalUser) == literalUser.toText())
+    }
+
     @Test func entriesKeepOnlyUserAndAssistantWithDisplayText() {
         let messages = [
             IOSChatForegroundFixtures.makeMessage(role: MessageRole.system, parts: [UIMessagePart.Text(text: "系统提示", metadata: nil)]),

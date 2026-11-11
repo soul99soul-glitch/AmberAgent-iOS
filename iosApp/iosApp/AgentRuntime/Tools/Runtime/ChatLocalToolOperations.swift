@@ -154,13 +154,13 @@ extension ChatToolRuntime {
     }
 
     func executeMemoryToolCall(_ pending: ChatPendingToolApproval) -> ChatToolRuntimeResult {
-        let writePolicy = memoryToolWritePolicy(input: pending.toolCall.input, isUserInitiated: false)
+        let writePolicy = memoryToolWritePolicy(input: pending.toolCall.input, isUserInitiated: false, conversationId: pending.conversationId)
         if case .needsUserAction(let reason) = writePolicy,
            let request = ChatToolApprovalRequestBuilder.memory(for: pending.toolCall, reason: reason) {
             return .waitingForApproval(.memory(request))
         }
 
-        let resultText = dispatchMemoryToolCall(pending.toolCall, writePolicy: writePolicy)
+        let resultText = dispatchMemoryToolCall(pending.toolCall, writePolicy: writePolicy, conversationId: pending.conversationId)
         return .completed(messagesByFinishingToolCall(
             pending.toolCall,
             outputText: resultText,
@@ -356,17 +356,22 @@ extension ChatToolRuntime {
     /// 不会触碰页面；只有 active（pinned 验收版本 + 全范围允许）才真正执行。
     func dispatchMemoryToolCall(
         _ toolCall: UIMessagePart.Tool,
-        writePolicy: IOSMemoryToolWritePolicy
+        writePolicy: IOSMemoryToolWritePolicy,
+        conversationId: KotlinUuid? = nil
     ) -> String {
         IOSMemoryToolExecutor.execute(
             input: toolCall.input,
             runtime: sharedSettings.agentRuntime,
-            writePolicy: writePolicy
+            writePolicy: writePolicy,
+            conversationId: conversationId?.toHexDashString()
         )
     }
 
-    func memoryToolWritePolicy(input: String, isUserInitiated: Bool) -> IOSMemoryToolWritePolicy {
-        localToolExecutor?.memoryToolWritePolicy(
+    func memoryToolWritePolicy(input: String, isUserInitiated: Bool, conversationId: KotlinUuid? = nil) -> IOSMemoryToolWritePolicy {
+        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId?.toHexDashString()) else {
+            return .denied("Global memory is unavailable in an isolated Hub.")
+        }
+        return localToolExecutor?.memoryToolWritePolicy(
             input: input,
             isUserInitiated: isUserInitiated,
             executionPolicy: IOSExecutionPolicyContext.snapshot

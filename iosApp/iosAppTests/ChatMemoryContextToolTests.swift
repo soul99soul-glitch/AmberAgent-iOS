@@ -6,6 +6,30 @@ import WebKit
 @MainActor
 final class ChatMemoryContextToolTests: ChatViewModelContextTestCase {
 
+    func testIsolatedHubBlocksRuntimeRecallIncludingOverridesAndMemoryTools() throws {
+        let id = KotlinUuid.companion.random().toHexDashString()
+        let hubStore = AmberHubStore.shared
+        let previous = hubStore.hubs
+        defer { hubStore.hubs = previous }
+        hubStore.hubs.append(AmberHubItem(title: "sandbox", memoryPolicy: .hubIsolated, conversationIds: [id]))
+        let settings = IOSSharedSettingsStore(userDefaults: isolatedDefaults())
+        let builder = ChatRuntimeContextBuilder(sharedSettings: settings, mcpTools: [], miniAppRepository: IOSMiniAppRepository(),
+                                               miniAppRuntimeEnabled: false, conversationId: id)
+        let messages = [UIMessage.companion.user(prompt: "hello")]
+        let recalled = ChatMemoryContextBuilder.RecallResult(prompt: "global-secret-memory", records: [])
+        XCTAssertNil(builder.memoryRecallResult(for: messages, override: recalled).prompt)
+        let uploaded = builder.injectingRuntimeContext(into: messages, memoryRecallOverride: recalled)
+        XCTAssertFalse(uploaded.map { $0.toText() }.joined().contains("global-secret-memory"))
+        for action in ["list", "read", "search", "query", "status", "create", "edit", "delete",
+                       "wiki_read", "wiki_search", "wiki_edit", "wiki_history", "wiki_revert"] {
+            let output = IOSMemoryToolExecutor.execute(input: "{\"action\":\"\(action)\"}", runtime: settings.agentRuntime,
+                                                      writePolicy: .allow, conversationId: id)
+            let result = try jsonObject(output)
+            XCTAssertEqual(result["ok"] as? Bool, false, action)
+            XCTAssertTrue((result["error"] as? String)?.contains("isolated") == true, action)
+        }
+    }
+
     func testPreparedUploadMessagesIncludeMemoryContextWithoutPersistingSystemMessage() throws {
         let originalRecords = IosMemoryFactory.shared.getAllRecords()
         IosMemoryFactory.shared.replaceAll(records: [])

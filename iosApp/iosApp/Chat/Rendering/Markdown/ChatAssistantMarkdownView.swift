@@ -71,6 +71,7 @@ struct ChatAssistantMarkdownView: View {
     // 不再暴露 microsoft/liyanan/streamingBlock/coalesced 开关给用户。
     private var fontScale: Double { IOSChatRenderPreferences.shared.fontScale }
     private var chatFont: String { IOSChatRenderPreferences.shared.chatFont }
+    private var isSegmentedReplyDelivery: Bool { IOSChatRenderPreferences.shared.isSegmentedReplyDelivery }
     @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
     /// per-view-instance 的「这个 bubble 用过 block 流式渲染」latch，覆盖 completion 瞬间；
     /// 回收后的完成态由 projection 层 hasEverStreamed + liveRenderingEnabled 驱动。
@@ -142,6 +143,7 @@ struct ChatAssistantMarkdownView: View {
     }
 
     var body: some View {
+        let _ = ChatTimelineRowLayoutInvalidation.markRowDirty(sourceMessageID)
         let _ = ChatRenderProbe.record("markdown", id: sourceMessageID ?? "unattributed")
         let widgetSettings = IOSGenerativeWidgetSettings(generativeUiSetting)
         let renderedMarkdown = renderedMarkdownText
@@ -473,8 +475,10 @@ struct ChatAssistantMarkdownView: View {
             codeBackgroundColor: surface2,
             codeUnderlineColor: border
         )
-        // Reduce Motion 下流式淡入全关（与思考框 animatesStreamingBody 同语义）。
-        let animates = liveStreaming && !reduceMotion
+        // Reduce Motion 下流式淡入全关（与思考框 animatesStreamingBody 同语义）；
+        // 分段呈现关闭逐词淡入与跨段合并，由已完成 Markdown 块级单次入场承载。
+        let segmented = isSegmentedReplyDelivery
+        let animates = liveStreaming && !reduceMotion && !segmented
         return SwiftStreamingMarkdown.MarkdownRenderConfig.default
             .withShouldAnimateText(value: animates)
             // 逐拍尾段整体淡入 + 解除 window 门控：修「开头看不到淡入、一拍一跳」
@@ -503,7 +507,7 @@ struct ChatAssistantMarkdownView: View {
             // 新段落也不再是「新建视图 + 从 alpha 0 淡入」。合并块内的增长仍走
             // ParagraphUIView 的 append 快路径(行距/段距烘进属性串,视图侧传 nil)。
             // 这里是三个界面(Chat/议会/小说)共用的唯一 config 构造点。
-            .withCoalescesAdjacentTextBlocks(value: true)
+            .withCoalescesAdjacentTextBlocks(value: !segmented)
     }
 
     @ViewBuilder
@@ -512,16 +516,17 @@ struct ChatAssistantMarkdownView: View {
         liveStreaming: Bool,
         cacheIdentitySuffix: String = "document"
     ) -> some View {
+        let segmented = isSegmentedReplyDelivery
         let config = detection.markdownConfig(
             for: ChatStreamingDetectionBox.MarkdownConfigKey(
-                liveStreaming: liveStreaming,
+                liveStreaming: liveStreaming && !segmented,
                 reduceMotion: reduceMotion,
                 fontScale: boundedFontScale,
                 bodyPointSize: scaledBodyPointSize,
                 chatFont: chatFont,
                 themePaper: AmberThemeRuntime.shared.paper.rawValue,
                 themeAccentHex: AmberThemeRuntime.shared.accentHex,
-                coalescedTextBlocks: true
+                coalescedTextBlocks: !segmented
             ),
             build: { streamingMarkdownConfig(liveStreaming: liveStreaming) }
         )

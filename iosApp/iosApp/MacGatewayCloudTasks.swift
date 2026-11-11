@@ -275,11 +275,7 @@ struct MacGatewayCloudTaskRecord: Codable, Equatable, Identifiable, Sendable {
         if let progress = effectiveWorkItem?.progress, !progress.isEmpty, !isTerminal {
             return "\(statusPart) · \(progress)"
         }
-        if let result = detail?.resultMarkdown?.trimmingCharacters(in: .whitespacesAndNewlines), !result.isEmpty {
-            let preview = result
-                .split(whereSeparator: \.isNewline)
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .first { !$0.isEmpty && !$0.hasPrefix("# Settlement Report") } ?? result
+        if let preview = AmberUnifiedTaskBuilder.resultPreview(from: detail?.resultMarkdown) {
             return "\(statusPart) · \(preview)"
         }
         return statusPart
@@ -347,8 +343,8 @@ extension MacGatewayClient {
 // MARK: - Store Operations & Persistence
 
 extension MacGatewayStore {
-    static let cloudTasksKey = "macGateway.cloudTasks.v1"
-    static let persistenceQueue = DispatchQueue(label: "app.amber.ios.macGateway.persistence", qos: .utility)
+    nonisolated static let cloudTasksKey = "macGateway.cloudTasks.v1"
+    nonisolated static let persistenceQueue = DispatchQueue(label: "app.amber.ios.macGateway.persistence", qos: .utility)
 
     var effectiveCloudAgents: [MacGatewayCloudAgent] {
         if cloudAgents.isEmpty {
@@ -392,25 +388,69 @@ extension MacGatewayStore {
         cloudTasks = filtered
     }
 
-    func persistCloudTasks(_ records: [MacGatewayCloudTaskRecord]? = nil) {
+    func persistCloudTasks(_ records: [MacGatewayCloudTaskRecord]? = nil, forceAsync: Bool = false) {
         let list = records ?? cloudTasks
         let targetDefaults = defaults
-        if targetDefaults === UserDefaults.standard {
-            nonisolated(unsafe) let sendableDefaults = targetDefaults
-            Self.persistenceQueue.async {
-                if list.isEmpty {
-                    sendableDefaults.removeObject(forKey: Self.cloudTasksKey)
-                } else if let data = try? JSONEncoder().encode(list) {
-                    sendableDefaults.set(data, forKey: Self.cloudTasksKey)
-                }
-            }
-        } else {
-            if list.isEmpty {
-                targetDefaults.removeObject(forKey: Self.cloudTasksKey)
+        let (epoch, identity) = persistenceCoordinator.snapshot()
+        let coordinator = persistenceCoordinator
+        nonisolated(unsafe) let sendableDefaults = targetDefaults
+        let commitBlock: @Sendable () -> Void = {
+            guard coordinator.canCommit(epoch: epoch, identity: identity) else { return }
+            if list.isEmpty || identity == nil {
+                sendableDefaults.removeObject(forKey: Self.cloudTasksKey)
             } else if let data = try? JSONEncoder().encode(list) {
-                targetDefaults.set(data, forKey: Self.cloudTasksKey)
+                sendableDefaults.set(data, forKey: Self.cloudTasksKey)
             }
         }
+        if forceAsync || targetDefaults === UserDefaults.standard {
+            Self.persistenceQueue.async(execute: commitBlock)
+        } else {
+            commitBlock()
+        }
+    }
+
+    @discardableResult
+    func mergeCloudTaskSnapshot(
+        at index: Int,
+        workItem: MacGatewayCloudWorkItem,
+        detail: MacGatewayCloudWorkDetail?,
+        replayed: Bool? = nil
+    ) -> Bool {
+        let existing = cloudTasks[index]
+        if let existingWorkItem = existing.effectiveWorkItem {
+            if workItem.updatedAtMs < existingWorkItem.updatedAtMs {
+                return false
+            }
+            if existingWorkItem.state.isTerminal && !workItem.state.isTerminal {
+                return false
+            }
+        }
+        let updatedDate = workItem.updatedAtDate
+        let resolvedDetail: MacGatewayCloudWorkDetail?
+        if let detail {
+            resolvedDetail = detail
+        } else if var existingDetail = existing.detail {
+            existingDetail.workItem = workItem
+            resolvedDetail = existingDetail
+        } else {
+            resolvedDetail = nil
+        }
+        if let replayed {
+            cloudTasks[index].replayed = replayed
+        }
+        guard existing.workItemId != workItem.id
+            || existing.workItem != workItem
+            || existing.detail != resolvedDetail
+            || existing.lastError != nil
+            || existing.updatedAt != updatedDate else {
+            return false
+        }
+        cloudTasks[index].workItemId = workItem.id
+        cloudTasks[index].workItem = workItem
+        cloudTasks[index].detail = resolvedDetail
+        cloudTasks[index].lastError = nil
+        cloudTasks[index].updatedAt = updatedDate
+        return true
     }
 
     func refreshCloudAgents() async {
@@ -492,11 +532,12 @@ extension MacGatewayStore {
                 return .failure(CancellationError())
             }
             if let index = cloudTasks.firstIndex(where: { $0.requestId == record.requestId }) {
-                cloudTasks[index].workItemId = receipt.workItem.id
-                cloudTasks[index].workItem = receipt.workItem
-                cloudTasks[index].replayed = receipt.replayed
-                cloudTasks[index].lastError = nil
-                cloudTasks[index].updatedAt = receipt.workItem.updatedAtDate
+                _ = mergeCloudTaskSnapshot(
+                    at: index,
+                    workItem: receipt.workItem,
+                    detail: nil,
+                    replayed: receipt.replayed
+                )
                 record = cloudTasks[index]
                 persistCloudTasks()
             }
@@ -507,7 +548,10 @@ extension MacGatewayStore {
             startCloudTaskPollingIfNeeded()
             return .success(record)
         } catch {
-            if forgetIfRevoked(error) {
+            guard self.client === client else {
+                return .failure(CancellationError())
+            }
+            if forgetIfRevoked(error, for: client) {
                 return .failure(MacGatewayError.unauthorized)
             }
             if let index = cloudTasks.firstIndex(where: { $0.requestId == record.requestId }) {
@@ -539,25 +583,14 @@ extension MacGatewayStore {
         do {
             let detail = try await client.workItem(id: workItemId)
             guard self.client === client else { return }
-            if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }) {
-                let existing = cloudTasks[index]
-                let updatedDate = detail.workItem.updatedAtDate
-                guard existing.workItem != detail.workItem
-                    || existing.detail != detail
-                    || existing.lastError != nil
-                    || existing.updatedAt != updatedDate else {
-                    return
-                }
-                cloudTasks[index].workItem = detail.workItem
-                cloudTasks[index].detail = detail
-                cloudTasks[index].lastError = nil
-                cloudTasks[index].updatedAt = updatedDate
+            if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }),
+               mergeCloudTaskSnapshot(at: index, workItem: detail.workItem, detail: detail) {
                 persistCloudTasks()
             }
         } catch is CancellationError {
         } catch {
             guard self.client === client else { return }
-            if forgetIfRevoked(error) { return }
+            if forgetIfRevoked(error, for: client) { return }
             if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }) {
                 let errorMessage = error.localizedDescription
                 guard cloudTasks[index].lastError != errorMessage else { return }
@@ -589,17 +622,14 @@ extension MacGatewayStore {
         do {
             let detail = try await client.cancelTask(id: workItemId)
             guard self.client === client else { return }
-            if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }) {
-                cloudTasks[index].workItem = detail.workItem
-                cloudTasks[index].detail = detail
-                cloudTasks[index].lastError = nil
-                cloudTasks[index].updatedAt = detail.workItem.updatedAtDate
+            if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }),
+               mergeCloudTaskSnapshot(at: index, workItem: detail.workItem, detail: detail) {
                 persistCloudTasks()
             }
         } catch is CancellationError {
         } catch {
             guard self.client === client else { return }
-            if !forgetIfRevoked(error) {
+            if !forgetIfRevoked(error, for: client) {
                 if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }) {
                     cloudTasks[index].lastError = error.localizedDescription
                     persistCloudTasks()

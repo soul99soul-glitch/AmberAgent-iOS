@@ -48,7 +48,7 @@ struct ChatTimelineActivity: Equatable {
 
     @MainActor
     func shouldDisplayBelow(_ entry: NativeTimelineEntry, at uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
-        if entry.role == MessageRole.user || !entry.hasVisibleBodyText { return true }
+        if entry.role == MessageRole.user || !entry.hasVisibleBodyText || entry.isAwaitingSegmentedFirstBlock { return true }
         guard resolvedPresentation(at: uptime).kind == .generating else { return true }
         return taskSlot.map { $0.currentRoundAssistantMessageId != entry.messageId } ?? false
     }

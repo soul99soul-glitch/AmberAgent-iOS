@@ -362,7 +362,8 @@ extension MacGatewayStore {
         } catch is CancellationError {
             return false
         } catch {
-            _ = forgetIfRevoked(error)
+            guard self.client === client else { return false }
+            _ = forgetIfRevoked(error, for: client)
             return false
         }
     }
@@ -383,7 +384,8 @@ extension MacGatewayStore {
         } catch is CancellationError {
             return false
         } catch {
-            _ = forgetIfRevoked(error)
+            guard self.client === client else { return false }
+            _ = forgetIfRevoked(error, for: client)
             return false
         }
     }

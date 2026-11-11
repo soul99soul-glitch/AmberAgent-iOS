@@ -442,7 +442,7 @@ struct CloudManualModelSheet: View {
                 }
                 .scrollIndicators(.hidden)
             }
-            .navigationTitle(macGatewayL("手动切换云端模型"))
+            .navigationTitle(macGatewayL("手动配置"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -483,13 +483,16 @@ struct CloudManualModelSheet: View {
             }
         } label: {
             HStack(spacing: 12) {
-                MacGatewayIconPlate(icon: "cpu")
-                Text(verbatim: macGatewayL("目标服务商协议")).font(.body).foregroundStyle(AmberTheme.foreground)
+                Text(verbatim: macGatewayL("服务商协议"))
+                    .font(.body)
+                    .foregroundStyle(AmberTheme.foreground)
                 Spacer(minLength: 8)
                 Text(verbatim: IOSCloudConfigWire.providerDisplayName(for: kind.rawValue))
                     .font(.subheadline)
-                    .foregroundStyle(AmberTheme.accent)
-                MacGatewayChevron()
+                    .foregroundStyle(AmberTheme.foreground)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(AmberTheme.muted2)
             }
             .frame(minHeight: 52)
             .padding(.horizontal, 14)

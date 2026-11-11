@@ -1164,39 +1164,59 @@ final class ChatTimelineReviewRegressionTests: ChatNativeTimelineReplayTestCase 
 
     private struct BubbleIsolationHarness: View {
         let message: UIMessage
+        let displaySetting: DisplaySetting
+        let generativeUiSetting: GenerativeUiSetting
         let workspaceStore: IOSWorkspaceStore
         @ObservedObject var state: BubbleIsolationState
 
         var body: some View {
-            MessageBubbleView(
+            let messageId = message.id.toHexDashString()
+            let row = ChatMessageRowModel(
+                rowId: messageId,
+                messageId: messageId,
                 message: message,
-                messageIndex: 10,
-                isAssistantContinuation: false,
-                variantInfo: nil,
-                displaySetting: nil,
-                generativeUiSetting: nil,
-                onRegenerate: {},
-                onRequestEdit: { _ in },
-                onEdit: { _ in },
-                onDelete: {},
-                onSelectVariant: { _ in },
-                onGenerativeWidgetAction: { _ in },
-                onModifyGeneratedImage: { _, _, _ in },
-                onOpenMiniApp: { _ in },
-                onOpenMiniApps: {},
-                isGenerating: false,
-                isChatGenerationActive: state.isChatGenerationActive,
-                isLastMessage: state.isLastMessage,
+                role: message.role,
+                parts: message.parts,
+                index: 10,
+                isLast: state.isLastMessage,
+                isStreaming: false,
                 hasEverStreamed: true,
-                liveMarkdownRenderingEnabled: state.liveRenderingEnabled,
-                frozenMarkdownSnapshot: nil,
-                reasoningLevelLabel: nil
+                canAnimateInsertion: false,
+                isAssistantContinuation: false
             )
+            let renderState = ChatRenderState(
+                rendererMode: .streamingMarkdown,
+                hasEverStreamed: true,
+                liveRenderingEnabled: state.liveRenderingEnabled,
+                frozenMarkdownSnapshot: nil
+            )
+            let model = ChatListMessageRenderModel(
+                row: row,
+                variantInfo: nil,
+                renderState: renderState,
+                isGenerationActive: state.isChatGenerationActive,
+                renderIdentity: "\(messageId):streamingMarkdown",
+                liveTailModel: nil
+            )
+            NativeTimelineMessageBubble(
+                entryID: "message-\(messageId)",
+                renderDigest: nil,
+                model: model,
+                displaySetting: displaySetting,
+                generativeUiSetting: generativeUiSetting,
+                displaySettingSignature: 1,
+                generativeUiSettingSignature: 1,
+                reasoningLevelLabel: nil,
+                imageAccessibilityFocusToolCallID: nil,
+                onAction: { _ in }
+            )
+            .equatable()
             .environment(workspaceStore)
         }
     }
 
     func testP1MessageBubbleViewIsolatesIsLastMessageTransitionFromMarkdownAndBody() throws {
+        let sharedSettings = IOSSharedSettingsStore(userDefaults: .standard)
         let message = makeAssistantMessage(
             text: "### 标题\n\n这里是一段包含 `inline code` 与列表的完整回复：\n\n- 第一项\n- 第二项",
             finished: true
@@ -1209,6 +1229,8 @@ final class ChatTimelineReviewRegressionTests: ChatNativeTimelineReplayTestCase 
         let window = UIWindow(windowScene: scene)
         let host = UIHostingController(rootView: BubbleIsolationHarness(
             message: message,
+            displaySetting: sharedSettings.displaySetting,
+            generativeUiSetting: sharedSettings.snapshot.agentRuntime.generativeUi,
             workspaceStore: workspaceStore,
             state: state
         ))
@@ -1247,5 +1269,183 @@ final class ChatTimelineReviewRegressionTests: ChatNativeTimelineReplayTestCase 
                        "已完结气泡翻转 isLastMessage/liveRenderingEnabled 时不得重算正文子树")
         XCTAssertEqual(ChatRenderProbe.counts["markdown"]?[messageID] ?? 0, 0,
                        "已完结气泡翻转 isLastMessage/liveRenderingEnabled 时不得重建 Markdown")
+    }
+
+    @MainActor
+    private final class OuterRefreshState: ObservableObject {
+        @Published var keyboardBottomInset: CGFloat = 0
+        @Published var isSheetPresented = false
+        @Published var isBusy = false
+    }
+
+    private struct OuterRefreshHarness: View {
+        @ObservedObject var model: HarnessModel
+        @ObservedObject var outer: OuterRefreshState
+        let displaySetting: DisplaySetting
+        let generativeUiSetting: GenerativeUiSetting
+        let workspaceStore: IOSWorkspaceStore
+        let artifactPinHandler: ChatArtifactPinHandler
+        let completionFeedback: ChatCompletionFeedback
+
+        var body: some View {
+            NativeChatTimelineView(
+                signal: model.signal,
+                timelineUpdates: model.timelineUpdates,
+                configurationIssue: nil,
+                isGenerationActive: model.isGenerationActive,
+                usesIndependentTasks: model.usesIndependentTasks,
+                activity: model.activity,
+                isLoading: false,
+                isRecognizingImages: false,
+                contextCompactState: .idle,
+                followGeneration: true,
+                displaySetting: displaySetting,
+                generativeUiSetting: generativeUiSetting,
+                reasoningLevelLabel: nil,
+                workspaceStore: workspaceStore,
+                scrollToBottomTrigger: model.scrollToBottomTrigger,
+                scrollToBottomSource: .button,
+                messageAnchor: model.messageAnchor,
+                currentConversationID: model.currentConversationID,
+                messagesProvider: { [weak model] in model?.messages ?? [] },
+                variantInfoProvider: { _ in nil },
+                onAction: { _ in },
+                onViewportStateChange: { [weak model] state in model?.recordViewport(state) },
+                onDismissKeyboard: {}
+            )
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                Color.clear.frame(height: outer.keyboardBottomInset)
+            }
+            .environment(\.amberIsUnderlyingSheetPresented, outer.isSheetPresented)
+            .environment(\.intelligentUIBusy, outer.isBusy)
+            .environment(\.chatArtifactPinAction, artifactPinHandler)
+            .environment(\.chatCompletionFeedback, completionFeedback)
+        }
+    }
+
+    func testRowZeroOuterRefreshSkipsGraphHostAndRowRemeasureWhileStreamingLineWrapGrowsHeight() throws {
+        let sharedSettings = IOSSharedSettingsStore(userDefaults: .standard)
+        let workspaceStore = IOSWorkspaceStore(
+            baseDirectory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("RowZeroIsolation-\(UUID().uuidString)", isDirectory: true)
+        )
+        let model = HarnessModel()
+        let outer = OuterRefreshState()
+        let pinHandler = ChatArtifactPinHandler()
+        let completionFeedback = ChatCompletionFeedback()
+
+        var history: [UIMessage] = []
+        for turn in 0..<4 {
+            history.append(makeUserMessage("历史提问 \(turn)"))
+            history.append(makeAssistantMessage(
+                text: "### 历史回复 \(turn)\n\n这是一段用于验证 `row=0` 外层键盘与环境刷新零重测的正文。",
+                finished: true
+            ))
+        }
+        model.messages = history
+        model.send(.initialLoad)
+        model.timelineUpdates.publish(model.signal, messages: model.messages)
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        let host = UIHostingController(rootView: OuterRefreshHarness(
+            model: model,
+            outer: outer,
+            displaySetting: sharedSettings.displaySetting,
+            generativeUiSetting: sharedSettings.snapshot.agentRuntime.generativeUi,
+            workspaceStore: workspaceStore,
+            artifactPinHandler: pinHandler,
+            completionFeedback: completionFeedback
+        ))
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            ChatRenderProbe.enabled = false
+            ChatRenderProbe.reset()
+            window.isHidden = true
+            window.rootViewController = nil
+            window.windowScene = nil
+            previousWindow?.makeKey()
+        }
+
+        XCTAssertTrue(pumpUntil(timeout: 4) { model.latestViewport.isAtBottom })
+        pump(seconds: 0.4)
+
+        // 1. Stream a reply that wraps from 1 line to multiple lines and verify height grows immediately.
+        model.isGenerationActive = true
+        model.messages.append(makeUserMessage("触发流式回复"))
+        model.send(.userAppend)
+        model.timelineUpdates.publish(model.signal, messages: model.messages)
+        pump(seconds: 0.1)
+
+        let streamID = KotlinUuid.companion.random()
+        let streamHex = streamID.toHexDashString()
+        model.messages.append(makeAssistantMessage(id: streamID, text: "短句", finished: false))
+        model.send(.streamDelta)
+        model.timelineUpdates.publish(model.signal, messages: model.messages)
+        pump(seconds: 0.25)
+
+        let longWrappedText = String(repeating: "流式段落持续增长并自动折行以撑高外层行布局高度，验证不会卡死或裁切。", count: 8)
+        ChatRenderProbe.reset()
+        ChatRenderProbe.enabled = true
+        model.messages[model.messages.count - 1] = makeAssistantMessage(id: streamID, text: longWrappedText, finished: false)
+        model.send(.streamDelta)
+        model.timelineUpdates.publish(model.signal, messages: model.messages)
+        pump(seconds: 0.6)
+        ChatRenderProbe.enabled = false
+        XCTAssertGreaterThan(
+            ChatRenderProbe.counts["layout-measure"]?[streamHex] ?? 0,
+            0,
+            "流式段落折行增高时 ChatTimelineRowLayout 必须立即重新测量并更新行高"
+        )
+
+        // Settle the streamed turn.
+        model.messages[model.messages.count - 1] = makeAssistantMessage(id: streamID, text: longWrappedText, finished: true)
+        model.isGenerationActive = false
+        model.send(.generationCompleted)
+        model.timelineUpdates.publish(model.signal, messages: model.messages)
+        pump(seconds: 1.5)
+
+        let allSettledIDs = Set(model.messages.map { $0.id.toHexDashString() })
+
+        // Warm task summary cache before simulating backgrounding.
+        let summaryInput = "### 任务完成\n\n- 第一项结果\n- 第二项结果"
+        _ = AmberUnifiedTaskBuilder.extractDeliverableSummary(from: summaryInput)
+
+        // 2. Simulate keyboard show/hide (`safeAreaInset`), outer environment toggles, and background notification (`row=0`).
+        ChatRenderProbe.reset()
+        ChatRenderProbe.enabled = true
+        outer.keyboardBottomInset = 320
+        outer.isSheetPresented = true
+        outer.isBusy = true
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        pump(seconds: 0.15)
+
+        outer.keyboardBottomInset = 0
+        outer.isSheetPresented = false
+        outer.isBusy = false
+        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        _ = AmberUnifiedTaskBuilder.extractDeliverableSummary(from: summaryInput)
+        host.view.setNeedsLayout()
+        host.view.layoutIfNeeded()
+        pump(seconds: 0.15)
+        ChatRenderProbe.enabled = false
+
+        let rowCount = allSettledIDs.reduce(0) { $0 + (ChatRenderProbe.counts["row"]?[$1] ?? 0) }
+        let layoutInvalidates = allSettledIDs.reduce(0) { $0 + (ChatRenderProbe.counts["layout-invalidate"]?[$1] ?? 0) }
+        let layoutMeasures = allSettledIDs.reduce(0) { $0 + (ChatRenderProbe.counts["layout-measure"]?[$1] ?? 0) }
+        let graphHostUpdates = ChatRenderProbe.counts["graph-host-update"]?.values.reduce(0, +) ?? 0
+        let graphHostRoots = ChatRenderProbe.counts["graph-host-root"]?.values.reduce(0, +) ?? 0
+        let summaryParses = ChatRenderProbe.counts["task-summary-parse"]?.values.reduce(0, +) ?? 0
+
+        XCTAssertEqual(rowCount, 0)
+        XCTAssertEqual(graphHostUpdates, 0, "已定稿历史流式气泡在外层/键盘刷新下不得触发 graph-host-update")
+        XCTAssertEqual(graphHostRoots, 0, "已定稿历史流式气泡在外层/键盘刷新下不得触发 graph-host-root")
+        XCTAssertEqual(layoutInvalidates, 0, "row=0 外层/键盘刷新不得清空 ChatTimelineRowLayout 缓存")
+        XCTAssertEqual(layoutMeasures, 0, "row=0 外层/键盘刷新不得触发全表重新测量")
+        XCTAssertEqual(summaryParses, 0, "后台通知后相同任务摘要不得重复触发 task-summary-parse")
     }
 }

@@ -3,6 +3,7 @@ import UIKit
 import Shared
 import ChatLayout
 import Combine
+import SwiftStreamingMarkdown
 
 struct ChatSwiftUIMessageBubble: View, @MainActor Equatable {
     let entryID: String
@@ -20,6 +21,7 @@ struct ChatSwiftUIMessageBubble: View, @MainActor Equatable {
     var body: some View {
         MessageBubbleView(
             message: row.message,
+            displayTexts: row.displayTexts,
             messageIndex: row.index,
             isAssistantContinuation: row.isAssistantContinuation,
             variantInfo: variantInfo,
@@ -81,6 +83,7 @@ struct ChatListMessageRenderModel {
     /// Set only on a phone-step group's head row.
     var phoneToolGroup: ChatPhoneToolGroupSummary? = nil
     var assistantTurn: ChatAssistantTurnRole? = nil
+    var automationScreenshotGroup: ChatAutomationScreenshotBatchSummary? = nil
     var isTaskLive = false
     var usesIndependentTasks = false
     var contentObservesGenerationState = false
@@ -98,9 +101,25 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
     let imageAccessibilityFocusToolCallID: String?
     let onAction: (ChatListAction) -> Void
 
+    private var rowLayoutSignature: Int {
+        var hasher = Hasher()
+        hasher.combine(model.renderIdentity)
+        hasher.combine(model.phoneToolGroup?.signature)
+        hasher.combine(model.automationScreenshotGroup?.signature)
+        hasher.combine(model.variantInfo?.selectedIndex)
+        hasher.combine(model.variantInfo?.variantCount)
+        hasher.combine(displaySettingSignature)
+        hasher.combine(generativeUiSettingSignature)
+        return hasher.finalize()
+    }
+
     var body: some View {
         let _ = ChatRenderProbe.record("row", id: model.row.messageId)
-        ChatTimelineRowLayout(messageID: model.row.messageId) {
+        ChatTimelineRowLayout(
+            messageID: model.row.messageId,
+            tracksRowInvalidation: true,
+            layoutSignature: rowLayoutSignature
+        ) {
             ChatMessageHostedBubble(
                 model: model,
                 displaySetting: displaySetting,
@@ -109,6 +128,7 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
                 imageAccessibilityFocusToolCallID: imageAccessibilityFocusToolCallID,
                 onAction: onAction
             )
+            .environment(\.markdownLayoutInvalidationID, model.row.messageId)
             .id(model.renderIdentity)
         }
     }
@@ -126,6 +146,7 @@ struct NativeTimelineMessageBubble: View, @MainActor Equatable {
               lhs.model.renderIdentity == rhs.model.renderIdentity,
               lhs.model.phoneToolGroup?.signature == rhs.model.phoneToolGroup?.signature,
               lhs.model.assistantTurn == rhs.model.assistantTurn,
+              lhs.model.automationScreenshotGroup?.signature == rhs.model.automationScreenshotGroup?.signature,
               lhs.model.isTaskLive == rhs.model.isTaskLive,
               lhs.effectiveIsGenerating == rhs.effectiveIsGenerating,
               lhs.displaySettingSignature == rhs.displaySettingSignature,
@@ -239,10 +260,12 @@ private struct ChatMessageHostedBubble: View {
     fileprivate func messageBubble(
         message: UIMessage,
         isGenerationActive: Bool,
-        renderState: ChatRenderState
+        renderState: ChatRenderState,
+        displayTexts: [Int: String]? = nil
     ) -> some View {
         MessageBubbleView(
             message: message,
+            displayTexts: displayTexts ?? model.row.displayTexts,
             messageIndex: model.row.index,
             isAssistantContinuation: model.row.isAssistantContinuation,
             variantInfo: model.variantInfo,
@@ -273,7 +296,8 @@ private struct ChatMessageHostedBubble: View {
             reasoningLevelLabel: reasoningLevelLabel,
             imageAccessibilityFocusToolCallID: imageAccessibilityFocusToolCallID,
             phoneToolGroup: model.phoneToolGroup,
-            assistantTurn: model.assistantTurn
+            assistantTurn: model.assistantTurn,
+            automationScreenshotGroup: model.automationScreenshotGroup
         )
     }
 }
@@ -300,7 +324,8 @@ private struct ChatLiveTailBubble: View {
         .messageBubble(
             message: model.row.isLast ? liveTailModel.message : model.row.message,
             isGenerationActive: model.row.isLast ? liveTailModel.isGenerationActive : model.isGenerationActive,
-            renderState: model.row.isLast ? liveTailModel.renderState : model.renderState
+            renderState: model.row.isLast ? liveTailModel.renderState : model.renderState,
+            displayTexts: model.row.isLast ? liveTailModel.displayTexts : model.row.displayTexts
         )
     }
 }

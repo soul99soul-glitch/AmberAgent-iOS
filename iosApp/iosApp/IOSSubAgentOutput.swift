@@ -104,7 +104,7 @@ enum IOSSubAgentOutputProjection {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .last
-        let summary = bounded(assistantText ?? fallbackSummary ?? "", limit: maxSummaryLength) ?? ""
+        let summary = summaryFromStoredResult(assistantText ?? fallbackSummary ?? "") ?? ""
         guard !summary.isEmpty || !steps.isEmpty else { return nil }
         return IOSSubAgentOutputSnapshot(summary: summary, steps: steps, isFinal: isFinal)
     }
@@ -125,9 +125,9 @@ enum IOSSubAgentOutputProjection {
         let summary: String?
         if isFinal {
             summary = summaryFromStoredResult(task.resultSummary) ??
-                bounded(task.error, limit: maxSummaryLength)
+                summaryFromStoredResult(task.error)
         } else {
-            summary = bounded(liveText ?? "", limit: maxSummaryLength)
+            summary = summaryFromStoredResult(liveText ?? "")
         }
         guard let summary, !summary.isEmpty else {
             return isFinal
@@ -137,43 +137,414 @@ enum IOSSubAgentOutputProjection {
         return IOSSubAgentOutputSnapshot(summary: summary, steps: [], isFinal: isFinal)
     }
 
-    static func summaryFromStoredResult(_ raw: String) -> String? {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        if let data = trimmed.data(using: .utf8),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            var pieces: [String] = []
-            if let summary = object["summary"] as? String {
-                pieces.append(summary)
-            } else if let conclusion = object["conclusion"] as? String {
-                pieces.append(conclusion)
+    static let childResultExcerptMarker = "[Amber host: child result excerpt]"
+    static let childRunEndedMarker = "[Amber host: child run ended]"
+    static let emptyRunPlaceholder = "[run ended without assistant output]"
+
+    /// Extracts user-facing readable Markdown/summary at the subagent result protocol boundary.
+    /// Keeps internal host envelopes (`[Amber host: child result excerpt]`, `[Amber host: child run ended]`,
+    /// `session_read` UUIDs/offsets, `run_ended` flags, and raw JSON) out of user-visible chat text,
+    /// while preserving original newlines and Markdown structure.
+    /// Never falls back to raw JSON when parsing fails or when readable fields are absent.
+    static func extractUserFacingResult(from raw: String) -> String? {
+        var working = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !working.isEmpty, working != emptyRunPlaceholder else { return nil }
+
+        // 1. Strip `[mailbox KIND from SENDER]\n` transport header if present.
+        if working.hasPrefix("[mailbox "),
+           let newlineIdx = working.firstIndex(of: "\n") {
+            let headerLine = working[..<newlineIdx]
+            if headerLine.hasSuffix("]") {
+                working = String(working[working.index(after: newlineIdx)...])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            if let findings = object["findings"] as? String {
-                pieces.append(findings)
-            } else if let findings = object["findings"] as? [Any] {
-                pieces.append(contentsOf: findings.compactMap { $0 as? String })
-            } else if let keyPoints = object["key_points"] as? [Any] {
-                pieces.append(contentsOf: keyPoints.compactMap { $0 as? String })
+        }
+        guard !working.isEmpty, working != emptyRunPlaceholder else { return nil }
+
+        // 2. Split known `[Amber host: ...]` trailer if present.
+        var trailerDict: [String: Any]? = nil
+        var matchedMarker: String? = nil
+        if let split = splitHostMarker(in: working) {
+            matchedMarker = split.marker
+            working = split.bodyPrefix
+            trailerDict = parseHostTrailerJSON(from: split.trailerBody)
+        }
+
+        // 3. Unpack `[Structured Digest]` / `[Raw Output]` framing if present in `working`.
+        working = unpackStructuredDigestSections(in: working)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if working == emptyRunPlaceholder {
+            working = ""
+        }
+
+        // 4. Protocol JSON is not Markdown merely because both may start with `[`. Malformed
+        // object envelopes still fail closed; links and bracket labels remain readable prose.
+        if isJSONResultPayload(working) {
+            if let extractedFromWorking = extractReadableSummaryFromJSONString(working) {
+                return extractedFromWorking
             }
-            if let needsDecision = object["needs_user_decision"] as? Bool, needsDecision {
-                if let prompt = (object["decision_prompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !prompt.isEmpty {
-                    pieces.append("需用户拍板：\(prompt)")
-                } else {
-                    pieces.append("需用户拍板确认下一步")
+            // Malformed JSON or JSON lacking readable fields: try trailer's structured_summary if any,
+            // and never fall back to raw JSON.
+            if let trailerDict, let extractedFromTrailer = extractReadableSummary(from: trailerDict) {
+                return extractedFromTrailer
+            }
+            return nil
+        }
+
+        // 5. If `working` is empty (e.g. payload was only `[Amber host: child result excerpt]\n{...}`),
+        // extract from the parsed trailer dictionary.
+        if working.isEmpty {
+            if let trailerDict, let extractedFromTrailer = extractReadableSummary(from: trailerDict) {
+                return extractedFromTrailer
+            }
+            return nil
+        }
+
+        // Guard against unparsed host marker lines leaking if malformed.
+        if working.hasPrefix("[Amber host:") {
+            if let trailerDict, let extractedFromTrailer = extractReadableSummary(from: trailerDict) {
+                return extractedFromTrailer
+            }
+            return nil
+        }
+
+        // 6. When the payload was a truncated `[Amber host: child result excerpt]`, ensure the
+        // structured summary (conclusion / deliverable_hint / formatted_summary) is preserved
+        // even if `working` only holds a truncated excerpt slice.
+        if matchedMarker == childResultExcerptMarker,
+           let trailerDict,
+           let extractedFromTrailer = extractReadableSummary(from: trailerDict),
+           !working.contains(extractedFromTrailer) {
+            let conclusionLine = ((trailerDict["structured_summary"] as? [String: Any])?["conclusion"] as? String)
+                ?? (trailerDict["conclusion"] as? String)
+            if let conclusionLine, !conclusionLine.isEmpty, working.hasPrefix(conclusionLine) {
+                return working
+            }
+            return extractedFromTrailer + "\n\n" + working
+        }
+
+        return working
+    }
+
+    static func isKnownSubAgentResultEnvelope(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if trimmed.contains(childResultExcerptMarker)
+            || trimmed.contains(childRunEndedMarker)
+            || trimmed.hasPrefix("[Structured Digest]")
+            || trimmed == emptyRunPlaceholder {
+            return true
+        }
+        if trimmed.hasPrefix("{") || (trimmed.hasPrefix("[") && !hasLeadingMarkdownLink(trimmed)) {
+            return trimmed.contains("\"structured_summary\"")
+                || trimmed.contains("\"formatted_summary\"")
+                || trimmed.contains("\"session_read\"")
+                || trimmed.contains("\"run_ended\"")
+        }
+        return false
+    }
+
+    static func sanitizeAssistantDisplayTextIfEnvelope(_ text: String) -> String {
+        guard isKnownSubAgentResultEnvelope(text) else { return text }
+        return extractUserFacingResult(from: text) ?? ""
+    }
+
+    /// Non-decoding fallback for previews or a renderer that has not received its first event.
+    static func unpreparedDisplayTexts(in message: UIMessage) -> [Int: String] {
+        var texts: [Int: String] = [:]
+        for (index, part) in message.parts.enumerated() {
+            guard let text = part as? UIMessagePart.Text else { continue }
+            if message.role == MessageRole.assistant && ChatTaskCommentaryCoalescer.isOrdinaryWaitingText(text.text) {
+                texts[index] = ""
+                continue
+            }
+            let base = IosMailboxMessageBridge.shared.displayText(part: text)
+            let isFinal = IosToolOutputJsonBridge.shared.metadataString(part: text, key: "kind") == "FINAL_ANSWER"
+            texts[index] = isFinal || isKnownSubAgentResultEnvelope(base) ? "" : base
+        }
+        return texts
+    }
+
+    /// Immutable display snapshot prepared by the existing message-event owner before publication.
+    /// Raw message parts stay untouched for persistence and model uploads.
+    static func displayTexts(in message: UIMessage) -> [Int: String] {
+        var texts: [Int: String] = [:]
+        for (index, part) in message.parts.enumerated() {
+            guard let text = part as? UIMessagePart.Text else { continue }
+            texts[index] = message.role == MessageRole.assistant
+                ? (ChatTaskCommentaryCoalescer.isOrdinaryWaitingText(text.text) ? "" : sanitizeAssistantDisplayTextIfEnvelope(text.text))
+                : userFacingMailboxDisplayText(part: text)
+        }
+        return texts
+    }
+
+    static func userFacingMailboxDisplayText(part: UIMessagePart.Text) -> String {
+        let base = IosMailboxMessageBridge.shared.displayText(part: part)
+        let kind = IosToolOutputJsonBridge.shared.metadataString(part: part, key: "kind")
+        if kind == "FINAL_ANSWER" || isKnownSubAgentResultEnvelope(base) {
+            return extractUserFacingResult(from: base) ?? ""
+        }
+        return base
+    }
+
+    private static func splitHostMarker(in text: String) -> (marker: String, bodyPrefix: String, trailerBody: String)? {
+        let markers = [childResultExcerptMarker, childRunEndedMarker]
+        var earliestRange: Range<String.Index>? = nil
+        var matchedMarker: String? = nil
+
+        for marker in markers {
+            if text.hasPrefix(marker) {
+                let range = text.startIndex..<text.index(text.startIndex, offsetBy: marker.count)
+                if earliestRange == nil || range.lowerBound < earliestRange!.lowerBound {
+                    earliestRange = range
+                    matchedMarker = marker
+                }
+            } else if let range = text.range(of: "\n" + marker) {
+                let markerStart = text.index(after: range.lowerBound)
+                let markerRange = markerStart..<range.upperBound
+                if earliestRange == nil || markerRange.lowerBound < earliestRange!.lowerBound {
+                    earliestRange = markerRange
+                    matchedMarker = marker
                 }
             }
-            let result = pieces
+        }
+
+        guard let range = earliestRange, let marker = matchedMarker else { return nil }
+        let prefix = String(text[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = String(text[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (marker, prefix, suffix)
+    }
+
+    private static func parseHostTrailerJSON(from trailerBody: String) -> [String: Any]? {
+        let trimmed = trailerBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        // Try first line if it is a single-line JSON object (standard `IOSWorkspaceStore.json` output).
+        if let firstLine = trimmed.components(separatedBy: .newlines).first?.trimmingCharacters(in: .whitespacesAndNewlines),
+           firstLine.hasPrefix("{"),
+           let data = firstLine.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return obj
+        }
+        // Also support pretty-printed or multi-line JSON objects preceding any trailing English note.
+        if let jsonSlice = extractLeadingBalancedJSONObject(in: trimmed),
+           let data = jsonSlice.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return obj
+        }
+        return nil
+    }
+
+    private static func extractLeadingBalancedJSONObject(in text: String) -> String? {
+        guard let start = text.firstIndex(of: "{") else { return nil }
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var idx = start
+        while idx < text.endIndex {
+            let ch = text[idx]
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if ch == "\\" {
+                    escaped = true
+                } else if ch == "\"" {
+                    inString = false
+                }
+            } else {
+                if ch == "\"" {
+                    inString = true
+                } else if ch == "{" {
+                    depth += 1
+                } else if ch == "}" {
+                    depth -= 1
+                    if depth == 0 {
+                        return String(text[start...idx])
+                    }
+                }
+            }
+            idx = text.index(after: idx)
+        }
+        return nil
+    }
+
+    private static func unpackStructuredDigestSections(in text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("[Structured Digest]") else { return text }
+        let afterHeader = String(trimmed.dropFirst("[Structured Digest]".count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let rawRange = afterHeader.range(of: "\n[Raw Output]\n") ?? afterHeader.range(of: "\n[Raw Output]") {
+            let digestPart = String(afterHeader[..<rawRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawPart = String(afterHeader[rawRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !rawPart.isEmpty, rawPart != emptyRunPlaceholder {
+                if isJSONResultPayload(rawPart) {
+                    if let extracted = extractReadableSummaryFromJSONString(rawPart) {
+                        return extracted
+                    }
+                    return digestPart
+                }
+                return rawPart
+            }
+            return digestPart
+        }
+        return afterHeader
+    }
+
+    private static func isJSONResultPayload(_ text: String) -> Bool {
+        if text.hasPrefix("{") { return true }
+        guard text.hasPrefix("[") else { return false }
+        if let data = text.data(using: .utf8),
+           (try? JSONSerialization.jsonObject(with: data)) is [Any] {
+            return true
+        }
+        // A Markdown link label may itself contain JSON or nested brackets.
+        // Check its complete link framing before treating a partial array as protocol JSON.
+        if hasLeadingMarkdownLink(text) { return false }
+        let firstItem = text.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+        return firstItem.hasPrefix("{") || firstItem.hasPrefix("[")
+    }
+
+    private static func hasLeadingMarkdownLink(_ text: String) -> Bool {
+        var depth = 0
+        var escaped = false
+        var cursor = text.startIndex
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            cursor = text.index(after: cursor)
+            if escaped { escaped = false; continue }
+            if character == "\\" { escaped = true; continue }
+            if character == "[" { depth += 1 }
+            if character == "]" {
+                depth -= 1
+                if depth == 0 { break }
+            }
+        }
+        guard depth == 0, cursor < text.endIndex else { return false }
+        let opening = text[cursor]
+        guard opening == "(" || opening == "[" else { return false }
+        let closing: Character = opening == "(" ? ")" : "]"
+        depth = 1
+        cursor = text.index(after: cursor)
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            cursor = text.index(after: cursor)
+            if escaped { escaped = false; continue }
+            if character == "\\" { escaped = true; continue }
+            if character == opening { depth += 1 }
+            if character == closing {
+                depth -= 1
+                if depth == 0 { return true }
+            }
+        }
+        return false
+    }
+
+    private static func extractReadableSummaryFromJSONString(_ jsonString: String) -> String? {
+        let trimmed = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = trimmed.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return extractReadableSummary(from: object)
+    }
+
+    static func extractReadableSummary(from object: [String: Any]) -> String? {
+        if let nested = object["structured_summary"] as? [String: Any],
+           let nestedSummary = extractReadableSummary(from: nested) {
+            return nestedSummary
+        }
+
+        if let formatted = (object["formatted_summary"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !formatted.isEmpty {
+            return normalizeLiteralNewlines(formatted)
+        }
+
+        let primaryCandidateKeys = ["conclusion", "summary", "result", "markdown", "content", "text"]
+        var primaryText: String? = nil
+        for key in primaryCandidateKeys {
+            if let value = (object[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !value.isEmpty {
+                primaryText = normalizeLiteralNewlines(value)
+                break
+            }
+        }
+
+        let deliverableHint = (object["deliverable_hint"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var keyPointLines: [String] = []
+        if let arr = (object["key_points"] as? [Any]) ?? (object["findings"] as? [Any]) {
+            keyPointLines = arr.compactMap { $0 as? String }
+                .map { normalizeLiteralNewlines($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        } else if let str = (object["key_points"] as? String) ?? (object["findings"] as? String) {
+            keyPointLines = normalizeLiteralNewlines(str)
+                .components(separatedBy: .newlines)
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
-                .joined(separator: "\n")
-            return result.isEmpty ? nil : bounded(result, limit: maxSummaryLength)
         }
-        // A truncated JSON report is not a safe structured value. Do not show
-        // it as if it were a valid report; plain-text fallback output remains
-        // public assistant text and is safe to display as bounded text.
-        if trimmed.hasPrefix("{") || trimmed.hasPrefix("[") { return nil }
-        return bounded(trimmed, limit: maxSummaryLength)
+
+        let needsDecision = (object["needs_user_decision"] as? Bool) == true
+        let decisionPrompt = ((object["decision_prompt"] as? String) ?? (object["next_step"] as? String))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard primaryText != nil || !keyPointLines.isEmpty || (needsDecision && decisionPrompt?.isEmpty == false) else {
+            return nil
+        }
+
+        var sections: [String] = []
+        if let primaryText, !primaryText.isEmpty {
+            sections.append(primaryText)
+        }
+        if let deliverableHint, !deliverableHint.isEmpty,
+           !(primaryText?.contains(deliverableHint) == true) {
+            sections.append("交付物：\(deliverableHint)")
+        }
+        if !keyPointLines.isEmpty {
+            if sections.isEmpty {
+                sections.append(keyPointLines.joined(separator: "\n"))
+            } else {
+                var bulletBlock = ["关键产出要点："]
+                for point in keyPointLines {
+                    if point.hasPrefix("•") || point.hasPrefix("-") || point.hasPrefix("*") {
+                        bulletBlock.append(point)
+                    } else {
+                        bulletBlock.append("• \(point)")
+                    }
+                }
+                sections.append(bulletBlock.joined(separator: "\n"))
+            }
+        }
+        if needsDecision {
+            if let decisionPrompt, !decisionPrompt.isEmpty, decisionPrompt != primaryText {
+                sections.append("需用户拍板：\(decisionPrompt)")
+            } else {
+                sections.append("需用户拍板确认下一步")
+            }
+        }
+
+        let joined = sections.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return joined.isEmpty ? nil : joined
+    }
+
+    private static func normalizeLiteralNewlines(_ text: String) -> String {
+        guard text.contains("\\n") else { return text }
+        return text.replacingOccurrences(of: "\\n", with: "\n")
+    }
+
+    static func summaryFromStoredResult(_ raw: String) -> String? {
+        guard let extracted = extractUserFacingResult(from: raw) else {
+            return nil
+        }
+        return bounded(extracted, limit: maxSummaryLength)
+    }
+
+    /// Activity display and text selection share this public snapshot, including legacy archives.
+    static func displaySnapshot(_ snapshot: IOSSubAgentOutputSnapshot) -> IOSSubAgentOutputSnapshot {
+        IOSSubAgentOutputSnapshot(
+            summary: summaryFromStoredResult(snapshot.summary) ?? "",
+            steps: snapshot.steps,
+            isFinal: snapshot.isFinal
+        )
     }
 
     static func structuredDigest(
@@ -194,9 +565,11 @@ enum IOSSubAgentOutputProjection {
         let policyRequiresDecision = IOSOrchestrationCheckpointPolicy(rawPolicy: effectivePolicy) == .pauseForDecision
 
         if let data = trimmed.data(using: .utf8),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+           let rawObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            let object = (rawObject["structured_summary"] as? [String: Any]) ?? rawObject
             let conclusionRaw = (object["conclusion"] as? String)
                 ?? (object["summary"] as? String)
+                ?? (object["formatted_summary"] as? String)?.components(separatedBy: .newlines).first
                 ?? ""
             let conclusion = cleanLine(conclusionRaw)
             var keyPoints: [String] = []
@@ -204,25 +577,40 @@ enum IOSSubAgentOutputProjection {
                 keyPoints = arr.compactMap { $0 as? String }.map(cleanLine).filter { !$0.isEmpty }
             } else if let str = (object["key_points"] as? String) ?? (object["findings"] as? String) {
                 keyPoints = str.components(separatedBy: .newlines).map(cleanLine).filter { !$0.isEmpty }
+            } else if let formatted = object["formatted_summary"] as? String {
+                keyPoints = normalizeLiteralNewlines(formatted)
+                    .components(separatedBy: .newlines)
+                    .compactMap(extractBulletText(from:))
             }
             guard !conclusion.isEmpty || !keyPoints.isEmpty else { return nil }
             let resolvedConclusion = conclusion.isEmpty ? keyPoints.removeFirst() : conclusion
-            let explicitDecision = object["needs_user_decision"] as? Bool
+            let explicitDecision = (object["needs_user_decision"] as? Bool) ?? (object["needs_decision"] as? Bool)
             let decisionPrompt = cleanLine(
                 (object["decision_prompt"] as? String) ?? (object["next_step"] as? String) ?? ""
             )
-            let inferredDecision = detectDecisionSignal(in: trimmed)
+            let inferredDecision = decisionSignal(in: trimmed)
             let needsDecision = explicitDecision ?? (policyRequiresDecision || inferredDecision.needsDecision)
             return IOSSubAgentStructuredDigest(
                 conclusion: String(resolvedConclusion.prefix(240)),
                 keyPoints: Array(keyPoints.prefix(4)).map { String($0.prefix(160)) },
                 needsUserDecision: needsDecision,
                 decisionPrompt: decisionPrompt.isEmpty ? inferredDecision.prompt : decisionPrompt,
-                deliverableHint: effectiveHint ?? (object["deliverable_hint"] as? String),
-                checkpointPolicy: effectivePolicy ?? (object["checkpoint_policy"] as? String)
+                deliverableHint: effectiveHint ?? (object["deliverable_hint"] as? String) ?? (rawObject["deliverable_hint"] as? String),
+                checkpointPolicy: effectivePolicy ?? (object["checkpoint_policy"] as? String) ?? (rawObject["checkpoint_policy"] as? String)
             )
         }
-        if trimmed.hasPrefix("{") || trimmed.hasPrefix("[") {
+        if isKnownSubAgentResultEnvelope(trimmed) {
+            guard let extracted = extractUserFacingResult(from: trimmed),
+                  extracted != trimmed else {
+                return nil
+            }
+            return structuredDigest(
+                from: extracted,
+                deliverableHint: deliverableHint,
+                checkpointPolicy: checkpointPolicy
+            )
+        }
+        if isJSONResultPayload(trimmed) {
             return nil
         }
 
@@ -267,7 +655,7 @@ enum IOSSubAgentOutputProjection {
             }
         }
 
-        let decisionSignal = detectDecisionSignal(in: trimmed)
+        let decisionSignal = decisionSignal(in: trimmed)
         let needsDecision = policyRequiresDecision || decisionSignal.needsDecision
         return IOSSubAgentStructuredDigest(
             conclusion: conclusion,
@@ -342,20 +730,32 @@ enum IOSSubAgentOutputProjection {
         )
     }
 
-    private static func stripCodeFences(from text: String) -> String {
-        var result: [String] = []
-        var insideFence = false
+    static func linesOutsideCodeFences(_ text: String) -> [String] {
+        var fence: (marker: Character, length: Int)?
+        var visible: [String] = []
         for line in text.components(separatedBy: .newlines) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("```") {
-                insideFence.toggle()
-                continue
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let marker = trimmed.first, marker == "`" || marker == "~" {
+                let length = trimmed.prefix(while: { $0 == marker }).count
+                if length >= 3 {
+                    if let current = fence {
+                        if marker == current.marker, length >= current.length,
+                           trimmed.dropFirst(length).trimmingCharacters(in: .whitespaces).isEmpty {
+                            fence = nil
+                        }
+                    } else {
+                        fence = (marker, length)
+                    }
+                    continue
+                }
             }
-            if !insideFence {
-                result.append(line)
-            }
+            if fence == nil { visible.append(line) }
         }
-        return result.joined(separator: "\n")
+        return visible
+    }
+
+    private static func stripCodeFences(from text: String) -> String {
+        linesOutsideCodeFences(text).joined(separator: "\n")
     }
 
     private static func isNoiseLogLine(_ line: String) -> Bool {
@@ -403,18 +803,24 @@ enum IOSSubAgentOutputProjection {
         return String(cleaned.prefix(maxChars))
     }
 
-    private static func detectDecisionSignal(in text: String) -> (needsDecision: Bool, prompt: String?) {
-        let decisionKeywords = [
-            "需要你拍板", "需要您拍板", "请拍板", "待你拍板", "待您拍板",
-            "待你确认", "待您确认", "请确认下一步", "需要你决定", "需要您决定",
-            "请选择下一步", "是否继续深入", "pause_for_decision"
+    static func decisionSignal(in text: String) -> (needsDecision: Bool, prompt: String?) {
+        let markers = [
+            "[待拍板]", "【待拍板】", "等待拍板", "等我拍板", "等你拍板", "待你拍板",
+            "请拍板", "需要拍板", "需你拍板", "需用户拍板", "待拍板：", "待拍板:",
+            "[needs_decision]", "needs_decision:", "awaiting_decision", "[checkpoint]", "checkpoint:",
+            "阶段完成待确认", "需要你拍板", "需要您拍板", "待您拍板", "待你确认", "待您确认",
+            "请确认下一步", "需要你决定", "需要您决定", "请选择下一步", "是否继续深入", "pause_for_decision"
         ]
-        for rawLine in text.components(separatedBy: .newlines) {
-            let line = cleanLine(rawLine)
-            guard !line.isEmpty else { continue }
-            if decisionKeywords.contains(where: { line.contains($0) }) {
-                return (true, String(line.prefix(140)))
-            }
+        for rawLine in linesOutsideCodeFences(text) {
+            let line = extractBulletText(from: rawLine) ?? cleanLine(rawLine)
+            let lower = line.replacingOccurrences(of: "`", with: "").lowercased()
+            guard let marker = markers.first(where: lower.hasPrefix) else { continue }
+            let remainder = lower.dropFirst(marker.count)
+                .trimmingCharacters(in: CharacterSet(charactersIn: " ：:·-—\t"))
+            if ["无需", "无须", "不需要", "不用", "不必", "不再"].contains(where: remainder.hasPrefix) { continue }
+            if ["needs_decision:", "awaiting_decision", "checkpoint:"].contains(marker),
+               ["false", "false.", "false。", "0"].contains(remainder) { continue }
+            return (true, String(line.prefix(140)))
         }
         return (false, nil)
     }
@@ -504,6 +910,14 @@ enum IOSSubAgentOutputLoader {
         activity: IOSSubAgentActivity,
         task: IOSAdvancedTaskRecord?
     ) async throws -> IOSSubAgentOutputSnapshot? {
+        try await sourceSnapshot(activity: activity, task: task)
+            .map(IOSSubAgentOutputProjection.displaySnapshot)
+    }
+
+    private static func sourceSnapshot(
+        activity: IOSSubAgentActivity,
+        task: IOSAdvancedTaskRecord?
+    ) async throws -> IOSSubAgentOutputSnapshot? {
         if activity.id.hasPrefix("task:") {
             guard let task else { return nil }
             if task.status.isTerminal,
@@ -560,7 +974,7 @@ enum IOSSubAgentOutputArchive {
             }
         }
         guard child else { return }
-        guard let data = try? JSONEncoder().encode(snapshot),
+        guard let data = try? JSONEncoder().encode(IOSSubAgentOutputProjection.displaySnapshot(snapshot)),
               let payload = String(data: data, encoding: .utf8) else { return }
         let event = AgentRunEvent(
             eventId: eventPrefix + runId,
@@ -598,6 +1012,8 @@ enum IOSSubAgentOutputArchive {
         }
         guard let payload,
               let data = payload.data(using: .utf8) else { return nil }
-        return try JSONDecoder().decode(IOSSubAgentOutputSnapshot.self, from: data)
+        return IOSSubAgentOutputProjection.displaySnapshot(
+            try JSONDecoder().decode(IOSSubAgentOutputSnapshot.self, from: data)
+        )
     }
 }

@@ -375,6 +375,7 @@ struct ChatRuntimeContextBuilder {
 
     @MainActor
     private func messagesByInjectingRecentEpisodesContext(_ messages: [UIMessage]) -> [UIMessage] {
+        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else { return messages }
         let prompt = ChatEpisodeContextSupport.recentEpisodesPrompt(
             conversationId: conversationId,
             isOrchestratedChild: isOrchestratedChild
@@ -580,6 +581,7 @@ struct ChatRuntimeContextBuilder {
         _ messages: [UIMessage],
         memoryRecallOverride: ChatMemoryContextBuilder.RecallResult?
     ) -> [UIMessage] {
+        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else { return messages }
         let result = memoryRecallResult(for: messages, override: memoryRecallOverride)
         let wikiIndex = IOSMemoryPersistence.shared.wikiNavigation(runtime: sharedSettings.agentRuntime)
         let runtime = sharedSettings.agentRuntime
@@ -639,6 +641,9 @@ struct ChatRuntimeContextBuilder {
         for messages: [UIMessage],
         override: ChatMemoryContextBuilder.RecallResult? = nil
     ) -> ChatMemoryContextBuilder.RecallResult {
+        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else {
+            return ChatMemoryContextBuilder.RecallResult(prompt: nil, records: [])
+        }
         if let override { return override }
         let records = ChatMemoryContextBuilder.recordsForPrompt(
             records: IosMemoryFactory.shared.getAllRecords(),

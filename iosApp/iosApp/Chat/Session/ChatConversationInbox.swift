@@ -160,15 +160,21 @@ extension ChatViewModel {
             generateResponse(inputDigest: digest, conversationId: state.conversationId)
         } else if let configuration = state.generationConfiguration,
                   let conversationId = state.conversationId {
-            host(for: conversationId)?.start(
+            let run = runRegistry.current(for: conversationId)
+            let anchorId = state.messages.last.map(ChatMessageProjector.messageId(for:))
+            let baseline = buildTaskBaselineMessages(in: run, anchorUserMessageId: anchorId)
+            let slot = ChatAsyncTaskSlot(
+                conversationId: conversationId,
+                inputDigest: digest,
+                anchorUserMessageId: anchorId,
+                phoneControlUserInitiated: false,
                 providerSetting: configuration.provider,
                 params: configuration.params,
-                inputDigest: digest,
-                conversationId: conversationId,
-                uploadMessages: state.messages,
                 toolExposureBridge: state.toolExposureBridge,
-                recipeCatalogSnapshot: configuration.dynamicSnapshot
+                recipeCatalogSnapshot: configuration.dynamicSnapshot,
+                baselineMessages: baseline
             )
+            _ = startOrEnqueueTaskSlot(slot, in: run)
         }
     }
 
@@ -283,7 +289,7 @@ extension ChatViewModel {
     /// every read; previews never acknowledge mail, the resumed run does that.
     private func resumeYieldedRunIfReady(state: ChatConversationRunState?, runId: String) async throws -> Bool {
         guard let state, !Task.isCancelled, state.waitingForChildRunId == runId,
-              let id = state.conversationId, let host = host(for: id),
+              let id = state.conversationId, host(for: id) != nil,
               !isGenerationActive(conversationId: id) else { return true }
         let reports = try await inboxIO.pendingResults(forConversationId: id)
 #if DEBUG
@@ -305,15 +311,21 @@ extension ChatViewModel {
         state.waitingForChildRunId = nil
         state.childResultWakeTask = nil
         _ = appendMailboxEnvelopes(reports, state: state)
-        host.start(
+        let run = runRegistry.current(for: id)
+        let anchorId = state.messages.last.map(ChatMessageProjector.messageId(for:))
+        let baseline = buildTaskBaselineMessages(in: run, anchorUserMessageId: anchorId)
+        let slot = ChatAsyncTaskSlot(
+            conversationId: id,
+            inputDigest: chatInputDigest(for: "child-results:\(runId)"),
+            anchorUserMessageId: anchorId,
+            phoneControlUserInitiated: false,
             providerSetting: configuration.provider,
             params: configuration.params,
-            inputDigest: chatInputDigest(for: "child-results:\(runId)"),
-            conversationId: id,
-            uploadMessages: state.messages,
             toolExposureBridge: state.toolExposureBridge,
-            recipeCatalogSnapshot: configuration.dynamicSnapshot
+            recipeCatalogSnapshot: configuration.dynamicSnapshot,
+            baselineMessages: baseline
         )
+        _ = startOrEnqueueTaskSlot(slot, in: run)
         return true
     }
 

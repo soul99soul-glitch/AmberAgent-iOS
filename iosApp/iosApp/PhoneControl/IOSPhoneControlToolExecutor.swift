@@ -496,9 +496,11 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                     act: { await self.dispatch($0, pageAnchorRef: $1, pageAnchorRegion: $2,
                                                requireUnchangedObservation: $3, runner: runner) },
                     choose: { [jev, runID] goal, observation, candidates, recent, expectation in
-                        await jev.chooseAction(goal: goal, observation: observation, candidates: candidates,
-                                               recentSteps: recent, expectation: expectation, runID: runID,
-                                               screenshotProvider: { try await runner.screenshotObservation() })
+                        await Self.chooseGoalAction(
+                            jev: jev, goal: goal, observation: observation, candidates: candidates,
+                            recentSteps: recent, expectation: expectation, runID: runID,
+                            screenshotProvider: { try await runner.screenshotObservation() }
+                        )
                     },
                     advise: { [jev, runID] goal, expectation, before, after, verification in
                         await jev.adviseAfterAction(goal: goal, expectation: expectation, before: before,
@@ -703,6 +705,35 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         }
     }
 
+    static func chooseGoalAction(
+        jev: IOSJevPhoneControlService,
+        goal: String,
+        observation: PhoneObservation,
+        candidates: [IOSJevPhoneControlService.Candidate],
+        recentSteps: [String],
+        expectation: IOSPhoneGoalExpectation?,
+        runID: String,
+        screenshotProvider: (() async throws -> PhoneScreenshot)?
+    ) async -> IOSJevPhoneControlService.Selection {
+        let textChoice = await jev.chooseAction(
+            goal: goal, observation: observation, candidates: candidates,
+            recentSteps: recentSteps, expectation: expectation, runID: runID,
+            recentStepLimit: 12,
+            screenshotProvider: nil
+        )
+        guard textChoice == .needsScreenshot,
+              screenshotProvider != nil,
+              jev.canSendActionScreenshots else {
+            return textChoice
+        }
+        return await jev.chooseAction(
+            goal: goal, observation: observation, candidates: candidates,
+            recentSteps: recentSteps, expectation: expectation, runID: runID,
+            recentStepLimit: 12,
+            screenshotProvider: screenshotProvider
+        )
+    }
+
     private static func phoneActionMode() -> IOSJevMode {
         let settings = IOSSharedSettingsStore.loadPersistedJevSettings()
         return settings.canSend(useCase: .phoneActions, required: [.selectedTaskText, .phoneContent])
@@ -879,13 +910,19 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             guard IOSPhoneControlController.validBundleID(request.bundleID) else { throw InvalidArguments("bundle_id 无效。") }
             return .runFlow(request)
         case "phone_run_goal":
-            guard Set(object.keys).isSubset(of: ["goal", "bundle_id", "actions", "steps", "completion", "max_steps"]) else {
+            guard Set(object.keys).isSubset(of: ["goal", "bundle_id", "page_anchor", "actions", "steps", "completion", "max_steps"]) else {
                 throw InvalidArguments("phone_run_goal 包含未知参数。")
             }
             guard object["actions"] == nil || object["steps"] == nil else {
                 throw InvalidArguments("phone_run_goal 只能提供 actions 或 steps 其中一个。")
             }
+            guard object["page_anchor"] == nil || object["steps"] == nil else {
+                throw InvalidArguments("phone_run_goal 的根级 page_anchor 不能与 steps 同时使用。")
+            }
             try validateExpectationObject(object["completion"])
+            if let pageAnchor = object["page_anchor"] {
+                try validateTargetObject(pageAnchor)
+            }
             if let actions = object["actions"] {
                 try validateGoalActionsObject(actions)
             }

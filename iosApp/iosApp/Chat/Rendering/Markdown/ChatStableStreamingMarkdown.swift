@@ -1,9 +1,46 @@
 import SwiftUI
+import Observation
 import Shared
 import SwiftStreamingMarkdown
 
+/// Tracks whether a segmented-delivery assistant message has finished parsing its
+/// first non-empty `RenderableDocument` block. Until this flips to `true`, the
+/// bubble container (`ChatAssistantStack` + `ChatAgentName()`) stays unpresented
+/// at zero height and the single-line task activity row remains visible, so the
+/// bubble container and first rendered block enter atomically on the exact same frame.
+@MainActor
+@Observable
+final class ChatSegmentedBubbleReadiness {
+    static let shared = ChatSegmentedBubbleReadiness()
+    private(set) var readyMessageIDs: Set<String> = []
+    #if DEBUG
+    static var prewarmGateForTesting: (@Sendable () async -> Void)?
+    #endif
+
+    func isReady(messageID: String?) -> Bool {
+        guard let messageID, !messageID.isEmpty else { return true }
+        return readyMessageIDs.contains(messageID)
+    }
+
+    func markReady(messageID: String?) {
+        guard let messageID, !messageID.isEmpty, !readyMessageIDs.contains(messageID) else { return }
+        readyMessageIDs.insert(messageID)
+    }
+
+    func reset(messageID: String?) {
+        guard let messageID, !messageID.isEmpty else { return }
+        readyMessageIDs.remove(messageID)
+    }
+
+    func resetAllForTesting() {
+        readyMessageIDs.removeAll()
+    }
+}
+
 struct ChatStableStreamingMarkdownView: View {
     @Environment(\.chatStreamingTailCoordinator) private var tailCoordinator
+    @Environment(\.markdownSegmentedBlockEntrance) private var segmentedBlockEntrance
+    @Environment(\.markdownLayoutInvalidationID) private var layoutInvalidationID
     let text: String
     let config: SwiftStreamingMarkdown.MarkdownRenderConfig
     var cacheIdentity: String? = nil
@@ -11,6 +48,7 @@ struct ChatStableStreamingMarkdownView: View {
     @StateObject private var controller = ChatStableStreamingMarkdownController()
 
     var body: some View {
+        let _ = ChatTimelineRowLayoutInvalidation.markRowDirty(layoutInvalidationID)
         let visualHash = ChatStableStreamingMarkdownController.cachedVisualConfigHash(for: config)
         let resolution = controller.resolution(
             for: text,
@@ -23,12 +61,14 @@ struct ChatStableStreamingMarkdownView: View {
         // blockSpacing 提供，使冷行首帧高度贴近异步解析后的真实高度，
         // 消除历史行首次实例化时"占位偏高→解析后整章收缩"的可见位移。
         let renderable = resolution.renderable
-            ?? SwiftStreamingMarkdown.RenderableDocument(
-                plainText: text,
-                id: "0",
-                config: config,
-                splittingParagraphsOnBlankLines: true
-            )
+            ?? ((segmentedBlockEntrance || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                ? SwiftStreamingMarkdown.RenderableDocument.empty
+                : SwiftStreamingMarkdown.RenderableDocument(
+                    plainText: text,
+                    id: "0",
+                    config: config,
+                    splittingParagraphsOnBlankLines: true
+                ))
         SwiftStreamingMarkdown.DocumentView(
             renderableDocument: renderable,
             config: config,
@@ -50,7 +90,8 @@ struct ChatStableStreamingMarkdownView: View {
                     text: text,
                     config: config,
                     cacheIdentity: cacheIdentity,
-                    tailCoordinator: tailCoordinator
+                    tailCoordinator: tailCoordinator,
+                    layoutInvalidationID: layoutInvalidationID
                 )
             }
     }
@@ -103,6 +144,7 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
     @Published private(set) var revision = 0
     let tailSink = SwiftStreamingMarkdown.MarkdownStreamingTailSink()
     private weak var tailCoordinator: ChatStreamingTailCoordinator?
+    private var layoutInvalidationID: String?
     private var renderedText: String?
     private var renderableDocument: SwiftStreamingMarkdown.RenderableDocument?
     private var renderedSignature: RenderSignature?
@@ -204,10 +246,23 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
         text: String,
         config: SwiftStreamingMarkdown.MarkdownRenderConfig,
         cacheIdentity: String? = nil,
-        tailCoordinator: ChatStreamingTailCoordinator? = nil
+        tailCoordinator: ChatStreamingTailCoordinator? = nil,
+        layoutInvalidationID: String? = nil
     ) {
         ChatRenderProbe.record("md-schedule")
         self.tailCoordinator = tailCoordinator
+        if let layoutInvalidationID {
+            self.layoutInvalidationID = layoutInvalidationID
+        }
+        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let cached = resolution(
+            for: text,
+            config: config,
+            cacheIdentity: cacheIdentity
+           ).renderable,
+           cached != SwiftStreamingMarkdown.RenderableDocument.empty {
+            ChatSegmentedBubbleReadiness.shared.markReady(messageID: self.layoutInvalidationID)
+        }
         if let tailCoordinator {
             tailCoordinator.bindSink(tailSink)
             tailSink.updateStreamingConfig(
@@ -365,6 +420,13 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
             ChatPerfTrace.event("MarkdownCacheHit")
             ChatRenderProbe.record("md-parse-ms:cache-hit")
         } else {
+            #if DEBUG
+            if !config.coalescesAdjacentTextBlocks,
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let gate = ChatSegmentedBubbleReadiness.prewarmGateForTesting {
+                await gate()
+            }
+            #endif
             renderable = await Task.detached(priority: .userInitiated) {
                 let parser = SwiftStreamingMarkdown.MarkdownParserImpl()
                 // repairsRejectedStrongEmphasis：修复 CommonMark flanking 拒绝的粗体
@@ -389,7 +451,12 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
             ChatRenderProbe.record(Self.parseDurationBucket(parseElapsedMs))
         }
         guard !Task.isCancelled else { return }
+        let hasNonEmptyRenderable = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && renderable != SwiftStreamingMarkdown.RenderableDocument.empty
         guard renderedText != text || renderedSignature != signature || renderableDocument != renderable else {
+            if hasNonEmptyRenderable {
+                ChatSegmentedBubbleReadiness.shared.markReady(messageID: layoutInvalidationID)
+            }
             syncStreamingTail(text: text, renderable: renderable, config: config)
             return
         }
@@ -412,6 +479,9 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
                 Self.storeCachedRenderable(renderable, for: text, config: config)
             }
             syncStreamingTail(text: text, renderable: renderable, config: config)
+            if hasNonEmptyRenderable {
+                ChatSegmentedBubbleReadiness.shared.markReady(messageID: layoutInvalidationID)
+            }
             revision &+= 1
         }
     }

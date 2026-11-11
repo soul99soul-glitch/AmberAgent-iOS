@@ -102,6 +102,7 @@ struct ChatSuggestionStrip: View {
             }
             .padding(.vertical, 3)
         }
+        .fixedSize(horizontal: false, vertical: true)
         .contentMargins(.horizontal, ChatLayout.contentHorizontalInset, for: .scrollContent)
         .padding(.horizontal, -ChatLayout.contentHorizontalInset)
     }

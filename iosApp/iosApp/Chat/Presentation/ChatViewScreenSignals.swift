@@ -37,7 +37,7 @@ extension ChatView {
         next.userMessageCount = messages.filter {
             $0.role == MessageRole.user && ChatMessageProjector.isConversationMessage($0)
         }.count
-        next.lastMessageID = messages.last.map(ChatMessageProjector.messageId(for:))
+        next.updateTimelineAnchors(from: messages)
         next.recapBranchID = conversationStore.currentRecapBranchID ?? ""
         let taskCounts = taskCountCache.counts(messages: messages, isGenerationActive: viewModel.isGenerationActive)
         next.inChatActiveTaskCount = taskCounts.active
@@ -397,11 +397,30 @@ extension ChatView {
 
     var currentTimelineActivity: ChatTimelineActivity? {
         guard let presentation = activeTimelinePresentation else { return nil }
+        if let deferredAnchor = viewModel.pendingDeferredGenerationAnchorId {
+            return ChatTimelineActivity(
+                anchorMessageID: deferredAnchor,
+                hasAssistant: false,
+                presentation: presentation,
+                tool: nil,
+                taskSlot: nil,
+                plannedStages: [],
+                stagePlanStartedUptime: nil,
+                liveReasoningSummary: nil,
+                tracksTaskLiveness: false,
+                showsThought: false
+            )
+        }
         let task = viewModel.focusedActiveTask
         let assistant = task?.generatedMessages.last(where: { $0.role == .assistant })
-        guard let anchor = (showsTaskFailure && task == nil ? failureMessageID : nil)
+        guard let rawAnchor = (showsTaskFailure && task == nil ? failureMessageID : nil)
             ?? assistant.map(ChatMessageProjector.messageId(for:))
             ?? task?.anchorUserMessageId ?? chatListSummary.lastMessageID else { return nil }
+        let (anchor, hasAssistant) = chatListSummary.timelineActivityAnchor(
+            rawAnchor: rawAnchor,
+            hasAssistant: assistant != nil,
+            isTargetedFollowup: viewModel.selectedFollowupRunId != nil
+        )
         let tool: UIMessagePart.Tool?
         if let step = chatListSummary.activeToolStep,
            (presentation.kind == .tool || presentation.kind == .image),
@@ -416,7 +435,7 @@ extension ChatView {
             presentation.tint != .red
         let showsThought = tracksTaskLiveness &&
             (presentation.kind == .thinking || (presentation.kind == .waiting && presentation.title == "正在思考"))
-        return ChatTimelineActivity(anchorMessageID: anchor, hasAssistant: assistant != nil,
+        return ChatTimelineActivity(anchorMessageID: anchor, hasAssistant: hasAssistant,
                                     presentation: presentation, tool: tool, taskSlot: task,
                                     plannedStages: task?.plannedActivityStages ?? [],
                                     stagePlanStartedUptime: task?.stagePlanStartedUptime,

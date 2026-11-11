@@ -232,6 +232,18 @@ final class IOSPhoneGoalLoop {
         var noProgress = 0
         var ineffective = carry?.ineffective ?? []
         var withheld: [String] = []
+        var trackedPageAnchor: PhoneObservationNode? = nil
+
+        func checkPageAnchor(_ observation: PhoneObservation) -> Bool {
+            guard carry == nil, let target = request.pageAnchor else { return true }
+            let matches = IOSPhoneGoalVerification.matchingNodes(target: target, in: observation)
+            guard matches.count == 1, let anchor = matches.first else { return false }
+            if let prior = trackedPageAnchor {
+                return prior.label == anchor.label && prior.value == anchor.value && prior.type == anchor.type
+            }
+            trackedPageAnchor = anchor
+            return true
+        }
 
         func result(_ status: Result.Status, _ reason: String, code: ReasonCode, screenshot: Bool = false,
                     unknown: PhoneControlProblem? = nil) -> Result {
@@ -343,6 +355,10 @@ final class IOSPhoneGoalLoop {
                     }
                     return result(.completed, "最新界面满足指定的验收条件。", code: .completed)
                 }
+                guard checkPageAnchor(observation) else {
+                    return result(.handback, "当前页面或题目锚点已变化，交回主模型重新理解。",
+                                  code: .pageChanged, screenshot: true)
+                }
                 guard actionCount < request.maxSteps else {
                     return result(.handback, "已达到动作数量上限；请根据最新观察继续规划。", code: .stepBudgetExhausted)
                 }
@@ -441,12 +457,12 @@ final class IOSPhoneGoalLoop {
                     }
                     return result(.handback, reason, code: hasAlert ? .unexpectedAlert : .decisionHandback,
                                   screenshot: hasAlert || IOSJevPhoneControlService.isRetryableHandback(reason))
-                case .needsScreenshot, .wait:
+                case .needsScreenshot:
+                    return result(.handback, "界面文字不足以判断下一步，需要截图交给主模型定位。", code: .screenshotRequired, screenshot: true)
+                case .wait:
                     noProgress += 1
                     guard noProgress < Self.noProgressLimit else {
-                        return selection == .wait
-                            ? result(.handback, "多次等待后界面仍未变化，交回主模型。", code: .waitBudgetExhausted, screenshot: true)
-                            : result(.handback, "界面文字不足以判断下一步，需要截图交给主模型定位。", code: .screenshotRequired, screenshot: true)
+                        return result(.handback, "多次等待后界面仍未变化，交回主模型。", code: .waitBudgetExhausted, screenshot: true)
                     }
                     guard try await reread(waiting: true) else {
                         return result(.handback, "等待界面期间控制任务已停止。", code: stopCode() ?? .taskStopped)
@@ -500,6 +516,10 @@ final class IOSPhoneGoalLoop {
                     verification = checked
                     if checked.status == .satisfied {
                         return result(.completed, "最新界面满足指定的验收条件。", code: .completed)
+                    }
+                    guard checkPageAnchor(after) else {
+                        return result(.handback, "当前页面或题目锚点已变化，交回主模型重新理解。",
+                                      code: .pageChanged, screenshot: true)
                     }
                     guard IOSPhoneGoalVerification.hasMeaningfulChange(before: observation, after: after) else {
                         // Never repeat the same ineffective action on this screen; let the
@@ -866,6 +886,7 @@ final class IOSPhoneGoalLoop {
             liveTapTypes.contains(node.type) && node.enabled && node.ref?.isEmpty == false
                 && IOSPhoneGoalVerification.hasVisibleFrame(node, within: bounds)
                 && displayName(node) != nil
+                && !isSystemScrollIndicator(node)
         }
         var seen = Set<String>()
         var taps: [(candidate: Candidate, index: Int, priority: Int)] = []
@@ -1203,6 +1224,17 @@ final class IOSPhoneGoalLoop {
     private static func displayName(_ node: PhoneObservationNode) -> String? {
         [node.label, node.identifier].lazy.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty }
+    }
+
+    private static func isSystemScrollIndicator(_ node: PhoneObservationNode) -> Bool {
+        guard node.type == "XCUIElementTypeOther",
+              (node.identifier ?? "").isEmpty,
+              let label = node.label?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let value = node.value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              value.hasSuffix("%") else { return false }
+        let lower = label.lowercased()
+        return label.hasPrefix("水平滚动条") || label.hasPrefix("垂直滚动条")
+            || lower.hasPrefix("horizontal scroll bar") || lower.hasPrefix("vertical scroll bar")
     }
 
     private static func nameDescription(_ node: PhoneObservationNode) -> String {

@@ -918,6 +918,7 @@ extension ChatViewModel {
             return false
         }
         state.messages = store.currentMessages
+        retireOrphanedTaskSlotsAfterBranchChange(in: runRegistry.current(for: conversationId))
         refreshIntelligentUIReceipts(messages: state.messages, conversationID: conversationId.toHexDashString())
         bumpMessageRevision(reason: .branchChange)
         return true

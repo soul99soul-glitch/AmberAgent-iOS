@@ -63,7 +63,7 @@ enum IOSPhoneControlToolCatalog {
             ),
             declaration(
                 name: "phone_run_goal",
-                description: "在当前已打开的授权 App 内连续完成多步目标：导航、浏览、按题面作答等需要读到下一屏才能决定的操作。默认只传 goal、bundle_id、completion（可加 max_steps），不要预先列出每个动作。本机每轮读取新界面，把可见的具名控件、主要滚动区域和 App 内弹窗按钮列为候选；同名控件附位置与上下文，由 Jev 选择下一步，动作后重新观察并核验 completion，直到满足或达到预算（默认 15 步、最多 30 步，总计 180 秒）。加载中、界面未变化或判断不清时会在调用内等待重读并换用其它候选，连续 3 轮无进展才交回。需要输入文字或已知准确顺序时可用 steps：每步 page_anchor（当前页面的具体内容，如完整题干）、actions（候选动作及准确文字）、expectation（证明本步效果的条件）；页面偏离计划时自动转为目标模式继续。completion 用能证明结果的唯一控件，示例：{\"kind\":\"visible\",\"target\":{\"identifier\":\"result\"}}；target.region 按当前树中的 rect 除以屏幕尺寸计算。硬规则：Jev 只在本机列出的候选中选择，不生成 ref、坐标或文字；发送消息、发布、支付、删除、登录和权限授权不会自动点击，会以 withheld_final_actions 交回，由你确认后用 phone_act 执行；只操作授权 App，前台切换即停止；不启动或添加 App；unknown 表示可能已执行，必须停止核对，禁止重放。completed 仅在新界面满足 completion 时出现；handback 附已执行步骤和最新界面，只规划剩余部分，不整体重放。",
+                description: "在当前已打开的授权 App 内连续完成多步目标：同一页面内的连续选词组句、多项点选、筛选切换，以及导航、浏览等操作。默认只传 goal、bundle_id、completion（同一页面子目标可附 page_anchor 锁定当前题干/页面锚点，可加 max_steps），不要预先列出每个动作，更不要把同一页面内的多次点按拆成多次 phone_act。本机每轮快速读取最新 UI tree，默认先不抓图直接由 Jev 从候选控件中连续决策，仅在纯文本无法消歧时按需补图；动作后轻量核验 completion 与 page_anchor，直到子目标满足、页面语义锚点变化、低置信或达到预算（默认 15 步、最多 30 步，总计 180 秒）。加载中、界面未变化或判断不清时会在调用内等待重读并换用其它候选，连续 3 轮无进展才交回。需要输入文字或已知准确顺序时可用 steps：每步 page_anchor（当前页面的具体内容，如完整题干）、actions（候选动作及准确文字）、expectation（证明本步效果的条件）；页面偏离计划时自动转为目标模式继续。completion 用能证明结果的唯一控件，示例：{\"kind\":\"enabled\",\"target\":{\"label\":\"检查\"}} 或 {\"kind\":\"visible\",\"target\":{\"identifier\":\"result\"}}；target.region 按当前树中的 rect 除以屏幕尺寸计算。硬规则：Jev 只在本机列出的候选中选择，不生成 ref、坐标或文字；发送消息、发布、支付、删除、登录和权限授权不会自动点击，会以 withheld_final_actions 交回，由你确认后用 phone_act 执行；只操作授权 App，前台切换或 page_anchor 变化即停止交回；不启动或添加 App；unknown 表示可能已执行，必须停止核对，禁止重放。completed 仅在新界面满足 completion 时出现；handback 附已执行步骤和最新界面，只规划剩余部分，不整体重放。",
                 schema: goalSchema,
                 effect: "sideEffect"
             ),
@@ -132,6 +132,7 @@ enum IOSPhoneControlToolCatalog {
         encodedSchema(["type": "object", "properties": [
             "goal": ["type": "string", "minLength": 1, "maxLength": 1000],
             "bundle_id": ["type": "string", "description": "当前已打开的授权 App 的准确 ID。"],
+            "page_anchor": targetSchema,
             "steps": ["type": "array", "minItems": 1, "maxItems": 12, "description": "已知顺序时使用的有序步骤；每步 actions 表示候选分支，并需具体页面锚点和本步验收条件。不提供 steps 时使用目标模式。", "items": [
                 "type": "object", "properties": [
                     "page_anchor": targetSchema,

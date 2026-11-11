@@ -552,13 +552,9 @@ struct AmberDuetTaskCenterCard: View {
                         .padding(.bottom, 12)
                         .contentShape(Rectangle())
                         .gesture(
-                            DragGesture(minimumDistance: 8)
-                                .onChanged { value in
-                                    onHeaderDragChanged?(value)
-                                }
-                                .onEnded { value in
-                                    onHeaderDragEnded?(value)
-                                }
+                            DragGesture(minimumDistance: 8, coordinateSpace: ChatSheetDismissSmoothnessPolicy.inlinePanelDragCoordinateSpace)
+                                .onChanged { onHeaderDragChanged?($0) }
+                                .onEnded { onHeaderDragEnded?($0) }
                         )
 
                     ScrollView(.vertical, showsIndicators: true) {
@@ -569,6 +565,7 @@ struct AmberDuetTaskCenterCard: View {
                         .padding(.top, 2)
                         .padding(.bottom, 20)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .amberInlinePanelScrollDismiss()
                     }
                     .scrollBounceBehavior(.basedOnSize)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -587,7 +584,7 @@ struct AmberDuetTaskCenterCard: View {
                     openDestinationDirectly(task)
                 },
                 onQuickDecision: { task, decision in
-                    handleQuickDecision(decision, for: task)
+                    Task { await handleQuickDecision(decision, for: task) }
                 }
             )
             .amberFloatingSheet(detents: [.medium, .large])
@@ -610,7 +607,7 @@ struct AmberDuetTaskCenterCard: View {
                 },
                 onQuickDecision: { task, decision in
                     inlineDeliverableTask = nil
-                    handleQuickDecision(decision, for: task)
+                    Task { await handleQuickDecision(decision, for: task) }
                 }
             )
         } else {
@@ -861,7 +858,7 @@ struct AmberDuetTaskCenterCard: View {
                 HStack(spacing: 8) {
                     ForEach(item.quickActions) { decision in
                         Button {
-                            handleQuickDecision(decision, for: item)
+                            Task { await handleQuickDecision(decision, for: item) }
                         } label: {
                             Text(decision.title)
                                 .font(.system(size: 12, weight: .medium))
@@ -944,7 +941,11 @@ struct AmberDuetTaskCenterCard: View {
         }
     }
 
-    private func handleQuickDecision(_ decision: AmberTaskQuickDecision, for item: AmberUnifiedTaskItem) {
+    func handleQuickDecision(_ decision: AmberTaskQuickDecision, for item: AmberUnifiedTaskItem) async {
+        if decision.kind == .retry, case .cloudTask(let requestId) = item.source {
+            _ = await gateway.retryCloudTask(requestId: requestId)
+            return
+        }
         if decision.kind == .openDetail {
             openDestinationDirectly(item)
             return
@@ -1070,7 +1071,7 @@ struct AmberDuetTaskCenterCard: View {
 
     private func recentDeliverableRow(_ item: AmberUnifiedTaskItem) -> some View {
         let statusColor = AmberUnifiedTaskBuilder.statusColor(for: item)
-        let primarySummary = (item.resultText?.isEmpty == false) ? item.resultText! : item.subtitle
+        let primarySummary = (item.phase == .completed && item.resultText?.isEmpty == false) ? item.resultText! : item.subtitle
         let bullets = item.deliverableBullets.filter { $0 != primarySummary }
 
         return VStack(alignment: .leading, spacing: 6) {
@@ -1260,13 +1261,9 @@ struct AmberDuetHubsCard: View {
             .padding(.bottom, 12)
             .contentShape(Rectangle())
             .gesture(
-                DragGesture(minimumDistance: 8)
-                    .onChanged { value in
-                        onHeaderDragChanged?(value)
-                    }
-                    .onEnded { value in
-                        onHeaderDragEnded?(value)
-                    }
+                DragGesture(minimumDistance: 8, coordinateSpace: ChatSheetDismissSmoothnessPolicy.inlinePanelDragCoordinateSpace)
+                    .onChanged { onHeaderDragChanged?($0) }
+                    .onEnded { onHeaderDragEnded?($0) }
             )
 
             ScrollView(.vertical, showsIndicators: true) {
@@ -1299,6 +1296,7 @@ struct AmberDuetHubsCard: View {
                 .padding(.top, 2)
                 .padding(.bottom, 20)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .amberInlinePanelScrollDismiss()
             }
             .scrollBounceBehavior(.basedOnSize)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

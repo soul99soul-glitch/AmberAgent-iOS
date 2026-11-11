@@ -629,8 +629,8 @@ class OpenAIKmpProvider internal constructor(
 
     private fun parseMessage(jsonObject: JsonObject): UIMessage {
         val role = MessageRole.valueOf(jsonObject.str("role")?.uppercase() ?: "ASSISTANT")
-        val content = jsonObject.str("content") ?: ""
-        val refusal = jsonObject.str("refusal") ?: ""
+        val content = jsonObject.extractResponsesMessageOutputText()
+        val refusal = jsonObject.str("refusal") ?: jsonObject.extractResponsesMessageRefusalText()
         val reasoning = jsonObject.str("reasoning_content") ?: jsonObject.str("reasoning")
         val hasReasoningContent = jsonObject.containsKey("reasoning_content")
         val toolCalls = jsonObject["tool_calls"]?.arr() ?: emptyList()
@@ -1570,6 +1570,10 @@ class OpenAIKmpProvider internal constructor(
                 else -> return@forEach
             }
         }
+        if (parts.none { it is UIMessagePart.Text }) {
+            jsonObject.str("output_text")?.takeIf { it.isNotEmpty() }
+                ?.let { text -> parts.add(UIMessagePart.Text(text = text)) }
+        }
 
         return MessageChunk(
             id = jsonObject.str("id") ?: "",
@@ -1586,15 +1590,23 @@ class OpenAIKmpProvider internal constructor(
         )
     }
 
-    private fun JsonObject.extractResponsesMessageOutputText(): String =
-        (this["content"]?.arr() ?: emptyList())
+    private fun JsonObject.extractResponsesMessageOutputText(): String {
+        (this["content"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull?.let { return it }
+        return (this["content"]?.arr() ?: emptyList())
             .mapNotNull { part ->
                 val partObject = part.obj() ?: return@mapNotNull null
                 when (partObject.str("type")) {
-                    "output_text", "text" -> partObject.str("text")
+                    "output_text", "text", null -> partObject.str("text")
                     else -> null
                 }
             }
+            .joinToString("")
+    }
+
+    private fun JsonObject.extractResponsesMessageRefusalText(): String =
+        (this["content"]?.arr() ?: emptyList())
+            .mapNotNull { it.obj()?.str("refusal") }
+            .filter { it.isNotBlank() }
             .joinToString("")
 
     private fun JsonObject.responsesFinishReason(): String? {

@@ -23,7 +23,9 @@ struct ChatTimelineChunkView<EntryContent: View>: View, @MainActor Equatable {
     static func == (lhs: Self, rhs: Self) -> Bool {
         ChatRenderProbe.record("chunk-compare", id: lhs.chunk.id)
         return lhs.chunk.signature == rhs.chunk.signature &&
-            lhs.presentationSignature == rhs.presentationSignature && lhs.activity == rhs.activity
+            lhs.presentationSignature == rhs.presentationSignature &&
+            lhs.activity == rhs.activity &&
+            lhs.hasActivityAnchor == rhs.hasActivityAnchor
     }
 
     var body: some View {
@@ -32,8 +34,11 @@ struct ChatTimelineChunkView<EntryContent: View>: View, @MainActor Equatable {
             ForEach(chunk.entries) { entry in
                 let isHistoryBoundary = entry.id == firstHistoryEntryID || historyBoundaryIDs.contains(entry.id)
                 let activityHere = entry.messageId != nil && entry.messageId == activity?.anchorMessageID
+                let awaitingSegmentedFirstBlock = entry.isAwaitingSegmentedFirstBlock
                 let statusReplacesEntry = activityHere && entry.isGlobalStatusOnly
-                let isHiddenStatus = (entry.isGlobalStatusOnly && !statusReplacesEntry) || entry.kind == .pendingAssistant ||
+                let isHiddenStatus = (entry.isGlobalStatusOnly && !statusReplacesEntry) ||
+                    entry.automationScreenshotGroup?.isCollapsedMember == true ||
+                    entry.kind == .pendingAssistant ||
                     entry.kind == .visionRecognition ||
                     (entry.kind == .contextMarker &&
                      (entry.compactState ?? contextCompactState).status != .completed)
@@ -68,12 +73,16 @@ struct ChatTimelineChunkView<EntryContent: View>: View, @MainActor Equatable {
                         entryView(entry)
                     }
                 }
-                .padding(.top, isHistoryBoundary ? 0 : topSpacing)
+                .padding(.top, (isHistoryBoundary || awaitingSegmentedFirstBlock) ? 0 : topSpacing)
                 if let activity, activityHere, !statusReplacesEntry, activity.shouldDisplayBelow(entry) {
                     // 仅当当前轮气泡正在吐正文时收起进度行（防流式结束 28pt 下坠）；工具执行与次轮思考仍展示在首轮气泡下方。
                     let isAfterUserMessage = entry.role == MessageRole.user
-                    ChatTimelineActivityRowView(activity: activity, showAgentName: isAfterUserMessage, onAction: { callbacks.action($0) })
-                        .padding(.top, isAfterUserMessage ? 14 : ChatLayout.assistantPartSpacing)
+                    let showHeaderOnActivity = isAfterUserMessage || (awaitingSegmentedFirstBlock && !entry.isAssistantContinuation)
+                    let activityTopSpacing: CGFloat = isAfterUserMessage
+                        ? 14
+                        : (awaitingSegmentedFirstBlock ? topSpacing : ChatLayout.assistantPartSpacing)
+                    ChatTimelineActivityRowView(activity: activity, showAgentName: showHeaderOnActivity, onAction: { callbacks.action($0) })
+                        .padding(.top, activityTopSpacing)
                 }
             }
         }

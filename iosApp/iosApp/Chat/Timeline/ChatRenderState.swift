@@ -7,13 +7,15 @@ import Combine
 final class ChatLiveTailModel: ObservableObject {
     let objectWillChange = ObservableObjectPublisher()
     private(set) var message: UIMessage
+    private(set) var displayTexts: [Int: String]
     private(set) var isGenerationActive: Bool
     private(set) var renderState: ChatRenderState
     private(set) var revision: Int = 0
     private var lastSourceRevision: Int?
 
-    init(message: UIMessage, isGenerationActive: Bool, renderState: ChatRenderState) {
+    init(message: UIMessage, isGenerationActive: Bool, renderState: ChatRenderState, displayTexts: [Int: String]? = nil) {
         self.message = message
+        self.displayTexts = displayTexts ?? IOSSubAgentOutputProjection.unpreparedDisplayTexts(in: message)
         self.isGenerationActive = isGenerationActive
         self.renderState = renderState
     }
@@ -22,7 +24,8 @@ final class ChatLiveTailModel: ObservableObject {
         message: UIMessage,
         isGenerationActive: Bool,
         renderState: ChatRenderState,
-        sourceRevision: Int? = nil
+        sourceRevision: Int? = nil,
+        displayTexts: [Int: String]? = nil
     ) {
         if let sourceRevision,
            sourceRevision == lastSourceRevision,
@@ -31,6 +34,7 @@ final class ChatLiveTailModel: ObservableObject {
             return
         }
         objectWillChange.send()
+        self.displayTexts = displayTexts ?? IOSSubAgentOutputProjection.unpreparedDisplayTexts(in: message)
         self.message = message
         self.isGenerationActive = isGenerationActive
         self.renderState = renderState
@@ -133,7 +137,8 @@ final class ChatRenderStateStore {
         let model = ChatLiveTailModel(
             message: row.message,
             isGenerationActive: isGenerationActive,
-            renderState: renderState
+            renderState: renderState,
+            displayTexts: row.displayTexts
         )
         liveTailModelsByMessageID[row.messageId] = model
         return model

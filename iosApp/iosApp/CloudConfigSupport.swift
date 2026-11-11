@@ -126,11 +126,59 @@ enum IOSCloudConfigWire {
         }
     }
 
+    static func shortProtocolName(for provider: String) -> String {
+        switch provider.lowercased() {
+        case "openai": return "OpenAI"
+        case "claude": return "Claude"
+        default: return provider
+        }
+    }
+
+    /// Normalizes a model `baseUrl` onto the cloud daemon's strict `java.net.URI`
+    /// contract (`CloudConfigurationManager.validateRemoteModel`): empty string, or
+    /// `https` scheme with non-empty host and no userinfo/query/fragment.
+    /// Lowercases scheme + host and strips trailing `/` so mixed-case local URLs
+    /// never fail server-side `uri.scheme != "https"` or miss remote matching.
+    static func normalizedModelBaseUrl(_ baseUrl: String) -> String? {
+        let trimmed = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "" }
+        guard var components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "https",
+              let host = components.host?.lowercased(),
+              !host.isEmpty,
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil else {
+            return nil
+        }
+        components.scheme = scheme
+        components.host = host
+        if components.path == "/" {
+            components.path = ""
+        } else if components.path.count > 1 {
+            while components.path.hasSuffix("/") {
+                components.path.removeLast()
+            }
+        }
+        return components.string
+    }
+
+    static func isValidCloudModelBaseUrl(_ baseUrl: String) -> Bool {
+        normalizedModelBaseUrl(baseUrl) != nil
+    }
+
     /// The contract's default-address normalization: an empty baseUrl resolves
     /// to the protocol default before comparing destinations.
     static func effectiveBaseUrl(provider: String, baseUrl: String) -> String {
         let trimmed = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { return trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
+        if !trimmed.isEmpty {
+            if let normalized = normalizedModelBaseUrl(trimmed), !normalized.isEmpty {
+                return normalized
+            }
+            return trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        }
         return provider.lowercased() == "claude" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"
     }
 
@@ -141,7 +189,7 @@ enum IOSCloudConfigWire {
             let defaultHost = provider.lowercased() == "claude" ? "api.anthropic.com" : "api.openai.com"
             return macGatewayL("默认") + " (\(defaultHost))"
         }
-        return URLComponents(string: trimmed)?.host ?? trimmed
+        return URLComponents(string: trimmed)?.host?.lowercased() ?? trimmed
     }
 }
 
@@ -185,16 +233,24 @@ struct IOSCloudProviderExportItem: Identifiable, Equatable {
     let managedAuthLabel: String?
     let enabled: Bool
 
-    /// Only a real API key on a cloud-supported protocol can be imported;
-    /// account sign-in sessions and disabled providers stay local.
+    /// Only a real API key on a cloud-supported protocol with a contract-valid
+    /// HTTPS Base URL can be imported; LAN HTTP or account sessions stay local.
     var isExportable: Bool {
-        enabled && managedAuthLabel == nil && hasApiKey && !chatModels.isEmpty && kind.isCloudSupported
+        enabled
+            && managedAuthLabel == nil
+            && hasApiKey
+            && !chatModels.isEmpty
+            && kind.isCloudSupported
+            && IOSCloudConfigWire.isValidCloudModelBaseUrl(baseUrl)
     }
 
     var blockedReason: String? {
         if !kind.isCloudSupported { return macGatewayL("云端不支持该服务商协议") }
         if !enabled { return macGatewayL("已停用") }
         if let managedAuthLabel { return managedAuthLabel + macGatewayL(" 登录态不能导出") }
+        if !IOSCloudConfigWire.isValidCloudModelBaseUrl(baseUrl) {
+            return macGatewayL("仅支持 HTTPS 无查询参数的接入地址")
+        }
         if !hasApiKey { return macGatewayL("没有 API Key") }
         if chatModels.isEmpty { return macGatewayL("没有聊天模型") }
         return nil
@@ -321,7 +377,7 @@ struct IOSCloudImportDraft: Equatable {
         for provider in providers where !provider.isExportable {
             if let auth = provider.managedAuthLabel {
                 oauthNames.append("\(provider.name)（\(auth)）")
-            } else if !provider.kind.isCloudSupported {
+            } else if !provider.kind.isCloudSupported || !IOSCloudConfigWire.isValidCloudModelBaseUrl(provider.baseUrl) {
                 unsupportedNames.append(provider.name)
             } else if !provider.enabled || (provider.hasApiKey && provider.chatModels.isEmpty) {
                 disabledOrEmptyNames.append(provider.name)
@@ -627,6 +683,8 @@ struct IOSCloudConfigBundle: Equatable, Sendable {
         /// Empty baseUrl uses the provider protocol's default address.
         var baseUrl: String
         var credential: CredentialAction
+        /// Non-wire friendly provider label for local UI feedback banners.
+        var providerDisplayName: String? = nil
     }
 
     struct SearchEntry: Equatable, Sendable {
@@ -793,11 +851,14 @@ extension IOSCloudImportDraft {
            let setting = sharedSettings.snapshot.providers.first(where: { $0.id.description() == provider.providerId }) {
             let apiKey = ChatProviderConfiguration.apiKey(of: setting)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedBaseUrl = IOSCloudConfigWire.normalizedModelBaseUrl(provider.baseUrl)
+                ?? provider.baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
             modelSection = IOSCloudConfigBundle.ModelSection(
                 providerKind: provider.kind.rawValue,
                 modelId: model.modelId,
-                baseUrl: provider.baseUrl,
-                credential: apiKey.isEmpty ? .keep : .replace(apiKey)
+                baseUrl: normalizedBaseUrl,
+                credential: apiKey.isEmpty ? .keep : .replace(apiKey),
+                providerDisplayName: provider.name
             )
         }
         let searchEntries = selectedSearches.map { item -> IOSCloudConfigBundle.SearchEntry in

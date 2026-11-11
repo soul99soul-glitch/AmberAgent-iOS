@@ -167,10 +167,9 @@ enum ChatEpisodeTextNormalizer {
     }
 
     static func mailboxBody(of message: UIMessage) -> String? {
-        let bridge = IosMailboxMessageBridge.shared
         let rendered = message.parts
             .compactMap { $0 as? UIMessagePart.Text }
-            .map { bridge.displayText(part: $0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .map { IOSSubAgentOutputProjection.userFacingMailboxDisplayText(part: $0).trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
         return rendered.isEmpty ? nil : rendered

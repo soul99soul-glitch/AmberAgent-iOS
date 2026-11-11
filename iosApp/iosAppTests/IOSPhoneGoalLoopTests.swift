@@ -1054,6 +1054,208 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         XCTAssertEqual(fixture.observeCount, 3)
     }
 
+    func testInPageContinuousWordSelectionUsesLazyScreenshotPreservesRecentStepsAndHandsBackOnPageAnchorChange() async throws {
+        let words = ["我", "每天", "早上", "经常", "喝", "热", "咖啡"]
+        let rawArgsData = try JSONSerialization.data(withJSONObject: [
+            "goal": "按顺序点选『我』『每天』『早上』『经常』『喝』『热』『咖啡』组成句子，使检查按钮可用",
+            "bundle_id": "app.test",
+            "page_anchor": ["identifier": "prompt", "label": "题干：我每天早上经常喝热咖啡"],
+            "completion": ["kind": "enabled", "target": ["identifier": "check-btn", "label": "检查"]],
+            "max_steps": 10
+        ])
+        let rawArgs = String(decoding: rawArgsData, as: UTF8.self)
+        guard case .runGoal(let goalRequest) = try IOSPhoneControlToolExecutor.request(
+            name: "phone_run_goal",
+            arguments: rawArgs
+        ) else {
+            return XCTFail("Expected phone_run_goal request with page_anchor")
+        }
+
+        func makeWordScreen(step: Int, promptLabel: String = "题干：我每天早上经常喝热咖啡") -> PhoneObservation {
+            var nodes: [PhoneObservationNode] = [
+                node("s\(step):prompt", id: "prompt", type: "XCUIElementTypeStaticText", label: promptLabel, y: 80),
+                node("s\(step):check", id: "check-btn", label: "检查", enabled: step >= words.count, y: 780)
+            ]
+            // Selected chips in answer bar (top region)
+            for chosenIdx in 0..<min(step, words.count) {
+                nodes.append(
+                    node(
+                        "s\(step):ans-\(chosenIdx)",
+                        id: "ans-\(chosenIdx)",
+                        label: words[chosenIdx],
+                        enabled: true,
+                        y: 220,
+                        x: Double(24 + chosenIdx * 48)
+                    )
+                )
+            }
+            // Remaining chips in word bank (bottom region)
+            for bankIdx in 0..<words.count {
+                let isUsed = bankIdx < step
+                nodes.append(
+                    node(
+                        "s\(step):bank-\(bankIdx)",
+                        id: "bank-\(bankIdx)",
+                        label: words[bankIdx],
+                        enabled: !isUsed,
+                        y: 560,
+                        x: Double(24 + bankIdx * 48)
+                    )
+                )
+            }
+            return observation("s\(step)", nodes)
+        }
+
+        var mutableSettings = IOSJevSettings()
+        mutableSettings.setPinnedModelVersion("jev-phone-fixture-v1")
+        mutableSettings.setMode(.active, for: .phoneActions)
+        mutableSettings.setMode(.active, for: .phoneVerification)
+        mutableSettings.setScopes([.selectedTaskText, .phoneContent, .phoneScreenshots], for: .phoneActions)
+        let fixedSettings = mutableSettings
+
+        final class TraceBox: @unchecked Sendable {
+            private let lock = NSLock()
+            var recentStepCounts: [Int] = []
+            var hasScreenshots: [Bool] = []
+            var screenshotCaptures = 0
+            var clock: TimeInterval = 0
+            func withLock<T>(_ body: (TraceBox) -> T) -> T {
+                lock.lock(); defer { lock.unlock() }
+                return body(self)
+            }
+        }
+        let trace = TraceBox()
+
+        let transport = JevStubTransport { urlRequest in
+            let body = urlRequest.httpBody ?? Data()
+            let obj = (try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:]
+            let hasAssets = (obj["assets"] as? [String: Any])?.isEmpty == false
+            let stepIndex = trace.withLock { box -> Int in
+                box.hasScreenshots.append(hasAssets)
+                if let stateRaw = obj["state"] as? String,
+                   let stateLine = stateRaw.split(separator: "\n", maxSplits: 1).last,
+                   let stateObj = try? JSONSerialization.jsonObject(with: Data(stateLine.utf8)) as? [String: Any],
+                   let recent = stateObj["recentSteps"] as? [String] {
+                    box.recentStepCounts.append(recent.count)
+                }
+                return box.hasScreenshots.filter { !$0 }.count - 1
+            }
+            // Simulate stepIndex == 3 needing visual disambiguation once on text-only call:
+            if stepIndex == 3 && !hasAssets {
+                let askShot = try! JSONSerialization.data(withJSONObject: [
+                    "model": "jev-phone-fixture-v1",
+                    "answers": ["single.next_step": ["type": "choice", "choice": "needs_screenshot", "confidence": 0.96]]
+                ])
+                return (askShot, jevResponse(200))
+            }
+            let questions = (obj["questions"] as? [String: Any]) ?? [:]
+            let criteria = ((questions["single.next_step"] as? [String: Any])?["criteria"] as? [String: String]) ?? [:]
+            let targetWord = words[min(max(0, stepIndex), words.count - 1)]
+            let chosenID = criteria.first { key, desc in
+                key != "handback" && key != "wait" && key != "needs_screenshot"
+                    && desc.contains("label=\(targetWord)") && desc.contains("identifier=bank-")
+            }?.key ?? "handback"
+            let reply = try! JSONSerialization.data(withJSONObject: [
+                "model": "jev-phone-fixture-v1",
+                "answers": ["single.next_step": ["type": "choice", "choice": chosenID, "confidence": 0.96]]
+            ])
+            return (reply, jevResponse(200))
+        }
+
+        let coordinator = IOSJevDecisionCoordinator(deps: .init(
+            client: IOSJevClient(transport: transport),
+            settingsProvider: { fixedSettings },
+            apiKeyProvider: { "fixture-key" },
+            now: { Date(timeIntervalSince1970: trace.withLock { $0.clock }) },
+            metricsStore: { _, _ in }
+        ))
+        let jevService = IOSJevPhoneControlService(deps: .init(
+            coordinator: coordinator,
+            settingsProvider: { fixedSettings }
+        ))
+        let dummyPNG = try jevPhonePNG()
+
+        var screens = (0...words.count).map { makeWordScreen(step: $0) }
+        var waitCalls = 0
+        var dispatchedActions: [PhoneAction] = []
+        let loop = IOSPhoneGoalLoop(deps: .init(
+            observe: {
+                trace.withLock { $0.clock += 0.025 }
+                return screens.removeFirst()
+            },
+            act: { action, _, _, _ in
+                trace.withLock { $0.clock += 0.035 }
+                dispatchedActions.append(action)
+                return .completed
+            },
+            choose: { goal, obs, candidates, recent, exp in
+                trace.withLock { $0.clock += 0.065 }
+                return await IOSPhoneControlToolExecutor.chooseGoalAction(
+                    jev: jevService,
+                    goal: goal,
+                    observation: obs,
+                    candidates: candidates,
+                    recentSteps: recent,
+                    expectation: exp,
+                    runID: "run-7words",
+                    screenshotProvider: {
+                        trace.withLock {
+                            $0.screenshotCaptures += 1
+                            $0.clock += 0.350
+                        }
+                        return PhoneScreenshot(data: dummyPNG, observationID: obs.observationID, width: 402, height: 874)
+                    }
+                )
+            },
+            advise: { _, _, _, _, _ in .continueTask },
+            mode: { .active },
+            isCurrent: { true },
+            reportActivity: { _ in },
+            now: { Date(timeIntervalSince1970: trace.withLock { $0.clock }) },
+            waitForUI: {
+                waitCalls += 1
+                trace.withLock { $0.clock += 0.400 }
+            },
+            observeAfterAction: {
+                trace.withLock { $0.clock += 0.030 }
+                return screens.removeFirst()
+            }
+        ))
+
+        let result = await loop.run(goalRequest)
+        XCTAssertEqual(result.status, .completed)
+        XCTAssertEqual(dispatchedActions.count, 7, "All 7 words selected continuously inside one phone_run_goal turn (1 LLM round-trip instead of 7)")
+        XCTAssertEqual(trace.withLock { $0.screenshotCaptures }, 1, "Screenshots are captured lazily only on the 1 step where Jev returned needs_screenshot, not all 7 steps")
+        XCTAssertEqual(waitCalls, 0, "On-demand screenshot escalation must not incur a 400ms waitForUI stall")
+        XCTAssertEqual(trace.withLock { $0.recentStepCounts.last }, 6, "7th word decision must still see all 6 previously tapped words (not truncated at 5)")
+        XCTAssertLessThan(result.metrics.totalMs, 1_500, "Page total latency stays compact vs ~3500ms+ eager per-tap screenshot + multi-LLM round-trips")
+
+        // Page semantic change: if prompt changes after 2 taps before completion is met, hand back immediately with .pageChanged
+        var changedScreens = [
+            makeWordScreen(step: 0),
+            makeWordScreen(step: 1),
+            makeWordScreen(step: 2, promptLabel: "题干：下一道全新听力题")
+        ]
+        var boundaryDispatched = 0
+        let boundaryLoop = IOSPhoneGoalLoop(deps: .init(
+            observe: { changedScreens.removeFirst() },
+            act: { _, _, _, _ in boundaryDispatched += 1; return .completed },
+            choose: { _, _, candidates, _, _ in
+                let bankCandidate = candidates.first { $0.description.contains("identifier=bank-") }
+                return bankCandidate.map { .action($0.id) } ?? .handback("none")
+            },
+            advise: { _, _, _, _, _ in .continueTask },
+            mode: { .active },
+            isCurrent: { true },
+            reportActivity: { _ in },
+            observeAfterAction: { changedScreens.removeFirst() }
+        ))
+        let boundaryResult = await boundaryLoop.run(goalRequest)
+        XCTAssertEqual(boundaryResult.status, .handback)
+        XCTAssertEqual(boundaryResult.reasonCode, .pageChanged, "Must hand back to general LLM when page semantic anchor changes")
+        XCTAssertEqual(boundaryDispatched, 2, "Must not tap blindly on the new page")
+    }
+
     private func sequenceRequest() -> IOSPhoneGoalRequest {
         let steps = ["one", "two", "three"].map { word in
             IOSPhoneSequenceStep(pageAnchor: .init(identifier: "question"),

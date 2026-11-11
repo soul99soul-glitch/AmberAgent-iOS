@@ -463,6 +463,54 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         XCTAssertFalse(viewModel.messages.contains { $0.toText().contains("<amber-") })
     }
 
+    func testIndependentQuestionsPreserveFirstTokenWaitAndQueuedTasksAtSendEntry() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        await store.bootstrap()
+        let defaults = makeDefaults()
+        let sharedSettings = makeSharedSettings(defaults: defaults)
+        let provider = ScriptedAsyncLoopProvider(gatedLabels: ["A", "B"])
+        defer { provider.release("A"); provider.release("B") }
+        let viewModel = makeViewModel(defaults: defaults, sharedSettings: sharedSettings, store: store)
+        viewModel.kernelTextProviderOverrideForTesting = provider
+        viewModel.runRegistry.maxConcurrentLocalRuns = 1
+        viewModel.reloadFromStore()
+
+        viewModel.inputText = "TASK_A: Synthetic first-token wait"
+        XCTAssertTrue(viewModel.sendMessage())
+        let startedA = await waitForCondition { provider.hasStarted("A") }
+        XCTAssertTrue(startedA)
+        let slotA = try XCTUnwrap(viewModel.currentRun.orderedSlots.first)
+        XCTAssertTrue(slotA.generatedMessages.allSatisfy { $0.toText().isEmpty && $0.getTools().isEmpty })
+
+        viewModel.inputText = "TASK_B: Synthetic queued question"
+        XCTAssertTrue(viewModel.sendMessage())
+        let queuedB = await waitForCondition { viewModel.currentRun.orderedSlots.count == 2 }
+        XCTAssertTrue(queuedB)
+        let slotB = try XCTUnwrap(viewModel.currentRun.orderedSlots.last)
+        XCTAssertFalse(slotA.isTerminal, "An independent question must not cancel A before its first token")
+        XCTAssertTrue(slotB.isQueuedForConcurrencySlot)
+
+        viewModel.inputText = "TASK_C: Synthetic independent question"
+        XCTAssertTrue(viewModel.sendMessage())
+        let queuedC = await waitForCondition { viewModel.currentRun.orderedSlots.count == 3 }
+        XCTAssertTrue(queuedC)
+        XCTAssertFalse(slotA.isTerminal)
+        XCTAssertFalse(slotB.isTerminal, "A queued task is not a stalled task")
+        XCTAssertTrue(slotB.isQueuedForConcurrencySlot)
+        XCTAssertFalse(provider.hasStarted("B"))
+        provider.release("A")
+        let startedB = await waitForCondition { provider.hasStarted("B") }
+        XCTAssertTrue(startedB)
+        XCTAssertTrue(viewModel.messages.contains { $0.toText() == "A final reply" })
+        provider.release("B")
+        let done = await waitForCondition { !viewModel.isGenerationActive }
+        XCTAssertTrue(done)
+        for label in ["A", "B", "C"] {
+            XCTAssertTrue(viewModel.messages.contains { $0.toText() == "\(label) final reply" })
+        }
+    }
+
     func testPlainMessageDuringRunningTaskStartsNewIndependentQuestionAndPreservesPositions() async throws {
         let (store, directory) = try makeStore()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -805,5 +853,539 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         let completed = await waitForCondition { !viewModel.isGenerationActive }
         XCTAssertTrue(completed)
         XCTAssertNil(view.currentTimelineActivity)
+    }
+
+    func testCommentaryCoalescesSameStageFragmentsPreservesPublishedProseAndSplitsOnMilestone() throws {
+        let userPrompt = UIMessage.companion.user(prompt: "帮我检查项目配置并核对线上状态")
+        let coalescer = ChatTaskCommentaryCoalescer()
+
+        func makeAssistant(text: String, toolName: String? = nil, toolId: String = "call-1") -> UIMessage {
+            var parts: [UIMessagePart] = []
+            if !text.isEmpty {
+                parts.append(UIMessagePart.Text(text: text, metadata: nil))
+            }
+            if let toolName {
+                parts.append(
+                    UIMessagePart.Tool(
+                        toolCallId: toolId,
+                        toolName: toolName,
+                        input: "{}",
+                        output: [],
+                        approvalState: ToolApprovalState.Auto.shared,
+                        streamIndex: nil,
+                        metadata: nil
+                    )
+                )
+            }
+            return IOSChatForegroundFixtures.assistantMessage(parts: parts)
+        }
+
+        // 1. 首轮先接话 + 调工具 (workspace_read -> workspace 阶段)：保留首条自然回应 Bubble 1
+        let ackBubble = makeAssistant(text: "好的，我先帮你读取本地配置文件。", toolName: "workspace_read", toolId: "c-1")
+        let ackBubbleID = ChatMessageProjector.messageId(for: ackBubble)
+
+        // 2. Round 2 同阶段重复陪聊（零信息增量）：应被抑制正文，只保留隐藏 tool 调用，不新增重复正文气泡
+        let dupBubble = makeAssistant(text: "好的，我先帮你读取本地配置文件。", toolName: "workspace_read", toolId: "c-2")
+        let dupBubbleID = ChatMessageProjector.messageId(for: dupBubble)
+
+        // 3. Round 3 & Round 4 同阶段（仍是 workspace 阶段）两段碎片化中途说明：合并成该阶段的一条完整想法，不每步新建气泡
+        let frag1 = makeAssistant(text: "主配置文件已读完，发现端口映射有改动。", toolName: "workspace_read", toolId: "c-3")
+        let frag1ID = ChatMessageProjector.messageId(for: frag1)
+        let frag2 = makeAssistant(text: "顺便把备份配置也比对了一下，两边一致。", toolName: "workspace_list", toolId: "c-4")
+        let frag2ID = ChatMessageProjector.messageId(for: frag2)
+
+        // 4. Round 5 切换到新阶段（search_web -> web_research 阶段）：关键阶段切换产出新的独立说明气泡
+        let stage2Bubble = makeAssistant(text: "本地配置核对完毕，现在切到线上接口核查实时状态。", toolName: "search_web", toolId: "c-5")
+        let stage2ID = ChatMessageProjector.messageId(for: stage2Bubble)
+
+        // 5. Round 6 最终答复（无 tool_calls）：独立成最终结果气泡，所有前序已上屏正文气泡完整保留
+        let finalBubble = makeAssistant(text: "全部核查完成：本地与线上配置均正常，无需额外修复。")
+        let finalID = ChatMessageProjector.messageId(for: finalBubble)
+
+        let rawMessages: [UIMessage] = [
+            userPrompt,
+            ackBubble,
+            dupBubble,
+            frag1,
+            frag2,
+            stage2Bubble,
+            makeAssistant(text: "Synthetic web follow-up detail", toolName: "search_web", toolId: "c-6"),
+            finalBubble
+        ]
+        let coalesced = coalescer.coalesce(messages: rawMessages)
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let defaults = makeDefaults()
+        let viewModel = makeViewModel(defaults: defaults, sharedSettings: makeSharedSettings(defaults: defaults), store: store)
+        let state = viewModel.currentRun.state
+        state.messages = [userPrompt]
+        let slot = ChatAsyncTaskSlot(
+            conversationId: state.conversationId, inputDigest: "synthetic-stage-regression",
+            anchorUserMessageId: ChatMessageProjector.messageId(for: userPrompt), phoneControlUserInitiated: false,
+            providerSetting: IOSChatForegroundFixtures.makeProviderSetting(),
+            params: IOSChatForegroundFixtures.makeParams(toolNames: []), toolExposureBridge: nil,
+            recipeCatalogSnapshot: nil, baselineMessages: [userPrompt]
+        )
+        viewModel.spliceTaskTranscript(rawMessages, for: slot, into: state)
+        let expectedStage = "本地配置核对完毕，现在切到线上接口核查实时状态。\n\nSynthetic web follow-up detail"
+        XCTAssertEqual(slot.currentTranscript.first { $0.id == stage2Bubble.id }?.toText().trimmingCharacters(in: .whitespacesAndNewlines), expectedStage)
+        XCTAssertEqual(state.messages.first { $0.id == stage2Bubble.id }?.toText().trimmingCharacters(in: .whitespacesAndNewlines), expectedStage)
+        viewModel.spliceTaskTranscript(slot.currentTranscript, for: slot, into: state)
+        XCTAssertEqual(slot.currentTranscript.first { $0.id == stage2Bubble.id }?.toText().trimmingCharacters(in: .whitespacesAndNewlines), expectedStage)
+
+        // 验证首轮自然回应气泡完整保留，未被后续状态或阶段说明覆盖
+        let ackAfter = coalesced.first { ChatMessageProjector.messageId(for: $0) == ackBubbleID }
+        XCTAssertEqual(ackAfter?.toText().trimmingCharacters(in: .whitespacesAndNewlines), "好的，我先帮你读取本地配置文件。")
+
+        // 验证同阶段重复陪聊被剥离正文但保留工具调用
+        let dupAfter = coalesced.first { ChatMessageProjector.messageId(for: $0) == dupBubbleID }
+        XCTAssertEqual(dupAfter?.toText().trimmingCharacters(in: .whitespacesAndNewlines), "")
+        XCTAssertEqual(dupAfter?.getTools().count, 1, "去重陪聊正文时不得丢失本轮工具调用")
+
+        // 验证同阶段两段碎片说明收敛进同一个阶段说明气泡（frag1），frag2 转为仅保留工具调用的状态消息
+        let frag1After = coalesced.first { ChatMessageProjector.messageId(for: $0) == frag1ID }
+        XCTAssertEqual(
+            frag1After?.toText().trimmingCharacters(in: .whitespacesAndNewlines),
+            "主配置文件已读完，发现端口映射有改动。\n\n顺便把备份配置也比对了一下，两边一致。",
+            "同阶段碎片化说明应收敛进同一阶段说明气泡"
+        )
+        let frag2After = coalesced.first { ChatMessageProjector.messageId(for: $0) == frag2ID }
+        XCTAssertEqual(frag2After?.toText().trimmingCharacters(in: .whitespacesAndNewlines), "")
+        XCTAssertEqual(frag2After?.getTools().count, 1)
+
+        // 验证阶段切换（workspace -> web_research）与最终答复各自独立成泡
+        let stage2After = coalesced.first { ChatMessageProjector.messageId(for: $0) == stage2ID }
+        XCTAssertEqual(stage2After?.toText().trimmingCharacters(in: .whitespacesAndNewlines), "本地配置核对完毕，现在切到线上接口核查实时状态。\n\nSynthetic web follow-up detail")
+        let finalAfter = coalesced.first { ChatMessageProjector.messageId(for: $0) == finalID }
+        XCTAssertEqual(finalAfter?.toText().trimmingCharacters(in: .whitespacesAndNewlines), "全部核查完成：本地与线上配置均正常，无需额外修复。")
+
+        let visibleProseBubbles = coalesced.filter {
+            $0.role == MessageRole.assistant && !$0.toText().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        XCTAssertEqual(
+            visibleProseBubbles.count,
+            4,
+            "最终时间线应包含：1 首轮接话 + 1 本地阶段合并说明 + 1 线上阶段切换说明 + 1 最终答复"
+        )
+    }
+
+    func testSameIDProvisionalVisibleGrowthResetsKeepaliveButDuplicateBlankAndReasoningDoNot() throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let defaults = makeDefaults()
+        let viewModel = makeViewModel(defaults: defaults, sharedSettings: makeSharedSettings(defaults: defaults), store: store)
+        let state = viewModel.currentRun.state
+        let user = UIMessage.companion.user(prompt: "核查进展")
+        state.messages = [user]
+        let slot = ChatAsyncTaskSlot(conversationId: state.conversationId, inputDigest: "visible-growth",
+            anchorUserMessageId: ChatMessageProjector.messageId(for: user), phoneControlUserInitiated: false,
+            providerSetting: IOSChatForegroundFixtures.makeProviderSetting(),
+            params: IOSChatForegroundFixtures.makeParams(toolNames: []), toolExposureBridge: nil,
+            recipeCatalogSnapshot: nil, baselineMessages: [user])
+        viewModel.currentRun.registerSlot(slot)
+        let bindings = viewModel.makeGenerationBindings(state: state, taskSlot: slot)
+        let first = IOSChatForegroundFixtures.assistantText("已完成 A。\n\n")
+        func snapshot(_ text: String, reasoning: String? = nil) -> UIMessage {
+            var parts: [UIMessagePart] = [UIMessagePart.Text(text: text, metadata: nil)]
+            if let reasoning {
+                parts.append(UIMessagePart.Reasoning(reasoning: reasoning, createdAt: KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0), finishedAt: nil, metadata: nil))
+            }
+            return UIMessage(id: first.id, role: first.role, parts: parts, annotations: first.annotations,
+                createdAt: first.createdAt, finishedAt: nil, modelId: first.modelId, usage: first.usage, translation: first.translation)
+        }
+        XCTAssertTrue(bindings.setProvisionalAssistant(snapshot("已完成 A。\n\n")))
+        let growth = snapshot("已完成 A。\n\n已完成 B。\n\n")
+        slot.lastUserVisibleProgressUptime = 1
+        slot.hasEmittedKeepaliveInCurrentSilenceWindow = true
+        XCTAssertTrue(bindings.setProvisionalAssistant(growth))
+        XCTAssertGreaterThan(slot.lastUserVisibleProgressUptime, 1, "同 ID 可见正文增长必须刷新保活时钟")
+        XCTAssertFalse(slot.hasEmittedKeepaliveInCurrentSilenceWindow)
+
+        slot.lastUserVisibleProgressUptime = 2
+        slot.hasEmittedKeepaliveInCurrentSilenceWindow = true
+        XCTAssertTrue(bindings.setProvisionalAssistant(growth))
+        XCTAssertTrue(bindings.setProvisionalAssistant(snapshot(growth.toText(), reasoning: "内部推理继续增长")))
+        XCTAssertEqual(slot.lastUserVisibleProgressUptime, 2, "重复正文和 reasoning 不算新进展")
+        XCTAssertTrue(slot.hasEmittedKeepaliveInCurrentSilenceWindow)
+        bindings.setMessages([user, snapshot(growth.toText(), reasoning: "相同正文权威快照")])
+        XCTAssertEqual(slot.lastUserVisibleProgressUptime, 2, "快路径后重复的权威快照也不能刷新时钟")
+
+        XCTAssertTrue(bindings.setProvisionalAssistant(snapshot("   \n")))
+        XCTAssertEqual(slot.lastUserVisibleProgressUptime, 2, "空白正文不得刷新时钟")
+        XCTAssertTrue(slot.hasEmittedKeepaliveInCurrentSilenceWindow)
+        XCTAssertEqual(state.messages.last?.toText().trimmingCharacters(in: .whitespacesAndNewlines), "")
+    }
+
+    func testKeepaliveFiresOnceAfter60sSilenceResetsOnMeaningfulProgressAndStopsOnTerminalOrFailure() throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let defaults = makeDefaults()
+        let viewModel = makeViewModel(defaults: defaults, sharedSettings: makeSharedSettings(defaults: defaults), store: store)
+
+        let t0: TimeInterval = 1_000.0
+        let userMsg = UIMessage.companion.user(prompt: "执行耗时分析任务")
+        let userID = ChatMessageProjector.messageId(for: userMsg)
+        let ackMsg = IOSChatForegroundFixtures.assistantText("收到，我先开始分析。")
+        let state = viewModel.currentRun.state
+        state.messages = [userMsg, ackMsg]
+
+        let slot = ChatAsyncTaskSlot(
+            slotId: "task-keepalive-1",
+            conversationId: state.conversationId,
+            inputDigest: "keepalive-digest",
+            anchorUserMessageId: userID,
+            phoneControlUserInitiated: false,
+            providerSetting: IOSChatForegroundFixtures.makeProviderSetting(),
+            params: IOSChatForegroundFixtures.makeParams(toolNames: []),
+            toolExposureBridge: nil,
+            recipeCatalogSnapshot: nil,
+            baselineMessages: [userMsg]
+        )
+        slot.generatedMessages = [ackMsg]
+        slot.generatedMessageIds = [ChatMessageProjector.messageId(for: ackMsg)]
+        slot.currentTranscript = [userMsg, ackMsg]
+        slot.recordMeaningfulUserVisibleProgress(at: t0)
+        viewModel.currentRun.registerSlot(slot)
+
+        // 1. 30s 内部活跃心跳（lastActivityUptime）与轮询工具不得刷新用户可见进展时钟（lastUserVisibleProgressUptime），且未满 60s 不发保活
+        slot.lastActivityUptime = t0 + 30.0
+        XCTAssertEqual(slot.lastUserVisibleProgressUptime, t0, "内部流心跳不得刷新用户可见进展时钟")
+        XCTAssertNil(
+            viewModel.evaluateTaskKeepaliveIfNeeded(for: slot, in: state, now: t0 + 59.0),
+            "未满 60 秒静默窗口不得触发保活正文"
+        )
+
+        // 2. 满 60s 无用户可见进展：触发且仅触发 1 条坦诚保活正文气泡，不编造百分比或假完成
+        let firstKeepalive = viewModel.evaluateTaskKeepaliveIfNeeded(for: slot, in: state, now: t0 + 60.5)
+        XCTAssertNotNil(firstKeepalive, "超过 60 秒无用户可见进展时应发送一条保活说明")
+        XCTAssertEqual(firstKeepalive?.toText(), ChatAsyncTaskSlot.keepaliveDefaultText)
+        let keepaliveBubblesAfterFirst = state.messages.filter {
+            $0.role == MessageRole.assistant && $0.toText() == ChatAsyncTaskSlot.keepaliveDefaultText
+        }
+        XCTAssertEqual(keepaliveBubblesAfterFirst.count, 1)
+
+        // 3. 同一静默窗口内（90s、130s）绝不重复刷屏
+        XCTAssertNil(
+            viewModel.evaluateTaskKeepaliveIfNeeded(for: slot, in: state, now: t0 + 90.0),
+            "同一静默窗口最多只允许 1 条保活正文"
+        )
+        XCTAssertNil(
+            viewModel.evaluateTaskKeepaliveIfNeeded(for: slot, in: state, now: t0 + 130.0),
+            "未发生新的真实进展前不得发送第二条保活正文"
+        )
+        XCTAssertEqual(
+            state.messages.filter { $0.role == MessageRole.assistant && $0.toText() == ChatAsyncTaskSlot.keepaliveDefaultText }.count,
+            1
+        )
+
+        // 4. 发生真实用户可见进展（140s）后重置窗口：195s（距新进展 55s）不触发，201s（距新进展 61s）允许新窗口触发一次
+        slot.recordMeaningfulUserVisibleProgress(at: t0 + 140.0)
+        XCTAssertFalse(slot.hasEmittedKeepaliveInCurrentSilenceWindow)
+        XCTAssertNil(
+            viewModel.evaluateTaskKeepaliveIfNeeded(for: slot, in: state, now: t0 + 195.0)
+        )
+        let secondKeepalive = viewModel.evaluateTaskKeepaliveIfNeeded(for: slot, in: state, now: t0 + 201.0)
+        XCTAssertNotNil(secondKeepalive, "新进展重置静默窗口后再次超过 60 秒可触发新一轮保活")
+        XCTAssertEqual(
+            state.messages.filter { $0.role == MessageRole.assistant && $0.toText() == ChatAsyncTaskSlot.keepaliveDefaultText }.count,
+            2
+        )
+
+        // 5. 审批等待、工具失败或终态时：立即抑制保活，不覆盖错误或完成态
+        slot.recordMeaningfulUserVisibleProgress(at: t0 + 210.0)
+        slot.activityStage = .waitingForConfirmation
+        XCTAssertNil(
+            viewModel.evaluateTaskKeepaliveIfNeeded(for: slot, in: state, now: t0 + 280.0),
+            "等待用户确认/审批期间不得发送通用保活说明"
+        )
+        slot.activityStage = .runningTool
+        slot.explicitFailureOrStallReason = "tool_failed"
+        XCTAssertNil(
+            viewModel.evaluateTaskKeepaliveIfNeeded(for: slot, in: state, now: t0 + 280.0),
+            "已发生明确失败或阻断时应展示阻断，不得发通用保活掩盖"
+        )
+        slot.explicitFailureOrStallReason = nil
+        slot.isTerminal = true
+        slot.activityStage = .completed
+        XCTAssertNil(
+            viewModel.evaluateTaskKeepaliveIfNeeded(for: slot, in: state, now: t0 + 360.0),
+            "任务完成后不得再触发任何保活说明"
+        )
+    }
+
+    func testSingleLineStatusMergesAcrossContinuationStagesIgnoresStaleOutOfOrderEventsAndCleansUpOnTerminalOrSwitch() throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let defaults = makeDefaults()
+        let sharedSettings = makeSharedSettings(defaults: defaults)
+        let viewModel = makeViewModel(defaults: defaults, sharedSettings: sharedSettings, store: store)
+        let run = viewModel.currentRun
+        let state = run.state
+
+        let timestamp = KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 1_700_000_000_000)
+        let u1 = UIMessage.companion.user(prompt: "请并行核查各模块的编译耗时与缓存命中率")
+        let u1ID = ChatMessageProjector.messageId(for: u1)
+        let thinkingStub1 = IOSChatForegroundFixtures.assistantMessage(parts: [
+            UIMessagePart.Reasoning(reasoning: "正在规划检索方向", createdAt: timestamp, finishedAt: nil, metadata: nil)
+        ])
+        let thinkingStub1ID = ChatMessageProjector.messageId(for: thinkingStub1)
+        state.messages = [u1, thinkingStub1]
+
+        // 1. 合成 Slot 1：尚无正文的 queued/thinking 任务仍是合法运行态。
+        let slot1 = ChatAsyncTaskSlot(
+            slotId: "slot-stalled-1",
+            conversationId: state.conversationId,
+            inputDigest: "digest-1",
+            anchorUserMessageId: u1ID,
+            phoneControlUserInitiated: false,
+            providerSetting: IOSChatForegroundFixtures.makeProviderSetting(),
+            params: IOSChatForegroundFixtures.makeParams(toolNames: []),
+            toolExposureBridge: nil,
+            recipeCatalogSnapshot: nil,
+            baselineMessages: [u1]
+        )
+        slot1.isQueuedForConcurrencySlot = true
+        slot1.activityStage = .thinking
+        slot1.generatedMessages = [thinkingStub1]
+        slot1.generatedMessageIds = [thinkingStub1ID]
+        slot1.currentTranscript = [u1, thinkingStub1]
+        run.registerSlot(slot1)
+        let slot1Bindings = viewModel.makeGenerationBindings(state: state, taskSlot: slot1)
+
+        // 2. 新独立任务不能退休 live Slot 1；只有显式终态后才清理其纯状态占位。
+        let u2 = UIMessage.companion.user(prompt: "继续执行并同步当前阶段状态")
+        let u2ID = ChatMessageProjector.messageId(for: u2)
+        state.messages.append(u2)
+        let slot2 = ChatAsyncTaskSlot(
+            slotId: "slot-active-2",
+            conversationId: state.conversationId,
+            inputDigest: "digest-2",
+            anchorUserMessageId: u2ID,
+            phoneControlUserInitiated: false,
+            providerSetting: IOSChatForegroundFixtures.makeProviderSetting(),
+            params: IOSChatForegroundFixtures.makeParams(toolNames: []),
+            toolExposureBridge: nil,
+            recipeCatalogSnapshot: nil,
+            baselineMessages: [u1, u2]
+        )
+        slot2.isQueuedForConcurrencySlot = true
+        viewModel.retireEmptyStalledStatusSlotsBeforeContinuation(in: run, newSlotId: slot2.slotId)
+        XCTAssertFalse(slot1.isTerminal)
+        viewModel.markTaskSlotTerminal(slot1, in: run)
+        viewModel.retireEmptyStalledStatusSlotsBeforeContinuation(in: run, newSlotId: slot2.slotId)
+        run.registerSlot(slot2)
+        viewModel.refreshLiveTaskMessageIds(in: run)
+
+        XCTAssertTrue(slot1.isTerminal, "显式终态后的空状态占位可清理")
+        XCTAssertFalse(
+            state.messages.contains { ChatMessageProjector.messageId(for: $0) == thinkingStub1ID },
+            "旧轮次的纯状态占位必须移除，不得在 U2 上方残留『正在思考』"
+        )
+
+        // 3. 乱序旧事件验证：已收口的 Slot 1 迟到触发 setProvisionalAssistant / setMessages / recordTaskToolActivity 必须被全部拒绝
+        let lateGhostStub = IOSChatForegroundFixtures.assistantMessage(parts: [
+            UIMessagePart.Reasoning(reasoning: "迟到的旧思考", createdAt: timestamp, finishedAt: nil, metadata: nil)
+        ])
+        XCTAssertFalse(slot1Bindings.setProvisionalAssistant(lateGhostStub))
+        slot1Bindings.setMessages([u1, lateGhostStub])
+        slot1Bindings.recordTaskActivity(.thinking)
+        slot1Bindings.recordTaskToolActivity("search_web", #"{"query":"旧查询"}"#)
+        XCTAssertFalse(
+            state.messages.contains { ChatMessageProjector.messageId(for: $0) == ChatMessageProjector.messageId(for: lateGhostStub) },
+            "终态/已收口槽位的乱序迟到回调绝不能重新把旧状态插回时间线"
+        )
+
+        // 4. 快速连续阶段变化与 commentary 正文气泡保护：
+        //    Slot 2 先产出首轮说明气泡，再快速连续切换 preparing -> thinking -> runningTool(1) -> runningTool(2) -> 终态
+        slot2.isQueuedForConcurrencySlot = false
+        let slot2Bindings = viewModel.makeGenerationBindings(state: state, taskSlot: slot2)
+        let commentaryBubble = IOSChatForegroundFixtures.assistantMessage(parts: [
+            UIMessagePart.Text(text: "好的，现在立即并行启动子模块核查任务。", metadata: nil),
+            UIMessagePart.Tool(
+                toolCallId: "spawn-1",
+                toolName: "spawn_agent",
+                input: #"{"task":"核查模块 A"}"#,
+                output: [UIMessagePart.Text(text: #"{"ok":true}"#, metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            )
+        ])
+        let commentaryID = ChatMessageProjector.messageId(for: commentaryBubble)
+        slot2Bindings.setMessages([u1, u2, commentaryBubble])
+
+        slot2Bindings.recordTaskActivity(.preparing)
+        slot2Bindings.recordTaskActivity(.thinking)
+        slot2Bindings.recordTaskToolActivity("spawn_agent", #"{"task":"核查模块 A"}"#)
+        XCTAssertEqual(slot2.activityStage, .runningTool)
+        XCTAssertEqual(slot2.activeToolTitle, "正在安排「核查模块 A」")
+
+        slot2Bindings.recordTaskToolActivity("spawn_agent", #"{"task":"核查模块 B"}"#)
+        XCTAssertEqual(slot2.activityStage, .runningTool)
+        XCTAssertEqual(slot2.activeToolTitle, "正在安排「核查模块 B」")
+
+        let finalReply = IOSChatForegroundFixtures.assistantText("所有子模块核查任务已派发完毕，正在汇总结果。")
+        let finalReplyID = ChatMessageProjector.messageId(for: finalReply)
+        slot2Bindings.setMessages([u1, u2, commentaryBubble, finalReply])
+        viewModel.markTaskSlotTerminal(slot2, in: run)
+
+        XCTAssertTrue(slot2.isTerminal)
+        XCTAssertNil(slot2.activeToolName)
+        XCTAssertNil(slot2.activeToolTitle)
+        XCTAssertNil(slot2.currentRoundAssistantMessageId)
+        XCTAssertTrue(
+            state.messages.contains { ChatMessageProjector.messageId(for: $0) == commentaryID },
+            "需要持久保留的 commentary 正文气泡在阶段切换与终态收口后必须完整保留"
+        )
+        XCTAssertTrue(
+            state.messages.contains { ChatMessageProjector.messageId(for: $0) == finalReplyID }
+        )
+
+        // 5. 云端单行状态：首拍无 workItemId 的 topic 占位并入后续 workItemId，且拒绝乱序旧 seq 事件
+        let gateway = MacGatewayStore()
+        gateway.ingestCloudDialogueEventsPage(
+            MacGatewayCloudDialogueEventsPage(
+                items: [
+                    MacGatewayCloudDialogueEvent(
+                        seq: 10,
+                        id: "ce-10",
+                        kind: .processEvent,
+                        role: "assistant",
+                        text: "正在准备任务…",
+                        topicId: "topic-merge",
+                        workItemId: nil,
+                        outcome: nil,
+                        soulRevision: nil
+                    ),
+                    MacGatewayCloudDialogueEvent(
+                        seq: 11,
+                        id: "ce-11",
+                        kind: .processEvent,
+                        role: "assistant",
+                        text: "正在分析构建依赖…",
+                        topicId: "topic-merge",
+                        workItemId: "work-merge-1",
+                        outcome: nil,
+                        soulRevision: nil
+                    )
+                ],
+                nextCursor: 11,
+                soulRevision: nil
+            ),
+            requestedAfter: 0
+        )
+        XCTAssertNil(
+            gateway.cloudDialogueProgressByWorkItem["topic:topic-merge"],
+            "首拍 topic 级临时状态必须并入后续分配了 workItemId 的单行状态，不得残留两条"
+        )
+        XCTAssertEqual(gateway.cloudDialogueProgressByWorkItem.count, 1)
+        XCTAssertEqual(gateway.cloudDialogueProgressByWorkItem["work-merge-1"]?.statusLine, "正在分析构建依赖…")
+        XCTAssertEqual(gateway.cloudDialogueProgressByWorkItem["work-merge-1"]?.processEventCount, 2)
+
+        // 模拟乱序到达的旧 seq 事件（seq: 9 < lastEventSeq: 11）不得覆盖最新状态
+        var outOfOrder = gateway.cloudDialogueProgressByWorkItem["work-merge-1"]!
+        let staleEvent = MacGatewayCloudDialogueEvent(
+            seq: 9,
+            id: "ce-9-stale",
+            kind: .processEvent,
+            role: "assistant",
+            text: "过期的旧阶段状态",
+            topicId: "topic-merge",
+            workItemId: "work-merge-1",
+            outcome: nil,
+            soulRevision: nil
+        )
+        gateway.ingestCloudDialogueEventsPage(
+            MacGatewayCloudDialogueEventsPage(items: [staleEvent], nextCursor: 11, soulRevision: nil),
+            requestedAfter: 8
+        )
+        outOfOrder = gateway.cloudDialogueProgressByWorkItem["work-merge-1"]!
+        XCTAssertEqual(outOfOrder.statusLine, "正在分析构建依赖…", "乱序旧事件不得覆盖已推进的新阶段状态")
+    }
+
+    func testZeroInformationWaitingBubblesStayInSingleLineStatusAcrossLocalAndCloudWhilePreservingFindingsAndFailures() throws {
+        // 1. Local ReAct / Phone & Web automation loop:
+        let userMsg = UIMessage.companion.user(prompt: "帮我完成当前页面的词块组句并核对结果")
+        func assistantRound(text: String, toolName: String? = nil, callId: String, outputJSON: String = #"{"ok":true}"#) -> UIMessage {
+            var parts: [UIMessagePart] = []
+            if !text.isEmpty {
+                parts.append(UIMessagePart.Text(text: text, metadata: nil))
+            }
+            if let toolName {
+                parts.append(
+                    UIMessagePart.Tool(
+                        toolCallId: callId,
+                        toolName: toolName,
+                        input: "{}",
+                        output: [UIMessagePart.Text(text: outputJSON, metadata: nil)],
+                        approvalState: ToolApprovalState.Auto.shared,
+                        streamIndex: nil,
+                        metadata: nil
+                    )
+                )
+            }
+            return IOSChatForegroundFixtures.assistantMessage(parts: parts)
+        }
+
+        let r1Ack = assistantRound(text: "好的，我先读取当前题面并开始组句。", toolName: "phone_observe", callId: "p-1")
+        let r2Wait = assistantRound(text: "正在处理，请稍候…", toolName: "phone_run_goal", callId: "p-2")
+        let r3WaitVariant = assistantRound(text: "仍在继续操作中，请稍等。", toolName: "phone_run_goal", callId: "p-3")
+        let r4StageWait = assistantRound(text: "请稍候，正在继续下一步…", toolName: "wm_run_goal", callId: "p-4")
+        let r5Finding = assistantRound(text: "检测到弹窗提示词块顺序异常，已重新核对题干。", toolName: "phone_observe", callId: "p-5")
+        let r6Final = assistantRound(text: "已完成全部词块选择并通过检查。", callId: "p-6")
+
+        let coalescer = ChatTaskCommentaryCoalescer()
+        let coalesced = coalescer.coalesce(messages: [userMsg, r1Ack, r2Wait, r3WaitVariant, r4StageWait, r5Finding, r6Final])
+
+        let visibleLocalBubbles = coalesced.filter {
+            $0.role == MessageRole.assistant && !$0.toText().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        XCTAssertEqual(
+            visibleLocalBubbles.map { $0.toText().trimmingCharacters(in: .whitespacesAndNewlines) },
+            [
+                "好的，我先读取当前题面并开始组句。",
+                "检测到弹窗提示词块顺序异常，已重新核对题干。",
+                "已完成全部词块选择并通过检查。"
+            ],
+            "Zero-information waiting phrases must be stripped to status-only updates instead of spawning or bloating prose bubbles"
+        )
+        // Tools on suppressed waiting rounds must remain intact for single-line status projection:
+        for suppressedID in [r2Wait, r3WaitVariant, r4StageWait].map(ChatMessageProjector.messageId(for:)) {
+            let msg = try XCTUnwrap(coalesced.first { ChatMessageProjector.messageId(for: $0) == suppressedID })
+            XCTAssertEqual(msg.getTools().count, 1)
+            XCTAssertTrue(NativeTimelineProjector.isGlobalStatusOnly(msg), "Suppressed waiting round must project as global status-only")
+        }
+
+        // 2. Cloud Main Dialogue stream:
+        let gateway = MacGatewayStore()
+        gateway.ingestCloudDialogueEventsPage(
+            MacGatewayCloudDialogueEventsPage(
+                items: [
+                    MacGatewayCloudDialogueEvent(seq: 1, id: "u-1", kind: .userMessage, role: "user", text: "检查并执行连续步骤", topicId: "t-lownoise", workItemId: nil, outcome: nil, soulRevision: nil),
+                    MacGatewayCloudDialogueEvent(seq: 2, id: "ack:1", kind: .assistantReply, role: "assistant", text: "收到，我来处理…", topicId: "t-lownoise", workItemId: nil, outcome: nil, soulRevision: nil),
+                    MacGatewayCloudDialogueEvent(seq: 3, id: "pe-1", kind: .processEvent, role: "assistant", text: "正在读取页面控件…", topicId: "t-lownoise", workItemId: "w-1", outcome: nil, soulRevision: nil),
+                    MacGatewayCloudDialogueEvent(seq: 4, id: "wait-1", kind: .assistantReply, role: "assistant", text: "正在处理，请稍候。", topicId: "t-lownoise", workItemId: "w-1", outcome: nil, soulRevision: nil),
+                    MacGatewayCloudDialogueEvent(seq: 5, id: "wait-2", kind: .assistantReply, role: "assistant", text: "仍在处理中，请稍等…", topicId: "t-lownoise", workItemId: "w-1", outcome: nil, soulRevision: nil),
+                    MacGatewayCloudDialogueEvent(seq: 6, id: "prog-1", kind: .assistantReply, role: "assistant", text: "已完成前 4 个步骤核验，准备最终收口。", topicId: "t-lownoise", workItemId: "w-1", outcome: nil, soulRevision: nil),
+                    MacGatewayCloudDialogueEvent(seq: 7, id: "res-1", kind: .taskResult, role: "assistant", text: "全部步骤核验通过。", topicId: "t-lownoise", workItemId: "w-1", outcome: .completed, soulRevision: nil)
+                ],
+                nextCursor: 7,
+                soulRevision: nil
+            ),
+            requestedAfter: 0
+        )
+
+        let cloudAssistantTexts = gateway.cloudDialogueVisibleEvents
+            .filter { $0.kind == .assistantReply || $0.kind == .taskResult }
+            .map(\.text)
+        XCTAssertEqual(
+            cloudAssistantTexts,
+            [
+                "收到，我来处理…",
+                "已完成前 4 个步骤核验，准备最终收口。",
+                "全部步骤核验通过。"
+            ],
+            "Duplicate/variant zero-info waiting replies in cloud dialogue must update in-place progress instead of adding prose bubbles"
+        )
     }
 }

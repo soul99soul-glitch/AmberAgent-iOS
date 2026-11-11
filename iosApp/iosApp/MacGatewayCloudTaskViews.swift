@@ -326,7 +326,7 @@ struct MacGatewayCloudTaskDetailSheet: View {
     @ViewBuilder
     private func resultSection(_ record: MacGatewayCloudTaskRecord) -> some View {
         Section(macGatewayL("执行结果")) {
-            if let markdown = record.detail?.resultMarkdown,
+            if let markdown = AmberUnifiedTaskBuilder.userFacingResultMarkdown(from: record.detail?.resultMarkdown),
                !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {

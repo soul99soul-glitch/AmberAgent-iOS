@@ -281,6 +281,7 @@ final class PhoneRunnerClientTests: XCTestCase, @unchecked Sendable {
                                            backend: "private-ax", truncated: true, nodes: nodes)
         let text = observation.compactText
         XCTAssertTrue(text.contains("truncated=true nodes=8 displayed=5 omitted=3"))
+        XCTAssertTrue(text.contains("empty_containers=3"))
         XCTAssertFalse(text.contains("observed:1 Window"))
         XCTAssertTrue(text.contains("observed:3 Button"))
         XCTAssertTrue(text.contains("observed:4 ScrollView"))

@@ -12,8 +12,13 @@ struct DisplayFontSettingsView: View {
     @AppStorage(IOSDisplayPreferenceKeys.followGeneration) private var followGeneration = true
     @AppStorage(IOSDisplayPreferenceKeys.activityIslandEdgeGlow) private var activityIslandEdgeGlow = false
     @AppStorage(IOSDisplayPreferenceKeys.completionHaptic) private var completionHaptic = true
+    @AppStorage(IOSDisplayPreferenceKeys.replyDeliveryMode) private var replyDeliveryMode = IOSChatReplyDeliveryMode.default.rawValue
     private var selectedFont: IOSChatFont {
         IOSChatFont(rawValue: chatFont) ?? .default
+    }
+
+    private var selectedReplyDeliveryMode: IOSChatReplyDeliveryMode {
+        IOSChatReplyDeliveryMode(rawValue: replyDeliveryMode) ?? .default
     }
 
     private var fontScaleLabel: String {
@@ -145,6 +150,18 @@ struct DisplayFontSettingsView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "消息显示")
             AmberFormGroup {
+                Menu {
+                    ForEach(IOSChatReplyDeliveryMode.allCases) { mode in
+                        Button(mode.title) {
+                            replyDeliveryMode = mode.rawValue
+                        }
+                    }
+                } label: {
+                    DisplayValueRow(title: "回复呈现方式", value: selectedReplyDeliveryMode.title)
+                }
+
+                DisplayDivider()
+
                 DisplayToggleRow(title: "显示 Agent 名字", isOn: agentName) { agentName.toggle() }
 
                 DisplayDivider()

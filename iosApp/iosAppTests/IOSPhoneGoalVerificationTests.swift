@@ -138,6 +138,44 @@ final class IOSPhoneGoalVerificationTests: XCTestCase {
         XCTAssertEqual(matches.map(\.identifier), ["continue", "other-continue"])
     }
 
+    func testDuolingoWordChipReadOnlyTextViewAndEnclosingFooterWrapperCollapseCleanly() {
+        // Real Duolingo word-chip hierarchy: Other(label="くし") -> disabled TextView(value="くし") -> TextView(label="くし", value=nil)
+        let chipOuter = node(identifier: nil, label: "くし", depth: 3, type: "XCUIElementTypeOther",
+                             x: 169, width: 64, y: 615, height: 45)
+        let chipReadOnlyWrapper = node(identifier: nil, label: nil, value: "くし", depth: 4,
+                                       type: "XCUIElementTypeTextView", enabled: false, x: 181, width: 40, y: 623, height: 26)
+        let chipInnerLabel = node(identifier: nil, label: "くし", value: nil, depth: 5,
+                                  type: "XCUIElementTypeTextView", x: 181, width: 40, y: 623, height: 25)
+        let chipScreen = observation([chipOuter, chipReadOnlyWrapper, chipInnerLabel])
+
+        let chipMatches = IOSPhoneGoalVerification.matchingNodes(
+            target: .init(label: "くし"), in: chipScreen, executable: true)
+        XCTAssertEqual(chipMatches.count, 1)
+        XCTAssertEqual(chipMatches.first?.type, "XCUIElementTypeOther")
+        XCTAssertEqual(evaluate(.init(kind: .visible, target: .init(label: "くし")), after: chipScreen).status, .satisfied)
+
+        // Same-label word already placed in top sentence area remains genuinely ambiguous without region.
+        let topPlacedWord = node(identifier: nil, label: "くし", value: nil, depth: 3,
+                                 type: "XCUIElementTypeTextView", x: 232, width: 40, y: 215, height: 28)
+        let duplicateScreen = observation([topPlacedWord, chipOuter, chipReadOnlyWrapper, chipInnerLabel])
+        XCTAssertEqual(evaluate(.init(kind: .visible, target: .init(label: "くし")), after: duplicateScreen).reason, "ambiguous_target")
+
+        // Real Duolingo grading footer: unidentified Other(label="继续") enclosing both "答疑解惑" and Button(id="challenge_check_button", label="继续")
+        let footerWrapper = node(identifier: nil, label: "继续", depth: 3, type: "XCUIElementTypeOther",
+                                 x: 16, width: 370, y: 720, height: 104)
+        let explainButton = node(identifier: nil, label: "答疑解惑", depth: 3, type: "XCUIElementTypeButton",
+                                 x: 16, width: 370, y: 720, height: 48)
+        let continueButton = node(identifier: "challenge_check_button", label: "继续", depth: 3,
+                                  type: "XCUIElementTypeButton", x: 16, width: 370, y: 776, height: 48)
+        let continueStatic = node(identifier: nil, label: "继续", depth: 4, type: "XCUIElementTypeStaticText",
+                                  x: 184, width: 34, y: 788, height: 19)
+        let footerScreen = observation([footerWrapper, explainButton, continueButton, continueStatic])
+
+        let continueMatches = IOSPhoneGoalVerification.matchingNodes(target: .init(label: "继续"), in: footerScreen)
+        XCTAssertEqual(continueMatches.map(\.identifier), ["challenge_check_button"])
+        XCTAssertEqual(evaluate(.init(kind: .enabled, target: .init(label: "继续")), after: footerScreen).status, .satisfied)
+    }
+
     func testExplicitTypeKeepsTheRequestedTextChildPrecise() {
         let target = IOSPhoneGoalTarget(label: "继续", type: "XCUIElementTypeStaticText")
         let parent = node(identifier: "continue", label: "继续", depth: 1, type: "XCUIElementTypeButton", x: 20, width: 180, y: 20, height: 80)

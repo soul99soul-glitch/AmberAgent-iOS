@@ -27,22 +27,31 @@ extension ChatToolRuntime {
             ))
         }
 
+        var prefetchedPostActionObservation: IOSJevWebMountLoopService.PageObservation?
         let service = IOSJevWebMountLoopService(deps: .init(
             coordinator: .shared,
             settingsProvider: { IOSSharedSettingsStore.loadPersistedJevSettings() },
             observe: { sessionId in
-                await self.webMountLoopObservation(sessionId: sessionId, runId: runId, conversationId: conversationId)
+                if let cached = prefetchedPostActionObservation {
+                    prefetchedPostActionObservation = nil
+                    return cached
+                }
+                return await self.webMountLoopObservation(sessionId: sessionId, runId: runId, conversationId: conversationId)
             },
             execute: { sessionId, action in
-                await self.webMountLoopExecute(
+                prefetchedPostActionObservation = nil
+                let (result, observedAfter) = await self.webMountLoopExecuteWithObservation(
                     sessionId: sessionId,
                     action: action,
                     runId: runId,
                     conversationId: conversationId
                 )
+                prefetchedPostActionObservation = observedAfter
+                return result
             },
             probe: { sessionId in
-                await self.webMountLoopProbe(sessionId: sessionId, runId: runId, conversationId: conversationId)
+                if prefetchedPostActionObservation != nil { return nil }
+                return await self.webMountLoopProbe(sessionId: sessionId, runId: runId, conversationId: conversationId)
             },
             replay: IOSJevWebMountLoopService.sharedReplay,
             isComplete: { _, observation in
@@ -146,8 +155,22 @@ extension ChatToolRuntime {
         runId: String,
         conversationId: KotlinUuid?
     ) async -> IOSJevWebMountLoopService.ExecutorResult {
+        await webMountLoopExecuteWithObservation(
+            sessionId: sessionId,
+            action: action,
+            runId: runId,
+            conversationId: conversationId
+        ).0
+    }
+
+    private func webMountLoopExecuteWithObservation(
+        sessionId: String,
+        action: IOSJevWebMountLoopService.PlannedAction,
+        runId: String,
+        conversationId: KotlinUuid?
+    ) async -> (IOSJevWebMountLoopService.ExecutorResult, IOSJevWebMountLoopService.PageObservation?) {
         guard let (toolName, payload) = Self.webMountLoopActionCall(sessionId: sessionId, action: action) else {
-            return .failed(reason: "动作不在可执行白名单内。")
+            return (.failed(reason: "动作不在可执行白名单内。"), nil)
         }
         let output = await webMountToolExecutionOutput(
             toolCall(name: toolName, input: payload),
@@ -157,25 +180,25 @@ extension ChatToolRuntime {
         )
         switch output {
         case .failed(let reason):
-            return .failed(reason: reason)
+            return (.failed(reason: reason), nil)
         case .needsUserAction(let reason):
-            return .denied(reason: reason)
+            return (.denied(reason: reason), nil)
         case .denied(let reason):
-            return .denied(reason: reason)
+            return (.denied(reason: reason), nil)
         case .webMountResult(let text):
             let object = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
             // 先判工具级错误：ok:false / 失败 status 不得落到重观察 fallback
             // 被吞成 applied（此前缺 snapshot_id 的动作全在此被误记已应用）。
             if let mapped = Self.webMountLoopActionResult(object) {
-                return mapped
+                return (mapped, nil)
             }
-            // 输出未带 revision：重观察一次取值（保持无进展判定有效）。
+            // 输出未带 revision：重观察一次取值（保持无进展判定有效），并把新鲜观察缓存给下一拍循环顶部复用。
             if let observation = await webMountLoopObservation(sessionId: sessionId, runId: runId, conversationId: conversationId) {
-                return .applied(newRevision: observation.revision)
+                return (.applied(newRevision: observation.revision), observation)
             }
-            return .failed(reason: "动作后无法确认页面状态。")
+            return (.failed(reason: "动作后无法确认页面状态。"), nil)
         default:
-            return .failed(reason: "WebMount 动作返回了不支持的输出。")
+            return (.failed(reason: "WebMount 动作返回了不支持的输出。"), nil)
         }
     }
 
@@ -237,7 +260,7 @@ extension ChatToolRuntime {
             // 逐段下滚由观察反馈驱动（不用 to:bottom 跳页——会跳过目标可视区）。
             payload["by_y"] = 700
             return ("wm_scroll", webMountJSON(payload))
-        case .clickNav:
+        case .clickNav, .clickControl:
             guard let elementId = action.elementId else { return nil }
             payload["target"] = elementId
             return ("wm_click", webMountJSON(payload))

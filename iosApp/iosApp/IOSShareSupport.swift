@@ -281,14 +281,19 @@ enum IOSConversationExporter {
         let imageCount: Int
     }
 
-    /// 与气泡显示一致的文本：用户消息去掉邮箱桥接与可视化路由标记，助手消息取正文。
+    /// 与气泡显示一致的文本：用户消息去掉邮箱桥接与可视化路由标记，助手消息复用展示净化规则。
     /// 单条分享与整段导出共用，避免把内部标记带出 App。
     static func shareText(for message: UIMessage) -> String {
+        if message.role == MessageRole.assistant {
+            let displayTexts = IOSSubAgentOutputProjection.displayTexts(in: message)
+            // Preserve toText's separators/empty non-text parts for ordinary assistant messages.
+            return message.parts.indices.map { displayTexts[$0] ?? "" }.joined(separator: "\n")
+        }
         guard message.role == MessageRole.user else { return message.toText() }
         return message.parts.compactMap { part -> String? in
             guard let textPart = part as? UIMessagePart.Text, !textPart.text.isEmpty else { return nil }
             return GenerativeUiPlanner.shared.stripVisualRouteTagsForDisplay(
-                text: IosMailboxMessageBridge.shared.displayText(part: textPart)
+                text: IOSSubAgentOutputProjection.userFacingMailboxDisplayText(part: textPart)
             )
         }.joined(separator: "\n\n")
     }

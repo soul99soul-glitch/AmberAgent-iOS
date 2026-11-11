@@ -659,3 +659,92 @@ final class IOSChatKernelRunHostTests: IOSChatKernelRunHostTestCase {
     }
 
 }
+
+@MainActor
+final class IOSForegroundApprovalResumeTests: IOSChatKernelRunHostTestCase {
+    func testForegroundResumePreservesSlotApprovalAndFollowupsThenContinues() async throws {
+        let harness = makeHarness()
+        let provider = HostScriptedProvider(rounds: [
+            toolRound("resume-search", "search_web", #"{"query":"amber"}"#),
+            textRound("审批后继续完成")
+        ])
+        let host = makeHost(harness: harness, provider: provider)
+        defer { host.cancel() }
+        let owner = makeOwner()
+        let run = owner.currentRun
+        let slot = ChatAsyncTaskSlot(
+            conversationId: run.state.conversationId, inputDigest: "foreground-approval",
+            anchorUserMessageId: nil, phoneControlUserInitiated: false,
+            providerSetting: harness.providerSetting, params: harness.params,
+            toolExposureBridge: nil, recipeCatalogSnapshot: nil,
+            baselineMessages: harness.messages
+        )
+        slot.host = host
+        run.registerSlot(slot)
+        start(host, harness: harness)
+        let approval = await harness.waitForPendingSearchApproval()
+        XCTAssertNotNil(approval)
+        let runID = try XCTUnwrap(host.currentRunId)
+        run.rebindSlotRunId(slot: slot, newRunId: runID)
+        slot.targetedFollowups = [ChatLocalTaskFollowup(
+            id: "pending-input", runId: runID, text: "保留待消费补充", createdAtMillis: 1, status: .received
+        )]
+        owner.syncFollowupsToState(slot: slot, state: run.state)
+        run.state.selectedFollowupRunId = runID
+
+        let interrupted = owner.reconcileForegroundRunsAfterSystemSuspensionIfNeeded(hasValidKeepAliveLease: false)
+
+        XCTAssertEqual(interrupted, [])
+        XCTAssertTrue(host.hasPendingToolApproval)
+        XCTAssertTrue(host.isRunning)
+        XCTAssertFalse(slot.isTerminal)
+        XCTAssertEqual(slot.targetedFollowups.first?.status, .received)
+        XCTAssertEqual(run.state.selectedFollowupRunId, runID)
+        XCTAssertEqual(harness.pendingSearchApproval?.id, approval?.id)
+        host.approvePendingSearchTool()
+        let terminal = await harness.waitForTerminal()
+        XCTAssertEqual(terminal, "completed")
+        let idle = await waitForHostIdle(host)
+        XCTAssertTrue(idle)
+        XCTAssertEqual(provider.callCount, 2)
+        XCTAssertEqual(harness.messages.last?.toText(), "审批后继续完成")
+    }
+
+    func testForegroundResumePreservesLegacyHostApprovalThenContinues() async throws {
+        let harness = makeHarness()
+        let provider = HostScriptedProvider(rounds: [
+            toolRound("legacy-search", "search_web", #"{"query":"amber"}"#),
+            textRound("原运行已继续")
+        ])
+        let host = makeHost(harness: harness, provider: provider)
+        defer { host.cancel() }
+        let owner = makeOwner()
+        owner.currentRun.host = host
+        start(host, harness: harness)
+        let approval = await harness.waitForPendingSearchApproval()
+        XCTAssertNotNil(approval)
+        let runID = try XCTUnwrap(host.currentRunId)
+
+        XCTAssertEqual(owner.reconcileForegroundRunsAfterSystemSuspensionIfNeeded(hasValidKeepAliveLease: false), [])
+        XCTAssertEqual(host.currentRunId, runID)
+        XCTAssertTrue(host.hasPendingToolApproval)
+        host.approvePendingSearchTool()
+        let terminal = await harness.waitForTerminal()
+        XCTAssertEqual(terminal, "completed")
+        let idle = await waitForHostIdle(host)
+        XCTAssertTrue(idle)
+        XCTAssertEqual(provider.callCount, 2)
+        XCTAssertEqual(harness.messages.last?.toText(), "原运行已继续")
+    }
+
+    private func makeOwner() -> ChatViewModel {
+        let suite = "IOSForegroundApprovalResumeTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        return ChatViewModel(
+            settingsStore: SettingsStore(userDefaults: defaults),
+            sharedSettings: IOSSharedSettingsStore(userDefaults: defaults),
+            autoGenerateResponses: false
+        )
+    }
+}

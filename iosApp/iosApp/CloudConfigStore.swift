@@ -23,7 +23,12 @@ extension MacGatewayStore {
     /// Fetches the cloud's non-secret config view. `notFound` means an older
     /// gateway — surfaced as "接口待接入", not an error banner.
     func refreshCloudConfig() async {
-        guard let transport = cloudConfigTransport else {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["AMBER_CLOUD_CONFIG_FIXTURE"] == "1" {
+            return
+        }
+        #endif
+        guard let client, let transport = cloudConfigTransport else {
             cloudConfig = nil
             cloudConfigError = nil
             return
@@ -32,11 +37,13 @@ extension MacGatewayStore {
         defer { cloudConfigLoading = false }
         do {
             let snapshot = try await transport.fetchCloudConfiguration()
+            guard self.client === client else { return }
             cloudConfig = snapshot
             cloudConfigError = nil
         } catch is CancellationError {
         } catch {
-            if forgetIfRevoked(error) { return }
+            guard self.client === client else { return }
+            if forgetIfRevoked(error, for: client) { return }
             if error as? IOSCloudConfigError == .notFound {
                 cloudConfig = nil
                 cloudConfigError = nil
@@ -74,7 +81,8 @@ extension MacGatewayStore {
     @discardableResult
     func applyCloudBundle(_ bundle: IOSCloudConfigBundle, expectedRevision: Int?) async -> String? {
         guard !cloudImporting else { return nil }
-        guard let transport = cloudConfigTransport else {
+        notice = nil
+        guard let client, let transport = cloudConfigTransport else {
             return localized("云端还不支持配置导入，请等待服务端更新")
         }
         guard !bundle.isEmpty else {
@@ -95,6 +103,7 @@ extension MacGatewayStore {
         do {
             let receipt = try await transport.applyCloudConfiguration(
                 bundle, requestId: requestId, expectedRevision: expected)
+            guard self.client === client else { return nil }
             // Terminal receipt — this operation is over. Keeping the id would
             // let a later identical-but-new submit silently replay this receipt.
             pendingImportOperation.finish()
@@ -103,7 +112,11 @@ extension MacGatewayStore {
             if receipt.replayed {
                 summaryText = localized("云端已应用过该配置（重复请求已合并）")
             } else if let model = bundle.model {
-                summaryText = localized("已切换云端模型为 \(model.providerKind) · \(model.modelId)，新任务开始使用")
+                let trimmedDisplayName = model.providerDisplayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let providerLabel = (trimmedDisplayName?.isEmpty == false)
+                    ? trimmedDisplayName!
+                    : IOSCloudConfigWire.shortProtocolName(for: model.providerKind)
+                summaryText = localized("已切换云端配置为 \(providerLabel) · \(model.modelId)，新任务开始使用")
             } else {
                 summaryText = localized("云端配置已更新，新任务开始使用")
             }
@@ -114,7 +127,8 @@ extension MacGatewayStore {
             await refreshCloudConfig()
             return nil
         } catch {
-            if forgetIfRevoked(error) { return MacGatewayError.unauthorized.localizedDescription }
+            guard self.client === client else { return nil }
+            if forgetIfRevoked(error, for: client) { return MacGatewayError.unauthorized.localizedDescription }
             // Result unknown or a clean 409: the pending id survives so a
             // verbatim retry merges/replays instead of doubling the apply;
             // the draft's selections survive for the user to re-review.

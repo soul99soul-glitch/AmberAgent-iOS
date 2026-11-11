@@ -21,6 +21,16 @@ final class IOSMemoryExtractionCoordinator {
     private let environment: () -> (foreground: Bool, idle: Bool, charging: Bool)
     private let now: () -> Date
     private var pending: [String: [String]]
+    /// Facts and experiences use separate atomic files. Keep only the sanitized
+    /// unfinished experience write so retry never replays committed fact actions.
+    private struct ExperienceWrite: Codable {
+        let sourceIds: [String]
+        let candidates: [IOSAgentExperienceCandidate]
+        let evidence: [IOSAgentTaskEvidence]
+        let factSummary: String
+    }
+    private var experienceWrites: [String: ExperienceWrite]
+    private static let experienceWritesKey = "app.amber.ios.memoryExtraction.experienceWrites.v1"
     private var waitingForRetry = false
     private weak var settings: IOSSharedSettingsStore?
     private weak var conversations: IOSConversationStore?
@@ -47,6 +57,8 @@ final class IOSMemoryExtractionCoordinator {
         self.provider = provider
         self.environment = environment
         self.now = now
+        experienceWrites = defaults.data(forKey: Self.experienceWritesKey)
+            .flatMap { try? JSONDecoder().decode([String: ExperienceWrite].self, from: $0) } ?? [:]
         pending = defaults.dictionary(forKey: Self.pendingKey) as? [String: [String]] ?? [:]
         statusMessage = defaults.string(forKey: Self.statusKey) ?? "聊天结束后自动提炼值得保留的信息。"
     }
@@ -62,7 +74,8 @@ final class IOSMemoryExtractionCoordinator {
     }
 
     func enqueue(conversationId: KotlinUuid, baseline: [UIMessage], completed: [UIMessage]) {
-        guard let worker = settings?.agentRuntime.memoryWorker,
+        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId.toHexDashString()),
+              let worker = settings?.agentRuntime.memoryWorker,
               worker.enabled, worker.extractionEnabled else { return }
         // Include the initial user turn and user steer messages added during it,
         // without re-extracting the entire older conversation on every completion.
@@ -113,7 +126,7 @@ final class IOSMemoryExtractionCoordinator {
             let day = Calendar.current.startOfDay(for: now()).timeIntervalSince1970
             let budget = defaults.dictionary(forKey: Self.budgetKey) ?? [:]
             let runs = (budget["day"] as? Double) == day ? (budget["count"] as? Int ?? 0) : 0
-            guard runs < Int(worker.maxDailyRuns) else { report("已达到今日自动提炼次数，明天继续。"); return }
+            guard experienceWrites[conversationKey] != nil || runs < Int(worker.maxDailyRuns) else { report("已达到今日自动提炼次数，明天继续。"); return }
 
             let sourceIds = Array(queuedIds.prefix(6))
             guard UUID(uuidString: conversationKey) != nil else {
@@ -123,9 +136,20 @@ final class IOSMemoryExtractionCoordinator {
             let conversationId = KotlinUuid.companion.parse(uuidString: conversationKey)
             do {
                 guard let conversation = try await conversations.loadConversationForOrchestration(conversationId),
-                      conversation.memoryMode != .disabled else {
+                      conversation.memoryMode != .disabled,
+                      AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationKey) else {
                     removePending(conversationKey, ids: sourceIds)
                     report("会话已关闭记忆提炼，本次跳过。")
+                    continue
+                }
+                if let unfinished = experienceWrites[conversationKey] {
+                    let fresh = IOSAgentExperienceStore.evidence(messages: conversation.currentMessages, sourceIds: Set(unfinished.sourceIds))
+                    if conversation.memoryMode == .enabled, snapshot.agentRuntime.enableLongTermMemory {
+                        try persistence.experiences.save(unfinished.candidates, evidence: unfinished.evidence.filter { fresh.contains($0) },
+                                                         conversationId: conversationKey, now: Int64(now().timeIntervalSince1970 * 1000))
+                    }
+                    removePending(conversationKey, ids: unfinished.sourceIds)
+                    report("\(unfinished.factSummary) 经验待写入项已处理。")
                     continue
                 }
                 let sources = Self.sourceTexts(conversation, ids: sourceIds)
@@ -156,6 +180,7 @@ final class IOSMemoryExtractionCoordinator {
                 // switches, then take the latest memory snapshot before writing.
                 guard let current = try await conversations.loadConversationForOrchestration(conversationId),
                       current.memoryMode != .disabled,
+                      AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationKey),
                       !(conversation.memoryMode == .enabled && current.memoryMode == .polluted),
                       Self.sourceTexts(current, ids: sourceIds) == sources else {
                     report("来源会话已变化，本次未写入；稍后重新提炼。")
@@ -172,7 +197,14 @@ final class IOSMemoryExtractionCoordinator {
                 )
                 if runtime.enableLongTermMemory, current.memoryMode == .enabled {
                     let fresh = IOSAgentExperienceStore.evidence(messages: current.currentMessages, sourceIds: Set(sources.keys))
-                    try persistence.experiences.save(output.experiences ?? [], evidence: taskEvidence.filter { fresh.contains($0) },
+                    let candidates = (output.experiences ?? []).filter(\.isCredentialSafe)
+                    let evidence = taskEvidence.filter { fresh.contains($0) }
+                    if !candidates.isEmpty {
+                        experienceWrites[conversationKey] = ExperienceWrite(sourceIds: sourceIds, candidates: candidates,
+                                                                          evidence: evidence, factSummary: result.committedSummary)
+                        try persistExperienceWrites()
+                    }
+                    try persistence.experiences.save(candidates, evidence: evidence,
                                                      conversationId: conversationKey, now: Int64(now().timeIntervalSince1970 * 1000))
                 }
                 removePending(conversationKey, ids: sourceIds)
@@ -182,16 +214,28 @@ final class IOSMemoryExtractionCoordinator {
                 return
             } catch {
                 // Keep the source IDs for an explicit retry, without a retry loop.
-                let reason = "自动记忆提炼失败：\(error.localizedDescription)"
+                let unfinished = experienceWrites[conversationKey]
+                let reason = unfinished.map { "\($0.factSummary) 仅经验写入失败，待重试：\(error.localizedDescription)" }
+                    ?? "自动记忆提炼失败：\(error.localizedDescription)"
                 waitingForRetry = true
-                audit.record(action: "extract", status: "failed", reason: reason)
+                audit.record(action: "extract", status: unfinished == nil ? "failed" : "partial", reason: reason)
                 report(reason)
                 failedThisPass.insert(conversationKey)
             }
         }
     }
 
+    private func persistExperienceWrites() throws {
+        defaults.set(try JSONEncoder().encode(experienceWrites), forKey: Self.experienceWritesKey)
+    }
+
     private func removePending(_ key: String, ids: [String]) {
+        if let unfinished = experienceWrites[key], Set(unfinished.sourceIds).isSubset(of: Set(ids)) {
+            experienceWrites.removeValue(forKey: key)
+            // Encoding only fixed Codable values cannot fail; removal must not
+            // replay an already completed experience write after a restart.
+            defaults.set(try? JSONEncoder().encode(experienceWrites), forKey: Self.experienceWritesKey)
+        }
         let remaining = (pending[key] ?? []).filter { !ids.contains($0) }
         pending[key] = remaining.isEmpty ? nil : remaining
         defaults.set(pending, forKey: Self.pendingKey)
@@ -203,7 +247,7 @@ final class IOSMemoryExtractionCoordinator {
     }
 
     private static func userText(_ message: UIMessage) -> String {
-        guard message.role == .user, IosMailboxMessageBridge.shared.kind(message: message) == nil else { return "" }
+        guard message.role == .user, !IOSAgentExperienceStore.isInherited(message), IosMailboxMessageBridge.shared.kind(message: message) == nil else { return "" }
         return message.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }
             .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -324,6 +368,10 @@ final class IOSMemoryExtractionCoordinator {
         var updated = 0
         var invalidated = 0
         var confirmed = 0
+
+        var committedSummary: String {
+            added + updated + invalidated + confirmed > 0 ? "\(summary) 事实变更已保存。" : summary
+        }
 
         var summary: String {
             let parts = [
@@ -605,8 +653,10 @@ final class IOSMemoryExtractionCoordinator {
         \(relatedJSON)
         """ + (try IOSAgentExperienceStore.prompt(evidence: taskEvidence))
         let assistant = settings.getCurrentAssistant()
+        // maxTokens 置 nil：与记忆整理（画像/主题聚合）和压缩路径同约定，不硬编码 1600 上限，
+        // 避免推理模型在思考阶段耗尽输出预算导致正文 content 为空。
         let params = TextGenerationParams(
-            model: model, temperature: nil, topP: nil, maxTokens: KotlinInt(value: 1_600), tools: [],
+            model: model, temperature: nil, topP: nil, maxTokens: nil, tools: [],
             reasoningLevel: .off,
             customHeaders: ChatProviderConfiguration.requestHeaders(
                 for: providerSetting,
@@ -632,7 +682,9 @@ final class IOSMemoryExtractionCoordinator {
         try await withThrowingTaskGroup(of: String.self) { group in
             group.addTask {
                 let chunk = try await request.provider.generateText(providerSetting: request.setting, messages: request.messages, params: request.params)
-                guard let text = chunk.choices.first?.message?.toText(), !text.isEmpty else {
+                let choice = chunk.choices.first
+                guard let text = (choice?.message ?? choice?.delta)?.toText().trimmingCharacters(in: .whitespacesAndNewlines),
+                      !text.isEmpty else {
                     throw Failure("提炼模型返回了空内容。")
                 }
                 return text

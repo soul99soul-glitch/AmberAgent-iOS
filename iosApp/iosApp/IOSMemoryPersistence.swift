@@ -33,8 +33,12 @@ enum IOSMemoryToolExecutor {
         input: String,
         runtime: AgentRuntimeSetting,
         writePolicy: IOSMemoryToolWritePolicy,
-        expectedUpdatedAt: Int64? = nil
+        expectedUpdatedAt: Int64? = nil,
+        conversationId: String? = nil
     ) -> String {
+        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else {
+            return json(["ok": false, "tool": "memory_tool", "error": "Global memory is unavailable in an isolated Hub."])
+        }
         guard let args = jsonObject(input) else {
             return json(["ok": false, "tool": "memory_tool", "error": "memory_tool input must be a JSON object"])
         }

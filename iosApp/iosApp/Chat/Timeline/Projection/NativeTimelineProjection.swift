@@ -20,6 +20,8 @@ enum ChatAssistantTurnTrailingSignal: Equatable {
 
 struct NativeTimelineMessageFacts {
     let identity: ChatMessageContentIdentity
+    let displayTexts: [Int: String]
+    let hasPreparedDisplayTexts: Bool
     let messageId: String
     var parts: [UIMessagePart] { identity.cachedParts }
     let rawRole: MessageRole
@@ -45,8 +47,10 @@ struct NativeTimelineMessageFacts {
         self.init(message: message, identity: identity)
     }
 
-    init(message: UIMessage, identity: ChatMessageContentIdentity) {
+    init(message: UIMessage, identity: ChatMessageContentIdentity, displayTexts: [Int: String]? = nil) {
         self.identity = identity
+        self.hasPreparedDisplayTexts = displayTexts != nil
+        self.displayTexts = displayTexts ?? IOSSubAgentOutputProjection.unpreparedDisplayTexts(in: message)
         self.messageId = ChatMessageProjector.messageId(for: message)
         let parts = identity.cachedParts
         let rawRole = message.role
@@ -78,14 +82,16 @@ struct NativeTimelineMessageFacts {
         for part in parts {
             switch part {
             case let text as UIMessagePart.Text:
-                let hasNonWhitespace = text.text.contains(where: { !$0.isWhitespace })
+                let suppressWaiting = rawRole == MessageRole.assistant &&
+                    ChatTaskCommentaryCoalescer.isOrdinaryWaitingText(text.text)
+                let hasNonWhitespace = !suppressWaiting && text.text.contains(where: { !$0.isWhitespace })
                 if hasNonWhitespace {
                     visibleText = true
                     phoneEligible = false
                     allCollapsibleParts = false
                     trailingSignal = .replyText
                 }
-                if !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if hasNonWhitespace {
                     allStatusOnlyParts = false
                 }
             case let reasoning as UIMessagePart.Reasoning:
@@ -182,11 +188,18 @@ struct NativeTimelineEntry: Identifiable, Equatable {
     var phoneToolGroup: ChatPhoneToolGroupRole? = nil
     /// Assistant turn with non-phone tools this message belongs to (L1 projection).
     var assistantTurn: ChatAssistantTurnRole? = nil
+    /// Continuous automation process screenshot batch this message belongs to (L1 projection).
+    var automationScreenshotGroup: ChatAutomationScreenshotGroupRole? = nil
     /// Digest before the group role was folded in; lets regrouping stay idempotent.
     var baseRenderDigest: ChatRowDigest? = nil
     var isTaskLive: Bool = false
     var contentObservesGenerationState: Bool? = nil
     var contentHasVisibleBodyText: Bool? = nil
+    var displayTexts: [Int: String] = [:]
+
+    var isGenerating: Bool {
+        isStreaming || isTaskLive
+    }
 
     /// Completed prose doesn't consume the chat-wide generation flag. Only
     /// live rows and media with modify controls need that flag to refresh.
@@ -205,7 +218,9 @@ struct NativeTimelineEntry: Identifiable, Equatable {
 
     /// Occupies no space; its group head stands in for it.
     var isCollapsedGroupMember: Bool {
-        phoneToolGroup?.isCollapsedMember == true || assistantTurn?.isCollapsedMember == true
+        phoneToolGroup?.isCollapsedMember == true ||
+            assistantTurn?.isCollapsedMember == true ||
+            automationScreenshotGroup?.isCollapsedMember == true
     }
 
     var hasMultipleVariants: Bool {
@@ -224,6 +239,26 @@ struct NativeTimelineEntry: Identifiable, Equatable {
         return message.parts.contains { part in
             (part as? UIMessagePart.Text)?.text.contains { !$0.isWhitespace } == true
         }
+    }
+
+    @MainActor
+    var isAwaitingSegmentedFirstBlock: Bool {
+        guard role == MessageRole.assistant,
+              isGenerating && isLastMessage,
+              liveMarkdownRenderingEnabled,
+              IOSChatRenderPreferences.shared.isSegmentedReplyDelivery,
+              let message else {
+            return false
+        }
+        let hasNonTextVisiblePart = message.parts.contains { part in
+            if part is UIMessagePart.Text || part is UIMessagePart.Reasoning { return false }
+            if let tool = part as? UIMessagePart.Tool {
+                return ChatTaskStreamGrouping.isMediaBearing(tool)
+            }
+            return true
+        }
+        guard !hasNonTextVisiblePart else { return false }
+        return !ChatSegmentedBubbleReadiness.shared.isReady(messageID: messageId)
     }
 
     var liveMarkdownRenderingEnabled: Bool {
@@ -429,7 +464,11 @@ enum NativeTimelineProjector {
             )
             previousVisibleWasRawAssistant = messageFacts.rawRole == MessageRole.assistant
 
-            if chatEntry.role == MessageRole.assistant {
+            // The child card owns its heading; the next main reply starts a new heading too.
+            if messageFacts.isSubAgentResult {
+                chatEntry.isAssistantContinuation = false
+                hasVisibleAssistantInTurn = false
+            } else if chatEntry.role == MessageRole.assistant {
                 chatEntry.isAssistantContinuation = hasVisibleAssistantInTurn == true
                 if !messageFacts.isGlobalStatusOnly {
                     hasVisibleAssistantInTurn = true
@@ -591,12 +630,14 @@ enum NativeTimelineProjector {
             isCompactedHistory: previousEntry.isCompactedHistory,
             isTaskLive: liveTaskTailIDs.contains(messageID),
             contentObservesGenerationState: tailFacts.contentObservesGenerationState,
-            contentHasVisibleBodyText: tailFacts.contentHasVisibleBodyText
+            contentHasVisibleBodyText: tailFacts.contentHasVisibleBodyText,
+            displayTexts: tailFacts.displayTexts
         )
         if ChatPhoneToolGrouping.tailMayAffectGroups(
             tail: message,
             previousRole: previousEntry.phoneToolGroup,
-            previousTurnRole: previousEntry.assistantTurn
+            previousTurnRole: previousEntry.assistantTurn,
+            previousScreenshotRole: previousEntry.automationScreenshotGroup
         ) {
             let tailSplit = entries[..<entryIndex].lastIndex(where: {
                 $0.kind == .message && $0.role == MessageRole.user
@@ -611,14 +652,18 @@ enum NativeTimelineProjector {
                 fromEntryIndex: tailSplit,
                 factsByObjectID: updatedFacts
             )
-        } else if previousEntry.phoneToolGroup != nil || previousEntry.assistantTurn != nil {
+        } else if previousEntry.phoneToolGroup != nil ||
+            previousEntry.assistantTurn != nil ||
+            previousEntry.automationScreenshotGroup != nil {
             entries[entryIndex].baseRenderDigest = digest
             entries[entryIndex].phoneToolGroup = previousEntry.phoneToolGroup
             entries[entryIndex].assistantTurn = previousEntry.assistantTurn
+            entries[entryIndex].automationScreenshotGroup = previousEntry.automationScreenshotGroup
             entries[entryIndex].renderDigest = ChatPhoneToolGrouping.digest(
                 base: digest,
                 role: previousEntry.phoneToolGroup,
-                turnRole: previousEntry.assistantTurn
+                turnRole: previousEntry.assistantTurn,
+                screenshotRole: previousEntry.automationScreenshotGroup
             )
         }
         return NativeTimelineProjection(
@@ -819,7 +864,10 @@ enum NativeTimelineProjector {
             previousVisibleWasRawAssistant = messageFacts.rawRole == MessageRole.assistant
 
             let entryContinuation: Bool
-            if messageFacts.effectiveRole == MessageRole.assistant {
+            if messageFacts.isSubAgentResult {
+                entryContinuation = false
+                hasVisibleAssistantInTurn = false
+            } else if messageFacts.effectiveRole == MessageRole.assistant {
                 entryContinuation = hasVisibleAssistantInTurn
                 if !messageFacts.isGlobalStatusOnly {
                     hasVisibleAssistantInTurn = true
@@ -846,6 +894,7 @@ enum NativeTimelineProjector {
                 reused.baseRenderDigest = nil
                 reused.phoneToolGroup = nil
                 reused.assistantTurn = nil
+                reused.automationScreenshotGroup = nil
                 entries.append(reused)
                 continue
             }
@@ -1016,7 +1065,8 @@ enum NativeTimelineProjector {
             isGlobalStatusOnly: facts.isGlobalStatusOnly,
             isTaskLive: isTaskLive,
             contentObservesGenerationState: facts.contentObservesGenerationState,
-            contentHasVisibleBodyText: facts.contentHasVisibleBodyText
+            contentHasVisibleBodyText: facts.contentHasVisibleBodyText,
+            displayTexts: facts.displayTexts
         )
     }
 

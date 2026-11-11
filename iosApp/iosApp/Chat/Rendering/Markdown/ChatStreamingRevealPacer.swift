@@ -433,17 +433,22 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         self.content = content
         let initialUTF16 = initiallyRevealedUTF16Count ?? 0
         self._revealedUTF16Count = State(initialValue: initialUTF16)
-        let initialPacing = (isStreaming || pacePendingText) && !reduceMotion
+        let segmentedMode = IOSChatRenderPreferences.shared.isSegmentedReplyDelivery
+        let initialPacing = (isStreaming || pacePendingText) && (!reduceMotion || segmentedMode)
         self._isActivelyPacing = State(initialValue: initialPacing)
         self._latchedCompletionRunID = State(initialValue: resolvedRunID)
         self._pacerBox = State(initialValue: ChatStreamingRevealPacerBox(initialUTF16Count: initialUTF16))
     }
 
     /// 是否仍按帧吐字。流式结束后若还有尾巴没吐完，继续按同一节奏吐。
-    private var isPacing: Bool { isStreaming && !reduceMotion }
+    private var isPacing: Bool {
+        isStreaming && (!reduceMotion || IOSChatRenderPreferences.shared.isSegmentedReplyDelivery)
+    }
 
     var body: some View {
-        let activePacing = !reduceMotion && (isStreaming || isActivelyPacing)
+        let isSegmentedMode = IOSChatRenderPreferences.shared.isSegmentedReplyDelivery
+        let activeSegmented = isSegmentedMode && (isStreaming || isActivelyPacing)
+        let activePacing = !isSegmentedMode && !reduceMotion && (isStreaming || isActivelyPacing)
         // Markdown 表格在 `ChatStreamingBlockMarkdownView` 内部已有稳定前缀 + 尾部节流分块策略；
         // 若外层再按 60fps 逐字切片并对整张 `TableView` 施加 `.frame(height: displayedHeight)` 动画，
         // 会导致数百个单元格每 16ms 触发多遍 `TableLayout` 与滚动几何反馈环（单帧卡死 200-330ms）。
@@ -451,12 +456,17 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         let effectiveRevealedUTF16 = liveRenderingEnabled
             ? revealedUTF16Count
             : max(revealedUTF16Count, pacerBox.currentUTF16Count)
-        let localPendingReveal = activePacing && !bypassPacingForTable && (effectiveRevealedUTF16 < text.utf16.count || isActivelyPacing)
-        let hasPendingReveal = isStreaming || localPendingReveal
-        let isActivelyRevealing = isStreaming || localPendingReveal
         let displayedText: String
         let heightTransitionActive: Bool
-        if activePacing && !bypassPacingForTable {
+        let localPendingReveal: Bool
+        if activeSegmented {
+            let committedUTF16 = liveRenderingEnabled
+                ? pacerBox.committedSegmentedUTF16Count(for: text, isStreaming: isStreaming)
+                : min(pacerBox.currentUTF16Count, text.utf16.count)
+            displayedText = ChatStreamingRevealTiming.slicedPrefix(of: text, utf16Count: committedUTF16)
+            heightTransitionActive = false
+            localPendingReveal = committedUTF16 < text.utf16.count || isActivelyPacing
+        } else if activePacing && !bypassPacingForTable {
             let totalUTF16 = text.utf16.count
             let clampedUTF16 = min(max(0, effectiveRevealedUTF16), totalUTF16)
             if clampedUTF16 < totalUTF16 {
@@ -465,10 +475,14 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                 displayedText = text
             }
             heightTransitionActive = liveRenderingEnabled && (clampedUTF16 < totalUTF16 || isStreaming || isActivelyPacing)
+            localPendingReveal = effectiveRevealedUTF16 < text.utf16.count || isActivelyPacing
         } else {
             displayedText = text
             heightTransitionActive = false
+            localPendingReveal = false
         }
+        let hasPendingReveal = isStreaming || localPendingReveal
+        let isActivelyRevealing = isStreaming || localPendingReveal
         let observesTimelineTableGrowth = timelineGrowth != nil && initiallyRevealedUTF16Count == nil && bypassPacingForTable
         let observesGeometry = (activePacing && !bypassPacingForTable) || observesTimelineTableGrowth
 
@@ -516,6 +530,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
             .clipped()
             .environment(\.chatPacesStreamingTextBlocks, bypassPacingForTable)
             .environment(\.chatIsActivelyPacingReveal, isActivelyRevealing)
+            .environment(\.markdownSegmentedBlockEntrance, activeSegmented)
             .environment(\.chatStreamingTailCoordinator, activePacing && liveRenderingEnabled && !bypassPacingForTable ? pacerBox.tailCoordinator : nil)
             .modifier(ChatStreamingRevealProgressModifier(progress: .init(
                 isMounted: true, hasPendingReveal: hasPendingReveal)))
@@ -537,6 +552,12 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                 }
                 guard isPacing, revealedUTF16Count == 0 else { return }
                 guard initiallyRevealedUTF16Count == nil else { return }
+                if isSegmentedMode {
+                    let committed = pacerBox.committedSegmentedUTF16Count(for: text, isStreaming: isStreaming)
+                    revealedUTF16Count = committed
+                    isActivelyPacing = true
+                    return
+                }
                 if pacerBox.containsTable(in: text) {
                     let fullCount = text.utf16.count
                     pacerBox.currentUTF16Count = fullCount
@@ -566,6 +587,11 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                     if revealedUTF16Count != synced {
                         revealedUTF16Count = synced
                     }
+                } else if isSegmentedMode {
+                    let committed = pacerBox.committedSegmentedUTF16Count(for: text, isStreaming: isStreaming)
+                    if revealedUTF16Count != committed {
+                        revealedUTF16Count = committed
+                    }
                 } else if isPacing, !pacerBox.containsTable(in: text) {
                     let floorOffset = ChatStreamingRevealTiming.reentryStartUTF16Offset(
                         in: text,
@@ -580,10 +606,11 @@ struct ChatStreamingRevealPacer<Content: View>: View {
             }
             .task(
                 id: PacingKey(
-                    targetUTF16Count: activePacing && !bypassPacingForTable ? text.utf16.count : 0,
+                    targetUTF16Count: (activeSegmented || (activePacing && !bypassPacingForTable)) ? text.utf16.count : 0,
                     isStreaming: isStreaming,
                     reduceMotion: reduceMotion,
-                    liveRenderingEnabled: liveRenderingEnabled
+                    liveRenderingEnabled: liveRenderingEnabled,
+                    isSegmentedMode: isSegmentedMode
                 )
             ) {
                 await drain()
@@ -611,6 +638,26 @@ struct ChatStreamingRevealPacer<Content: View>: View {
 
     /// 小步推进直到追平全文。全程同一节奏：流式结束后不提速、不一次性刷出。
     private func drain() async {
+        if IOSChatRenderPreferences.shared.isSegmentedReplyDelivery {
+            pacerBox.lastTickUptime = nil
+            pacerBox.tailCoordinator.setGatesHeightByLineCount(false)
+            guard isStreaming || isActivelyPacing else { return }
+            let committed = liveRenderingEnabled
+                ? pacerBox.committedSegmentedUTF16Count(for: text, isStreaming: isStreaming)
+                : min(pacerBox.currentUTF16Count, text.utf16.count)
+            if revealedUTF16Count != committed {
+                revealedUTF16Count = committed
+            }
+            if isStreaming {
+                if !isActivelyPacing { isActivelyPacing = true }
+            } else if isActivelyPacing {
+                try? await Task.sleep(nanoseconds: UInt64(ChatStreamingRevealTiming.heightSettleSeconds * 1_000_000_000))
+                if !Task.isCancelled && !isStreaming {
+                    isActivelyPacing = false
+                }
+            }
+            return
+        }
         guard !reduceMotion else {
             pacerBox.lastTickUptime = nil
             pacerBox.tailCoordinator.setGatesHeightByLineCount(false)
@@ -751,6 +798,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
         let isStreaming: Bool
         let reduceMotion: Bool
         let liveRenderingEnabled: Bool
+        let isSegmentedMode: Bool
     }
 }
 
@@ -769,6 +817,138 @@ private final class ChatStreamingRevealPacerBox {
     func containsTable(in text: String) -> Bool {
         tableDetector.update(with: text)
         return tableDetector.containsTable
+    }
+
+    func committedSegmentedUTF16Count(for text: String, isStreaming: Bool) -> Int {
+        let totalUTF16 = text.utf16.count
+        if currentUTF16Count > totalUTF16 {
+            currentUTF16Count = 0
+        }
+        let next = ChatSegmentedMarkdownCommitPolicy.committedUTF16Count(
+            in: text,
+            isStreaming: isStreaming,
+            previouslyCommittedUTF16Count: currentUTF16Count
+        )
+        currentUTF16Count = next
+        return next
+    }
+}
+
+/// 分段呈现（`IOSChatReplyDeliveryMode.segmentedBlocks`）的自然结构边界提交策略。
+///
+/// 规则：
+/// 1. 仅在已完成的 Markdown 自然结构边界（闭合围栏代码块/数学块、顶层空行分隔的完整段落/列表/表格/标题）提交；
+/// 2. 未完成句/段不提交；长段落不设硬字数切割，完整后一次显示；代码块与数学块即使内部含空行也不从中间切开；
+/// 3. 流式结束（`isStreaming == false`）时立即全量排空（flush），确保最终文本与源完全一致。
+enum ChatSegmentedMarkdownCommitPolicy {
+    static let defaultSoftTargetCharacters = 120
+
+    static func committedUTF16Count(
+        in text: String,
+        isStreaming: Bool,
+        previouslyCommittedUTF16Count: Int = 0,
+        softTargetCharacters: Int = defaultSoftTargetCharacters
+    ) -> Int {
+        let totalUTF16 = text.utf16.count
+        guard isStreaming else { return totalUTF16 }
+        guard totalUTF16 > 0 else { return 0 }
+        _ = softTargetCharacters
+
+        let safePrevious = min(max(0, previouslyCommittedUTF16Count), totalUTF16)
+        var fenceState = ChatStreamingMarkdownFenceState()
+        var insideMathBlock = false
+        var lastNonBlankContentEnd = text.startIndex
+        var hasUncommittedBlockContent = false
+        var committedIndex = text.startIndex
+
+        var lineStart = text.startIndex
+        while lineStart < text.endIndex {
+            var lineContentEnd = lineStart
+            while lineContentEnd < text.endIndex, !text[lineContentEnd].isNewline {
+                lineContentEnd = text.index(after: lineContentEnd)
+            }
+
+            let hasNewline = lineContentEnd < text.endIndex
+            let lineEnd = hasNewline ? text.index(after: lineContentEnd) : lineContentEnd
+            let lineSlice = text[lineStart..<lineContentEnd]
+
+            // 未以换行结束的尾部行仍在生成中，不能闭合当前结构块。
+            guard hasNewline else { break }
+
+            let lineString = String(lineSlice)
+            let trimmed = lineString.trimmingCharacters(in: .whitespaces)
+
+            let wasInsideCodeFence = fenceState.isInsideFence
+            if fenceState.consumesCodeLine(lineString) {
+                lastNonBlankContentEnd = lineContentEnd
+                hasUncommittedBlockContent = true
+                if wasInsideCodeFence && !fenceState.isInsideFence && !insideMathBlock {
+                    committedIndex = lineContentEnd
+                    hasUncommittedBlockContent = false
+                }
+                lineStart = lineEnd
+                continue
+            }
+
+            if isDisplayMathFenceLine(trimmed) {
+                if !isSingleLineDisplayMath(trimmed) {
+                    insideMathBlock.toggle()
+                }
+                lastNonBlankContentEnd = lineContentEnd
+                hasUncommittedBlockContent = true
+                if !insideMathBlock {
+                    committedIndex = lineContentEnd
+                    hasUncommittedBlockContent = false
+                }
+                lineStart = lineEnd
+                continue
+            }
+
+            if insideMathBlock {
+                lastNonBlankContentEnd = lineContentEnd
+                hasUncommittedBlockContent = true
+                lineStart = lineEnd
+                continue
+            }
+
+            if trimmed.isEmpty {
+                if hasUncommittedBlockContent {
+                    committedIndex = lastNonBlankContentEnd
+                    hasUncommittedBlockContent = false
+                }
+            } else {
+                lastNonBlankContentEnd = lineContentEnd
+                hasUncommittedBlockContent = true
+            }
+
+            lineStart = lineEnd
+        }
+
+        let computedUTF16 = committedIndex.utf16Offset(in: text)
+        return max(safePrevious, computedUTF16)
+    }
+
+    static func committedPrefix(
+        in text: String,
+        isStreaming: Bool,
+        previouslyCommittedUTF16Count: Int = 0,
+        softTargetCharacters: Int = defaultSoftTargetCharacters
+    ) -> String {
+        let count = committedUTF16Count(
+            in: text,
+            isStreaming: isStreaming,
+            previouslyCommittedUTF16Count: previouslyCommittedUTF16Count,
+            softTargetCharacters: softTargetCharacters
+        )
+        return ChatStreamingRevealTiming.slicedPrefix(of: text, utf16Count: count)
+    }
+
+    private static func isDisplayMathFenceLine(_ trimmed: String) -> Bool {
+        trimmed.hasPrefix("$$")
+    }
+
+    private static func isSingleLineDisplayMath(_ trimmed: String) -> Bool {
+        trimmed.count >= 4 && trimmed.hasPrefix("$$") && trimmed.hasSuffix("$$")
     }
 }
 
@@ -858,12 +1038,21 @@ enum ChatStreamingRevealTiming {
 /// their existing hosting path.
 struct ChatStreamingGraphBoundary<Content: View>: View {
     let isStreaming: Bool
+    var messageID: String = ""
+    var contentKey: Int? = nil
     let content: Content
     @State private var didStream: Bool
     @Environment(\.chatTimelineGrowth) private var growth
 
-    init(isStreaming: Bool, @ViewBuilder content: () -> Content) {
+    init(
+        isStreaming: Bool,
+        messageID: String = "",
+        contentKey: Int? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
         self.isStreaming = isStreaming
+        self.messageID = messageID
+        self.contentKey = contentKey
         self.content = content()
         _didStream = State(initialValue: isStreaming)
     }
@@ -871,7 +1060,12 @@ struct ChatStreamingGraphBoundary<Content: View>: View {
     var body: some View {
         Group {
             if growth != nil && didStream {
-                ChatStreamingGraphHost(content: content)
+                ChatStreamingGraphHost(
+                    isStreaming: isStreaming,
+                    messageID: messageID,
+                    contentKey: contentKey,
+                    content: content
+                )
             } else {
                 content
             }
@@ -883,7 +1077,36 @@ struct ChatStreamingGraphBoundary<Content: View>: View {
 }
 
 private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresentable {
+    let isStreaming: Bool
+    let messageID: String
+    let contentKey: Int?
     let content: Content
+
+    struct HostEnvironmentKey: Equatable {
+        let reduceMotion: Bool
+        let locale: Locale
+        let artifactMessageID: String?
+        let layoutInvalidationID: String?
+        let fontScale: Double
+        let chatFont: String
+        let agentName: Bool
+        let appLanguage: String
+        let replyDeliveryMode: String
+
+        @MainActor
+        init(_ env: EnvironmentValues) {
+            let prefs = IOSChatRenderPreferences.shared
+            reduceMotion = env.accessibilityReduceMotion
+            locale = env.locale
+            artifactMessageID = env.chatArtifactMessageID
+            layoutInvalidationID = env.markdownLayoutInvalidationID
+            fontScale = prefs.fontScale
+            chatFont = prefs.chatFont
+            agentName = prefs.agentName
+            appLanguage = prefs.appLanguage
+            replyDeliveryMode = prefs.replyDeliveryMode
+        }
+    }
 
     struct Root: View {
         let content: Content
@@ -909,11 +1132,26 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
 
     final class Controller: UIViewController {
         var host: UIHostingController<Root>!
+        var messageID: String
+        private var lastIsStreaming: Bool
+        private var lastContentKey: Int?
+        private var lastEnvKey: HostEnvironmentKey
         private var measuredWidth: CGFloat?
         private var hasMeasured = false
         private var sizedView: SizedView { view as! SizedView }
 
-        init(content: Content, environment: EnvironmentValues) {
+        init(
+            content: Content,
+            environment: EnvironmentValues,
+            isStreaming: Bool,
+            messageID: String,
+            contentKey: Int?,
+            envKey: HostEnvironmentKey
+        ) {
+            self.messageID = messageID
+            self.lastIsStreaming = isStreaming
+            self.lastContentKey = contentKey
+            self.lastEnvKey = envKey
             super.init(nibName: nil, bundle: nil)
             ChatRenderProbe.record("graph-host-created")
             host = UIHostingController(rootView: root(content, environment: environment))
@@ -939,11 +1177,40 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
                 guard let self, height.isFinite, height >= 0,
                       abs(sizedView.height - height) > 0.5 else { return }
                 sizedView.height = height
+                if !messageID.isEmpty {
+                    ChatTimelineRowLayoutInvalidation.markRowDirty(messageID)
+                }
                 sizedView.invalidateIntrinsicContentSize()
                 sizedView.setNeedsLayout()
             })
         }
-        func update(_ content: Content, environment: EnvironmentValues) {
+        func shouldUpdate(
+            isStreaming: Bool,
+            contentKey: Int?,
+            envKey: HostEnvironmentKey
+        ) -> Bool {
+            if let contentKey, let lastContentKey {
+                return isStreaming != lastIsStreaming ||
+                    contentKey != lastContentKey ||
+                    envKey != lastEnvKey
+            }
+            if !isStreaming && !lastIsStreaming && envKey == lastEnvKey {
+                return false
+            }
+            return true
+        }
+        func update(
+            _ content: Content,
+            environment: EnvironmentValues,
+            isStreaming: Bool,
+            messageID: String,
+            contentKey: Int?,
+            envKey: HostEnvironmentKey
+        ) {
+            self.messageID = messageID
+            self.lastIsStreaming = isStreaming
+            self.lastContentKey = contentKey
+            self.lastEnvKey = envKey
             host.rootView = root(content, environment: environment)
         }
         func size(width: CGFloat) -> CGSize {
@@ -958,11 +1225,34 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
     }
 
     func makeUIViewController(context: Context) -> Controller {
-        Controller(content: content, environment: context.environment)
+        let envKey = HostEnvironmentKey(context.environment)
+        return Controller(
+            content: content,
+            environment: context.environment,
+            isStreaming: isStreaming,
+            messageID: messageID,
+            contentKey: contentKey,
+            envKey: envKey
+        )
     }
     func updateUIViewController(_ controller: Controller, context: Context) {
+        let envKey = HostEnvironmentKey(context.environment)
+        guard controller.shouldUpdate(
+            isStreaming: isStreaming,
+            contentKey: contentKey,
+            envKey: envKey
+        ) else {
+            return
+        }
         ChatRenderProbe.record("graph-host-update")
-        controller.update(content, environment: context.environment)
+        controller.update(
+            content,
+            environment: context.environment,
+            isStreaming: isStreaming,
+            messageID: messageID,
+            contentKey: contentKey,
+            envKey: envKey
+        )
     }
     func sizeThatFits(_ proposal: ProposedViewSize, uiViewController: Controller, context: Context) -> CGSize? {
         guard let width = proposal.width, width > 0, width.isFinite else { return nil }

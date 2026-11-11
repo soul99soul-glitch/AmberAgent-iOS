@@ -90,6 +90,229 @@ enum ChatPhoneToolGroupRole: Equatable {
     }
 }
 
+// MARK: - Continuous automation process screenshot batch grouping (L1)
+
+struct ChatAutomationScreenshotBatchSummary: Equatable {
+    let id: String
+    let headMessageID: String
+    let items: [ChatMediaItem]
+    let isExpanded: Bool
+    let signature: Int
+
+    var toggleID: String { "automation-shots-\(id)" }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.signature == rhs.signature
+    }
+}
+
+enum ChatAutomationScreenshotGroupRole: Equatable {
+    case head(ChatAutomationScreenshotBatchSummary)
+    case member(groupID: String)
+
+    var headSummary: ChatAutomationScreenshotBatchSummary? {
+        if case let .head(summary) = self { return summary }
+        return nil
+    }
+
+    var isCollapsedMember: Bool {
+        if case .member = self { return true }
+        return false
+    }
+
+    var signature: Int {
+        var hasher = Hasher()
+        switch self {
+        case let .head(summary):
+            hasher.combine("shot-head")
+            hasher.combine(summary.signature)
+        case let .member(groupID):
+            hasher.combine("shot-member")
+            hasher.combine(groupID)
+        }
+        return hasher.finalize()
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.signature == rhs.signature
+    }
+}
+
+enum ChatAutomationScreenshotGrouping {
+    enum Membership {
+        case screenshots([ChatMediaItem])
+        case neutral
+        case breaking
+
+        var isBreaking: Bool {
+            if case .breaking = self { return true }
+            return false
+        }
+    }
+
+    static func isAutomationToolName(_ rawName: String) -> Bool {
+        let lower = rawName.lowercased()
+        if lower == "generate_image" || lower == "search_web" || lower == "scrape_web" { return false }
+        if ChatPhoneToolGrouping.isPhoneTool(rawName) { return true }
+        if lower.hasPrefix("wm_") || lower.hasPrefix("browser_") || lower.hasPrefix("desktop_") || lower.hasPrefix("device_") {
+            return true
+        }
+        if rawName == "mcp_call" || ToolKt.isExpandedMcpToolName(name: rawName) {
+            return lower.contains("screenshot") || lower.contains("browser") || lower.contains("device")
+        }
+        return false
+    }
+
+    static func isAutomationScreenshotTool(_ tool: UIMessagePart.Tool, allowDiskLookup: Bool = true) -> Bool {
+        guard isAutomationToolName(tool.toolName) else { return false }
+        guard !tool.output.contains(where: { $0 is UIMessagePart.Video }) else { return false }
+        for part in tool.output {
+            if IosToolOutputJsonBridge.shared.metadataString(part: part, key: "app.amber.media.origin") == "search" {
+                return false
+            }
+        }
+        return !screenshotItems(for: tool, messageID: "probe", allowDiskLookup: allowDiskLookup).isEmpty
+    }
+
+    static func defaultSourceLabel(for toolName: String) -> String {
+        let lower = toolName.lowercased()
+        if lower == "phone_observe" { return "手机界面观察" }
+        if lower == "phone_run_goal" || lower == "phone_run_flow" { return "手机连续操作核验" }
+        if lower.hasPrefix("phone_") { return "手机操作截图" }
+        if lower == "wm_visual_read" { return "网页视觉核验" }
+        if lower == "wm_screenshot" { return "网页视口截图" }
+        if lower.hasPrefix("wm_") || lower.hasPrefix("browser_") || lower.hasPrefix("desktop_") {
+            return "页面过程截图"
+        }
+        return "自动化过程截图"
+    }
+
+    static func screenshotItems(
+        for tool: UIMessagePart.Tool,
+        messageID: String,
+        allowDiskLookup: Bool = true
+    ) -> [ChatMediaItem] {
+        guard isAutomationToolName(tool.toolName),
+              !tool.output.contains(where: { $0 is UIMessagePart.Video }) else { return [] }
+        let fallbackTitle = defaultSourceLabel(for: tool.toolName)
+        if !allowDiskLookup {
+            // Fast in-memory path safe for SwiftUI body: inspect only UIMessagePart.Image without JSON/disk I/O.
+            let directImages = tool.output.compactMap { $0 as? UIMessagePart.Image }
+            return directImages.enumerated().map { offset, image in
+                let rawItem = ChatMediaItem.image(image, id: "\(messageID):\(tool.toolCallId):shot:\(offset)")
+                let trimmedTitle = rawItem.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                return ChatMediaItem(
+                    id: rawItem.id,
+                    url: rawItem.url,
+                    title: trimmedTitle.isEmpty ? fallbackTitle : trimmedTitle,
+                    sourceURL: rawItem.sourceURL,
+                    width: rawItem.width,
+                    height: rawItem.height
+                )
+            }
+        }
+        let rawItems = ChatMediaItem.toolImages(tool.output)
+        if !rawItems.isEmpty {
+            return rawItems.enumerated().map { offset, item in
+                let trimmedTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                return ChatMediaItem(
+                    id: "\(messageID):\(tool.toolCallId):shot:\(offset)",
+                    url: item.url,
+                    title: trimmedTitle.isEmpty ? fallbackTitle : trimmedTitle,
+                    sourceURL: item.sourceURL,
+                    width: item.width,
+                    height: item.height
+                )
+            }
+        }
+        // WebMount wm_screenshot local file artifact fallback when saved on disk:
+        if tool.toolName == "wm_screenshot" {
+            let joined = tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
+            if let data = joined.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let artifact = obj["artifact"] as? [String: Any],
+               let localRef = artifact["local_ref"] as? String,
+               localRef.hasPrefix("Workspace/WebMount/screenshots/") {
+                let fileName = String(localRef.dropFirst("Workspace/WebMount/screenshots/".count))
+                let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                if let fileURL = root?
+                    .appendingPathComponent("AmberWorkspace", isDirectory: true)
+                    .appendingPathComponent("WebMount", isDirectory: true)
+                    .appendingPathComponent("screenshots", isDirectory: true)
+                    .appendingPathComponent(fileName, isDirectory: false),
+                   FileManager.default.fileExists(atPath: fileURL.path) {
+                    let pageURL = ((obj["state"] as? [String: Any])?["url"] as? String)
+                    return [
+                        ChatMediaItem(
+                            id: "\(messageID):\(tool.toolCallId):shot:0",
+                            url: fileURL.absoluteString,
+                            title: fallbackTitle,
+                            sourceURL: pageURL,
+                            width: (artifact["width"] as? NSNumber)?.doubleValue,
+                            height: (artifact["height"] as? NSNumber)?.doubleValue
+                        )
+                    ]
+                }
+            }
+        }
+        return []
+    }
+
+    static func membership(of message: UIMessage, messageID: String? = nil) -> Membership {
+        guard message.role == MessageRole.assistant, message.annotations.isEmpty else { return .breaking }
+        guard !ChatMessageProjector.isSubAgentResult(message) else { return .breaking }
+        let resolvedID = messageID ?? ChatMessageProjector.messageId(for: message)
+        var collected: [ChatMediaItem] = []
+        for part in message.parts {
+            switch part {
+            case let text as UIMessagePart.Text:
+                if text.text.contains(where: { !$0.isWhitespace }) { return .breaking }
+            case is UIMessagePart.Reasoning:
+                continue
+            case let tool as UIMessagePart.Tool:
+                let shots = screenshotItems(for: tool, messageID: resolvedID)
+                if !shots.isEmpty {
+                    collected.append(contentsOf: shots)
+                } else if ChatTaskStreamGrouping.isMediaBearing(tool) {
+                    return .breaking
+                }
+            default:
+                return .breaking
+            }
+        }
+        return collected.isEmpty ? .neutral : .screenshots(collected)
+    }
+
+    static func makeSummary(
+        id: String,
+        headMessageID: String,
+        items: [ChatMediaItem],
+        expandedGroupIDs: Set<String>
+    ) -> ChatAutomationScreenshotBatchSummary {
+        let toggleID = "automation-shots-\(id)"
+        let isExpanded = expandedGroupIDs.contains(toggleID)
+        var hasher = Hasher()
+        hasher.combine(id)
+        hasher.combine(headMessageID)
+        hasher.combine(items.count)
+        for item in items {
+            hasher.combine(item.id)
+            hasher.combine(item.url.count)
+            hasher.combine(String(item.url.suffix(24)))
+            hasher.combine(item.title)
+            hasher.combine(item.sourceURL)
+        }
+        hasher.combine(isExpanded)
+        return ChatAutomationScreenshotBatchSummary(
+            id: id,
+            headMessageID: headMessageID,
+            items: items,
+            isExpanded: isExpanded,
+            signature: hasher.finalize()
+        )
+    }
+}
+
 enum ChatPhoneToolGrouping {
     enum Membership: Equatable {
         /// Assistant message whose only visible content is phone tool steps (+ reasoning).
@@ -129,22 +352,26 @@ enum ChatPhoneToolGrouping {
     static func tailMayAffectGroups(
         tail: UIMessage,
         previousRole: ChatPhoneToolGroupRole?,
-        previousTurnRole: ChatAssistantTurnRole? = nil
+        previousTurnRole: ChatAssistantTurnRole? = nil,
+        previousScreenshotRole: ChatAutomationScreenshotGroupRole? = nil
     ) -> Bool {
-        previousRole != nil || membership(of: tail) != .breaking ||
+        previousRole != nil || previousScreenshotRole != nil || membership(of: tail) != .breaking ||
+            !ChatAutomationScreenshotGrouping.membership(of: tail).isBreaking ||
             ChatAssistantTurnToolGrouping.tailMayAffectTurns(tail: tail, previousRole: previousTurnRole)
     }
 
     static func digest(
         base: ChatRowDigest?,
         role: ChatPhoneToolGroupRole?,
-        turnRole: ChatAssistantTurnRole? = nil
+        turnRole: ChatAssistantTurnRole? = nil,
+        screenshotRole: ChatAutomationScreenshotGroupRole? = nil
     ) -> ChatRowDigest? {
-        guard let base, role != nil || turnRole != nil else { return base }
+        guard let base, role != nil || turnRole != nil || screenshotRole != nil else { return base }
         var hasher = Hasher()
         hasher.combine(base.layout)
         hasher.combine(role?.signature)
         hasher.combine(turnRole?.signature)
+        hasher.combine(screenshotRole?.signature)
         return ChatRowDigest(layout: String(hasher.finalize()), presentation: base.presentation)
     }
 
@@ -297,18 +524,139 @@ enum ChatPhoneToolGrouping {
             fromEntryIndex: startEntryIndex,
             factsByObjectID: factsByObjectID
         )
+        let screenshotRoles = screenshotBatchRoles(
+            entries: entries,
+            messages: messages,
+            expandedGroupIDs: expandedGroupIDs,
+            fromEntryIndex: startEntryIndex,
+            factsByObjectID: factsByObjectID
+        )
         for index in startEntryIndex ..< entries.count where entries[index].kind == .message {
             let turnRole = turnRoles[index]
             let role = turnRole == nil ? roles[index] : nil
+            let screenshotRole = screenshotRoles[index]
             guard entries[index].phoneToolGroup != role ||
                 entries[index].assistantTurn != turnRole ||
+                entries[index].automationScreenshotGroup != screenshotRole ||
                 entries[index].baseRenderDigest == nil else { continue }
             let base = entries[index].baseRenderDigest ?? entries[index].renderDigest
             entries[index].baseRenderDigest = base
             entries[index].phoneToolGroup = role
             entries[index].assistantTurn = turnRole
-            entries[index].renderDigest = digest(base: base, role: role, turnRole: turnRole)
+            entries[index].automationScreenshotGroup = screenshotRole
+            entries[index].renderDigest = digest(
+                base: base,
+                role: role,
+                turnRole: turnRole,
+                screenshotRole: screenshotRole
+            )
         }
+    }
+
+    private static func screenshotBatchRoles(
+        entries: [NativeTimelineEntry],
+        messages: [UIMessage],
+        expandedGroupIDs: Set<String>,
+        fromEntryIndex: Int,
+        factsByObjectID: [ObjectIdentifier: NativeTimelineMessageFacts]?
+    ) -> [ChatAutomationScreenshotGroupRole?] {
+        struct ShotRun {
+            var firstMessageID: String?
+            var headEntryIndex: Int?
+            var memberIndices: [Int] = []
+            var items: [ChatMediaItem] = []
+        }
+        var runs: [ShotRun] = []
+        var current: ShotRun?
+        func close() {
+            if let run = current, !run.items.isEmpty, run.headEntryIndex != nil, run.firstMessageID != nil {
+                runs.append(run)
+            }
+            current = nil
+        }
+
+        if fromEntryIndex == 0,
+           let windowStart = entries.first(where: { $0.kind == .message })?.index {
+            if let prefix = prefixScreenshotRun(messages: messages, before: windowStart, factsByObjectID: factsByObjectID) {
+                current = ShotRun(firstMessageID: prefix.firstMessageID, headEntryIndex: nil, memberIndices: [], items: prefix.items)
+            }
+        }
+
+        for index in fromEntryIndex ..< entries.count {
+            let entry = entries[index]
+            guard entry.kind == .message else {
+                if entry.kind == .contextMarker { close() }
+                continue
+            }
+            guard let message = entry.message, !entry.hasMultipleVariants else {
+                close()
+                continue
+            }
+            let messageID = entry.messageId ?? factsByObjectID?[ObjectIdentifier(message)]?.messageId ?? ChatMessageProjector.messageId(for: message)
+            switch ChatAutomationScreenshotGrouping.membership(of: message, messageID: messageID) {
+            case .screenshots(let shots):
+                if current == nil {
+                    current = ShotRun(firstMessageID: messageID, headEntryIndex: index, memberIndices: [index], items: shots)
+                } else {
+                    if current?.headEntryIndex == nil { current?.headEntryIndex = index }
+                    current?.memberIndices.append(index)
+                    current?.items.append(contentsOf: shots)
+                }
+            case .neutral:
+                continue
+            case .breaking:
+                close()
+            }
+        }
+        close()
+
+        var roles = [ChatAutomationScreenshotGroupRole?](repeating: nil, count: entries.count)
+        for run in runs {
+            guard let groupID = run.firstMessageID,
+                  let headIndex = run.headEntryIndex,
+                  let headMessageID = entries[headIndex].messageId else { continue }
+            let summary = ChatAutomationScreenshotGrouping.makeSummary(
+                id: groupID,
+                headMessageID: headMessageID,
+                items: run.items,
+                expandedGroupIDs: expandedGroupIDs
+            )
+            for memberIndex in run.memberIndices {
+                roles[memberIndex] = memberIndex == headIndex
+                    ? .head(summary)
+                    : .member(groupID: groupID)
+            }
+        }
+        return roles
+    }
+
+    private static func prefixScreenshotRun(
+        messages: [UIMessage],
+        before index: Int,
+        factsByObjectID: [ObjectIdentifier: NativeTimelineMessageFacts]?
+    ) -> (firstMessageID: String, items: [ChatMediaItem])? {
+        var firstMessageID: String?
+        var reversedBatches: [[ChatMediaItem]] = []
+        var cursor = min(index, messages.count) - 1
+        while cursor >= 0 {
+            let message = messages[cursor]
+            cursor -= 1
+            let isVisible = factsByObjectID?[ObjectIdentifier(message)]?.isVisibleInTimeline
+                ?? ChatMessageProjector.isVisibleInTimeline(message)
+            guard isVisible else { continue }
+            let msgID = factsByObjectID?[ObjectIdentifier(message)]?.messageId ?? ChatMessageProjector.messageId(for: message)
+            switch ChatAutomationScreenshotGrouping.membership(of: message, messageID: msgID) {
+            case .breaking:
+                cursor = -1
+            case .neutral:
+                continue
+            case .screenshots(let shots):
+                firstMessageID = msgID
+                reversedBatches.append(shots)
+            }
+        }
+        guard let firstMessageID, !reversedBatches.isEmpty else { return nil }
+        return (firstMessageID, reversedBatches.reversed().flatMap { $0 })
     }
 
     /// The part of a run that lies before the loaded window, scanning backward

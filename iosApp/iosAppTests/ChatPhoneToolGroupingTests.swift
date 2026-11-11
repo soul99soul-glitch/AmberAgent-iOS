@@ -419,4 +419,139 @@ final class ChatPhoneToolGroupingTests: XCTestCase {
             }
         }
     }
+
+    func testContinuousAutomationScreenshotsCollapseIntoCompactExpandableAlbumPreservingSources() async throws {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 120, height: 240))
+        func syntheticShotDataURL(_ color: UIColor) -> String {
+            let png = renderer.pngData { ctx in
+                color.setFill()
+                ctx.fill(CGRect(x: 0, y: 0, width: 120, height: 240))
+            }
+            return "data:image/png;base64,\(png.base64EncodedString())"
+        }
+        func screenshotTool(
+            _ callID: String,
+            name: String,
+            dataURL: String,
+            title: String? = nil,
+            sourceURL: String? = nil
+        ) throws -> UIMessagePart.Tool {
+            let outputParts: [UIMessagePart]
+            if title != nil || sourceURL != nil {
+                var meta: [String: String] = [:]
+                if let title { meta["app.amber.media.title"] = title }
+                if let sourceURL { meta["app.amber.media.sourceURL"] = sourceURL }
+                let rawJSON = try JSONSerialization.data(withJSONObject: [
+                    ["type": "text", "text": #"{"ok":true}"#],
+                    ["type": "image", "url": dataURL, "metadata": meta]
+                ])
+                outputParts = try IosToolOutputJsonBridge.shared.decode(json: String(decoding: rawJSON, as: UTF8.self))
+            } else {
+                outputParts = [
+                    UIMessagePart.Text(text: #"{"screenshot_observation_id":"obs-\#(callID)"}"#, metadata: nil),
+                    UIMessagePart.Image(url: dataURL, metadata: nil)
+                ]
+            }
+            return UIMessagePart.Tool(
+                toolCallId: callID,
+                toolName: name,
+                input: "{}",
+                output: outputParts,
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            )
+        }
+
+        let messages = [
+            UIMessage.companion.user(prompt: "连续完成页面选词并核验"),
+            assistant([try screenshotTool("shot-1", name: "phone_observe", dataURL: syntheticShotDataURL(.systemTeal))]),
+            assistant([reasoning("点选词块中"), phone("act-mid", name: "phone_run_goal")]),
+            assistant([try screenshotTool("shot-2", name: "phone_observe", dataURL: syntheticShotDataURL(.systemIndigo), title: "第 2 步词块核验")]),
+            assistant([try screenshotTool("shot-3", name: "wm_visual_read", dataURL: syntheticShotDataURL(.systemOrange), title: "第 3 步视口核验", sourceURL: "https://practice.example/step-3")]),
+            assistant([UIMessagePart.Text(text: "本页子目标已完成，共核验 3 张过程截图。", metadata: nil)])
+        ]
+
+        func collectScrollViews(in root: UIView) -> [UIScrollView] {
+            var found: [UIScrollView] = []
+            if let sv = root as? UIScrollView { found.append(sv) }
+            for sub in root.subviews { found += collectScrollViews(in: sub) }
+            return found
+        }
+        let projectedCollapsed = messageEntries(project(messages))
+        let batchHeadCollapsed = try XCTUnwrap(projectedCollapsed.compactMap { $0.automationScreenshotGroup?.headSummary }.first)
+        XCTAssertEqual(projectedCollapsed.compactMap { $0.automationScreenshotGroup?.headSummary }.count, 1,
+                       "Three screenshot steps in one automation batch must produce exactly 1 head")
+        XCTAssertFalse(batchHeadCollapsed.isExpanded)
+        XCTAssertEqual(batchHeadCollapsed.items.count, 3)
+        XCTAssertEqual(batchHeadCollapsed.items.map(\.title), ["手机界面观察", "第 2 步词块核验", "第 3 步视口核验"])
+        XCTAssertEqual(batchHeadCollapsed.items.last?.sourceURL, "https://practice.example/step-3")
+        XCTAssertEqual(projectedCollapsed.filter { $0.automationScreenshotGroup?.isCollapsedMember == true }.count, 2)
+        let collapsedLabel = ChatAutomationScreenshotAlbumView.accessibilitySummaryLabel(
+            items: batchHeadCollapsed.items,
+            isExpanded: batchHeadCollapsed.isExpanded
+        )
+        XCTAssertTrue(collapsedLabel.contains("过程截图 · 3 张"), collapsedLabel)
+        XCTAssertTrue(collapsedLabel.contains("第 2 步词块核验"), collapsedLabel)
+
+        let projectedExpanded = messageEntries(project(messages, expanded: [batchHeadCollapsed.toggleID]))
+        XCTAssertEqual(projectedCollapsed.map(\.id), projectedExpanded.map(\.id), "Toggling album expansion must keep timeline row IDs stable")
+        let batchHeadExpanded = try XCTUnwrap(projectedExpanded.compactMap { $0.automationScreenshotGroup?.headSummary }.first)
+        XCTAssertTrue(batchHeadExpanded.isExpanded)
+        XCTAssertNotEqual(projectedCollapsed[1].renderDigest, projectedExpanded[1].renderDigest)
+        XCTAssertEqual(ChatMediaURL.external(batchHeadExpanded.items[2].sourceURL ?? "")?.host, "practice.example")
+
+        let groupToggleID = batchHeadCollapsed.toggleID
+        let store = ChatPhoneToolGroupExpansionStore.shared
+        store.setExpanded(false, groupID: groupToggleID)
+        defer { store.setExpanded(false, groupID: groupToggleID) }
+
+        let defaults = UserDefaults(suiteName: "AutomationShotAlbum-\(UUID().uuidString)")!
+        let settings = IOSSharedSettingsStore(userDefaults: defaults)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+
+        func measureTimeline(expanded: Bool) async throws -> CGFloat {
+            store.setExpanded(expanded, groupID: groupToggleID)
+            let view = NativeChatTimelineView(
+                signal: ChatMessageUpdateSignal(), configurationIssue: nil, isGenerationActive: false,
+                isLoading: false, isRecognizingImages: false,
+                contextCompactState: ChatContextCompactState(status: .idle, summary: "", updatedAt: Date()),
+                contextCompactBoundaries: [], followGeneration: false,
+                displaySetting: settings.displaySetting, generativeUiSetting: settings.agentRuntime.generativeUi,
+                reasoningLevelLabel: nil, workspaceStore: IOSWorkspaceStore(), scrollToBottomTrigger: 0,
+                scrollToBottomSource: .button, messageAnchor: nil, currentConversationID: "shot-album-\(expanded)",
+                messagesProvider: { messages }, variantInfoProvider: { _ in nil },
+                onAction: { _ in }, onViewportStateChange: { _ in }, onDismissKeyboard: {}
+            )
+            let host = UIHostingController(rootView: view)
+            let window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+            window.backgroundColor = .systemBackground
+            window.overrideUserInterfaceStyle = .light
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            host.view.frame = window.bounds
+            defer { window.isHidden = true }
+            try await Task.sleep(nanoseconds: 350_000_000)
+            host.view.layoutIfNeeded()
+            _ = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                XCTAssertTrue(window.drawHierarchy(in: window.bounds, afterScreenUpdates: true))
+            }
+            let verticalScrollView = collectScrollViews(in: host.view)
+                .max(by: { $0.bounds.height < $1.bounds.height })
+            return verticalScrollView?.contentSize.height ?? host.view.bounds.height
+        }
+
+        let collapsedHeight = try await measureTimeline(expanded: false)
+        XCTAssertLessThan(
+            collapsedHeight, 460,
+            "Collapsed screenshot batch must stay compact instead of stacking 3 full-width screenshots (\(collapsedHeight)pt)"
+        )
+
+        let expandedHeight = try await measureTimeline(expanded: true)
+        XCTAssertGreaterThan(
+            expandedHeight, collapsedHeight + 80,
+            "Expanding the screenshot album must reveal the individual screenshot tiles (collapsed=\(collapsedHeight)pt, expanded=\(expandedHeight)pt)"
+        )
+    }
 }

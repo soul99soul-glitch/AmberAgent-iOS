@@ -9,6 +9,83 @@ import Shared
 @MainActor
 final class ChatMessagePresentationTests: ChatMessageProjectionTestCase {
 
+    func testExactKeepaliveAndFirstGenericWaitHaveNoVisibleTimelineBody() {
+        for text in [ChatAsyncTaskSlot.keepaliveDefaultText, "正在处理，请稍候…"] {
+            let message = UIMessage.companion.assistant(prompt: text)
+            let coalesced = ChatTaskCommentaryCoalescer().coalesce(messages: [message])
+            if text == ChatAsyncTaskSlot.keepaliveDefaultText {
+                XCTAssertEqual(coalesced[0].toText(), text, "Keepalive records remain intact for persistence")
+            } else {
+                XCTAssertTrue(coalesced[0].toText().isEmpty, "Ordinary waiting must not receive a first-round exemption")
+            }
+            let projection = NativeTimelineProjector.build(messages: [message], event: .conversationLoaded)
+            XCTAssertFalse(projection.entries.contains { $0.kind == .message && $0.hasVisibleBodyText },
+                "Persisted waiting text must not reappear on history load")
+        }
+    }
+
+    func testWaitingHistoryRendersBelowTopCapsuleAtOriginalPhoneViewport() async throws {
+        struct EmptyKeyStore: SettingsAPIKeyStore {
+            func loadApiKey() -> String? { nil }
+            func saveApiKey(_ key: String) -> Bool { true }
+        }
+        let suite = "WaitingViewport-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = SettingsStore(userDefaults: defaults, apiKeyStore: EmptyKeyStore())
+        let shared = IOSSharedSettingsStore(userDefaults: defaults,
+            loadCredential: { _ in nil }, storeCredential: { _, _ in true }, deleteCredential: { _ in true })
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        let conversations = IOSConversationStore(baseDirectory: directory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let model = ChatViewModel(settingsStore: settings, sharedSettings: shared, autoGenerateResponses: false)
+        let user = UIMessage.companion.user(prompt: "完成当前练习页面，跳过听力和口语")
+        let reply = UIMessage.companion.assistant(prompt: "已识别当前题型，继续核对页面。")
+        model.currentRun.state.messages = [user, reply,
+            UIMessage.companion.assistant(prompt: ChatAsyncTaskSlot.keepaliveDefaultText)]
+        let slot = ChatAsyncTaskSlot(conversationId: nil, inputDigest: "viewport-fixture",
+            anchorUserMessageId: ChatMessageProjector.messageId(for: user), phoneControlUserInitiated: false,
+            providerSetting: IOSChatForegroundFixtures.makeProviderSetting(),
+            params: IOSChatForegroundFixtures.makeParams(toolNames: []),
+            toolExposureBridge: nil, recipeCatalogSnapshot: nil, baselineMessages: [user])
+        slot.isQueuedForConcurrencySlot = true
+        model.currentRun.registerSlot(slot)
+        model.bumpMessageRevision(reason: .initialLoad)
+        let root = ChatView(settingsStore: settings, sharedSettings: shared, viewModel: model)
+            .environment(conversations)
+            .environment(ConversationActivityCenter(conversationStore: conversations))
+            .environment(RouterPath())
+        let host = UIHostingController(rootView: root)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        try await Task.sleep(for: .milliseconds(500))
+        model.currentRun.state.messages = [user, reply,
+            UIMessage.companion.assistant(prompt: ChatAsyncTaskSlot.keepaliveDefaultText)]
+        model.currentRun.registerSlot(slot)
+        model.bumpMessageRevision(reason: .initialLoad)
+        try await Task.sleep(for: .milliseconds(500))
+        host.view.layoutIfNeeded()
+        XCTAssertEqual(model.messages.count, 3, "The rendered fixture must contain actual messages")
+        func scrolls(_ view: UIView) -> [UIScrollView] {
+            (view as? UIScrollView).map { [$0] } ?? view.subviews.flatMap(scrolls)
+        }
+        let scroll = try XCTUnwrap(scrolls(host.view).max { $0.bounds.height < $1.bounds.height })
+        let frame = scroll.convert(scroll.bounds, to: host.view)
+        XCTAssertGreaterThanOrEqual(frame.minY, host.view.safeAreaInsets.top + ChatTopBarLayout.controlsHeight)
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            XCTAssertTrue(window.drawHierarchy(in: window.bounds, afterScreenUpdates: true))
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "waiting-history-original-viewport"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     func testOpaqueReasoningHistoryDoesNotShowEmptyCardsOrHideThinkingPlaceholder() throws {
         let raw = #"""
         [
@@ -709,5 +786,379 @@ final class ChatMessagePresentationTests: ChatMessageProjectionTestCase {
             XCTAssertEqual(prefix, String(sample.prefix(revealedChars)))
         }
         XCTAssertEqual(revealedChars, totalChars)
+    }
+
+    // MARK: - 子代理结果协议边界提取与编辑消息内容驱动高度
+
+    func testSubAgentRoutePublishesReadableResultsOnLoadAndRefresh() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("SyntheticSubAgentRoute-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = IOSConversationStore(baseDirectory: directory)
+        await store.newConversation()
+        let conversationID = try XCTUnwrap(store.currentConversation?.id)
+        func results(_ phase: String) -> [UIMessage] {
+            [
+                IosMailboxMessageBridge.shared.makeMessage(
+                    authorThreadId: "/synthetic/plain", type: "FINAL_ANSWER", payload: "Synthetic plain \(phase)"
+                ),
+                IosMailboxMessageBridge.shared.makeMessage(
+                    authorThreadId: "/synthetic/nested", type: "FINAL_ANSWER",
+                    payload: "[Synthetic reference](https://example.invalid/ref)\n\nSynthetic nested \(phase)\n\n[Amber host: child run ended]\n{\"run_ended\":true,\"terminal_status\":\"completed\"}"
+                ),
+                UIMessage.companion.assistant(prompt: "{\"structured_summary\":{\"conclusion\":\"Synthetic assistant \(phase)\"},\"run_ended\":true}")
+            ]
+        }
+        await store.saveCurrent(messages: results("loaded"))
+        let suite = "SyntheticSubAgentRoute.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = IOSSharedSettingsStore(
+            userDefaults: defaults, loadCredential: { _ in nil },
+            storeCredential: { _, _ in true }, deleteCredential: { _ in true }
+        )
+        let channel = ChatTimelineUpdates()
+        let host = UIHostingController(rootView: SubAgentConversationView(
+            conversationId: conversationID.toHexDashString(), sharedSettings: settings,
+            workspaceStore: IOSWorkspaceStore(baseDirectory: directory), timelineUpdates: channel
+        ).environment(store).environment(RouterPath()))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        host.view.layoutIfNeeded()
+        func waitForPublication(after revision: Int) async -> Bool {
+            for _ in 0..<200 {
+                if channel.latestSignal.revision > revision { return true }
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            return false
+        }
+        func assertBodies(_ phase: String) throws {
+            let loaded = channel.structuralMessages
+            XCTAssertEqual(loaded.count, 3)
+            guard loaded.count == 3 else { return }
+            XCTAssertEqual(channel.projectionCache.displayTexts(for: loaded[0])[0], "Synthetic plain \(phase)")
+            XCTAssertEqual(channel.projectionCache.displayTexts(for: loaded[1])[0],
+                           "[Synthetic reference](https://example.invalid/ref)\n\nSynthetic nested \(phase)")
+            XCTAssertEqual(channel.projectionCache.displayTexts(for: loaded[2])[0], "Synthetic assistant \(phase)")
+            XCTAssertTrue(loaded[1].toText().contains("run_ended"), "The stored protocol must stay intact")
+            XCTAssertTrue(loaded[2].toText().contains("structured_summary"))
+        }
+        let initialPublished = await waitForPublication(after: 0)
+        XCTAssertTrue(initialPublished, "The real child route must publish loaded messages through its own owner")
+        try assertBodies("loaded")
+        let revision = channel.latestSignal.revision
+        await store.saveCurrent(messages: results("refreshed"))
+        let refreshPublished = await waitForPublication(after: revision)
+        XCTAssertTrue(refreshPublished, "Storage refresh must prepare the same child timeline owner")
+        try assertBodies("refreshed")
+    }
+
+    private func publishedProjection(_ messages: [UIMessage]) -> (projection: NativeTimelineProjection, updates: ChatTimelineUpdates) {
+        let updates = ChatTimelineUpdates()
+        updates.publish(.init(revision: 1, reason: .initialLoad), messages: messages)
+        // Matches the mounted timeline's initial reset after the event has prepared its snapshots.
+        updates.projectionCache.reset(forRevision: 1, preservingPreparedFacts: true)
+        let projection = updates.projectionCache.projection(
+            messages: messages, event: .conversationLoaded, sourceRevision: 1, startIndex: 0,
+            configurationIssue: nil, isGenerationActive: false, isLoading: false, isRecognizingImages: false,
+            contextCompactState: .idle, contextCompactBoundaries: [], viewportState: ChatViewportState(),
+            displaySettingSignature: 0, generativeUiSettingSignature: 0, renderStateRevision: 0,
+            reasoningLevelLabel: nil, streamedMessageIDs: [], renderStateStore: ChatRenderStateStore(),
+            variantInfoProvider: { _ in nil }, contentHashProvider: { _, _ in 0 }
+        )
+        return (projection, updates)
+    }
+
+    func testBracketLeadingMarkdownSurvivesMailboxCardAndExportBoundaries() throws {
+        let markdown = "[Synthetic reference](https://example.invalid/ref)\n\nSynthetic result body."
+        let payloads = [
+            markdown,
+            markdown + "\n\n[Amber host: child run ended]\n{\"run_ended\":true,\"terminal_status\":\"completed\"}",
+            "[Structured Digest]\nSynthetic digest\n[Raw Output]\n" + markdown,
+            "[Synthetic label]\n\nSynthetic result body."
+        ]
+        for payload in payloads {
+            let expected = payload.hasPrefix("[Synthetic label]") ? payload : markdown
+            XCTAssertEqual(IOSSubAgentOutputProjection.extractUserFacingResult(from: payload), expected)
+            let mailbox = IosMailboxMessageBridge.shared.makeMessage(
+                authorThreadId: "/synthetic/reviewer", type: "FINAL_ANSWER", payload: payload
+            )
+            let part = try XCTUnwrap(mailbox.parts.first as? UIMessagePart.Text)
+            XCTAssertEqual(IOSSubAgentOutputProjection.userFacingMailboxDisplayText(part: part), expected)
+            XCTAssertTrue(IOSConversationExporter.shareText(for: mailbox).contains(expected))
+            let projected = publishedProjection([mailbox]).projection
+            XCTAssertEqual(projected.entries.first { $0.kind == .message }?.role, .assistant)
+            let card = ChatSubAgentResultCard(message: mailbox)
+            XCTAssertEqual(Mirror(reflecting: card).descendant("displayText") as? String, expected)
+            let projectedCard = ChatSubAgentResultCard(
+                sender: "synthetic",
+                displayText: projected.entries.first { $0.kind == .message }?.displayTexts[0] ?? ""
+            )
+            XCTAssertEqual(Mirror(reflecting: projectedCard).descendant("displayText") as? String, expected)
+        }
+        for internalJSON in [
+            #"[{"run_ended":true,"session_read":{"offset":0}}]"#,
+            #"[{"run_ended":true,"structured_summary": broken"#
+        ] {
+            XCTAssertNil(IOSSubAgentOutputProjection.extractUserFacingResult(from: internalJSON))
+        }
+    }
+
+    func testTimelineActivityAnchorSummaryTracksStructureNotStreamingText() {
+        let userA = UIMessage.companion.user(prompt: "Synthetic question A")
+        let assistantA = UIMessage.companion.assistant(prompt: "Synthetic partial A")
+        let userB = UIMessage.companion.user(prompt: "Synthetic question B")
+        let mailbox = IosMailboxMessageBridge.shared.makeMessage(
+            authorThreadId: "/synthetic/worker", type: "FINAL_ANSWER", payload: "Synthetic report"
+        )
+        var summary = ChatListSummarySnapshot()
+        summary.updateTimelineAnchors(from: [userA, assistantA, userB, mailbox])
+        let oldAnchor = ChatMessageProjector.messageId(for: assistantA)
+        XCTAssertEqual(summary.timelineActivityAnchor(rawAnchor: oldAnchor, hasAssistant: true, isTargetedFollowup: false).messageID,
+                       ChatMessageProjector.messageId(for: mailbox))
+        XCTAssertFalse(summary.timelineActivityAnchor(rawAnchor: oldAnchor, hasAssistant: true, isTargetedFollowup: false).hasAssistant)
+        XCTAssertEqual(summary.timelineActivityAnchor(rawAnchor: oldAnchor, hasAssistant: true, isTargetedFollowup: true).messageID, oldAnchor)
+        let before = summary
+        let updatedA = UIMessage(id: assistantA.id, role: assistantA.role,
+                                 parts: [UIMessagePart.Text(text: "Synthetic updated A", metadata: nil)],
+                                 annotations: assistantA.annotations, createdAt: assistantA.createdAt,
+                                 finishedAt: assistantA.finishedAt, modelId: assistantA.modelId,
+                                 usage: assistantA.usage, translation: assistantA.translation)
+        summary.updateTimelineAnchors(from: [userA, updatedA, userB, mailbox])
+        XCTAssertEqual(summary, before, "Streaming text alone must not invalidate the parent anchor summary")
+        summary.updateTimelineAnchors(from: [userA, updatedA])
+        XCTAssertTrue(summary.messageIDsBeforeLatestUser.isEmpty, "Branch changes must discard removed anchor ordering")
+    }
+
+    func testDisplayTextSnapshotsKeepRawProtocolAndInvalidateOnExactBodyChanges() throws {
+        let raw = #"{"structured_summary":{"conclusion":"Synthetic result A"},"run_ended":true}"#
+        let original = UIMessage.companion.assistant(prompt: raw)
+        let published = publishedProjection([original])
+        let displayTexts = published.updates.projectionCache.displayTexts(for: original)
+        XCTAssertEqual(displayTexts[0], "Synthetic result A")
+        XCTAssertEqual(NativeTimelineMessageFacts(message: original).displayTexts[0], "", "An unprepared body-side fallback must not decode an envelope")
+        let iterations = 500
+        let decodeStart = Date.timeIntervalSinceReferenceDate
+        let decodedCharacters = (0..<iterations).reduce(0) { count, _ in
+            count + IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope(raw).utf16.count
+        }
+        let decodeMillis = (Date.timeIntervalSinceReferenceDate - decodeStart) * 1_000
+        let snapshotStart = Date.timeIntervalSinceReferenceDate
+        let snapshotCharacters = (0..<iterations).reduce(0) { count, _ in
+            count + (displayTexts[0]?.utf16.count ?? 0)
+        }
+        let snapshotMillis = (Date.timeIntervalSinceReferenceDate - snapshotStart) * 1_000
+        XCTAssertEqual(snapshotCharacters, decodedCharacters)
+        print(String(format: "S4 synthetic helper, %d reads: repeated sanitize %.3f ms; projected lookup %.3f ms", iterations, decodeMillis, snapshotMillis))
+        XCTAssertEqual(original.toText(), raw, "Display projection must not mutate model/persistence input")
+        let projection = published.projection
+        XCTAssertEqual(projection.entries.first { $0.kind == .message }?.displayTexts, displayTexts)
+        let state = ChatRenderState(rendererMode: .streamingMarkdown, hasEverStreamed: true,
+                                    liveRenderingEnabled: true, frozenMarkdownSnapshot: nil)
+        let live = ChatLiveTailModel(message: original, isGenerationActive: true, renderState: state, displayTexts: displayTexts)
+        live.update(message: original, isGenerationActive: true, renderState: state, sourceRevision: 1, displayTexts: displayTexts)
+        XCTAssertEqual(live.displayTexts, displayTexts)
+        let changed = UIMessage(id: original.id, role: original.role,
+                                parts: [UIMessagePart.Text(text: raw.replacingOccurrences(of: "result A", with: "result B"), metadata: nil)],
+                                annotations: original.annotations, createdAt: original.createdAt,
+                                finishedAt: original.finishedAt, modelId: original.modelId,
+                                usage: original.usage, translation: original.translation)
+        XCTAssertEqual(changed.toText().utf16.count, original.toText().utf16.count)
+        published.updates.publish(.init(revision: 2, reason: .streamDelta), messages: [changed])
+        let changedTexts = published.updates.projectionCache.displayTexts(for: changed)
+        live.update(message: changed, isGenerationActive: true, renderState: state, sourceRevision: 2, displayTexts: changedTexts)
+        XCTAssertEqual(live.displayTexts[0], "Synthetic result B", "ID/length equality cannot reuse a stale display snapshot")
+        let facts = NativeTimelineMessageFacts(message: changed, identity: ChatMessageContentIdentity(changed), displayTexts: changedTexts)
+        let replacement = try XCTUnwrap(NativeTimelineProjector.replacingStreamingTail(
+            in: projection, messages: [changed], event: .assistantStreamDelta,
+            isGenerationActive: true, viewportState: ChatViewportState(),
+            factsByObjectID: [ObjectIdentifier(changed): facts]
+        ))
+        XCTAssertEqual(replacement.entries.first { $0.kind == .message }?.displayTexts[0], "Synthetic result B")
+    }
+
+    func testSubAgentResultExtractionStripsHostEnvelopePreservesMarkdownAndNeverFallsBackToRawJSON() {
+        let syntheticExcerptPayload = """
+        前置补充说明。
+        这部分详细列出了各候选方案在离线与弱网场景下的吞吐表现，部分长表已在 2000 字符边界处截断等待按需分页读取
+
+        [Amber host: child result excerpt]
+        {"run_ended":true,"session_read":{"conversation_id":"00000000-0000-4000-8000-000000000101","message_id":"00000000-0000-4000-8000-000000000202","offset":0},"structured_summary":{"conclusion":"已完成三组候选缓存方案对比，优先推荐双层索引方案。","deliverable_hint":"缓存方案对比表 + 推荐配置 + 待验证项","formatted_summary":"核心结论：已完成三组候选缓存方案对比，优先推荐双层索引方案。\\n交付物：缓存方案对比表 + 推荐配置 + 待验证项\\n关键产出要点：\\n• 方案 A 的宣传吞吐数据缺少真实基准佐证，多处指标存在自相矛盾。\\n• 实测表明方案 B 在冷启动与内存占用之间最均衡，并支持增量快照恢复。"}}
+        This child run has ended. The report above is a delivery excerpt, not a promise of another message. Read the stored full message with native session_read using the reference above, then follow next_offset until null.
+        """
+
+        // 1. 本机 FINAL_ANSWER 信封保留内部结构化通道，同时展示层仅提取面向用户的可读摘要与正文
+        let mailboxMessage = IosMailboxMessageBridge.shared.makeMessage(
+            authorThreadId: "/root/benchmark_worker",
+            type: "FINAL_ANSWER",
+            payload: syntheticExcerptPayload
+        )
+        XCTAssertTrue(
+            mailboxMessage.toText().contains("\"session_read\""),
+            "内部结构化通道（供父模型上传）必须保留原始信封引用"
+        )
+        let textPart = try! XCTUnwrap(mailboxMessage.parts.first as? UIMessagePart.Text)
+        let userFacing = IOSSubAgentOutputProjection.userFacingMailboxDisplayText(part: textPart)
+        XCTAssertTrue(userFacing.contains("核心结论：已完成三组候选缓存方案对比，优先推荐双层索引方案。"))
+        XCTAssertTrue(userFacing.contains("交付物：缓存方案对比表 + 推荐配置 + 待验证项"))
+        XCTAssertTrue(userFacing.contains("\n• 方案 A 的宣传吞吐数据缺少真实基准佐证"))
+        XCTAssertTrue(userFacing.contains("\n• 实测表明方案 B 在冷启动与内存占用之间最均衡"))
+        XCTAssertFalse(userFacing.contains("[Amber host: child result excerpt]"))
+        XCTAssertFalse(userFacing.contains("\"run_ended\""))
+        XCTAssertFalse(userFacing.contains("\"session_read\""))
+        XCTAssertFalse(userFacing.contains("00000000-0000-4000-8000-000000000101"))
+        XCTAssertFalse(userFacing.contains("00000000-0000-4000-8000-000000000202"))
+        XCTAssertFalse(userFacing.contains("This child run has ended"))
+
+        // 2. 字段顺序打乱且无 formatted_summary 时，仍按确定性顺序提取可读结论、交付物、要点与拍板项并保留换行
+        let permutedJSON = """
+        {"session_read":{"offset":0,"message_id":"00000000-0000-4000-8000-000000000202","conversation_id":"00000000-0000-4000-8000-000000000101"},"structured_summary":{"key_points":["要点一：方案 B 可直接合入主干","要点二：方案 C 需补充压力测试"],"needs_user_decision":true,"decision_prompt":"是否先按方案 B 推进首轮集成？","deliverable_hint":"缓存方案对比表","conclusion":"评估完成，先同步核心结论。"},"run_ended":true}
+        """
+        let extractedPermuted = try! XCTUnwrap(IOSSubAgentOutputProjection.extractUserFacingResult(from: permutedJSON))
+        XCTAssertEqual(
+            extractedPermuted,
+            """
+            评估完成，先同步核心结论。
+            交付物：缓存方案对比表
+            关键产出要点：
+            • 要点一：方案 B 可直接合入主干
+            • 要点二：方案 C 需补充压力测试
+            需用户拍板：是否先按方案 B 推进首轮集成？
+            """
+        )
+
+        // 3. 缺失可读字段的纯内部 JSON 或截断损坏 JSON：绝不回退为整包原始 JSON
+        let internalOnlyJSON = """
+        [Amber host: child result excerpt]
+        {"run_ended":true,"session_read":{"conversation_id":"00000000-0000-4000-8000-000000000101","message_id":"00000000-0000-4000-8000-000000000202","offset":0},"terminal_status":"failed"}
+        """
+        XCTAssertNil(
+            IOSSubAgentOutputProjection.extractUserFacingResult(from: internalOnlyJSON),
+            "缺失可读摘要字段时必须返回 nil，不得把内部 JSON 回退当作正文"
+        )
+        let malformedJSON = #"{"run_ended":true,"structured_summary":{"conclusion":"半截损坏 JSON"#
+        XCTAssertNil(
+            IOSSubAgentOutputProjection.extractUserFacingResult(from: malformedJSON),
+            "JSON 解析失败时绝不能回退展示原始 JSON 字符串"
+        )
+
+        // 4. 云端入口（MacGatewayStore.ingestCloudDialogueEventsPage）同步在协议边界净化子代理回包
+        let gateway = MacGatewayStore()
+        let cloudPage = MacGatewayCloudDialogueEventsPage(
+            items: [
+                MacGatewayCloudDialogueEvent(
+                    seq: 1,
+                    id: "evt-cloud-subagent-1",
+                    kind: .taskResult,
+                    role: "assistant",
+                    text: syntheticExcerptPayload,
+                    topicId: "topic-1",
+                    workItemId: "work-1",
+                    outcome: .completed,
+                    soulRevision: nil
+                )
+            ],
+            nextCursor: 1,
+            soulRevision: nil
+        )
+        gateway.ingestCloudDialogueEventsPage(cloudPage, requestedAfter: 0)
+        let ingestedText = try! XCTUnwrap(gateway.cloudDialogueEvents.first?.text)
+        XCTAssertTrue(ingestedText.contains("核心结论：已完成三组候选缓存方案对比"))
+        XCTAssertFalse(ingestedText.contains("[Amber host: child result excerpt]"))
+        XCTAssertFalse(ingestedText.contains("00000000-0000-4000-8000-000000000101"))
+    }
+
+    func testChatMessageEditSheetUsesContentDrivenHeightCapsAndScrollsLongTextWhilePreservingLayout() throws {
+        let shortText = "请帮我核对一下构建产物的大小与符号表配置"
+        let mediumText = """
+        我们已经有一套默认的主工程编译配置了，现在需要针对模拟器与回归测试环境单独梳理一份轻量构建参数，优先保证增量链接速度和符号完整性。
+
+        目前主要想确认哪些调试阶段可以按需延后执行，因为日常开发只需要验证核心模块。请帮我在工程构建脚本和相关配置文档里查一下可行方案。
+        """
+        let longText = Array(
+            repeating: "这是一段较长的历史消息内容，用于验证编辑消息框在达到最大高度上限后转为内部滚动，并且全文保持完整可编辑。",
+            count: 24
+        ).joined(separator: "\n")
+
+        let shortEditorH = ChatMessageEditSheet.editorHeight(for: shortText, availableWidth: 393, dynamicTypeSize: .large)
+        let mediumEditorH = ChatMessageEditSheet.editorHeight(for: mediumText, availableWidth: 393, dynamicTypeSize: .large)
+        let longEditorH = ChatMessageEditSheet.editorHeight(for: longText, availableWidth: 393, dynamicTypeSize: .large)
+
+        // 1. 短消息与中等消息高度由内容驱动，绝不占满整屏；随内容行数增长，长消息在上限（320pt）封顶
+        XCTAssertLessThanOrEqual(shortEditorH, 110, "短消息编辑框应保持紧凑最小高度，不留大块空白")
+        XCTAssertGreaterThan(mediumEditorH, shortEditorH, "6 行消息的编辑框高度应随内容自然增长")
+        XCTAssertLessThan(mediumEditorH, ChatMessageEditSheet.defaultMaxEditorHeight, "中等长度消息未达上限前不应直接拉满上限")
+        XCTAssertEqual(longEditorH, ChatMessageEditSheet.defaultMaxEditorHeight, accuracy: 0.5, "超长消息编辑框高度应在上限处封顶并转为内部滚动")
+
+        let shortSheetH = ChatMessageEditSheet.preferredSheetHeight(for: shortText, availableWidth: 393, dynamicTypeSize: .large)
+        let mediumSheetH = ChatMessageEditSheet.preferredSheetHeight(for: mediumText, availableWidth: 393, dynamicTypeSize: .large)
+        XCTAssertLessThan(shortSheetH, 240, "短消息默认弹窗高度应紧凑贴合内容，不占近整屏")
+        XCTAssertGreaterThan(mediumSheetH, shortSheetH)
+        XCTAssertLessThan(mediumSheetH, 360)
+
+        // 2. 动态字号（Accessibility）下最小高度与测量高度同步放大且不裁切
+        let largeTypeEditorH = ChatMessageEditSheet.editorHeight(for: shortText, availableWidth: 393, dynamicTypeSize: .accessibility2)
+        XCTAssertGreaterThan(largeTypeEditorH, shortEditorH, "无障碍大字号下编辑框高度应随字号同步放大")
+
+        // 3. 在真实 UIHostingController 宿主中核对初帧布局、边距对齐、长文可滚动与完整可编辑性
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+
+        func findTextView(in view: UIView) -> UITextView? {
+            if let tv = view as? UITextView { return tv }
+            for sub in view.subviews {
+                if let found = findTextView(in: sub) { return found }
+            }
+            return nil
+        }
+
+        let mediumHost = UIHostingController(
+            rootView: ChatMessageEditSheet(
+                draft: ChatMessageEditDraft(messageId: "m-edit-1", text: mediumText),
+                onSubmit: { _, _ in },
+                onCancel: {}
+            )
+        )
+        window.rootViewController = mediumHost
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        mediumHost.view.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        mediumHost.view.layoutIfNeeded()
+
+        let mediumTextView = try XCTUnwrap(findTextView(in: mediumHost.view), "应挂载可编辑的 UITextView")
+        let mediumFrameInWindow = mediumTextView.convert(mediumTextView.bounds, to: window)
+        XCTAssertEqual(mediumTextView.text, mediumText)
+        XCTAssertTrue(mediumTextView.isEditable)
+        XCTAssertGreaterThanOrEqual(mediumFrameInWindow.minX, 16, "左侧应保留至少 16pt 安全边距，无越界错位")
+        XCTAssertLessThanOrEqual(mediumFrameInWindow.maxX, 393 - 16, "右侧应保留至少 16pt 安全边距，无水平溢出")
+        XCTAssertLessThan(mediumFrameInWindow.height, 260, "6 行中等长度内容在宿主中高度应紧凑，不得占满整屏（852pt）")
+
+        let longHost = UIHostingController(
+            rootView: ChatMessageEditSheet(
+                draft: ChatMessageEditDraft(messageId: "m-edit-2", text: longText),
+                onSubmit: { _, _ in },
+                onCancel: {}
+            )
+        )
+        window.rootViewController = longHost
+        longHost.view.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        longHost.view.layoutIfNeeded()
+
+        let longTextView = try XCTUnwrap(findTextView(in: longHost.view))
+        let longFrameInWindow = longTextView.convert(longTextView.bounds, to: window)
+        XCTAssertEqual(longTextView.text, longText, "长原文必须完整保留且可编辑")
+        XCTAssertTrue(longTextView.isEditable)
+        XCTAssertTrue(longTextView.isScrollEnabled, "达到高度上限后编辑区必须启用内部滚动")
+        XCTAssertGreaterThan(longFrameInWindow.height, mediumFrameInWindow.height, "长内容编辑区高度应大于中等内容并停在上限")
+        XCTAssertLessThanOrEqual(longFrameInWindow.height, ChatMessageEditSheet.defaultMaxEditorHeight + 2, "长内容编辑区高度不得突破上限")
     }
 }

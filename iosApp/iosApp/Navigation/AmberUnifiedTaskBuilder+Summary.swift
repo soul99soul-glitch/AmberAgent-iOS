@@ -1,19 +1,34 @@
 import Foundation
+import CoreFoundation
 
 extension AmberUnifiedTaskBuilder {
-    private final class SummaryEntry {
-        let value: AmberDeliverableSummary
-        init(_ value: AmberDeliverableSummary) { self.value = value }
-    }
-
     // Bottom-badge reads also build task cards. Their unchanged result text must
     // not be scanned again on every view update; status classification stays live.
-    // NSCache serializes its accesses; entries contain immutable summary values.
+    // Unlike NSCache (which iOS purges on every background/scenePhase snapshot),
+    // a bounded lock-protected ring keeps parsed summaries across scene transitions.
     private final class SummaryCache: @unchecked Sendable {
-        let values = NSCache<NSString, SummaryEntry>()
-        init() {
-            values.countLimit = 64
-            values.totalCostLimit = 1_048_576
+        private let lock = NSLock()
+        private let capacity = 128
+        private var entries: [String: AmberDeliverableSummary] = [:]
+        private var order: [String] = []
+
+        func value(for key: String) -> AmberDeliverableSummary? {
+            lock.lock()
+            defer { lock.unlock() }
+            return entries[key]
+        }
+
+        func insert(_ summary: AmberDeliverableSummary, for key: String) {
+            lock.lock()
+            defer { lock.unlock() }
+            if entries[key] == nil {
+                if order.count >= capacity, let oldest = order.first {
+                    order.removeFirst()
+                    entries.removeValue(forKey: oldest)
+                }
+                order.append(key)
+            }
+            entries[key] = summary
         }
     }
     private static let summaryCache = SummaryCache()
@@ -21,10 +36,9 @@ extension AmberUnifiedTaskBuilder {
     /// Exact input value is the cache key, including decision markers at the tail.
     static func extractDeliverableSummary(from raw: String?) -> AmberDeliverableSummary {
         guard let raw else { return parseDeliverableSummary(from: nil) }
-        let key = raw as NSString
-        if let cached = summaryCache.values.object(forKey: key) { return cached.value }
+        if let cached = summaryCache.value(for: raw) { return cached }
         let summary = parseDeliverableSummary(from: raw)
-        summaryCache.values.setObject(SummaryEntry(summary), forKey: key, cost: key.length * 2)
+        summaryCache.insert(summary, for: raw)
         return summary
     }
 
@@ -33,31 +47,27 @@ extension AmberUnifiedTaskBuilder {
             return AmberDeliverableSummary(headline: nil, bullets: [], decisionPrompt: nil, needsDecision: false)
         }
         ChatRenderProbe.record("task-summary-parse")
-        let trimmedRaw = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedRaw.isEmpty else {
+        let initialTrimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !initialTrimmed.isEmpty else {
             return AmberDeliverableSummary(headline: nil, bullets: [], decisionPrompt: nil, needsDecision: false)
         }
-
-        let overallNeedsDecision = containsDecisionMarker(trimmedRaw)
+        guard let trimmedRaw = userFacingResultMarkdown(from: initialTrimmed) else {
+            return AmberDeliverableSummary(headline: nil, bullets: [], decisionPrompt: nil, needsDecision: false)
+        }
+        let overallNeedsDecision = structuredDecision(in: initialTrimmed) ?? containsDecisionMarker(trimmedRaw)
         var headline: String? = nil
         var explicitBullets: [String] = []
         var paragraphSentences: [String] = []
         var decisionPrompt: String? = nil
         var fallbackHeading: String? = nil
-        var inCodeBlock = false
-
-        for rawLine in trimmedRaw.split(whereSeparator: \.isNewline) {
+        for rawLine in IOSSubAgentOutputProjection.linesOutsideCodeFences(trimmedRaw) {
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            if line.hasPrefix("```") {
-                inCodeBlock.toggle()
-                continue
-            }
-            if inCodeBlock || line.isEmpty { continue }
+            if line.isEmpty { continue }
             if isHorizontalRule(line) || isInternalHeaderLine(line) { continue }
 
             let isHeading = line.hasPrefix("#")
             let isBullet = isMarkdownBulletLine(line)
-            let lineHasDecisionMarker = containsDecisionMarker(line)
+            let lineHasDecisionMarker = overallNeedsDecision && containsDecisionMarker(line)
             let cleaned = cleanMarkdownLine(line)
             guard !cleaned.isEmpty else { continue }
 
@@ -131,32 +141,57 @@ extension AmberUnifiedTaskBuilder {
         extractDeliverableSummary(from: raw).headline
     }
 
+    /// One projection for task previews, summaries and copy. Persisted output remains lossless.
+    static func userFacingResultMarkdown(from raw: String?) -> String? {
+        guard let raw else { return nil }
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if IOSSubAgentOutputProjection.isKnownSubAgentResultEnvelope(text) {
+            text = IOSSubAgentOutputProjection.extractUserFacingResult(from: text) ?? ""
+        }
+        // amberd owns this exact preamble. Do not strip similarly named fields in user reports.
+        let lines = text.components(separatedBy: "\n")
+        if lines.first?.hasPrefix("# Settlement Report · ") == true,
+           let summary = lines.firstIndex(of: "## Summary"),
+           lines[1..<summary].allSatisfy({ line in
+               line.isEmpty || ["- TaskKey: ", "- Title: ", "- Outcome: "].contains(where: line.hasPrefix)
+           }) {
+            text = lines.dropFirst(summary + 1).joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return text.isEmpty ? nil : text
+    }
+
+    static func needsDecision(metadata: [String: String], fallback: Bool) -> Bool {
+        for key in ["needs_decision", "needs_user_decision"] {
+            if let value = metadata[key]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+                if value == "false" { return false }
+                if value == "true" { return true }
+            }
+        }
+        return ["decision_prompt", "checkpoint"].contains {
+            metadata[$0]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        } || fallback
+    }
+
+    static func structuredDecision(in text: String?) -> Bool? {
+        guard let text, let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let facts = object["structured_summary"] as? [String: Any] ?? object
+        for key in ["needs_decision", "needs_user_decision"] {
+            if let value = facts[key] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() {
+                return value.boolValue
+            }
+        }
+        if let prompt = facts["decision_prompt"] as? String, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        return nil
+    }
+
     static func containsDecisionMarker(_ text: String?) -> Bool {
         guard let text, !text.isEmpty else { return false }
-        let lower = text.lowercased()
-        let markers = [
-            "[待拍板]",
-            "【待拍板】",
-            "等待拍板",
-            "等我拍板",
-            "等你拍板",
-            "待你拍板",
-            "请拍板",
-            "需要拍板",
-            "需你拍板",
-            "待拍板：",
-            "待拍板:",
-            "needs_decision",
-            "[needs_decision]",
-            "awaiting_decision",
-            "[checkpoint]",
-            "checkpoint:",
-            "前序阶段完成",
-            "前序阶段已完成",
-            "前序步骤已完成",
-            "阶段完成待确认"
-        ]
-        return markers.contains { lower.contains($0) }
+        if let decision = structuredDecision(in: text) { return decision }
+        return IOSSubAgentOutputProjection.decisionSignal(in: text).needsDecision
     }
 
     private static func isHorizontalRule(_ line: String) -> Bool {

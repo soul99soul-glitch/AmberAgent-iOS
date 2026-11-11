@@ -139,6 +139,211 @@ extension MacGatewayCloudDialogueSessionHealth {
 
 // MARK: - Inline Paired Cloud Main Dialogue View (Embedded in ChatView)
 
+@MainActor
+final class AmberCloudTimelineScrollCoordinator {
+    private weak var scrollView: UIScrollView?
+    private var lastAdjustedBottomInset: CGFloat = 0
+    private var lastViewportHeight: CGFloat = 0
+    private var lastContentHeight: CGFloat = 0
+    private(set) var isPinnedToBottom: Bool = true
+
+    func resolve(_ scrollView: UIScrollView) {
+        let isNew = self.scrollView !== scrollView
+        self.scrollView = scrollView
+        if isNew {
+            lastAdjustedBottomInset = scrollView.adjustedContentInset.bottom
+            lastViewportHeight = scrollView.bounds.height
+            lastContentHeight = scrollView.contentSize.height
+            if isPinnedToBottom {
+                scrollToBottom()
+            }
+        }
+    }
+
+    func scrollToBottom() {
+        isPinnedToBottom = true
+        applyBottomOffsetIfNeeded()
+        DispatchQueue.main.async { [weak self] in
+            self?.applyBottomOffsetIfNeeded()
+        }
+    }
+
+    private func applyBottomOffsetIfNeeded() {
+        guard isPinnedToBottom, let scrollView else { return }
+        scrollView.layoutIfNeeded()
+        let targetY = bottomTarget(in: scrollView)
+        if abs(scrollView.contentOffset.y - targetY) > 0.5 {
+            scrollView.setContentOffset(CGPoint(x: 0, y: targetY), animated: false)
+        }
+        lastAdjustedBottomInset = scrollView.adjustedContentInset.bottom
+        lastViewportHeight = scrollView.bounds.height
+        lastContentHeight = scrollView.contentSize.height
+    }
+
+    func handleMetricsChanged() {
+        guard let scrollView else { return }
+        let currentVisibleHeight = max(
+            1,
+            scrollView.bounds.height - scrollView.adjustedContentInset.top - scrollView.adjustedContentInset.bottom
+        )
+        let previousVisibleHeight = max(
+            1,
+            lastViewportHeight - scrollView.adjustedContentInset.top - lastAdjustedBottomInset
+        )
+        let shrinkDelta = max(0, previousVisibleHeight - currentVisibleHeight)
+        let contentGrowthDelta = max(0, scrollView.contentSize.height - lastContentHeight)
+        let currentDistance = distanceToBottom(in: scrollView)
+        let distanceBeforeChange = max(0, currentDistance - shrinkDelta - contentGrowthDelta)
+        let userInteracting = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
+
+        lastAdjustedBottomInset = scrollView.adjustedContentInset.bottom
+        lastViewportHeight = scrollView.bounds.height
+        lastContentHeight = scrollView.contentSize.height
+
+        if !userInteracting && (isPinnedToBottom || distanceBeforeChange <= NativeTimelineScrollCore.resumeEpsilon) {
+            isPinnedToBottom = true
+            let targetY = bottomTarget(in: scrollView)
+            if abs(scrollView.contentOffset.y - targetY) > 0.5 {
+                scrollView.setContentOffset(CGPoint(x: 0, y: targetY), animated: false)
+            }
+        } else {
+            isPinnedToBottom = currentDistance <= NativeTimelineScrollCore.resumeEpsilon
+        }
+    }
+
+    private func bottomTarget(in scrollView: UIScrollView) -> CGFloat {
+        max(
+            -scrollView.adjustedContentInset.top,
+            scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom
+        )
+    }
+
+    private func distanceToBottom(in scrollView: UIScrollView) -> CGFloat {
+        let visibleHeight = max(
+            1,
+            scrollView.bounds.height - scrollView.adjustedContentInset.top - scrollView.adjustedContentInset.bottom
+        )
+        let visibleMaxY = scrollView.contentOffset.y + scrollView.adjustedContentInset.top + visibleHeight
+        return max(0, scrollView.contentSize.height - visibleMaxY)
+    }
+}
+
+struct AmberCloudTaskProgressRowView: View {
+    let headline: String
+    let isLive: Bool
+    var outcome: MacGatewayCloudDialogueOutcome? = nil
+    var showsActions: Bool = false
+    var onSupplement: (() -> Void)? = nil
+    var onStop: (() -> Void)? = nil
+    var animationTimeOverride: TimeInterval? = nil
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var dotColor: Color {
+        if isLive {
+            return AmberTheme.accent
+        }
+        switch outcome {
+        case .completed, .none:
+            return AmberTheme.muted2
+        case .blocked, .cancelled:
+            return AmberTheme.accentAmber
+        case .failed:
+            return AmberTheme.accentRed
+        }
+    }
+
+    private var lineColor: Color {
+        if isLive {
+            return AmberTheme.foreground
+        }
+        switch outcome {
+        case .completed, .none:
+            return AmberTheme.muted
+        case .blocked, .cancelled:
+            return AmberTheme.accentAmber
+        case .failed:
+            return AmberTheme.accentRed
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            ChatTaskProgressDot(
+                tint: dotColor,
+                isLive: isLive,
+                reduceMotion: reduceMotion,
+                timeOverride: animationTimeOverride
+            )
+
+            ZStack(alignment: .leading) {
+                Text(verbatim: headline)
+                    .font(.system(size: 14, weight: isLive ? .medium : .regular))
+                    .foregroundStyle(lineColor)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .modifier(
+                        ChatTaskProgressTextShimmer(
+                            isActive: isLive && !reduceMotion,
+                            accentColor: dotColor,
+                            timeOverride: animationTimeOverride
+                        )
+                    )
+                    .id(headline)
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .asymmetric(
+                                insertion: .opacity
+                                    .combined(with: .offset(y: 5))
+                                    .combined(with: .scale(scale: 0.985, anchor: .leading)),
+                                removal: .opacity
+                                    .combined(with: .offset(y: -5))
+                            )
+                    )
+            }
+            .frame(height: 22, alignment: .leading)
+            .clipped()
+            .animation(
+                reduceMotion ? nil : .snappy(duration: 0.26, extraBounce: 0),
+                value: headline
+            )
+
+            Spacer(minLength: 4)
+
+            if showsActions {
+                if let onSupplement {
+                    Button(macGatewayL("补充")) {
+                        onSupplement()
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(AmberTheme.accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(AmberTheme.accent.opacity(0.12), in: Capsule(style: .continuous))
+                    .buttonStyle(.plain)
+                }
+
+                if let onStop {
+                    Button(macGatewayL("停止")) {
+                        onStop()
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(AmberTheme.accentRed)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(AmberTheme.accentRed.opacity(0.12), in: Capsule(style: .continuous))
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+        .padding(.horizontal, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("chat.cloudMainDialogue.statusLine")
+    }
+}
+
 struct AmberInlineCloudMainDialogueView: View {
     let store: MacGatewayStore
     let topInset: CGFloat
@@ -146,8 +351,47 @@ struct AmberInlineCloudMainDialogueView: View {
     let onOpenPairingSettings: () -> Void
     var onDismissKeyboard: (() -> Void)? = nil
 
-    private var sortedProgressItems: [MacGatewayCloudDialogueWorkItemProgress] {
-        store.cloudDialogueProgressByWorkItem.values.sorted { $0.lastEventSeq > $1.lastEventSeq }
+    @State private var scrollCoordinator = AmberCloudTimelineScrollCoordinator()
+
+    private struct CloudTailStatusRowItem: Identifiable {
+        let id: String
+        let headline: String
+        let isLive: Bool
+        let outcome: MacGatewayCloudDialogueOutcome?
+        let workItemId: String?
+        let showsActions: Bool
+    }
+
+    private var liveProgressItems: [MacGatewayCloudDialogueWorkItemProgress] {
+        store.liveCloudDialogueProgressItems
+    }
+
+    private var tailStatusItems: [CloudTailStatusRowItem] {
+        if !liveProgressItems.isEmpty {
+            return liveProgressItems.enumerated().map { index, progress in
+                CloudTailStatusRowItem(
+                    id: index == 0 ? "cloud-status-primary" : "cloud-status-\(progress.workItemId)",
+                    headline: progress.displaySingleLine,
+                    isLive: progress.isLive,
+                    outcome: progress.outcome,
+                    workItemId: progress.workItemId,
+                    showsActions: progress.isLive && !progress.isStopRequested
+                )
+            }
+        }
+        if store.isAwaitingCloudMainReply {
+            return [
+                CloudTailStatusRowItem(
+                    id: "cloud-status-primary",
+                    headline: macGatewayL("正在思考"),
+                    isLive: true,
+                    outcome: nil,
+                    workItemId: nil,
+                    showsActions: false
+                )
+            ]
+        }
+        return []
     }
 
     private var unmergedMainSubmissions: [MacGatewayCloudDialoguePersistedSubmission] {
@@ -162,9 +406,11 @@ struct AmberInlineCloudMainDialogueView: View {
 
     private var scrollTailToken: String {
         let lastEvent = store.cloudDialogueVisibleEvents.last
-        let liveSeq = sortedProgressItems.first?.lastEventSeq ?? 0
+        let liveProgress = liveProgressItems.first
+        let liveSeq = liveProgress?.lastEventSeq ?? 0
+        let liveStatus = liveProgress?.displaySingleLine ?? ""
         let pendingMainCount = unmergedMainSubmissions.count
-        return "\(lastEvent?.id ?? "none"):\(lastEvent?.seq ?? 0):\(pendingMainCount):\(unmergedFollowups.count):\(liveSeq):\(store.isAwaitingCloudMainReply)"
+        return "\(lastEvent?.id ?? "none"):\(lastEvent?.seq ?? 0):\(pendingMainCount):\(unmergedFollowups.count):\(liveSeq):\(liveStatus):\(store.isAwaitingCloudMainReply):\(isInputFocused)"
     }
 
     var body: some View {
@@ -176,14 +422,11 @@ struct AmberInlineCloudMainDialogueView: View {
 
                     cloudHostHeaderBanner
 
-                    if !sortedProgressItems.isEmpty {
-                        liveProgressSection
-                    }
-
                     if store.cloudDialogueVisibleEvents.isEmpty
                         && unmergedMainSubmissions.isEmpty
                         && unmergedFollowups.isEmpty
-                        && sortedProgressItems.isEmpty {
+                        && liveProgressItems.isEmpty
+                        && !store.isAwaitingCloudMainReply {
                         emptyCloudConversationCard
                     } else {
                         ForEach(store.cloudDialogueVisibleEvents) { event in
@@ -201,9 +444,9 @@ struct AmberInlineCloudMainDialogueView: View {
                                 .id("cloud-followup-\(followup.requestId)")
                         }
 
-                        if store.isAwaitingCloudMainReply && sortedProgressItems.isEmpty {
-                            awaitingCloudReplyRow
-                                .id("cloud-awaiting-reply")
+                        if !tailStatusItems.isEmpty {
+                            liveProgressSection
+                                .id("cloud-tail-status")
                         }
                     }
 
@@ -214,12 +457,22 @@ struct AmberInlineCloudMainDialogueView: View {
                 .padding(.horizontal, ChatLayout.contentHorizontalInset)
                 .background {
                     NativeTimelineScrollViewResolver(
-                        onResolve: { _ in },
-                        onMetricsChanged: {},
+                        onResolve: { scrollView in
+                            scrollCoordinator.resolve(scrollView)
+                        },
+                        onMetricsChanged: {
+                            scrollCoordinator.handleMetricsChanged()
+                        },
                         onDismissKeyboard: onDismissKeyboard
                     )
                 }
             }
+            .modifier(
+                ChatSizeChangesPinModifier(
+                    preservesScrollIdentity: true,
+                    enabled: scrollCoordinator.isPinnedToBottom
+                )
+            )
             .scrollDismissesKeyboard(.interactively)
             .contentShape(Rectangle())
             .simultaneousGesture(
@@ -236,11 +489,13 @@ struct AmberInlineCloudMainDialogueView: View {
                     _ = await store.pollCloudDialogueEvents()
                 }
                 proxy.scrollTo("cloud-dialogue-bottom-anchor", anchor: .bottom)
+                scrollCoordinator.scrollToBottom()
             }
             .onChange(of: scrollTailToken) { _, _ in
                 withAnimation(.easeOut(duration: 0.18)) {
                     proxy.scrollTo("cloud-dialogue-bottom-anchor", anchor: .bottom)
                 }
+                scrollCoordinator.scrollToBottom()
             }
         }
         .accessibilityIdentifier("chat.cloudMainDialogue.inlineView")
@@ -308,54 +563,20 @@ struct AmberInlineCloudMainDialogueView: View {
     }
 
     private var liveProgressSection: some View {
-        VStack(spacing: 8) {
-            ForEach(sortedProgressItems) { progress in
-                HStack(spacing: 8) {
-                    if progress.isLive {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: progress.outcome == .completed ? "checkmark.circle.fill" : "xmark.circle")
-                            .font(.caption)
-                            .foregroundStyle(progress.outcome == .completed ? AmberTheme.accentGreen : AmberTheme.muted)
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(tailStatusItems) { item in
+                AmberCloudTaskProgressRowView(
+                    headline: item.headline,
+                    isLive: item.isLive,
+                    outcome: item.outcome,
+                    showsActions: item.showsActions,
+                    onSupplement: item.workItemId.map { workItemId in
+                        { store.selectedCloudDialogueWorkItemId = workItemId }
+                    },
+                    onStop: item.workItemId.map { workItemId in
+                        { Task { _ = await store.stopCloudWorkItem(workItemId: workItemId) } }
                     }
-
-                    Text(verbatim: progress.displaySingleLine)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(AmberTheme.foreground)
-                        .lineLimit(1)
-
-                    Spacer(minLength: 4)
-
-                    if progress.isLive {
-                        Button(macGatewayL("补充")) {
-                            store.selectedCloudDialogueWorkItemId = progress.workItemId
-                        }
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(AmberTheme.accent)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(AmberTheme.accent.opacity(0.12), in: Capsule(style: .continuous))
-                        .buttonStyle(.plain)
-
-                        Button(macGatewayL("停止")) {
-                            Task { _ = await store.stopCloudWorkItem(workItemId: progress.workItemId) }
-                        }
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(AmberTheme.accentRed)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(AmberTheme.accentRed.opacity(0.12), in: Capsule(style: .continuous))
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(AmberTheme.surfaceElevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(progress.isLive ? AmberTheme.accent.opacity(0.32) : AmberTheme.borderSoft, lineWidth: 0.75)
-                }
+                )
             }
         }
     }
@@ -427,29 +648,31 @@ struct AmberInlineCloudMainDialogueView: View {
                             .stroke(AmberTheme.borderSoft, lineWidth: 0.75)
                     }
 
-                Text(verbatim: submission.receipt?.state.displayBadgeText ?? submission.lastError ?? macGatewayL("发送中…"))
+                Text(verbatim: pendingSubmissionStatusText(submission))
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(submission.lastError != nil ? AmberTheme.accentRed : AmberTheme.muted)
+                    .foregroundStyle((submission.lastError != nil && !submission.isAwaitingReceiptConfirmation) ? AmberTheme.accentRed : AmberTheme.muted)
             }
         }
     }
 
+    private func pendingSubmissionStatusText(_ submission: MacGatewayCloudDialoguePersistedSubmission) -> String {
+        if let receipt = submission.receipt {
+            return receipt.state.displayBadgeText
+        }
+        if store.busyCloudDialogueRequestIds.contains(submission.requestId) {
+            return macGatewayL("发送中…")
+        }
+        if submission.isAwaitingReceiptConfirmation {
+            return macGatewayL("已提交 · 待确认")
+        }
+        return submission.lastError ?? macGatewayL("未执行")
+    }
+
     private var awaitingCloudReplyRow: some View {
-        HStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
-            Text(macGatewayL("Amber · 云端 正在思考并生成回复…"))
-                .font(.caption)
-                .foregroundStyle(AmberTheme.muted)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(AmberTheme.borderSoft, lineWidth: 0.75)
-        }
+        AmberCloudTaskProgressRowView(
+            headline: macGatewayL("正在思考"),
+            isLive: true
+        )
     }
 
     @ViewBuilder
@@ -539,11 +762,15 @@ struct MacGatewayCloudDialogueSheet: View {
     @State private var inputText = ""
     @State private var activeRequestId = UUID().uuidString.lowercased()
     @State private var lastAttemptedFingerprint: String?
+    @State private var submitGeneration = 0
     @State private var errorMessage: String?
     @State private var isSending = false
 
     private var currentFingerprint: String {
-        "\(store.selectedCloudDialogueWorkItemId ?? "main")\u{0000}\(inputText)"
+        ChatComposerLocalState.cloudDialogueFingerprint(
+            text: inputText,
+            targetWorkItemId: store.selectedCloudDialogueWorkItemId
+        )
     }
 
     var body: some View {
@@ -552,37 +779,20 @@ struct MacGatewayCloudDialogueSheet: View {
                 if !store.cloudDialogueProgressByWorkItem.isEmpty {
                     VStack(spacing: 6) {
                         ForEach(Array(store.cloudDialogueProgressByWorkItem.values.sorted(by: { $0.lastEventSeq > $1.lastEventSeq }))) { progress in
-                            HStack(spacing: 8) {
-                                if progress.isLive {
-                                    ProgressView().controlSize(.small)
-                                } else {
-                                    Image(systemName: progress.outcome == .completed ? "checkmark.circle.fill" : "xmark.circle")
-                                        .font(.caption)
-                                        .foregroundStyle(progress.outcome == .completed ? AmberTheme.accentGreen : AmberTheme.muted)
+                            AmberCloudTaskProgressRowView(
+                                headline: progress.displaySingleLine,
+                                isLive: progress.isLive,
+                                outcome: progress.outcome,
+                                showsActions: progress.isLive && !progress.isStopRequested,
+                                onSupplement: {
+                                    store.selectedCloudDialogueWorkItemId = progress.workItemId
+                                },
+                                onStop: {
+                                    Task { _ = await store.stopCloudWorkItem(workItemId: progress.workItemId) }
                                 }
-                                Text(verbatim: progress.displaySingleLine)
-                                    .font(.caption.weight(.medium))
-                                    .foregroundStyle(AmberTheme.foreground)
-                                    .lineLimit(1)
-                                Spacer(minLength: 4)
-                                if progress.isLive {
-                                    Button(macGatewayL("补充")) {
-                                        store.selectedCloudDialogueWorkItemId = progress.workItemId
-                                    }
-                                    .font(.caption.weight(.semibold))
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.mini)
-
-                                    Button(macGatewayL("停止"), role: .destructive) {
-                                        Task { _ = await store.stopCloudWorkItem(workItemId: progress.workItemId) }
-                                    }
-                                    .font(.caption.weight(.semibold))
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.mini)
-                                }
-                            }
+                            )
                             .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
+                            .padding(.vertical, 6)
                             .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
                     }
@@ -703,10 +913,13 @@ struct MacGatewayCloudDialogueSheet: View {
     }
 
     private func sendInput() {
-        if let lastAttemptedFingerprint, lastAttemptedFingerprint != currentFingerprint {
+        let submittedFingerprint = currentFingerprint
+        if let lastAttemptedFingerprint, lastAttemptedFingerprint != submittedFingerprint {
             activeRequestId = UUID().uuidString.lowercased()
         }
-        lastAttemptedFingerprint = currentFingerprint
+        lastAttemptedFingerprint = submittedFingerprint
+        submitGeneration += 1
+        let generation = submitGeneration
         let reqId = activeRequestId
         let text = inputText
         let targetWorkItemId = store.selectedCloudDialogueWorkItemId
@@ -720,15 +933,27 @@ struct MacGatewayCloudDialogueSheet: View {
             } else {
                 result = await store.sendCloudDialogueMessage(text: text, requestId: reqId)
             }
-            isSending = false
+            if generation == submitGeneration {
+                isSending = false
+            }
             switch result {
             case .success:
-                inputText = ""
-                activeRequestId = UUID().uuidString.lowercased()
-                lastAttemptedFingerprint = nil
+                if inputText == text {
+                    inputText = ""
+                }
+                if store.selectedCloudDialogueWorkItemId == targetWorkItemId {
+                    store.selectedCloudDialogueWorkItemId = nil
+                }
+                if lastAttemptedFingerprint == submittedFingerprint {
+                    activeRequestId = UUID().uuidString.lowercased()
+                    lastAttemptedFingerprint = nil
+                    errorMessage = nil
+                }
                 _ = await store.pollCloudDialogueEvents()
             case .failure(let error):
-                errorMessage = error.localizedDescription
+                if generation == submitGeneration && currentFingerprint == submittedFingerprint {
+                    errorMessage = error.localizedDescription
+                }
             }
         }
     }

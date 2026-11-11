@@ -754,11 +754,11 @@ final class ChatRecipeExecution {
                 isUserInitiated: isUserInitiated
             ))
         case .memory:
-            let policy = runtime.memoryToolWritePolicy(input: argsJSON, isUserInitiated: isUserInitiated)
+            let policy = runtime.memoryToolWritePolicy(input: argsJSON, isUserInitiated: isUserInitiated, conversationId: context.conversationId)
             if case .needsUserAction(let reason) = policy {
                 return .needsApproval(reason: reason)
             }
-            return recipePrimitiveResult(runtime.dispatchMemoryToolCall(toolCall, writePolicy: policy))
+            return recipePrimitiveResult(runtime.dispatchMemoryToolCall(toolCall, writePolicy: policy, conversationId: context.conversationId))
         case .ish:
             let output = await runtime.ishToolExecutionOutput(toolCall, isUserInitiated: isUserInitiated)
             switch output {
@@ -862,10 +862,11 @@ final class ChatRecipeExecution {
             case .allow: return .proceed
             }
         case .memory:
-            if case .needsUserAction(let reason) = runtime.memoryToolWritePolicy(input: argsJSON, isUserInitiated: false) {
-                return .approvalRequired(reason: reason)
+            switch runtime.memoryToolWritePolicy(input: argsJSON, isUserInitiated: false, conversationId: context.conversationId) {
+            case .needsUserAction(let reason): return .approvalRequired(reason: reason)
+            case .denied(let reason), .deniedByUser(let reason): return .unsupported(reason: reason)
+            case .allow: return .proceed
             }
-            return .proceed
         case .ish:
             if runtime.isIshToolAutoApproved(
                 toolName: tool,

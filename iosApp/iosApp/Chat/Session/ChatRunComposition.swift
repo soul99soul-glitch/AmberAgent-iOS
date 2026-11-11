@@ -54,6 +54,7 @@ extension ChatViewModel {
                 },
                 setMessages: { [weak self] messages in
                     if let taskSlot, let self {
+                        guard !taskSlot.isTerminal else { return }
                         self.spliceTaskTranscript(messages, for: taskSlot, into: state)
                     } else {
                         state.messages = messages
@@ -204,7 +205,9 @@ extension ChatViewModel {
                     let effectiveSnapshot: [UIMessage]
                     let effectiveBaseline: IOSConversationWriteBaseline?
                     if let taskSlot {
-                        self.spliceTaskTranscript(snapshot, for: taskSlot, into: state)
+                        if !taskSlot.isTerminal {
+                            self.spliceTaskTranscript(snapshot, for: taskSlot, into: state)
+                        }
                         effectiveSnapshot = state.messages
                         let run = self.runRegistry.current(for: state.conversationId)
                         let targetId = conversationId ?? state.conversationId
@@ -281,14 +284,14 @@ extension ChatViewModel {
                     ChatViewModel.userFacingGenerationError(rawMessage, modelId: modelId)
                 },
                 memoryRecordIdsForRuntimeContext: { [weak self] messages, override in
-                    self?.memoryRecordIdsForRuntimeContext(messages, override: override) ?? []
+                    self?.memoryRecordIdsForRuntimeContext(messages, override: override, state: state) ?? []
                 },
                 prepareJevMemoryRecall: { [weak self] messages, runId in
                     guard let self else { return nil }
-                    return await self.prepareJevMemoryRecallSelection(messages, runId: runId)
+                    return await self.prepareJevMemoryRecallSelection(messages, runId: runId, state: state)
                 },
                 memoryRecallResultForRun: { [weak self] messages in
-                    self?.memoryRecallResultForRun(messages) ?? ChatMemoryContextBuilder.RecallResult(prompt: nil, records: [])
+                    self?.memoryRecallResultForRun(messages, state: state) ?? ChatMemoryContextBuilder.RecallResult(prompt: nil, records: [])
                 },
                 recordMemoryUsage: { [weak self] ids, force in
                     self?.recordMemoryUsage(ids, force: force, state: state)
@@ -381,6 +384,12 @@ extension ChatViewModel {
                             taskSlot.stagePlanStartedUptime = now
                         }
                         taskSlot.activityStage = stage
+                        if stage == .failed {
+                            taskSlot.explicitFailureOrStallReason = "failed"
+                        } else if stage == .waitingForConfirmation, taskSlot.lastSyncedVisibleStage != stage {
+                            taskSlot.lastSyncedVisibleStage = stage
+                            taskSlot.recordMeaningfulUserVisibleProgress(at: now)
+                        }
                         if stage != .runningTool {
                             taskSlot.activeToolName = nil
                             taskSlot.activeToolTitle = nil
@@ -399,9 +408,19 @@ extension ChatViewModel {
                 recordTaskToolActivity: { [weak self, weak taskSlot] name, input in
                     guard let self, let taskSlot, !taskSlot.isTerminal else { return }
                     let title = ChatToolStepModel.activeProgressTitle(toolName: name, input: input)
-                    guard taskSlot.activeToolName != name || taskSlot.activeToolTitle != title else { return }
+                    let stageChanged = taskSlot.activityStage != .runningTool
+                    if stageChanged {
+                        taskSlot.activityStage = .runningTool
+                    }
+                    guard stageChanged || taskSlot.activeToolName != name || taskSlot.activeToolTitle != title else { return }
                     taskSlot.activeToolName = name
                     taskSlot.activeToolTitle = title
+                    let isPollingTool = name == "list_agents" || name == "wait_agent"
+                    let toolSignature = "\(name)|\(title ?? "")"
+                    if !isPollingTool, toolSignature != taskSlot.lastSyncedVisibleToolSignature {
+                        taskSlot.lastSyncedVisibleToolSignature = toolSignature
+                        taskSlot.recordMeaningfulUserVisibleProgress()
+                    }
                     if self.isCurrentConversation(state.conversationId) { self.runActivityRevision &+= 1 }
                 },
                 recordTaskProgressPlan: { [weak self, weak taskSlot] stages in
@@ -409,6 +428,7 @@ extension ChatViewModel {
                           taskSlot.plannedActivityStages != stages else { return }
                     taskSlot.plannedActivityStages = stages
                     taskSlot.stagePlanStartedUptime = ProcessInfo.processInfo.systemUptime
+                    taskSlot.recordMeaningfulUserVisibleProgress()
                     if self.isCurrentConversation(state.conversationId) { self.runActivityRevision &+= 1 }
                 },
                 recordTaskReasoning: { [weak self, weak taskSlot] reasoning in
@@ -437,7 +457,7 @@ extension ChatViewModel {
                     }
                 },
                 setProvisionalAssistant: { [weak self, weak taskSlot] message in
-                    guard let self, let taskSlot else { return false }
+                    guard let self, let taskSlot, !taskSlot.isTerminal else { return false }
                     let messageID = ChatMessageProjector.messageId(for: message)
                     let structuralChange = taskSlot.generatedMessages.last?.id != message.id ||
                         taskSlot.currentRoundAssistantMessageId != messageID

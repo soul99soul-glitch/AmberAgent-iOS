@@ -33,6 +33,62 @@ struct ChatComposerLocalState {
     var cloudDialogueErrorMessage: String?
     var activeCloudDialogueRequestId = UUID().uuidString.lowercased()
     var lastCloudDialogueFingerprint: String?
+    var cloudDialogueSubmitGeneration = 0
+
+    static func cloudDialogueFingerprint(text: String, targetWorkItemId: String?) -> String {
+        "\(targetWorkItemId ?? "main")\u{0000}\(text)"
+    }
+
+    mutating func beginCloudDialogueSubmit(
+        text: String,
+        targetWorkItemId: String?
+    ) -> (requestId: String, generation: Int, fingerprint: String) {
+        let fingerprint = Self.cloudDialogueFingerprint(text: text, targetWorkItemId: targetWorkItemId)
+        if let last = lastCloudDialogueFingerprint, last != fingerprint {
+            activeCloudDialogueRequestId = UUID().uuidString.lowercased()
+        }
+        lastCloudDialogueFingerprint = fingerprint
+        cloudDialogueSubmitGeneration += 1
+        isSubmittingCloudDialogue = true
+        cloudDialogueErrorMessage = nil
+        return (activeCloudDialogueRequestId, cloudDialogueSubmitGeneration, fingerprint)
+    }
+
+    mutating func finishCloudDialogueSubmit(
+        generation: Int,
+        submittedText: String,
+        submittedTargetWorkItemId: String?,
+        submittedFingerprint: String,
+        currentInputText: inout String,
+        selectedWorkItemId: inout String?,
+        result: Result<MacGatewayCloudDialogueReceipt, Error>
+    ) {
+        if generation == cloudDialogueSubmitGeneration {
+            isSubmittingCloudDialogue = false
+        }
+        switch result {
+        case .success:
+            if currentInputText == submittedText {
+                currentInputText = ""
+            }
+            if selectedWorkItemId == submittedTargetWorkItemId {
+                selectedWorkItemId = nil
+            }
+            if lastCloudDialogueFingerprint == submittedFingerprint {
+                activeCloudDialogueRequestId = UUID().uuidString.lowercased()
+                lastCloudDialogueFingerprint = nil
+                cloudDialogueErrorMessage = nil
+            }
+        case .failure(let error):
+            let currentFingerprint = Self.cloudDialogueFingerprint(
+                text: currentInputText,
+                targetWorkItemId: selectedWorkItemId
+            )
+            if generation == cloudDialogueSubmitGeneration && currentFingerprint == submittedFingerprint {
+                cloudDialogueErrorMessage = error.localizedDescription
+            }
+        }
+    }
 
     mutating func enterBackgroundHandoffMode(followupTask: AmberUnifiedTaskItem? = nil) {
         activeDuetTab = .chat

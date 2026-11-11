@@ -984,4 +984,144 @@ final class IOSJevWebMountLoopTests: IOSJevWebMountLoopTestCase {
         XCTAssertEqual(probeCount, 3, "连续 3 次失配后探测应停用：got \(probeCount)")
         XCTAssertEqual(recorder.observations, 9, "8 轮循环内全量 + 1 次边界终验")
     }
+
+    func testInPageContinuousWordChipAssemblyAndSemanticPageChangeBoundary() async throws {
+        let targetWords = ["我", "经常", "在早上", "喝咖啡"]
+        var selectedWords: [String] = []
+        var revision = 1
+        var offeredOptionSets: [[String: String]] = []
+
+        func makePagePayload(promptText: String) -> [String: Any] {
+            var interactive: [[String: Any]] = [
+                ["ref": "anchor", "role": "heading", "text": promptText],
+                ["ref": "hint-disabled", "role": "button", "text": "提示", "disabled": true],
+                ["ref": "pay-commit", "role": "button", "text": "立即支付"]
+            ]
+            for (idx, chosen) in selectedWords.enumerated() {
+                interactive.append([
+                    "ref": "slot-\(idx)",
+                    "role": "button",
+                    "text": chosen,
+                    "selected": true
+                ])
+            }
+            let remainingBank = ["喝咖啡", "经常", "我", "在早上"]
+            for (idx, word) in remainingBank.enumerated() {
+                let usedOnce = selectedWords.contains(word) && word != "经常"
+                interactive.append([
+                    "ref": "bank-\(idx)",
+                    "role": "button",
+                    "text": word,
+                    "disabled": usedOnce,
+                    "selected": false
+                ])
+            }
+            if selectedWords == targetWords {
+                interactive.append([
+                    "ref": "assembled-ready",
+                    "role": "status",
+                    "text": "已组成：我 经常 在早上 喝咖啡"
+                ])
+            }
+            return [
+                "snapshot_id": "snap-\(revision)",
+                "page_revision": revision,
+                "page": [
+                    "url": "https://practice.example/unit-1",
+                    "title": promptText,
+                    "document_id": "doc-unit-1",
+                    "dom_revision": revision
+                ],
+                "interactive_elements": interactive
+            ]
+        }
+
+        let transport = JevStubTransport { request in
+            let body = request.httpBody ?? Data()
+            let json = (try? JSONSerialization.jsonObject(with: body) as? [String: Any]) ?? [:]
+            let questions = (json["questions"] as? [String: Any]) ?? [:]
+            let nextAction = (questions["single.next_action"] as? [String: Any]) ?? [:]
+            let criteria = (nextAction["criteria"] as? [String: String]) ?? [:]
+            offeredOptionSets.append(criteria)
+
+            let nextWord = selectedWords.count < targetWords.count ? targetWords[selectedWords.count] : nil
+            let pickedKey = criteria.first { key, desc in
+                guard let nextWord, key.hasPrefix("click_control@") else { return false }
+                return desc.contains("：\(nextWord)") && !desc.contains("已选中")
+            }?.key ?? "handback"
+            return (self.choicePayload(pickedKey), self.httpResponse(status: 200))
+        }
+
+        let recorder = Recorder()
+        let service = makeService(
+            settings: makeSettings(mode: .active),
+            transport: transport,
+            observe: { _ in
+                recorder.recordObservation()
+                return IOSJevWebMountLoopService.observation(
+                    fromObservePayload: makePagePayload(promptText: "题面：请把词块排成完整句子")
+                )
+            },
+            execute: { _, action in
+                recorder.recordExecution(action.kind.rawValue, action.elementId ?? "-")
+                let payload = makePagePayload(promptText: "题面：请把词块排成完整句子")
+                let interactive = payload["interactive_elements"] as? [[String: Any]] ?? []
+                if let matched = interactive.first(where: { $0["ref"] as? String == action.elementId }),
+                   let word = matched["text"] as? String {
+                    selectedWords.append(word)
+                }
+                revision += 1
+                return .applied(newRevision: revision)
+            },
+            isComplete: { _, obs in
+                IOSJevWebMountLoopService.isComplete(marker: "已组成：我 经常 在早上 喝咖啡", observation: obs)
+            }
+        )
+
+        let parsedInput = try XCTUnwrap(IOSJevWebMountLoopService.loopInput(fromArguments: [
+            "session_id": "s-inpage",
+            "goal": "按顺序点选『我』『经常』『在早上』『喝咖啡』组成完整句子",
+            "page_anchor": "题面：请把词块排成完整句子"
+        ]))
+        let outcome = await service.run(parsedInput, runId: "run-inpage-1")
+        guard case .completed(let steps, _) = outcome else {
+            return XCTFail("Expected single wm_run_goal call to complete all 4 in-page taps via Jev, got \(outcome)")
+        }
+        XCTAssertEqual(steps.count, 4)
+        XCTAssertEqual(transport.calls, 4, "Each in-page tap is chosen by Jev without returning to general LLM")
+        XCTAssertEqual(recorder.executed.map(\.0), Array(repeating: "click_control", count: 4))
+        for criteria in offeredOptionSets {
+            XCTAssertFalse(criteria.keys.contains("click_control@hint-disabled"), "Disabled controls must never be offered")
+            XCTAssertFalse(criteria.keys.contains("click_control@pay-commit"), "Final-commit payment controls must be withheld")
+        }
+
+        // Page semantic change boundary: if the page switches to a new question mid-loop, hand back immediately.
+        selectedWords = []
+        revision = 10
+        var pageSwitched = false
+        let boundaryRecorder = Recorder()
+        let boundaryService = makeService(
+            settings: makeSettings(mode: .active),
+            transport: transport,
+            observe: { _ in
+                boundaryRecorder.recordObservation()
+                let prompt = pageSwitched ? "题面：下一道阅读理解新题" : "题面：请把词块排成完整句子"
+                return IOSJevWebMountLoopService.observation(fromObservePayload: makePagePayload(promptText: prompt))
+            },
+            execute: { _, action in
+                boundaryRecorder.recordExecution(action.kind.rawValue, action.elementId ?? "-")
+                pageSwitched = true
+                revision += 1
+                return .applied(newRevision: revision)
+            },
+            isComplete: { _, _ in false }
+        )
+        let boundaryOutcome = await boundaryService.run(parsedInput, runId: "run-inpage-boundary")
+        guard case .handback(let reason, let boundarySteps, _) = boundaryOutcome else {
+            return XCTFail("Expected handback on semantic page change, got \(boundaryOutcome)")
+        }
+        XCTAssertEqual(boundarySteps.count, 1, "Must stop immediately after page semantic anchor changes without blind clicks on the new page")
+        XCTAssertEqual(boundaryRecorder.executed.count, 1)
+        XCTAssertTrue(reason.contains("页面") || reason.contains("锚点"), "Handback reason should explain page change: \(reason)")
+    }
 }

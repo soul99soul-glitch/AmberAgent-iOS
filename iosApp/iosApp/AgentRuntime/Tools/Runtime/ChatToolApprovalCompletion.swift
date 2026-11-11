@@ -52,7 +52,8 @@ extension ChatToolRuntime {
             input: pending.toolCall.input,
             runtime: sharedSettings.agentRuntime,
             writePolicy: writePolicy,
-            expectedUpdatedAt: expectedUpdatedAt
+            expectedUpdatedAt: expectedUpdatedAt,
+            conversationId: pending.conversationId?.toHexDashString()
         )
         return messagesByFinishingToolCall(
             pending.toolCall,

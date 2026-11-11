@@ -45,7 +45,8 @@ struct NativeChatTimelineView: View {
     @State private var renderStateStore = ChatRenderStateStore()
     @State private var renderStateRevision: UInt64 = 0
     @State private var contentHashCache = ChatRowContentHashCache()
-    @State private var projectionCache = NativeTimelineProjectionCache()
+    @State private var fallbackProjectionCache = NativeTimelineProjectionCache()
+    private var projectionCache: NativeTimelineProjectionCache { timelineUpdates?.projectionCache ?? fallbackProjectionCache }
     @State private var scrollDriver = NativeTimelineScrollDriver()
     @State private var timelineGrowth = ChatTimelineGrowth()
     @State private var nativeUserScrollActive = false
@@ -126,6 +127,17 @@ struct NativeChatTimelineView: View {
         let hasActivityAnchor = activity.map { status in
             projection.entries.contains { $0.messageId == status.anchorMessageID }
         } ?? true
+        let entryContext = EntryRenderContext(
+            displaySettingSignature: displaySettingSignature,
+            generativeUiSettingSignature: generativeUiSettingSignature,
+            liveRenderingFarFromBottom: viewportState.liveRenderingFarFromBottom,
+            consumedMessageAnchor: consumedMessageAnchor,
+            imageAccessibilityFocusToolCallID: imageAccessibilityFocusToolCallID,
+            islandToolHighlight: islandToolHighlight,
+            highlightedMessageAnchor: highlightedMessageAnchor,
+            renderStateStore: renderStateStore,
+            chunkCallbacks: chunkCallbacks
+        )
         let _ = chunkCallbacks.action = onAction
         let _ = chunkCallbacks.boundary = { id, previous, current in
             guard id == firstHistoryEntryID, let previous, let current,
@@ -164,8 +176,7 @@ struct NativeChatTimelineView: View {
                             historyBoundaryIDs: historyBoundaryIDs, activity: chunkActivity,
                             hasActivityAnchor: hasActivityAnchor, contextCompactState: contextCompactState,
                             callbacks: chunkCallbacks,
-                            entryView: { entryView($0, displaySettingSignature: displaySettingSignature,
-                                                  generativeUiSettingSignature: generativeUiSettingSignature) }
+                            entryView: { entryView($0, context: entryContext) }
                         ).equatable()
                     }
                 }
@@ -176,6 +187,7 @@ struct NativeChatTimelineView: View {
                 .padding(.bottom, 10)
                 .environment(\.chatPhoneToolGroupToggle, phoneToolGroupToggleHandler)
                 .environment(\.chatTimelineGrowth, timelineGrowth)
+                .environment(workspaceStore)
                 .modifier(ChatTimelineGrowthModifier(growth: timelineGrowth))
                 .scrollTargetLayout()
                 .onGeometryChange(for: String?.self) { _ in
@@ -816,11 +828,22 @@ struct NativeChatTimelineView: View {
         return hash.finalize()
     }
 
+    private struct EntryRenderContext {
+        let displaySettingSignature: Int
+        let generativeUiSettingSignature: Int
+        let liveRenderingFarFromBottom: Bool
+        let consumedMessageAnchor: ChatMessageAnchor?
+        let imageAccessibilityFocusToolCallID: String?
+        let islandToolHighlight: ChatIslandToolHighlight?
+        let highlightedMessageAnchor: ChatMessageAnchor?
+        let renderStateStore: ChatRenderStateStore
+        let chunkCallbacks: ChatTimelineChunkCallbacks
+    }
+
     @ViewBuilder
     private func entryView(
         _ entry: NativeTimelineEntry,
-        displaySettingSignature: Int,
-        generativeUiSettingSignature: Int
+        context: EntryRenderContext
     ) -> some View {
         switch entry.kind {
         case .emptyState:
@@ -835,7 +858,8 @@ struct NativeChatTimelineView: View {
                 )
             }
         case .message:
-            if entry.isGlobalStatusOnly, let messageId = entry.messageId {
+            if (entry.isGlobalStatusOnly || entry.automationScreenshotGroup?.isCollapsedMember == true),
+               let messageId = entry.messageId {
                 // Keep status-only entries as invisible anchors; media and text remain visible.
                 Color.clear
                     .frame(maxWidth: .infinity, maxHeight: 0)
@@ -848,7 +872,7 @@ struct NativeChatTimelineView: View {
                             active: entry.isLastMessage &&
                                 entry.role == MessageRole.assistant &&
                                 entry.hasEverStreamed,
-                            assumeVisible: !viewportState.liveRenderingFarFromBottom,
+                            assumeVisible: !context.liveRenderingFarFromBottom,
                             onVisibilityChanged: { isVisible in
                                 updateNativeStreamingTailVisibility(
                                     messageID: messageId,
@@ -864,7 +888,8 @@ struct NativeChatTimelineView: View {
                     entry: entry,
                     message: message,
                     index: index,
-                    messageId: messageId
+                    messageId: messageId,
+                    context: context
                 )
                 NativeTimelineMessageBubble(
                     entryID: entry.id,
@@ -872,28 +897,27 @@ struct NativeChatTimelineView: View {
                     model: model,
                     displaySetting: displaySetting,
                     generativeUiSetting: generativeUiSetting,
-                    displaySettingSignature: displaySettingSignature,
-                    generativeUiSettingSignature: generativeUiSettingSignature,
+                    displaySettingSignature: context.displaySettingSignature,
+                    generativeUiSettingSignature: context.generativeUiSettingSignature,
                     reasoningLevelLabel: reasoningLevelLabel,
-                    imageAccessibilityFocusToolCallID: consumedMessageAnchor?.messageID == messageId
-                        ? imageAccessibilityFocusToolCallID : nil,
-                    onAction: { chunkCallbacks.action($0) }
+                    imageAccessibilityFocusToolCallID: context.consumedMessageAnchor?.messageID == messageId
+                        ? context.imageAccessibilityFocusToolCallID : nil,
+                    onAction: { context.chunkCallbacks.action($0) }
                 )
                 .equatable()
                 .environment(
                     \.chatIslandToolHighlight,
-                    islandToolHighlight?.messageID == messageId ? islandToolHighlight : nil
+                    context.islandToolHighlight?.messageID == messageId ? context.islandToolHighlight : nil
                 )
                 .environment(
                     \.chatMessageAnchorHighlighted,
-                    highlightedMessageAnchor?.conversationID == currentConversationID &&
-                        highlightedMessageAnchor?.messageID == messageId
+                    context.highlightedMessageAnchor?.conversationID == currentConversationID &&
+                        context.highlightedMessageAnchor?.messageID == messageId
                 )
                 .padding(.leading, entry.phoneToolGroup?.isExpandedMember == true
                     ? ChatPhoneToolGroupHeader.expandedStepIndent : 0)
                 .saturation(entry.isCompactedHistory ? 0 : 1)
                 .opacity(entry.isCompactedHistory && entry.role != MessageRole.user ? 0.7 : 1)
-                .environment(workspaceStore)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(
                     maxWidth: .infinity,
@@ -908,7 +932,7 @@ struct NativeChatTimelineView: View {
                         active: entry.isLastMessage &&
                             entry.role == MessageRole.assistant &&
                             entry.hasEverStreamed,
-                        assumeVisible: !viewportState.liveRenderingFarFromBottom,
+                        assumeVisible: !context.liveRenderingFarFromBottom,
                         onVisibilityChanged: { isVisible in
                             updateNativeStreamingTailVisibility(
                                 messageID: messageId,
@@ -922,7 +946,7 @@ struct NativeChatTimelineView: View {
                 }
                 .onDisappear {
                     guard entry.hasEverStreamed, !entry.isLastMessage else { return }
-                    renderStateStore.freeze(
+                    context.renderStateStore.freeze(
                         messageID: messageId,
                         latestText: message.singleNonEmptyTextPart
                     )
@@ -950,7 +974,8 @@ struct NativeChatTimelineView: View {
         entry: NativeTimelineEntry,
         message: UIMessage,
         index: Int,
-        messageId: String
+        messageId: String,
+        context: EntryRenderContext
     ) -> ChatListMessageRenderModel {
         let row = ChatMessageRowModel(
             rowId: messageId,
@@ -963,14 +988,19 @@ struct NativeChatTimelineView: View {
             isStreaming: entry.isStreaming,
             hasEverStreamed: entry.renderHasEverStreamed,
             canAnimateInsertion: entry.canAnimateInsertion,
-            isAssistantContinuation: entry.isAssistantContinuation
+            isAssistantContinuation: entry.isAssistantContinuation,
+            displayTexts: entry.displayTexts
         )
-        let renderState = entry.renderState ?? renderStateStore.stateForRow(
+        let renderState = entry.renderState ?? context.renderStateStore.stateForRow(
             row,
-            isLiveRenderingFarFromBottom: viewportState.liveRenderingFarFromBottom,
+            isLiveRenderingFarFromBottom: context.liveRenderingFarFromBottom,
             isLiveTask: entry.isTaskLive
         )
-        let liveTailModel = nativeLiveTailModelIfNeeded(row: row, renderState: renderState)
+        let liveTailModel = nativeLiveTailModelIfNeeded(
+            row: row,
+            renderState: renderState,
+            renderStateStore: context.renderStateStore
+        )
         return ChatListMessageRenderModel(
             row: row,
             variantInfo: entry.variantInfo.map { .init(variantCount: $0.variantCount, selectedIndex: $0.selectedIndex) },
@@ -980,6 +1010,7 @@ struct NativeChatTimelineView: View {
             liveTailModel: liveTailModel,
             phoneToolGroup: entry.phoneToolGroup?.headSummary,
             assistantTurn: entry.assistantTurn,
+            automationScreenshotGroup: entry.automationScreenshotGroup?.headSummary,
             isTaskLive: entry.isTaskLive,
             usesIndependentTasks: usesIndependentTasks && entry.observesIndependentTaskMode,
             contentObservesGenerationState: entry.contentObservesGenerationState ?? false
@@ -1014,7 +1045,8 @@ struct NativeChatTimelineView: View {
 
     private func nativeLiveTailModelIfNeeded(
         row: ChatMessageRowModel,
-        renderState: ChatRenderState
+        renderState: ChatRenderState,
+        renderStateStore: ChatRenderStateStore
     ) -> ChatLiveTailModel? {
         // Keep the same hosted subtree after a send turns the old tail into
         // history. Historical rendering consumes the row snapshot below.
@@ -1044,7 +1076,7 @@ struct NativeChatTimelineView: View {
               projectionCache.lastResetRevision != revision else { return }
         renderStateStore.removeAll()
         contentHashCache.removeAll()
-        projectionCache.reset(forRevision: revision)
+        projectionCache.reset(forRevision: revision, preservingPreparedFacts: timelineUpdates != nil)
     }
 
     private func updateRendererMemory(event: ChatEvent, messages: [UIMessage]) {
@@ -1167,7 +1199,8 @@ struct NativeChatTimelineView: View {
         }
         ChatRenderProbe.record("consume-stream:hit")
         model.update(message: message, isGenerationActive: isGenerationActive,
-                     renderState: model.renderState, sourceRevision: signal.revision)
+                     renderState: model.renderState, sourceRevision: signal.revision,
+                     displayTexts: projectionCache.displayTexts(for: message))
         submitNativeScrollIntent(for: signal.event, lagAllowance: signal.lagAllowance)
         return true
     }
@@ -1197,7 +1230,8 @@ struct NativeChatTimelineView: View {
         )
         liveTailModel?.update(
             message: row.message, isGenerationActive: isGenerationActive,
-            renderState: renderState, sourceRevision: currentSignal.revision
+            renderState: renderState, sourceRevision: currentSignal.revision,
+            displayTexts: projectionCache.displayTexts(for: row.message)
         )
     }
 
@@ -1331,6 +1365,9 @@ struct NativeChatTimelineView: View {
             Self.shouldPinBottomOnSizeChanges(followGeneration: followGeneration,
                 viewportState: currentViewport,
                 driverPausedForUser: isNativeScrollDriverActive && scrollDriver.isPausedForUser)
+        timelineGrowth.onContentGrew = { [weak scrollDriver] _ in
+            scrollDriver?.syncBottomLockDuringLayoutIfNeeded()
+        }
         timelineGrowth.setEnabled(!reduceMotion && layoutPinsBottom && currentViewport.isContentScrollable)
         scrollDriver.setLayoutBottomPinEnabled(layoutPinsBottom)
     }
@@ -1420,33 +1457,21 @@ struct NativeChatTimelineView: View {
 }
 
 private struct ChatConfigurationNoticeCard: View {
-    let issue: ChatConfigurationIssue
-    let compact: Bool
-    let onPrimary: () -> Void
-    let onModelDefaults: () -> Void
-
+    let issue: ChatConfigurationIssue; let compact: Bool; let onPrimary: () -> Void; let onModelDefaults: () -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 10 : 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(verbatim: localized(issue.title))
-                    .font(compact ? .subheadline.weight(.semibold) : .headline)
-                    .foregroundStyle(AmberTheme.foreground)
-                Text(verbatim: localized(issue.message))
-                    .font(.footnote)
-                    .foregroundStyle(AmberTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text(verbatim: localized(issue.title)).font(compact ? .subheadline.weight(.semibold) : .headline).foregroundStyle(AmberTheme.foreground)
+                Text(verbatim: localized(issue.message)).font(.footnote).foregroundStyle(AmberTheme.muted).fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 8) {
-                Button(localized(primaryTitle), action: onPrimary)
-                    .buttonStyle(.borderedProminent).controlSize(.small).tint(AmberTheme.accent)
+                Button(localized(primaryTitle), action: onPrimary).buttonStyle(.borderedProminent).controlSize(.small).tint(AmberTheme.accent)
                 if issue != .missingModel {
-                    Button("选择模型", action: onModelDefaults)
-                        .buttonStyle(.bordered).controlSize(.small)
+                    Button("选择模型", action: onModelDefaults).buttonStyle(.bordered).controlSize(.small)
                 }
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
         .background(AmberTheme.surface.opacity(0.92), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay { RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(AmberTheme.borderSoft, lineWidth: 0.5) }
         .accessibilityElement(children: .contain)
@@ -1465,27 +1490,17 @@ private struct ChatConfigurationNoticeCard: View {
         case .geminiNotSignedIn: "登录 Antigravity"
         }
     }
-
-    private func localized(_ key: String) -> String {
-        IOSAppLocalization.string(key, defaultValue: key)
-    }
+    private func localized(_ key: String) -> String { IOSAppLocalization.string(key, defaultValue: key) }
 }
 
-private struct HistoryRevealAnchor {
-    let id: String
-    let position: UnitPoint
-}
+private struct HistoryRevealAnchor { let id: String; let position: UnitPoint }
 
 private extension View {
     func nativeTimelineScrollPosition(_ position: Binding<ScrollPosition>) -> some View {
-        self.scrollPosition(position)
-            .defaultScrollAnchor(.bottom, for: .initialOffset)
-            .defaultScrollAnchor(.top, for: .alignment)
+        self.scrollPosition(position).defaultScrollAnchor(.bottom, for: .initialOffset).defaultScrollAnchor(.top, for: .alignment)
     }
 }
 
 private enum ChatListSnapshotBuilder {
-    static func renderIdentityForRow(_ row: ChatMessageRowModel, renderState: ChatRenderState) -> String {
-        row.messageId
-    }
+    static func renderIdentityForRow(_ row: ChatMessageRowModel, renderState: ChatRenderState) -> String { row.messageId }
 }

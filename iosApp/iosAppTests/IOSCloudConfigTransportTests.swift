@@ -1,6 +1,8 @@
 import CryptoKit
 import Foundation
 import Security
+import Shared
+import Shared
 import XCTest
 @testable import iosApp
 
@@ -291,6 +293,126 @@ final class IOSCloudConfigTransportTests: XCTestCase {
         XCTAssertTrue(store.notice?.text.contains("deepseek-chat") == true)
     }
 
+    @MainActor
+    func testDirectModelSwitchEndToEndSealsPayloadUpdatesSnapshotAndClearsStaleSuccessNoticeOnFailure() async throws {
+        let key = try TestRSAKey()
+        let gwId = "gw-\(UUID().uuidString)"
+        defer { IOSCloudConfigClient.resetImportKeyTrust(gatewayId: gwId) }
+
+        let initialView = #"{"gatewayId":"\#(gwId)","revision":4,"model":{"provider":"openai","modelId":"deepseek-v4.1-flash","baseUrl":"https://opencode.ai/zen/v1"},"search":{"sources":["bing","duckduckgo"],"mode":"fallback"},"credentials":{"modelApiKey":{"configured":true},"exaApiKey":{"configured":false},"braveApiKey":{"configured":false}},"supportedModelProviders":["openai","claude"],"supportedSearchSources":["bing","duckduckgo","exa","brave"]}"#
+        let switchedView = #"{"gatewayId":"\#(gwId)","revision":5,"model":{"provider":"claude","modelId":"claude-sonnet-4-5","baseUrl":"https://api.anthropic.com/v1"},"search":{"sources":["bing","duckduckgo"],"mode":"fallback"},"credentials":{"modelApiKey":{"configured":true},"exaApiKey":{"configured":false},"braveApiKey":{"configured":false}},"supportedModelProviders":["openai","claude"],"supportedSearchSources":["bing","duckduckgo","exa","brave"]}"#
+
+        let harness = Harness(
+            importKeyJSON: key.importKeyJSON(gatewayId: gwId, deviceId: "dev-1"),
+            viewJSON: switchedView,
+            queuedViews: [initialView, switchedView],
+            postResponses: [
+                (200, #"{"requestId":"req-switch-1","revision":5,"currentRevision":5,"replayed":false,"effective":"next_task"}"#),
+                (422, #"{"error":"invalid_configuration"}"#),
+            ]
+        )
+
+        var fakeCreds: [String: String] = [:]
+        let settingsSuite = "CloudDirectSwitchSettings.\(UUID().uuidString)"
+        let settingsDefaults = try XCTUnwrap(UserDefaults(suiteName: settingsSuite))
+        defer { settingsDefaults.removePersistentDomain(forName: settingsSuite) }
+        let sharedSettings = IOSSharedSettingsStore(
+            userDefaults: settingsDefaults,
+            loadCredential: { fakeCreds[$0] },
+            storeCredential: { k, v in fakeCreds[k] = v; return true },
+            deleteCredential: { fakeCreds.removeValue(forKey: $0); return true }
+        )
+        let openCode = sharedSettings.addProvider(IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "opencode go",
+            apiKey: "sk-fake-opencode-11111111",
+            baseUrl: "HTTPS://OpenCode.AI/zen/v1/",
+            modelName: "deepseek-v4.1-flash",
+            modelId: "deepseek-v4.1-flash"
+        ))
+        let claude = sharedSettings.addProvider(IosSettingsMutations.shared.buildClaudeProvider(
+            name: "Claude",
+            apiKey: "sk-fake-claude-22222222",
+            baseUrl: "HTTPS://API.Anthropic.COM/v1/",
+            modelName: "claude-sonnet-4-5",
+            modelId: "claude-sonnet-4-5"
+        ))
+        let claudeModel = try XCTUnwrap(claude.models.first)
+        sharedSettings.addSearchProvider(name: "ExaLocal", apiKey: "exa-fake-33333333", serviceType: "exa")
+
+        let gatewaySuite = "CloudDirectSwitchGateway.\(UUID().uuidString)"
+        let gatewayDefaults = try XCTUnwrap(UserDefaults(suiteName: gatewaySuite))
+        defer { gatewayDefaults.removePersistentDomain(forName: gatewaySuite) }
+        let store = MacGatewayStore(defaults: gatewayDefaults)
+        store.configureForTesting(
+            connection: MacGatewayConnection(
+                gatewayId: gwId, name: "Cloud", addrs: ["127.0.0.1"],
+                port: 1, fingerprint: "", deviceId: "dev-1"
+            ),
+            client: harness.makeClient()
+        )
+
+        // 1. 页面首次加载：拉取云端配置并将主卡对齐到 opencode go · deepseek-v4.1-flash（状态：已在使用）
+        await store.refreshCloudConfig()
+        XCTAssertEqual(store.cloudConfig?.revision, 4)
+        var switchDraft = IOSCloudImportDraft.make(from: sharedSettings)
+            .alignedForPrimarySwitch(remote: store.cloudConfig)
+        XCTAssertEqual(switchDraft.providerId, openCode.id.description())
+
+        // 2. 用户在「云端模型」主卡切换到 Claude · claude-sonnet-4-5 并点击「切换并使用」
+        switchDraft.providerId = claude.id.description()
+        switchDraft.modelUuid = claudeModel.id.description()
+        let switchError = await store.applyCloudImport(
+            draft: switchDraft.modelOnlyDraft,
+            sharedSettings: sharedSettings,
+            expectedRevision: store.cloudConfig?.revision
+        )
+        XCTAssertNil(switchError)
+
+        // 验证真实加密信封内容符合云端 CloudConfigurationManager 契约：小写 https、不夹带本机搜索源、携带新模型 Key
+        let rawJWE = await harness.lastPostJWE
+        let jwe = try XCTUnwrap(rawJWE)
+        let decrypted = try XCTUnwrap(try harness.decryptPayload(jwe, key: key))
+        let config = try XCTUnwrap(decrypted["configuration"] as? [String: Any])
+        XCTAssertNil(config["search"], "直接切换云端模型不得覆盖或夹带本机联网搜索配置")
+        let modelPayload = try XCTUnwrap(config["model"] as? [String: Any])
+        XCTAssertEqual(modelPayload["provider"] as? String, "claude")
+        XCTAssertEqual(modelPayload["modelId"] as? String, "claude-sonnet-4-5")
+        XCTAssertEqual(modelPayload["baseUrl"] as? String, "https://api.anthropic.com/v1")
+        let credsPayload = try XCTUnwrap(decrypted["credentials"] as? [String: Any])
+        let modelKeyMutation = try XCTUnwrap(credsPayload["modelApiKey"] as? [String: Any])
+        XCTAssertEqual(modelKeyMutation["action"] as? String, "replace")
+        XCTAssertEqual(modelKeyMutation["value"] as? String, "sk-fake-claude-22222222")
+        XCTAssertNil(credsPayload["exaApiKey"])
+
+        // 3. 切换完成后自动刷新快照，UI 回到「已在使用」，顶部提示展示友好服务商名且绝不回显密钥
+        XCTAssertEqual(store.cloudConfig?.revision, 5)
+        XCTAssertEqual(store.cloudConfig?.model?.provider, "claude")
+        XCTAssertEqual(store.cloudConfig?.model?.modelId, "claude-sonnet-4-5")
+        let postSwitchDraft = switchDraft.alignedForPrimarySwitch(remote: store.cloudConfig)
+        let postTransition = try XCTUnwrap(postSwitchDraft.modelOnlyDraft.modelTransitionSummary(remote: store.cloudConfig))
+        let postState = IOSCloudPrimarySwitchState.resolve(
+            transition: postTransition,
+            remote: store.cloudConfig,
+            isLoadingRemote: false,
+            isSubmitting: false
+        )
+        XCTAssertEqual(postState, .inUse(missingKey: false))
+        XCTAssertEqual(store.notice?.isError, false)
+        XCTAssertTrue(store.notice?.text.contains("Claude") == true, "成功横幅应显示所选服务商友好名称")
+        XCTAssertFalse(store.notice?.text.contains("sk-fake") == true)
+
+        // 4. 若后续再次提交失败，必须清掉上一次成功的绿色横幅，避免成功提示与错误同时出现
+        switchDraft.providerId = openCode.id.description()
+        switchDraft.modelUuid = openCode.models.first?.id.description()
+        let secondError = await store.applyCloudImport(
+            draft: switchDraft.modelOnlyDraft,
+            sharedSettings: sharedSettings,
+            expectedRevision: store.cloudConfig?.revision
+        )
+        XCTAssertNotNil(secondError)
+        XCTAssertNil(store.notice, "新提交失败时必须清除上一次残留的成功横幅")
+    }
+
     // MARK: - Helpers
 
     private func assertThrows(
@@ -318,14 +440,17 @@ final class IOSCloudConfigTransportTests: XCTestCase {
         private(set) var postCount = 0
         private(set) var configGetCount = 0
         private var postResponses: [(Int, String)]
+        private var queuedViews: [String]
 
         private let cannedImportKey: String
         private let cannedView: String
         private let cannedViewStatus: Int
 
         init(importKeyJSON: String = "", viewJSON: String = "", viewStatus: Int = 200,
+             queuedViews: [String] = [],
              postResponses: [(Int, String)] = [(200, #"{"requestId":"req-1","revision":3,"currentRevision":3,"replayed":false,"effective":"next_task"}"#)]) {
             self.postResponses = postResponses
+            self.queuedViews = queuedViews
             self.cannedImportKey = importKeyJSON
             self.cannedView = viewJSON
             self.cannedViewStatus = viewStatus
@@ -346,7 +471,8 @@ final class IOSCloudConfigTransportTests: XCTestCase {
             switch (request.httpMethod, path) {
             case ("GET", "/v2/configuration"):
                 configGetCount += 1
-                (status, body) = (cannedViewStatus, cannedView)
+                let nextView = queuedViews.isEmpty ? cannedView : queuedViews.removeFirst()
+                (status, body) = (cannedViewStatus, nextView)
             case ("GET", "/v2/configuration/import-key"):
                 (status, body) = (200, cannedImportKey)
             case ("POST", "/v2/configuration"):

@@ -489,6 +489,7 @@ final class IOSThreadOrchestrationToolService {
                 reason: "子代理关系保存失败，任务未启动：\(error.localizedDescription)"
             )
         }
+        AmberHubStore.shared.inheritConversationBinding(from: parentHex, to: childHex)
         store.registerSubagentConversation(id: childConversationId)
         guard await store.saveForkedConversation(forked) else {
             return Self.errorJSON(

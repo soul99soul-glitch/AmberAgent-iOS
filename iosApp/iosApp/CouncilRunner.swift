@@ -187,6 +187,11 @@ final class IOSCouncilRoomRunner {
                 "host_model": settings.host.modelId,
                 "research_consent": request.researchConsent.rawValue
             ]
+            if continuation == nil {
+                for prior in taskStore.tasks where prior.kind == .modelCouncil && prior.retryable && prior.status.isTerminal {
+                    _ = taskStore.updateTask(id: prior.id, retryable: false, now: prior.updatedAt)
+                }
+            }
             task = taskStore.startTask(
                 id: request.taskId ?? continuation?.taskId,
                 kind: .modelCouncil,
@@ -210,7 +215,7 @@ final class IOSCouncilRoomRunner {
                 status: .failed,
                 resultSummary: message,
                 error: message,
-                retryable: true,
+                retryable: false,
                 cancelCapability: false
             )
             return IOSCouncilRoomRunSummary(
@@ -372,6 +377,7 @@ final class IOSCouncilRoomRunner {
             taskStore.appendLog(id: task.id, chunk: "[你 · 追问] \(objective)\n\n")
         }
 
+        var hasEstablishedTopic = false
         do {
             let finalTopic: String
             if let continuation = request.continuation {
@@ -432,6 +438,7 @@ final class IOSCouncilRoomRunner {
                 taskStore.appendLog(id: task.id, chunk: "[\(host.name)] \(generatedTopic)\n\n")
                 finalTopic = generatedTopic
             }
+            hasEstablishedTopic = !finalTopic.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
             // 开关「动态席位生成」开 → 主持人按议题 + 调研单独输出一份严格 JSON 席位清单
             //（Android planned_seats 思路），贴合本议题;关 → 直接用用户已添加的席位,不自由发挥。
@@ -840,7 +847,7 @@ final class IOSCouncilRoomRunner {
                     : message,
                 logTail: clippedTranscript(transcript, budget: 24_000),
                 error: isFailedContinuation || isCancel ? "" : message,
-                retryable: !isFailedContinuation,
+                retryable: !isFailedContinuation && !isCancel && hasEstablishedTopic,
                 cancelCapability: false,
                 metadata: request.continuation.map {
                     [

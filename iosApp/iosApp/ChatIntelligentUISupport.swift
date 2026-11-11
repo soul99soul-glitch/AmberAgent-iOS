@@ -103,7 +103,10 @@ enum IOSIntelligentUISubmitResult: Equatable {
 /// Stable environment identity. Durable receipts are decoded at lifecycle events, not in body.
 @MainActor
 @Observable
-final class IOSIntelligentUIHost {
+final class IOSIntelligentUIHost: Equatable {
+    nonisolated static func == (lhs: IOSIntelligentUIHost, rhs: IOSIntelligentUIHost) -> Bool {
+        lhs === rhs
+    }
     let stateStore: IOSIntelligentUIStateStore
     private(set) var receipts: [IOSIntelligentUISource: IOSIntelligentUISubmission] = [:]
     private(set) var pending: Set<IOSIntelligentUISource> = []

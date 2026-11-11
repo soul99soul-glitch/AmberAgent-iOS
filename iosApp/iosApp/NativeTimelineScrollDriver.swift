@@ -108,6 +108,44 @@ final class NativeTimelineScrollDriver: NSObject {
             cancelProgrammaticMotion()
         }
         reduceAndPerform(normalizedIntent(intent, token: token), token: token, now: now)
+        if case .streamContentGrew = intent {
+            syncBottomLockDuringLayoutIfNeeded()
+        }
+    }
+
+    /// Synchronously locks `contentOffset.y` to `bottomTarget` during the active layout pass
+    /// when `layoutPinsBottom` is enabled and the user has not paused follow.
+    /// Prevents the growing assistant bubble's bottom edge from protruding downward into the
+    /// composer area when TextKit/Markdown height increases outside a SwiftUI scroll transaction.
+    func syncBottomLockDuringLayoutIfNeeded() {
+        guard fallbackReason == nil,
+              automaticFollowEnabled,
+              layoutPinsBottom,
+              !isPausedForUser,
+              !isUIKitUserInteracting,
+              currentKeyboardAnimation() == nil,
+              let scrollView,
+              validateScrollViewHealth() else { return }
+        let target = bottomTarget(in: scrollView)
+        guard target > -scrollView.adjustedContentInset.top + NativeTimelineScrollCore.arrivalEpsilon else { return }
+        guard isFollowingBottomOrKeyboardFocus ||
+            wasNearBottomAtLastSample ||
+            distanceToBottom(in: scrollView) <= NativeTimelineScrollCore.resumeEpsilon else { return }
+        if abs(target - scrollView.contentOffset.y) >= NativeTimelineScrollCore.arrivalEpsilon {
+            UIView.performWithoutAnimation {
+                writeOffsetY(target)
+            }
+        }
+        wasNearBottomAtLastSample = true
+        if case .followingBottom(_, _, let lastFollowAt, let lagAllowance, _) = state {
+            state = .followingBottom(
+                virtualOffset: target,
+                target: target,
+                lastFollowRequestAt: lastFollowAt,
+                lagAllowance: lagAllowance,
+                velocity: 0
+            )
+        }
     }
 
     func handleLayoutMetricsChanged() {
@@ -140,6 +178,7 @@ final class NativeTimelineScrollDriver: NSObject {
                 submitViewportChanged(wasNearBottomBeforeChange: shouldFollowViewportChange)
                 return
             }
+            syncBottomLockDuringLayoutIfNeeded()
             reduceAndPerform(.layoutSettled(token: nil), token: generation)
         }
     }
@@ -806,6 +845,7 @@ struct NativeTimelineScrollViewResolver: UIViewRepresentable {
         private weak var observedScrollView: UIScrollView?
         var resolvedScrollView: UIScrollView? { observedScrollView }
         private weak var tapGestureRecognizer: UITapGestureRecognizer?
+        private weak var scrollInsetProbeView: ScrollViewInsetProbeView?
         private var displayLink: CADisplayLink?
         private var monitoringDeadline: CFTimeInterval?
         private var keyboardFrameObserver: NSObjectProtocol?
@@ -836,6 +876,8 @@ struct NativeTimelineScrollViewResolver: UIViewRepresentable {
             if let tapGestureRecognizer, let observedScrollView {
                 observedScrollView.removeGestureRecognizer(tapGestureRecognizer)
             }
+            scrollInsetProbeView?.removeFromSuperview()
+            scrollInsetProbeView = nil
             tapGestureRecognizer = nil
             observedScrollView = nil
         }
@@ -843,6 +885,7 @@ struct NativeTimelineScrollViewResolver: UIViewRepresentable {
         func observe(_ scrollView: UIScrollView) {
             guard !invalidated else { return }
             installTapGestureIfNeeded(on: scrollView)
+            installScrollInsetProbeIfNeeded(on: scrollView)
             guard observedScrollView !== scrollView else { return }
             if let keyboardFrameObserver {
                 NotificationCenter.default.removeObserver(keyboardFrameObserver)
@@ -852,14 +895,34 @@ struct NativeTimelineScrollViewResolver: UIViewRepresentable {
                 previous.removeGestureRecognizer(tapGestureRecognizer)
                 self.tapGestureRecognizer = nil
             }
+            if let scrollInsetProbeView, scrollInsetProbeView.superview !== scrollView {
+                scrollInsetProbeView.removeFromSuperview()
+                self.scrollInsetProbeView = nil
+            }
             displayLink?.invalidate()
             displayLink = nil
             monitoringDeadline = nil
             observedScrollView = scrollView
             installTapGestureIfNeeded(on: scrollView)
+            installScrollInsetProbeIfNeeded(on: scrollView)
             lastMetrics = Metrics(scrollView)
             observeKeyboardFrameChanges()
             scheduleCallback()
+        }
+
+        private func installScrollInsetProbeIfNeeded(on scrollView: UIScrollView) {
+            if let existing = scrollInsetProbeView, existing.superview === scrollView {
+                return
+            }
+            scrollInsetProbeView?.removeFromSuperview()
+            let probe = ScrollViewInsetProbeView(frame: .zero)
+            probe.isHidden = true
+            probe.isUserInteractionEnabled = false
+            probe.onSafeAreaOrLayoutChanged = { [weak self] in
+                self?.monitorRecentMetrics()
+            }
+            scrollView.addSubview(probe)
+            scrollInsetProbeView = probe
         }
 
         private func installTapGestureIfNeeded(on scrollView: UIScrollView) {
@@ -918,7 +981,12 @@ struct NativeTimelineScrollViewResolver: UIViewRepresentable {
         }
 
         func monitorRecentMetrics() {
-            guard !invalidated, observedScrollView != nil else { return }
+            guard !invalidated, let scrollView = observedScrollView else { return }
+            let metrics = Metrics(scrollView)
+            if metrics != lastMetrics {
+                lastMetrics = metrics
+                onMetricsChanged()
+            }
             monitoringDeadline = CACurrentMediaTime() + quietInterval
             startDisplayLinkIfNeeded()
         }
@@ -1018,6 +1086,30 @@ private final class ResolverProbeView: UIView {
     override func safeAreaInsetsDidChange() {
         super.safeAreaInsetsDidChange()
         onLayout?()
+    }
+}
+
+private final class ScrollViewInsetProbeView: UIView {
+    var onSafeAreaOrLayoutChanged: (() -> Void)?
+
+    override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        onSafeAreaOrLayoutChanged?()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        onSafeAreaOrLayoutChanged?()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onSafeAreaOrLayoutChanged?()
+    }
+
+    override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        onSafeAreaOrLayoutChanged?()
     }
 }
 

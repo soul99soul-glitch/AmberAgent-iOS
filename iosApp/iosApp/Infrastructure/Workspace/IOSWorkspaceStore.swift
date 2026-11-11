@@ -128,7 +128,10 @@ enum IOSWorkspaceToolCatalog {
 
 @MainActor
 @Observable
-final class IOSWorkspaceStore {
+final class IOSWorkspaceStore: Equatable {
+    nonisolated static func == (lhs: IOSWorkspaceStore, rhs: IOSWorkspaceStore) -> Bool {
+        lhs === rhs
+    }
     static let shared = IOSWorkspaceStore()
 
     private(set) var files: [IOSWorkspaceFileRecord] = []

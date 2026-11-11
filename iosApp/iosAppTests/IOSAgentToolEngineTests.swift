@@ -46,6 +46,38 @@ final class IOSAgentToolEngineTests: IOSAgentToolEngineTestCase {
         XCTAssertEqual(IOSSubAgentModelPool.preferredReasoning(in: [.low, .off]), .low)
     }
 
+    @MainActor
+    func testActivePhoneSessionKeepsLowReasoningUnderFastFirstWorkerOverride() async {
+        let provider = ParamsRecordingProvider([
+            toolCallMessage(toolCallId: "launch-duo", toolName: "phone_act", input: #"{"action":"launch","bundle_id":"com.duolingo.DuolingoMobile"}"#),
+            assistantText("done")
+        ])
+        let launchExecutor = RecordingExecutor(.filled(#"{"outcome":"completed"}"#))
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: ["phone_act": launchExecutor],
+            configuration: .init(fastFirstReasoning: true, routerReasoningName: "OFF", workerReasoningName: "HIGH"),
+            ledgerRunId: "phone-run-1",
+            phoneAutomaticReasoning: true,
+            phoneSessionIsActive: { runID in
+                runID == "phone-run-1" && !launchExecutor.calls.isEmpty
+            }
+        )
+        let phoneParams = IOSPhoneAutomationRequestPolicyTests.params(
+            modelID: "deepseek-flash",
+            reasoning: .high,
+            abilities: [.tool, .reasoning],
+            tools: IOSPhoneControlToolCatalog.declarations
+        )
+        _ = await engine.run(
+            providerSetting: makeProviderSetting(),
+            messages: [userMessage("帮我做多邻国")],
+            params: phoneParams
+        )
+        XCTAssertEqual(provider.recordedParams.map(\.reasoningLevel), [.off, .low],
+                       "手机自动化激活后后续轮次必须维持 .low，不能被 workerReasoningName=HIGH 覆盖回高推理")
+    }
+
     func testLastAllowedToolRoundLeavesSteerQueuedForTheNextRun() async {
         actor DrainCounter {
             var count = 0

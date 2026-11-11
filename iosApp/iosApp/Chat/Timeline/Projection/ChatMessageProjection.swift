@@ -14,6 +14,7 @@ struct ChatMessageRowModel: Identifiable {
     let canAnimateInsertion: Bool
 
     var isAssistantContinuation: Bool = false
+    var displayTexts: [Int: String] = [:]
 
     var id: String { rowId }
 }
@@ -53,6 +54,7 @@ struct ChatTimelineMessageEntry: Equatable {
     let renderToken: String
 
     var isAssistantContinuation: Bool = false
+    var displayTexts: [Int: String] = [:]
 
     var rowModel: ChatMessageRowModel {
         ChatMessageRowModel(
@@ -66,7 +68,8 @@ struct ChatTimelineMessageEntry: Equatable {
             isStreaming: isStreaming,
             hasEverStreamed: hasEverStreamed,
             canAnimateInsertion: canAnimateInsertion,
-            isAssistantContinuation: isAssistantContinuation
+            isAssistantContinuation: isAssistantContinuation,
+            displayTexts: displayTexts
         )
     }
 }
@@ -133,7 +136,8 @@ enum ChatTimelinePlanner {
             isLast: row.isLast, isStreaming: row.isStreaming, hasEverStreamed: row.hasEverStreamed,
             canAnimateInsertion: row.canAnimateInsertion, renderer: rendererKind(for: row),
             renderToken: includeRenderToken ? renderToken(for: row, partTokensBody: partTokensBody) : "",
-            isAssistantContinuation: row.isAssistantContinuation
+            isAssistantContinuation: row.isAssistantContinuation,
+            displayTexts: row.displayTexts
         )
     }
 
@@ -254,7 +258,8 @@ enum ChatMessageProjector {
             role: isResult ? MessageRole.assistant : message.role, parts: message.parts, index: index,
             isLast: isLast, isStreaming: isStreaming, hasEverStreamed: hasEverStreamed,
             canAnimateInsertion: canAnimateInsertion,
-            isAssistantContinuation: isAssistantContinuation(at: index, in: messages)
+            isAssistantContinuation: isAssistantContinuation(at: index, in: messages),
+            displayTexts: IOSSubAgentOutputProjection.unpreparedDisplayTexts(in: message)
         )
     }
 

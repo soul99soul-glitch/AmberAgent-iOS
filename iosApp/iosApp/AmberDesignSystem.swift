@@ -901,6 +901,23 @@ enum IOSDisplayPreferenceKeys {
     static let completionHaptic = "app.amber.ios.display.completionHaptic"
     static let streamingBlockMarkdown = "app.amber.ios.display.streamingBlockMarkdown"
     static let coalescedTextBlocks = "app.amber.ios.display.coalescedTextBlocks"
+    static let replyDeliveryMode = "app.amber.ios.display.replyDeliveryMode"
+}
+
+enum IOSChatReplyDeliveryMode: String, CaseIterable, Identifiable {
+    case liveStreaming = "live"
+    case segmentedBlocks = "segmented"
+
+    static let `default`: Self = .liveStreaming
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .liveStreaming: "实时流式"
+        case .segmentedBlocks: "分段呈现"
+        }
+    }
 }
 
 /// Value-diffed `@Observable` mirror of chat display and language preferences in `UserDefaults.standard`.
@@ -918,6 +935,12 @@ final class IOSChatRenderPreferences {
     private(set) var chatFont: String
     private(set) var agentName: Bool
     private(set) var appLanguage: String
+    private(set) var followGeneration: Bool
+    private(set) var replyDeliveryMode: String
+
+    var isSegmentedReplyDelivery: Bool {
+        IOSChatReplyDeliveryMode(rawValue: replyDeliveryMode) == .segmentedBlocks
+    }
 
     @ObservationIgnored private var defaultsObserver: NSObjectProtocol?
 
@@ -926,6 +949,8 @@ final class IOSChatRenderPreferences {
         self.chatFont = defaults.string(forKey: IOSDisplayPreferenceKeys.chatFont) ?? IOSChatFont.default.rawValue
         self.agentName = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.agentName, defaultValue: true)
         self.appLanguage = defaults.string(forKey: IOSAppLanguagePreference.defaultsKey) ?? IOSAppLanguage.system.rawValue
+        self.followGeneration = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.followGeneration, defaultValue: true)
+        self.replyDeliveryMode = Self.normalizedReplyDeliveryMode(from: defaults)
 
         self.defaultsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
@@ -962,6 +987,22 @@ final class IOSChatRenderPreferences {
         if _appLanguage != nextAppLanguage {
             appLanguage = nextAppLanguage
         }
+        let nextFollowGeneration = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.followGeneration, defaultValue: true)
+        if _followGeneration != nextFollowGeneration {
+            followGeneration = nextFollowGeneration
+        }
+        let nextReplyDeliveryMode = Self.normalizedReplyDeliveryMode(from: defaults)
+        if _replyDeliveryMode != nextReplyDeliveryMode {
+            replyDeliveryMode = nextReplyDeliveryMode
+        }
+    }
+
+    private static func normalizedReplyDeliveryMode(from defaults: UserDefaults) -> String {
+        guard let raw = defaults.string(forKey: IOSDisplayPreferenceKeys.replyDeliveryMode),
+              let mode = IOSChatReplyDeliveryMode(rawValue: raw) else {
+            return IOSChatReplyDeliveryMode.default.rawValue
+        }
+        return mode.rawValue
     }
 
     private static func readDouble(from defaults: UserDefaults, key: String, defaultValue: Double) -> Double {
@@ -1540,16 +1581,10 @@ enum ChatSheetDismissSmoothnessPolicy {
     /// Prevents `composerState.approvalContainerHeight` from mutating mid-swipe when UIKit
     /// toggles `safeAreaInsets.top` on the presenting view controller during sheet drag.
     static func shouldAcceptApprovalContainerHeightUpdate(
-        currentHeight: CGFloat,
-        proposedHeight: CGFloat,
-        safeAreaTop: CGFloat,
-        isModalSheetPresented: Bool
+        currentHeight: CGFloat, proposedHeight: CGFloat, safeAreaTop: CGFloat, isModalSheetPresented: Bool
     ) -> Bool {
-        guard !isModalSheetPresented else { return false }
-        guard proposedHeight > 0 else { return false }
-        if currentHeight > 0, safeAreaTop <= 0.5 {
-            return false
-        }
+        guard !isModalSheetPresented, proposedHeight > 0 else { return false }
+        if currentHeight > 0, safeAreaTop <= 0.5 { return false }
         return abs(currentHeight - proposedHeight) > 0.5
     }
 
@@ -1557,9 +1592,7 @@ enum ChatSheetDismissSmoothnessPolicy {
     /// popover panel is closed or a modal sheet is presented, avoiding 60–120Hz action callbacks
     /// while `UISheetPresentationController` scales/translates the presenting view.
     static func effectiveGlobalTapFrame(
-        _ rawFrame: @autoclosure () -> CGRect,
-        isPanelOpen: Bool,
-        isModalSheetPresented: Bool
+        _ rawFrame: @autoclosure () -> CGRect, isPanelOpen: Bool, isModalSheetPresented: Bool
     ) -> CGRect {
         guard isPanelOpen, !isModalSheetPresented else { return .null }
         return rawFrame()
@@ -1568,6 +1601,14 @@ enum ChatSheetDismissSmoothnessPolicy {
     /// Suppresses background timeline viewport-change re-anchoring while a modal sheet covers `ChatView`.
     static func shouldIgnoreTimelineViewportMetrics(isCoveredByPresentedModal: Bool) -> Bool {
         isCoveredByPresentedModal
+    }
+
+    /// Uses global window space so `.offset(y: inlineDuetPanelDragOffsetY)` never feeds back into `DragGesture.Value`.
+    static var inlinePanelDragCoordinateSpace: CoordinateSpace { .global }
+
+    static func updatedInlineDuetPanelDragOffsetY(currentOffsetY: CGFloat, translation: CGSize) -> CGFloat {
+        guard currentOffsetY > 0 || abs(translation.height) > abs(translation.width) else { return currentOffsetY }
+        return max(0, translation.height)
     }
 
     /// Determines whether an inline Duet floating panel (`任务` / `中心`) should dismiss to `.chat`

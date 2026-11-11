@@ -245,11 +245,11 @@ extension ChatToolRuntime {
         if availableToolNames.contains("memory_tool") {
             executors["memory_tool"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] _, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
-                let policy = self.memoryToolWritePolicy(input: arguments, isUserInitiated: false)
+                let policy = self.memoryToolWritePolicy(input: arguments, isUserInitiated: false, conversationId: conversationId)
                 if case .needsUserAction(let reason) = policy {
                     return .denied("后台生成期间需要回到 App 确认记忆写入：\(reason)")
                 }
-                return .filled(self.dispatchMemoryToolCall(self.toolCall(name: "memory_tool", input: arguments), writePolicy: policy))
+                return .filled(self.dispatchMemoryToolCall(self.toolCall(name: "memory_tool", input: arguments), writePolicy: policy, conversationId: conversationId))
             }
         }
 

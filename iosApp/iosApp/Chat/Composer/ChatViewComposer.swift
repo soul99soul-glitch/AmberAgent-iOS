@@ -177,14 +177,16 @@ extension ChatView {
                                 topTrailingRadius: 28,
                                 style: .continuous
                             )
-                            let handleHeaderDragChanged: (DragGesture.Value) -> Void = { value in
-                                guard abs(value.translation.height) > abs(value.translation.width) else { return }
-                                composerState.inlineDuetPanelDragOffsetY = max(0, value.translation.height)
+                            let handlePanelDragTranslationChanged: (CGSize) -> Void = { translation in
+                                composerState.inlineDuetPanelDragOffsetY = ChatSheetDismissSmoothnessPolicy.updatedInlineDuetPanelDragOffsetY(
+                                    currentOffsetY: composerState.inlineDuetPanelDragOffsetY,
+                                    translation: translation
+                                )
                             }
-                            let handleHeaderDragEnded: (DragGesture.Value) -> Void = { value in
+                            let handlePanelDragTranslationEnded: (CGFloat, CGFloat) -> Void = { translationY, predictedEndTranslationY in
                                 let shouldDismiss = ChatSheetDismissSmoothnessPolicy.shouldDismissInlineDuetPanel(
-                                    translationY: value.translation.height,
-                                    predictedEndTranslationY: value.predictedEndTranslation.height
+                                    translationY: translationY,
+                                    predictedEndTranslationY: predictedEndTranslationY
                                 )
                                 withAnimation(.snappy(duration: 0.22)) {
                                     composerState.inlineDuetPanelDragOffsetY = 0
@@ -192,6 +194,20 @@ extension ChatView {
                                         composerState.activeDuetTab = .chat
                                     }
                                 }
+                            }
+                            let handlePanelDragCancelled: () -> Void = {
+                                withAnimation(.snappy(duration: 0.22)) {
+                                    composerState.inlineDuetPanelDragOffsetY = 0
+                                }
+                            }
+                            let handleHeaderDragChanged: (DragGesture.Value) -> Void = { value in
+                                handlePanelDragTranslationChanged(value.translation)
+                            }
+                            let handleHeaderDragEnded: (DragGesture.Value) -> Void = { value in
+                                handlePanelDragTranslationEnded(
+                                    value.translation.height,
+                                    value.predictedEndTranslation.height
+                                )
                             }
 
                             VStack(alignment: .leading, spacing: 0) {
@@ -246,6 +262,13 @@ extension ChatView {
                             .clipShape(panelShape)
                             .background(AmberTheme.background, in: panelShape)
                             .overlay(panelShape.stroke(AmberTheme.border, lineWidth: 0.8))
+                            .modifier(
+                                AmberInlinePanelDragCallbacksHost(
+                                    onChanged: handlePanelDragTranslationChanged,
+                                    onEnded: handlePanelDragTranslationEnded,
+                                    onCancelled: handlePanelDragCancelled
+                                )
+                            )
                             .offset(y: max(0, composerState.inlineDuetPanelDragOffsetY))
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
@@ -583,35 +606,47 @@ extension ChatView {
     private func sendCloudDialogueFromComposer(text: String) {
         let store = MacGatewayStore.shared
         let targetWorkItemId = store.selectedCloudDialogueWorkItemId
-        let fingerprint = "\(targetWorkItemId ?? "main")\u{0000}\(text)"
-        if let last = composerState.lastCloudDialogueFingerprint, last != fingerprint {
-            composerState.activeCloudDialogueRequestId = UUID().uuidString.lowercased()
-        }
-        composerState.lastCloudDialogueFingerprint = fingerprint
-        let reqId = composerState.activeCloudDialogueRequestId
-        composerState.isSubmittingCloudDialogue = true
-        composerState.cloudDialogueErrorMessage = nil
+        let submission = composerState.beginCloudDialogueSubmit(
+            text: text,
+            targetWorkItemId: targetWorkItemId
+        )
         viewModel.suggestionDraftChanged(text)
 
         Task { @MainActor in
             let result: Result<MacGatewayCloudDialogueReceipt, Error>
             if let targetWorkItemId {
-                result = await store.sendCloudWorkItemInput(workItemId: targetWorkItemId, text: text, requestId: reqId)
+                result = await store.sendCloudWorkItemInput(
+                    workItemId: targetWorkItemId,
+                    text: text,
+                    requestId: submission.requestId
+                )
             } else {
-                result = await store.sendCloudDialogueMessage(text: text, requestId: reqId)
+                result = await store.sendCloudDialogueMessage(
+                    text: text,
+                    requestId: submission.requestId
+                )
             }
-            composerState.isSubmittingCloudDialogue = false
-            switch result {
-            case .success:
+            var currentDraft = composerInputController.currentText() ?? viewModel.inputText
+            var selectedWorkItemId = store.selectedCloudDialogueWorkItemId
+            composerState.finishCloudDialogueSubmit(
+                generation: submission.generation,
+                submittedText: text,
+                submittedTargetWorkItemId: targetWorkItemId,
+                submittedFingerprint: submission.fingerprint,
+                currentInputText: &currentDraft,
+                selectedWorkItemId: &selectedWorkItemId,
+                result: result
+            )
+            if viewModel.inputText != currentDraft {
+                viewModel.inputText = currentDraft
+            }
+            if store.selectedCloudDialogueWorkItemId != selectedWorkItemId {
+                store.selectedCloudDialogueWorkItemId = selectedWorkItemId
+            }
+            if case .success = result {
                 viewModel.suggestionMessageSubmitted(text)
-                viewModel.inputText = ""
-                store.selectedCloudDialogueWorkItemId = nil
-                composerState.activeCloudDialogueRequestId = UUID().uuidString.lowercased()
-                composerState.lastCloudDialogueFingerprint = nil
                 _ = await store.pollCloudDialogueEvents()
                 viewModel.refreshCloudSuggestions(gateway: store)
-            case .failure(let error):
-                composerState.cloudDialogueErrorMessage = error.localizedDescription
             }
         }
     }
@@ -958,6 +993,167 @@ private struct ComposerCollapseClipModifier: ViewModifier {
             content.clipped()
         } else {
             content
+        }
+    }
+}
+
+/// Reference-typed callback holder with identity equality so updating drag closures
+/// does not publish a new SwiftUI environment value on every drag frame.
+@MainActor
+final class AmberInlinePanelDragCallbacks: Equatable {
+    nonisolated static func == (lhs: AmberInlinePanelDragCallbacks, rhs: AmberInlinePanelDragCallbacks) -> Bool {
+        lhs === rhs
+    }
+
+    var onChanged: (@MainActor (CGSize) -> Void)?
+    var onEnded: (@MainActor (CGFloat, CGFloat) -> Void)?
+    var onCancelled: (@MainActor () -> Void)?
+}
+
+private struct AmberInlinePanelDragCallbacksKey: EnvironmentKey {
+    static let defaultValue: AmberInlinePanelDragCallbacks? = nil
+}
+
+extension EnvironmentValues {
+    var amberInlinePanelDragCallbacks: AmberInlinePanelDragCallbacks? {
+        get { self[AmberInlinePanelDragCallbacksKey.self] }
+        set { self[AmberInlinePanelDragCallbacksKey.self] = newValue }
+    }
+}
+
+private struct AmberInlinePanelDragCallbacksHost: ViewModifier {
+    let onChanged: @MainActor (CGSize) -> Void
+    let onEnded: @MainActor (CGFloat, CGFloat) -> Void
+    let onCancelled: @MainActor () -> Void
+    @State private var owner = AmberInlinePanelDragCallbacks()
+
+    func body(content: Content) -> some View {
+        owner.onChanged = onChanged
+        owner.onEnded = onEnded
+        owner.onCancelled = onCancelled
+        return content.environment(\.amberInlinePanelDragCallbacks, owner)
+    }
+}
+
+struct AmberInlinePanelScrollDismissBridge: UIViewRepresentable {
+    @Environment(\.amberInlinePanelDragCallbacks) private var callbacks
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(callbacks: callbacks)
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = InlinePanelScrollProbeView(frame: .zero)
+        view.isHidden = true
+        view.isUserInteractionEnabled = false
+        let coordinator = context.coordinator
+        view.onAttach = { [weak view] in
+            guard let view else { return }
+            coordinator.attachIfNeeded(from: view)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.callbacks = callbacks
+        context.coordinator.attachIfNeeded(from: uiView)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var callbacks: AmberInlinePanelDragCallbacks?
+        private weak var attachedScrollView: UIScrollView?
+        private var startedAtTop = true
+        private var isPullDismissing = false
+
+        init(callbacks: AmberInlinePanelDragCallbacks? = nil) {
+            self.callbacks = callbacks
+        }
+
+        func attach(to scrollView: UIScrollView) {
+            scrollView.alwaysBounceVertical = true
+            guard attachedScrollView !== scrollView else { return }
+            attachedScrollView?.panGestureRecognizer.removeTarget(self, action: #selector(handlePan(_:)))
+            attachedScrollView = scrollView
+            scrollView.panGestureRecognizer.addTarget(self, action: #selector(handlePan(_:)))
+        }
+
+        func attachIfNeeded(from probeView: UIView) {
+            var current = probeView.superview
+            var found: UIScrollView?
+            while let view = current {
+                if let sv = view as? UIScrollView {
+                    found = sv
+                    break
+                }
+                current = view.superview
+            }
+            guard let scrollView = found else { return }
+            attach(to: scrollView)
+        }
+
+        @objc func handlePan(_ pan: UIPanGestureRecognizer) {
+            guard let scrollView = attachedScrollView, let callbacks, callbacks.onChanged != nil else { return }
+            let referenceView = scrollView.window ?? scrollView
+            let translation = pan.translation(in: referenceView)
+            let topOffset = -scrollView.adjustedContentInset.top
+
+            switch pan.state {
+            case .began:
+                startedAtTop = scrollView.contentOffset.y <= topOffset + 0.5
+                isPullDismissing = false
+            case .changed:
+                if !isPullDismissing {
+                    if scrollView.contentOffset.y > topOffset + 0.5 || translation.y < -0.5 {
+                        startedAtTop = false
+                    } else if startedAtTop, translation.y > 0, abs(translation.y) > abs(translation.x) {
+                        isPullDismissing = true
+                    }
+                }
+                guard isPullDismissing else { return }
+                callbacks.onChanged?(CGSize(width: translation.x, height: max(0, translation.y)))
+            case .ended:
+                guard isPullDismissing else { return }
+                isPullDismissing = false
+                let velocityY = pan.velocity(in: referenceView).y
+                let predictedEndY = translation.y + velocityY * 0.18
+                callbacks.onEnded?(max(0, translation.y), predictedEndY)
+            case .cancelled, .failed:
+                guard isPullDismissing else { return }
+                isPullDismissing = false
+                callbacks.onCancelled?()
+            default:
+                break
+            }
+        }
+    }
+
+    private final class InlinePanelScrollProbeView: UIView {
+        var onAttach: (() -> Void)?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil else { return }
+            onAttach?()
+            DispatchQueue.main.async { [weak self] in
+                self?.onAttach?()
+            }
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            onAttach?()
+        }
+    }
+}
+
+extension View {
+    func amberInlinePanelScrollDismiss() -> some View {
+        background {
+            AmberInlinePanelScrollDismissBridge()
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
         }
     }
 }

@@ -83,6 +83,9 @@ extension EnvironmentValues {
   /// `ParagraphUIView` and gate height invalidation by laid-out line count.
   /// Defaults to `nil`, keeping legacy package behavior unchanged.
   @Entry public var markdownStreamingTailSink: MarkdownStreamingTailSink? = nil
+  /// Vendored addition (AmberAgent): enables one-shot upward slide + fade-in
+  /// entrance on newly committed top-level blocks in segmented delivery mode.
+  @Entry public var markdownSegmentedBlockEntrance: Bool = false
 }
 
 /// Identity-stable bridge between a streaming host and the mounted trailing

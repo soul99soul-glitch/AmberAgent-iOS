@@ -675,6 +675,234 @@ final class IOSCloudConfigTests: XCTestCase {
         XCTAssertTrue(manualMissingKey.requiresNewKeyForDestinationChange)
     }
 
+    func testPrimarySwitchStateShowsPlainInUseWhenMatchedAndConciseHintOnlyWhenChanged() throws {
+        let store = makeStore()
+        let openCode = store.addProvider(IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "opencode go",
+            apiKey: "sk-fake-opencode",
+            baseUrl: "https://opencode.ai/zen/v1",
+            modelName: "deepseek-v4.1-flash",
+            modelId: "deepseek-v4.1-flash"
+        ))
+        let anthropic = store.addProvider(IosSettingsMutations.shared.buildClaudeProvider(
+            name: "Claude",
+            apiKey: "sk-ant-fake",
+            baseUrl: "https://api.anthropic.com/v1",
+            modelName: "claude-sonnet-4-5",
+            modelId: "claude-sonnet-4-5"
+        ))
+        let localClaudeModel = try XCTUnwrap(anthropic.models.first)
+        // 本机当前聊天模型使用 Claude，但云端正在使用 opencode go · deepseek-v4.1-flash
+        store.setCurrentChatModelId(localClaudeModel.id.description())
+
+        let remoteMatchingOpenCode = makeRemote(
+            revision: 4,
+            provider: "openai",
+            modelId: "deepseek-v4.1-flash",
+            baseUrl: "https://opencode.ai/zen/v1",
+            modelKeyConfigured: true,
+            sources: ["bing", "duckduckgo"],
+            mode: "fallback"
+        )
+
+        let rawDraft = IOSCloudImportDraft.make(from: store)
+        XCTAssertEqual(rawDraft.providerId, anthropic.id.description(), "批量本机同步草稿仍默认指向本机当前聊天服务商")
+
+        // 主操作卡「修改云端配置」初始对齐云端真实配置，显示普通状态「已在使用」，绝不显示可点击主按钮
+        let alignedDraft = rawDraft.alignedToRemoteModelIfMatched(remoteMatchingOpenCode)
+        XCTAssertEqual(alignedDraft.providerId, openCode.id.description())
+        let matchedTransition = try XCTUnwrap(alignedDraft.modelOnlyDraft.modelTransitionSummary(remote: remoteMatchingOpenCode))
+        let inUseState = IOSCloudPrimarySwitchState.resolve(
+            transition: matchedTransition,
+            remote: remoteMatchingOpenCode,
+            isLoadingRemote: false,
+            isSubmitting: false
+        )
+        XCTAssertEqual(inUseState, .inUse(missingKey: false))
+        XCTAssertFalse(inUseState.showsPrimaryActionButton, "一致时不得显示貌似可点的主按钮")
+        XCTAssertEqual(inUseState.statusText, "已在使用")
+
+        // 用户切换到 Claude 模型后，才展示单行简短变化提示与唯一主按钮「切换并使用」，不重复目标摘要/协议/Base URL
+        var switchedDraft = alignedDraft
+        switchedDraft.providerId = anthropic.id.description()
+        switchedDraft.modelUuid = localClaudeModel.id.description()
+        let changedTransition = try XCTUnwrap(switchedDraft.modelOnlyDraft.modelTransitionSummary(remote: remoteMatchingOpenCode))
+        let readyState = IOSCloudPrimarySwitchState.resolve(
+            transition: changedTransition,
+            remote: remoteMatchingOpenCode,
+            isLoadingRemote: false,
+            isSubmitting: false
+        )
+        XCTAssertEqual(readyState, .readyToSwitch(changeHint: "当前：opencode go · deepseek-v4.1-flash"))
+        XCTAssertTrue(readyState.showsPrimaryActionButton)
+        if case .readyToSwitch(let hint) = readyState {
+            XCTAssertFalse(hint.contains("openai"), "主卡提示不重复平铺协议类型")
+            XCTAssertFalse(hint.contains("opencode.ai"), "主卡提示不重复平铺 Base URL")
+            XCTAssertFalse(hint.contains("claude-sonnet-4-5"), "主卡提示不重复生成目标摘要")
+        }
+
+        // 切换请求进行中保留明确进度状态并收起按钮
+        let switchingState = IOSCloudPrimarySwitchState.resolve(
+            transition: changedTransition,
+            remote: remoteMatchingOpenCode,
+            isLoadingRemote: false,
+            isSubmitting: true
+        )
+        XCTAssertEqual(switchingState, .switching)
+        XCTAssertFalse(switchingState.showsPrimaryActionButton)
+        XCTAssertEqual(switchingState.statusText, "正在切换…")
+    }
+
+    func testHttpsUppercaseAndTrailingSlashNormalizeWhileHttpAndQueryBaseUrlsAreBlocked() throws {
+        let store = makeStore()
+        let openCodeMixedCase = store.addProvider(IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "opencode go",
+            apiKey: "sk-fake-opencode",
+            baseUrl: "  HTTPS://OpenCode.AI/zen/v1/  ",
+            modelName: "deepseek-v4.1-flash",
+            modelId: "deepseek-v4.1-flash"
+        ))
+        let lanHttpProvider = store.addProvider(IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "LocalLAN",
+            apiKey: "sk-fake-lan",
+            baseUrl: "http://192.168.1.20:11434/v1",
+            modelName: "qwen",
+            modelId: "qwen2.5"
+        ))
+        let queryUrlProvider = store.addProvider(IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "QueryEndpoint",
+            apiKey: "sk-fake-query",
+            baseUrl: "https://api.example.com/v1?api-version=2025",
+            modelName: "gpt",
+            modelId: "gpt-4.1"
+        ))
+
+        let draft = IOSCloudImportDraft.make(from: store)
+        let openCodeItem = try XCTUnwrap(draft.providers.first { $0.providerId == openCodeMixedCase.id.description() })
+        let lanItem = try XCTUnwrap(draft.providers.first { $0.providerId == lanHttpProvider.id.description() })
+        let queryItem = try XCTUnwrap(draft.providers.first { $0.providerId == queryUrlProvider.id.description() })
+
+        XCTAssertTrue(openCodeItem.isExportable, "合法 HTTPS 地址（含大小写与尾斜杠）归一化后应允许云端使用")
+        XCTAssertFalse(lanItem.isExportable, "云端契约拒绝非 HTTPS 地址，应在客户端提前拦截而非提交报 422")
+        XCTAssertNotNil(lanItem.blockedReason)
+        XCTAssertFalse(queryItem.isExportable, "云端契约拒绝带 query/fragment 的 Base URL，应在客户端提前拦截")
+        XCTAssertNotNil(queryItem.blockedReason)
+
+        var selected = draft.modelOnlyDraft
+        selected.providerId = openCodeItem.providerId
+        selected.modelUuid = openCodeItem.defaultModelUuid
+        let bundle = selected.bundle(using: store)
+        XCTAssertEqual(
+            bundle.model?.baseUrl,
+            "https://opencode.ai/zen/v1",
+            "上传到云端的 baseUrl 必须归一化小写 scheme/host 并去除尾斜杠，满足服务端 java.net.URI 严格 https 校验"
+        )
+
+        let remoteCanonical = makeRemote(
+            revision: 4,
+            provider: "openai",
+            modelId: "deepseek-v4.1-flash",
+            baseUrl: "https://opencode.ai/zen/v1",
+            modelKeyConfigured: true,
+            sources: ["bing"],
+            mode: "fallback"
+        )
+        let aligned = draft.alignedForPrimarySwitch(remote: remoteCanonical)
+        XCTAssertEqual(aligned.providerId, openCodeItem.providerId)
+        let transition = try XCTUnwrap(aligned.modelOnlyDraft.modelTransitionSummary(remote: remoteCanonical))
+        XCTAssertFalse(transition.changesEndpointOrModel, "大小写或尾斜杠差异归一化后应准确识别为同一云端配置")
+    }
+
+    func testPrimarySwitchFallbackWhenLocalActiveChatIsOAuthAndMissingCloudKeyAllowsSwitch() throws {
+        let store = makeStore()
+        let codexProvider = store.addProvider(IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "CodexAccount",
+            apiKey: "sk-codex-placeholder",
+            baseUrl: "https://chatgpt.com/backend-api/codex",
+            modelName: "Codex",
+            modelId: "gpt-5-codex"
+        ))
+        _ = store.setOpenAIAuthMode(providerId: codexProvider.id.description(), authMode: OpenAIAuthMode.codexOauth)
+        let codexModel = try XCTUnwrap(codexProvider.models.first)
+        store.setCurrentChatModelId(codexModel.id.description())
+
+        let openCode = store.addProvider(IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "opencode go",
+            apiKey: "sk-fake-opencode",
+            baseUrl: "https://opencode.ai/zen/v1",
+            modelName: "deepseek-v4.1-flash",
+            modelId: "deepseek-v4.1-flash"
+        ))
+        let claude = store.addProvider(IosSettingsMutations.shared.buildClaudeProvider(
+            name: "Claude",
+            apiKey: "sk-fake-claude",
+            baseUrl: "https://api.anthropic.com/v1",
+            modelName: "claude-sonnet-4-5",
+            modelId: "claude-sonnet-4-5"
+        ))
+        let claudeModel = try XCTUnwrap(claude.models.first)
+
+        let rawDraft = IOSCloudImportDraft.make(from: store)
+        XCTAssertNil(rawDraft.providerId, "从本机同步默认草稿在当前聊天为 OAuth 时保持 nil，不替用户乱勾账号")
+
+        // 主切换卡在云端尚未设置或未匹配时，必须回退选中首个可切换服务商，绝不能折叠掉模型行与切换按钮
+        let switchFallback = rawDraft.alignedForPrimarySwitch(remote: nil)
+        XCTAssertEqual(switchFallback.providerId, openCode.id.description())
+        XCTAssertNotNil(switchFallback.selectedModel)
+
+        // 若云端模型与当前所选一致但缺少 Key（modelKeyConfigured == false），允许点击「切换并使用」补齐本机 Key
+        let remoteMissingKey = makeRemote(
+            revision: 2,
+            provider: "openai",
+            modelId: "deepseek-v4.1-flash",
+            baseUrl: "https://opencode.ai/zen/v1",
+            modelKeyConfigured: false,
+            sources: ["bing"],
+            mode: "fallback"
+        )
+        let alignedMissingKey = rawDraft.alignedForPrimarySwitch(remote: remoteMissingKey)
+        let missingKeyTransition = try XCTUnwrap(
+            alignedMissingKey.modelOnlyDraft.modelTransitionSummary(
+                remote: remoteMissingKey,
+                localProviders: alignedMissingKey.providers
+            )
+        )
+        let missingKeyState = IOSCloudPrimarySwitchState.resolve(
+            transition: missingKeyTransition,
+            remote: remoteMissingKey,
+            isLoadingRemote: false,
+            isSubmitting: false
+        )
+        XCTAssertTrue(missingKeyState.showsPrimaryActionButton, "云端缺 Key 且本机有 Key 时应允许点击主按钮补齐 Key")
+
+        // 跨服务商切换（opencode go → Claude）时，变化提示同时带出云端当前友好服务商名与模型 ID
+        let remoteWithKey = makeRemote(
+            revision: 3,
+            provider: "openai",
+            modelId: "deepseek-v4.1-flash",
+            baseUrl: "https://opencode.ai/zen/v1",
+            modelKeyConfigured: true,
+            sources: ["bing"],
+            mode: "fallback"
+        )
+        var crossProviderDraft = rawDraft.alignedForPrimarySwitch(remote: remoteWithKey)
+        crossProviderDraft.providerId = claude.id.description()
+        crossProviderDraft.modelUuid = claudeModel.id.description()
+        let crossTransition = try XCTUnwrap(
+            crossProviderDraft.modelOnlyDraft.modelTransitionSummary(
+                remote: remoteWithKey,
+                localProviders: crossProviderDraft.providers
+            )
+        )
+        let crossState = IOSCloudPrimarySwitchState.resolve(
+            transition: crossTransition,
+            remote: remoteWithKey,
+            isLoadingRemote: false,
+            isSubmitting: false
+        )
+        XCTAssertEqual(crossState, .readyToSwitch(changeHint: "当前：opencode go · deepseek-v4.1-flash"))
+    }
+
     // ---- helpers ----
 
     private func makeStore() -> IOSSharedSettingsStore {

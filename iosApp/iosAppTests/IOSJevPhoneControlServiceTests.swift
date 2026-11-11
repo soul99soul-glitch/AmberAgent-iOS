@@ -903,4 +903,26 @@ final class IOSJevPhoneControlServiceTests: XCTestCase {
             XCTAssertEqual(Service.handbackKind(reason), .declined, reason)
         }
     }
+
+    func testPhoneVerificationUsesInteractiveDeadlineForMultimodalAdvice() async throws {
+        var configured = imageSettings()
+        configured.policy.deadlineMs = 60
+        configured.policy.webActionsDeadlineMs = 1_000
+        let slowTransport = JevStubTransport { _ in
+            try await Task.sleep(nanoseconds: 140_000_000)
+            return (Self.payload("wait"), jevResponse(200))
+        }
+        let png = try jevPhonePNG()
+        let screenshot = PhoneScreenshot(data: png, observationID: "o2", width: 402, height: 874)
+        let advice = await service(SettingsBox(configured), transport: slowTransport).adviseAfterAction(
+            goal: "确认点击继续按钮已生效",
+            expectation: .init(kind: .enabled, target: .init(label: "继续")),
+            before: observation(),
+            after: observation(id: "o2"),
+            verification: .init(status: .insufficient, reason: "ambiguous_target", needsScreenshot: true),
+            runID: "multimodal-verification-deadline",
+            screenshotProvider: { screenshot }
+        )
+        XCTAssertEqual(advice, .wait, "phoneVerification 上传截图核验必须使用 webActionsDeadlineMs，不应按 1.2s 文本短预算提前超时")
+    }
 }
