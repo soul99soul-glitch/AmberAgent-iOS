@@ -101,7 +101,9 @@ final class IOSOrchestrationLaunchPolicy {
 
         let savedOverride = effectiveRoleId.flatMap { settings?.agentRuntime.subAgent.overrides[$0] }
         let availableToolNames = Set(
-            (toolExposureBridge?.fullToolDeclarations() ?? params.tools).map(\.name)
+            (toolExposureBridge?.fullToolDeclarations() ?? params.tools)
+                .map(\.name)
+                .filter { !IOSPhoneControlToolCatalog.isPhoneTool(name: $0) }
         )
         let explicitPrompt = systemPromptPresent
             ? Self.optionalTrimmedString(arguments["system_prompt"])
@@ -313,12 +315,13 @@ final class IOSOrchestrationLaunchPolicy {
             childHeaders = params.customHeaders
             childBodies = params.customBody
         }
+        let nonPhoneParentTools = params.tools.filter { !IOSPhoneControlToolCatalog.isPhoneTool(name: $0.name) }
         let childParams = TextGenerationParams(
             model: childModel,
             temperature: params.temperature,
             topP: params.topP,
             maxTokens: params.maxTokens,
-            tools: toolScope.map { scope in params.tools.filter { scope.contains($0.name) } } ?? params.tools,
+            tools: toolScope.map { scope in nonPhoneParentTools.filter { scope.contains($0.name) } } ?? nonPhoneParentTools,
             reasoningLevel: reasoning,
             customHeaders: childHeaders,
             customBody: childBodies

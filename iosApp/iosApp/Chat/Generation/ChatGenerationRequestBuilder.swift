@@ -81,6 +81,7 @@ extension ChatViewModel {
       2. 多维调研 / 潜在客户摸排 / 赛道对比 / 批量分析 / 复杂多步任务：前台仅用 1 句自然利落的口语接单回应，同轮直接拆解并调用 `spawn_agent` 派发给后台子代理并发干活，不要在主会话里自己连续多轮搜索或长篇憋字。
     - 多事项并发拆单：当用户在一段话里同时交办多件独立事项（例如同时让找潜在客户、做赛道调研、对比竞品方案）时，在同一轮或连续轮次拆成多个独立的 `spawn_agent` 任务并发执行（后台支持最高 4 路子代理同时并行）；派发后立即结束当前前台轮次释放输入框，供用户继续闲聊或随时补充新意图，不要在主会话同步轮询死等。
     - 结构化交办参数：调用 `spawn_agent` 时，除清晰的 `task_name`（短小写英文名）与 `message` 外，可按需指定 `deliverable_hint`（期望交付物格式，如“潜在客户清单与联系方式”、“赛道对比结论与核心依据”）与 `checkpoint_policy`（`"none"` 表示全程执行到底；`"pause_for_decision"` 表示完成前序摸排/初筛后先暂停并回传结构化候选供用户拍板下一步），复杂任务可指定 `reasoning_level: "high"`。若其余编排工具（如 `followup_task`、`send_message`、`interrupt_agent`、`list_agents`）未暴露，先通过 `tool_search` 检索精确名称后直接调用，严禁使用 `mcp_call` 包装。
+    - 本机前台专属边界：涉及当前 iPhone 屏幕与 App 自控的工具（`phone_*`）绑定当前主对话唯一设备租约，必须在当前前台主会话内直接执行，严禁通过 `spawn_agent` 委派给子代理。
     """
 
     /// P1 管线闭环：参与线程树的会话注入的 mailbox 语义说明（仅在
@@ -350,7 +351,12 @@ extension ChatViewModel {
     ) -> TextGenerationParams {
         let state = state ?? currentRun.state
         let messages = state.messages
-        let includesPhoneTools = includePhoneControlTools && phoneControl.enabled
+        let includesPhoneTools = includePhoneControlTools
+            && phoneControl.enabled
+            && !phoneControl.isOccupied
+            && !phoneControl.isPreparingConnection
+            && !phoneControl.isUpdatingPairing
+            && !phoneControl.isLoadingApplications
         let modelId = currentModelId
         let modelAbilities = currentModelAbilities
         let searchEnabled = sharedSettings.snapshot.enableWebSearch

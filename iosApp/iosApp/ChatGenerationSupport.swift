@@ -18,6 +18,7 @@ struct ChatPendingToolApproval {
     var executionPolicy: IOSExecutionPolicySnapshot? = nil
     /// baseMessages 不含真实对话时（嵌套 exec 的合成消息）由调用方提供最近的用户消息。
     var recentUserTexts: [String]? = nil
+    var phoneControl: IOSPhoneControlController? = nil
 }
 
 struct ChatGenerationDependencies {

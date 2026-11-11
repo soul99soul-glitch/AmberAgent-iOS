@@ -291,6 +291,28 @@ enum ChatToolApprovalRequestBuilder {
         )
     }
 
+    static func phoneAddApp(
+        for toolCall: UIMessagePart.Tool,
+        bundleID: String,
+        appName: String?,
+        reason: String
+    ) -> McpToolApprovalRequest {
+        var lines: [String] = []
+        if let appName = appName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !appName.isEmpty,
+           appName != bundleID {
+            lines.append("应用: \(appName)")
+        }
+        lines.append("Bundle ID: \(bundleID)")
+        return McpToolApprovalRequest(
+            id: ChatToolCallParsing.requestId(for: toolCall),
+            serverName: "iPhone",
+            toolName: toolCall.toolName,
+            argumentsPreview: lines.joined(separator: "\n"),
+            reason: reason
+        )
+    }
+
     private static func appleArgumentsPreview(toolName: String, arguments: [String: Any]) -> String {
         if IOSAppleAgentToolCatalog.workoutToolNames.contains(toolName) {
             return IOSWorkoutAgentToolExecutor.approvalPreview(arguments: arguments)

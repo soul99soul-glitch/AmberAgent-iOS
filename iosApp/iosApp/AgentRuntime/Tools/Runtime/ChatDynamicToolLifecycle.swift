@@ -89,6 +89,42 @@ final class ChatDynamicToolLifecycle {
             return .waitingForApproval(.mcp(request))
         }
 
+        if toolName == "phone_add_app" {
+            let controller = pending.phoneControl ?? runtime.phoneControl
+            let executor = IOSPhoneControlToolExecutor(runID: pending.runId, controller: controller)
+            if runtime.effectiveHighRiskAutoApproveEnabled {
+                let text = await executor.executeApprovedAddApp(arguments: pending.toolCall.input)
+                return .completed(runtime.messagesByFinishingToolCall(
+                    pending.toolCall,
+                    outputText: text,
+                    in: pending.baseMessages
+                ))
+            }
+            switch await executor.prepareAddAppApproval(arguments: pending.toolCall.input) {
+            case .requiresApproval(let bundleID, let appName):
+                let request = ChatToolApprovalRequestBuilder.phoneAddApp(
+                    for: pending.toolCall,
+                    bundleID: bundleID,
+                    appName: appName,
+                    reason: "请确认是否允许当前及后续手机控制任务访问并操作该应用。"
+                )
+                return .waitingForApproval(.mcp(request))
+            case .immediate(let outcome):
+                let text: String
+                switch outcome {
+                case .filled(let s), .failed(let s), .denied(let s), .durabilityFailure(let s), .needsApproval(let s):
+                    text = s
+                case .filledParts(let parts), .replanRequired(let parts), .outcomeUnknown(let parts):
+                    text = parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined()
+                }
+                return .completed(runtime.messagesByFinishingToolCall(
+                    pending.toolCall,
+                    outputText: text,
+                    in: pending.baseMessages
+                ))
+            }
+        }
+
         // Wave B2: `recipe__*` 通用前缀路由（§13.2.5 / §16.1）——镜像 mcp__*
         // 模式，单一路由不为每个 recipe 写分支。manifest 从「当前 round 的
         // registry snapshot」解析（in-flight pinning，不用 live store）；

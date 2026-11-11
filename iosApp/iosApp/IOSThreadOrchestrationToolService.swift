@@ -1150,7 +1150,10 @@ final class IOSThreadOrchestrationToolService {
         // 永久截断（未暴露的 wm_* 等永远不可 search/命中）。桥不可用回退现行为。
         let inheritedFullToolNames = (toolExposureBridge?.fullToolDeclarations().map(\.name)
             ?? params.tools.map { $0.name })
-            .filter { !IOSDynamicToolRegistry.isDynamicWorkflowToolName($0) }
+            .filter {
+                !IOSDynamicToolRegistry.isDynamicWorkflowToolName($0)
+                    && !IOSPhoneControlToolCatalog.isPhoneTool(name: $0)
+            }
         let fullToolNames: [String]
         if let scope = configuration?.toolScope {
             fullToolNames = inheritedFullToolNames.filter { scope.contains($0) }
@@ -1169,7 +1172,9 @@ final class IOSThreadOrchestrationToolService {
         // maxTokens 通常只有几千 token（或为 nil 吃服务商默认的小上限），长报告
         // 必被截断成"达到输出上限"终态（真机观察到的子代理失败）。地板 32k，
         // 父显式设了更大值则保留。
-        let childParams = params.withMaxTokenFloor(Self.childRunMinOutputTokens)
+        let childParams = params
+            .replacingTools(params.tools.filter { !IOSPhoneControlToolCatalog.isPhoneTool(name: $0.name) })
+            .withMaxTokenFloor(Self.childRunMinOutputTokens)
         let handoff = IOSChatBackgroundHandoff(
             runId: runId,
             startedAt: now,
