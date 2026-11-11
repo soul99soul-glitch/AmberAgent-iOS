@@ -448,7 +448,7 @@ internal fun Tool.category(): String = when {
     name.startsWith("github_") -> "webmount_github"
     name.startsWith("bilibili_") -> "webmount_bilibili"
     name.startsWith("zhihu_") -> "webmount_zhihu"
-    name.startsWith("screen_") || name == "vlm_task" -> "screen"
+    name.startsWith("screen_") || name.startsWith("phone_") || name == "vlm_task" -> "screen"
     name.startsWith("sms_") || name.startsWith("contacts_") || name.startsWith("photos_") ||
         name.startsWith("journaling_") || name.startsWith("calendar_") ||
         name.startsWith("workout_") || name.startsWith("workouts_") ||
@@ -494,6 +494,7 @@ private fun Tool.mutatesState(): Boolean {
         name == "deep_read_finish" ||
         name in setOf("subagent_start", "subagent_cancel") ||
         name in setOf("wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll", "wm_select") ||
+        (name.startsWith("phone_") && name !in setOf("phone_status", "phone_apps", "phone_observe")) ||
         name.startsWith("skill_enable") ||
         name.startsWith("skill_disable") ||
         name.startsWith("recipe_enable") ||
@@ -551,7 +552,8 @@ private fun Tool.riskProfile(): RiskProfile = when {
     name in setOf("contacts_pick", "photos_pick", "journaling_suggestion_pick") -> RiskProfile(ToolRisk.Sensitive, explicit = true)
     name.startsWith("workout_") || name.startsWith("workouts_") -> RiskProfile(ToolRisk.Sensitive, explicit = true)
     name.startsWith("sms_") || name.startsWith("call_") || name.startsWith("contacts_write") -> RiskProfile(ToolRisk.High, explicit = true)
-    name.startsWith("screen_") || name == "vlm_task" -> RiskProfile(ToolRisk.Sensitive, explicit = true)
+    name == "phone_add_app" -> RiskProfile(ToolRisk.High, explicit = true)
+    name.startsWith("screen_") || name.startsWith("phone_") || name == "vlm_task" -> RiskProfile(ToolRisk.Sensitive, explicit = true)
     name.startsWith("terminal_") || name == "ios_shell_execute" -> RiskProfile(ToolRisk.Sensitive, explicit = true)
     else -> RiskProfile(ToolRisk.Normal, explicit = false)
 }
@@ -583,6 +585,7 @@ private fun Tool.concurrencySafe(): Boolean = when {
     name.startsWith("cron_task_") && name != "cron_task_list" -> false
     name.startsWith("agent_task_") || name in setOf("agent_runtime_status", "runtime_status", "tool_policy_explain", "tool_search", "tools_list") -> true
     name.startsWith("subagent_") || name.startsWith("model_council_") -> false
+    name.startsWith("phone_") && name !in setOf("phone_status", "phone_apps") -> false
     else -> !mutatesState()
 }
 
@@ -590,7 +593,7 @@ private fun Tool.sensitiveRead(): Boolean =
     name in setOf("session_search", "session_read", "session_expand", "history_search", "history_fetch") ||
         name == "workouts_scheduled_list" ||
         name in setOf("contacts_pick", "photos_pick", "journaling_suggestion_pick") ||
-        name.startsWith("screen_") ||
+        name.startsWith("screen_") || name.startsWith("phone_") ||
         name in setOf(
             "officepro_read_screen",
             "officepro_capture_context",

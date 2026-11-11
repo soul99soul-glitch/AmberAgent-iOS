@@ -347,6 +347,9 @@ final class IOSPhoneControlController {
         selectedBundleIDs = selected
         applicationNames = (defaults.dictionary(forKey: Self.applicationNamesPreferenceKey) as? [String: String] ?? [:])
             .filter { selected.contains($0.key) }
+        IOSPhoneAutomationRequestPolicy.liveGoalPlanningActiveProvider = {
+            IOSPhoneControlToolExecutor.isGoalPlanningActive()
+        }
         Task { await refreshPreparation() }
     }
 
@@ -987,6 +990,18 @@ final class IOSPhoneControlController {
         for app in sorted where selectedBundleIDs.contains(app.bundleID) { names[app.bundleID] = app.name }
         if names != applicationNames { applicationNames = names }
         return sorted
+    }
+
+    func previewInstalledApplicationForApproval(bundleID: String, runID: String) async throws -> PhoneControlInstalledApp {
+        _ = try activeOwner(runID: runID)
+        guard !isLoadingApplications else { throw IOSPhoneControlError.occupied }
+        if !hasApplicationCatalog { _ = try await loadInstalledApplications(runID: runID) }
+        try Task.checkCancellation()
+        guard Self.validBundleID(bundleID),
+              let app = installedApplications.first(where: { $0.bundleID == bundleID }) else {
+            throw IOSPhoneControlError.applicationNotFound
+        }
+        return app
     }
 
     /// Exact IDs must come from this device's catalog. A model cannot authorize an invented ID.

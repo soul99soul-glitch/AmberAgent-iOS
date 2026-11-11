@@ -12,7 +12,8 @@ extension ChatToolRuntime {
         baseMessages: [UIMessage] = [],
         nestedTools: IOSJsSandboxTools? = nil,
         toolExposureBridge: IosToolExposureBridge? = nil,
-        execStoreScope: IOSJsStoreScope? = nil
+        execStoreScope: IOSJsStoreScope? = nil,
+        phoneControlOverride: IOSPhoneControlController? = nil
     ) async -> String {
         guard isAdvancedToolEnabled(toolCall.toolName) else {
             return IOSWorkspaceStore.json([
@@ -25,6 +26,11 @@ extension ChatToolRuntime {
             ])
         }
         switch toolCall.toolName {
+        case "phone_add_app":
+            return await IOSPhoneControlToolExecutor(
+                runID: runId,
+                controller: phoneControlOverride ?? phoneControl
+            ).executeApprovedAddApp(arguments: toolCall.input)
         case let name where IOSShortcutAuthoringToolCatalog.toolNames.contains(name):
             return await IOSShortcutAuthoringToolExecutor.execute(input: toolCall.input)
         case let name where IOSWakeToolCatalog.toolNames.contains(name):

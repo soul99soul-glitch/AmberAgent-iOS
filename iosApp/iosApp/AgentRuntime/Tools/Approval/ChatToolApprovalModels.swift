@@ -215,6 +215,7 @@ struct McpToolApprovalRequest: Identifiable, Equatable {
     var title: String {
         if serverName == "iPhone" {
             switch toolName {
+            case "phone_add_app": "确认扩展可控应用"
             case let name where name.hasPrefix("calendar_"): "确认日历操作"
             case let name where name.hasPrefix("reminder_"): "确认提醒事项操作"
             case let name where name.hasPrefix("notification_"): "确认通知操作"
@@ -266,7 +267,8 @@ struct McpToolApprovalRequest: Identifiable, Equatable {
     /// 与 `IOSSSHProfileToolCatalog.highRiskToolNames` 及破坏性 Apple 动作同源，
     /// 但用纯字符串集合表达，避免审批模型反向依赖工具目录类型。
     var isHighRiskLocalMutation: Bool {
-        !isAppleCapability && IOSSecretArgumentRedaction.carriesCredential(toolName)
+        toolName == "phone_add_app"
+            || (!isAppleCapability && IOSSecretArgumentRedaction.carriesCredential(toolName))
     }
 
     var displayToolName: String {
@@ -276,6 +278,8 @@ struct McpToolApprovalRequest: Identifiable, Equatable {
     var appleConsequenceWarning: String? {
         guard isAppleCapability else { return nil }
         return switch toolName {
+        case "phone_add_app":
+            "批准后，该应用会加入允许控制的 App 列表（当前任务立即生效，后续任务保留）。"
         case IOSAppleAgentToolCatalog.alarmSchedule:
             IOSAlarmCopy.scheduleWarning
         case IOSAppleAgentToolCatalog.alarmCancel:
@@ -291,6 +295,7 @@ struct McpToolApprovalRequest: Identifiable, Equatable {
 
     static func displayName(for toolName: String) -> String {
         let names = [
+            "phone_add_app": "添加可控应用",
             "calendar_events_list": "查看日历事件",
             "calendar_event_create": "新建日历事件",
             "calendar_event_update": "更新日历事件",

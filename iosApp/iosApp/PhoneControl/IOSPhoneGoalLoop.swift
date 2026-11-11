@@ -430,7 +430,7 @@ final class IOSPhoneGoalLoop {
                 // Shadow may inspect this one observation but must never wait/act its
                 // way into a second screen. A setting change also closes execution.
                 guard deps.mode() == .active else {
-                    return result(.handback, "当前为观察模式或快速操作已关闭，未执行候选动作。", code: inactiveCode())
+                    return result(.handback, "当前为观察模式或快速操作已关闭，未执行候选动作；确定性多步序列可改用 phone_run_flow，单步操作使用 phone_act。", code: inactiveCode())
                 }
                 switch selection {
                 case .handback(let reason):
@@ -1162,8 +1162,8 @@ final class IOSPhoneGoalLoop {
 
     static func jevMessage(_ reason: String, code: ReasonCode) -> String {
         code == .jevUnavailable
-            ? "Jev 当前不可用（\(reason)），未执行候选动作；请主模型根据最新观察用 phone_act 继续。"
-            : "Jev 判断请求失败（\(reason)），未执行候选动作；请主模型根据最新观察用 phone_act 继续。"
+            ? "Jev 当前不可用（\(reason)），未执行候选动作；请主模型根据最新观察改用 phone_run_flow 或 phone_act 继续。"
+            : "Jev 判断请求失败（\(reason)），未执行候选动作；请主模型根据最新观察改用 phone_run_flow 或 phone_act 继续。"
     }
 
     /// System permission prompts are never answered by the loop, in either direction.

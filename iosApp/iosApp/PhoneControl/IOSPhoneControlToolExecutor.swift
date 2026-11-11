@@ -485,7 +485,7 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                 return .filled(Self.json([
                     "status": "handback", "outcome": "not_sent", "retry_safe": true,
                     "reason_code": "mode_off",
-                    "reason": "Jev 手机快速操作未启用或数据范围未开放；可继续使用 phone_observe / phone_act。",
+                    "reason": "Jev 手机快速操作未启用或数据范围未开放；确定性多步序列请改用 phone_run_flow，单步操作或观察使用 phone_observe / phone_act。",
                 ]))
             }
             switch await prepareRunner() {
@@ -734,7 +734,81 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         )
     }
 
-    private static func phoneActionMode() -> IOSJevMode {
+    enum AddAppApprovalPreparation {
+        case requiresApproval(bundleID: String, appName: String?)
+        case immediate(IOSAgentToolOutcome)
+    }
+
+    func prepareAddAppApproval(arguments: String) async -> AddAppApprovalPreparation {
+        let parsed: Request
+        do {
+            parsed = try Self.request(name: "phone_add_app", arguments: arguments)
+        } catch {
+            return .immediate(await execute(name: "phone_add_app", arguments: arguments, isUserInitiated: false))
+        }
+        guard case .addApp(let bundleID) = parsed else {
+            return .immediate(await execute(name: "phone_add_app", arguments: arguments, isUserInitiated: false))
+        }
+        if controller.selectedBundleIDs.contains(bundleID) {
+            return .immediate(await execute(name: "phone_add_app", arguments: arguments, isUserInitiated: false))
+        }
+        let lease: IOSPhoneControlToolLease
+        do {
+            lease = try controller.beginPhoneTool(runID: runID)
+        } catch {
+            await reportActivity(.failed)
+            return .immediate(.denied(Self.denial(error)))
+        }
+        do {
+            if try controller.requiresFreshObservation(lease) {
+                controller.endPhoneTool(lease)
+                return .immediate(await returnAfterHumanControl(lease, prior: nil))
+            }
+            let app = try await controller.previewInstalledApplicationForApproval(bundleID: bundleID, runID: runID)
+            controller.endPhoneTool(lease)
+            return .requiresApproval(bundleID: app.bundleID, appName: app.name)
+        } catch {
+            controller.endPhoneTool(lease)
+            let outcome = Self.applicationFailure(error)
+            await reportActivity(.failed)
+            return .immediate(outcome)
+        }
+    }
+
+    func executeApprovedAddApp(arguments: String) async -> String {
+        switch await execute(name: "phone_add_app", arguments: arguments, isUserInitiated: true) {
+        case .filled(let text), .failed(let text), .denied(let text), .durabilityFailure(let text), .needsApproval(let text):
+            return text
+        case .filledParts(let parts), .replanRequired(let parts), .outcomeUnknown(let parts):
+            return parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined()
+        }
+    }
+
+    static func requiresBackgroundAddAppDenial(
+        arguments: String,
+        controller: IOSPhoneControlController
+    ) -> Bool {
+        guard let parsed = try? request(name: "phone_add_app", arguments: arguments),
+              case .addApp(let bundleID) = parsed else {
+            return false
+        }
+        return !controller.selectedBundleIDs.contains(bundleID)
+    }
+
+    nonisolated static func backgroundAddAppDenialJSON() -> String {
+        json([
+            "outcome": "not_sent",
+            "retry_safe": true,
+            "code": "approval_required_in_foreground",
+            "message": "后台阶段不能静默扩展可控应用范围；请回到 Amber 前台确认添加该应用后再继续。",
+        ])
+    }
+
+    nonisolated static func isGoalPlanningActive() -> Bool {
+        phoneActionMode() == .active
+    }
+
+    nonisolated private static func phoneActionMode() -> IOSJevMode {
         let settings = IOSSharedSettingsStore.loadPersistedJevSettings()
         return settings.canSend(useCase: .phoneActions, required: [.selectedTaskText, .phoneContent])
             ? settings.effectiveMode(for: .phoneActions) : .off
@@ -1179,7 +1253,7 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         return value
     }
 
-    private static func json(_ value: [String: Any]) -> String {
+    nonisolated private static func json(_ value: [String: Any]) -> String {
         // All result fields are primitives, so serialization cannot fail.
         let data = try! JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self)

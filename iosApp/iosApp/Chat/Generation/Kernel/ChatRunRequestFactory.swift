@@ -45,26 +45,48 @@ final class ChatRunRequestFactory {
     ) -> ChatRunKernelAdapter.RunRequest {
         let bindingsBox = UncheckedHostBindingsBox(bindings)
         let conversationBox = UncheckedHostConversationIdBox(conversationId)
-        let reasoningLevels = bindings.foregroundReasoningLevels(params.model)
-        let workerReasoning = IOSSubAgentModelPool.preferredReasoning(in: reasoningLevels, fallback: params.reasoningLevel)
+        let hasPhoneSurface = params.tools.contains { IOSPhoneControlToolCatalog.isPhoneTool(name: $0.name) }
+            || toolExposureBridge.fullToolDeclarations().contains { IOSPhoneControlToolCatalog.isPhoneTool(name: $0.name) }
+        let effectiveParams: TextGenerationParams
+        let effectiveBridge: IosToolExposureBridge
+        let effectivePhoneAutomaticReasoning: Bool
+        if hasPhoneSurface, phoneControl.ownerRunID != runId {
+            let filteredVisible = params.tools.filter { !IOSPhoneControlToolCatalog.isPhoneTool(name: $0.name) }
+            effectiveParams = params.replacingTools(filteredVisible)
+            let filteredFull = toolExposureBridge.fullToolDeclarations().filter {
+                !IOSPhoneControlToolCatalog.isPhoneTool(name: $0.name)
+            }
+            let dynamicInfo = Dictionary(uniqueKeysWithValues: (recipeCatalogSnapshot?.recipeTools ?? []).map {
+                ($0.toolId, $0.searchInfoJSON)
+            })
+            effectiveBridge = IosToolExposureBridge(tools: filteredFull, recipeSearchInfo: dynamicInfo)
+            effectiveBridge.exposeToolNames(names: filteredVisible.map(\.name))
+            effectivePhoneAutomaticReasoning = false
+        } else {
+            effectiveParams = params
+            effectiveBridge = toolExposureBridge
+            effectivePhoneAutomaticReasoning = phoneAutomaticReasoning
+        }
+        let reasoningLevels = bindings.foregroundReasoningLevels(effectiveParams.model)
+        let workerReasoning = IOSSubAgentModelPool.preferredReasoning(in: reasoningLevels, fallback: effectiveParams.reasoningLevel)
         let routerReasoning: String? = reasoningLevels.isEmpty || reasoningLevels.contains(.off)
             ? "OFF" : (reasoningLevels.contains(.low) ? "LOW" : nil)
         return ChatRunKernelAdapter.RunRequest(
             provider: adapterProvider,
             providerSetting: providerSetting,
-            params: params,
+            params: effectiveParams,
             runId: runId,
             startedAt: startedAt,
             inputDigest: inputDigest,
             conversationId: conversationId,
             initialMessages: initialMessages,
-            toolExposureBridge: toolExposureBridge,
+            toolExposureBridge: effectiveBridge,
             recipeCatalogSnapshot: recipeCatalogSnapshot,
             recipeCatalogRefresh: {
                 await IOSDynamicToolRegistry.shared.refresh()
             },
             executionPolicy: executionPolicy,
-            phoneAutomaticReasoning: phoneAutomaticReasoning,
+            phoneAutomaticReasoning: effectivePhoneAutomaticReasoning,
             phoneControl: phoneControl,
             fastFirstReasoning: bindings.isForegroundRouterRun(),
             routerReasoningName: routerReasoning,

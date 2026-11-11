@@ -87,6 +87,7 @@ final class ChatToolRuntime {
     let recipeToolService: IOSRecipeToolService
     let pluginToolService: IOSPluginToolService
     let pluginHealthStore: IOSPluginHealthStore
+    let phoneControl: IOSPhoneControlController
     /// Wave B2: checkpoint 落盘（`<base>/recipes/.checkpoints/`）。
 
     lazy var dynamicToolLifecycle = ChatDynamicToolLifecycle(runtime: self)
@@ -224,7 +225,8 @@ final class ChatToolRuntime {
         mcpImportClientFactory: ((IOSMcpServerConfig) -> any IOSMcpClienting)? = nil,
         autoApprovalGate: IOSJevAutoApprovalGate? = nil,
         wakeScheduler: IOSWakeScheduler? = nil,
-        agentSoulStore: AgentSoulStore? = nil
+        agentSoulStore: AgentSoulStore? = nil,
+        phoneControl: IOSPhoneControlController? = nil
     ) {
         self.settingsStore = settingsStore
         self.sharedSettings = sharedSettings
@@ -241,6 +243,7 @@ final class ChatToolRuntime {
         self.agentSoulStore = agentSoulStore
         self.ledger = ledger
         self.wakeScheduler = wakeScheduler ?? .shared
+        self.phoneControl = phoneControl ?? .shared
         self.recipeStoreBaseDirectory = recipeStoreBaseDirectory
         let resolvedRecipeRegistry = recipeRegistry
             ?? recipeStoreBaseDirectory.map(IOSDynamicToolRegistry.init(baseDirectory:))
@@ -833,6 +836,7 @@ final class ChatToolRuntime {
         var advancedNames: Set<String> = Set([
             "mcp_call", "subagent_dispatch", "model_council_run",
             IOSSoulToolCatalog.toolName,
+            "phone_add_app",
             // P1-c/P1-d: 线程编排工具（非常驻，tool_search 命中后与 mcp__* 同样可执行）。
             "spawn_agent", "list_agents", "interrupt_agent",
             "send_message", "followup_task", "wait_agent",
@@ -1063,6 +1067,8 @@ final class ChatToolRuntime {
     func isAdvancedToolEnabled(_ toolName: String) -> Bool {
         switch toolName {
         case "mcp_list", "mcp_describe_tool", "mcp_import_from_skill":
+            true
+        case "phone_add_app":
             true
         case let name where IOSWakeToolCatalog.toolNames.contains(name):
             true

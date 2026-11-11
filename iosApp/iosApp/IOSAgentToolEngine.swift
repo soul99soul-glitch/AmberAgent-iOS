@@ -403,7 +403,9 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 // its fixed overhead is included without changing canonical messages.
                 #if os(iOS)
                 let plannedMessages = IOSPhoneAutomationRequestPolicy.requestMessages(
-                    working, tools: effectiveParams.tools
+                    working,
+                    tools: effectiveParams.tools,
+                    goalPlanningActive: IOSPhoneAutomationRequestPolicy.liveGoalPlanningActiveProvider()
                 )
                 #else
                 let plannedMessages = working
