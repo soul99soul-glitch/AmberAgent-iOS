@@ -348,8 +348,12 @@ final class DesktopAgentSoulStore {
 
     private func writeGatewayRevision(_ revision: Int64) {
         guard let gatewayRevisionFile else { return }
-        try? FileManager.default.createDirectory(at: gatewayRevisionFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let fm = FileManager.default
+        let dir = gatewayRevisionFile.deletingLastPathComponent()
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
         try? Data("\(revision)\n".utf8).write(to: gatewayRevisionFile, options: .atomic)
+        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: gatewayRevisionFile.path)
     }
 
     static func renderMirrorMarkdown(_ state: AmberControl.SoulState) -> String {

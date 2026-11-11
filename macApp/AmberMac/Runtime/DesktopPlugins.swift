@@ -355,7 +355,7 @@ final class DesktopPluginStore {
             loadBotActivitiesFromStorage()
 
             for plugin in plugins where !plugin.isBuiltIn {
-                if plugin.enabled && plugin.manifest.isV3 {
+                if plugin.enabled && plugin.manifest.isV3 && canStartV3Runtime(for: plugin) {
                     let host = runtimeHosts[plugin.id] ?? DesktopPluginRuntimeHost(pluginID: plugin.id, store: self)
                     runtimeHosts[plugin.id] = host
                     try? host.start(plugin: plugin, workspaceDirectory: workspaceDirectory)
@@ -391,7 +391,7 @@ final class DesktopPluginStore {
         if plugins != updated { plugins = updated }
         let plugin = updated[index]
         if !plugin.isBuiltIn && plugin.manifest.isV3 {
-            if enabled {
+            if enabled && canStartV3Runtime(for: plugin) {
                 let host = runtimeHosts[id] ?? DesktopPluginRuntimeHost(pluginID: id, store: self)
                 runtimeHosts[id] = host
                 try? host.start(plugin: plugin, workspaceDirectory: workspaceDirectory)
@@ -756,6 +756,14 @@ final class DesktopPluginStore {
 
     // MARK: Precomputed Projections for Zero-IO SwiftUI Rendering
 
+    var activeInspectorCustomViews: [DesktopPluginCustomViewEntry] {
+        activeCustomViews.filter { $0.slot == .inspector || $0.slot == .rightSidebar }
+    }
+
+    var hasInspectorPluginItems: Bool {
+        !inspectorSnapshots.isEmpty || !activeInspectorCustomViews.isEmpty
+    }
+
     func rebuildProjections() {
         let now = referenceDateProvider()
         let today = Self.dateFormatter.string(from: now)
@@ -797,70 +805,74 @@ final class DesktopPluginStore {
                 }
             }
 
+            let canRenderCustomViews = !plugin.manifest.isV3 || hasPermission(plugin: plugin, permission: "ui.views")
             var pluginCards: [DesktopInspectorCardSnapshot] = []
-            for card in plugin.manifest.ui.inspectorCards {
-                if plugin.id == "feishu_calendar" {
-                    let todayEvents = calendarEvents.filter { $0.datePrefix == today }
-                    let displayEvents = todayEvents.isEmpty ? Array(calendarEvents.prefix(3)) : todayEvents
-                    let items = displayEvents.map { event in
-                        let subParts = [event.location, event.attendees.isEmpty ? nil : "\(event.attendees.count) 人参会"]
-                            .compactMap { $0 }.filter { !$0.isEmpty }
-                        return DesktopInspectorCardItem(
-                            id: event.id,
-                            badge: event.timeRangeText,
-                            title: event.summary,
-                            subtitle: subParts.isEmpty ? nil : subParts.joined(separator: " · "),
-                            actionTitle: "准备",
-                            prompt: event.preparationPrompt
-                        )
+            if canRenderCustomViews {
+                for card in plugin.manifest.ui.inspectorCards {
+                    if plugin.id == "feishu_calendar" {
+                        let todayEvents = calendarEvents.filter { $0.datePrefix == today }
+                        let displayEvents = todayEvents.isEmpty ? Array(calendarEvents.prefix(3)) : todayEvents
+                        let items = displayEvents.map { event in
+                            let subParts = [event.location, event.attendees.isEmpty ? nil : "\(event.attendees.count) 人参会"]
+                                .compactMap { $0 }.filter { !$0.isEmpty }
+                            return DesktopInspectorCardItem(
+                                id: event.id,
+                                badge: event.timeRangeText,
+                                title: event.summary,
+                                subtitle: subParts.isEmpty ? nil : subParts.joined(separator: " · "),
+                                actionTitle: "准备",
+                                prompt: event.preparationPrompt
+                            )
+                        }
+                        let badgeText = todayEvents.isEmpty ? "\(calendarEvents.count)" : "\(todayEvents.count)"
+                        pluginCards.append(DesktopInspectorCardSnapshot(
+                            pluginID: plugin.id,
+                            pluginName: plugin.manifest.name,
+                            cardID: card.id,
+                            title: card.title,
+                            symbol: card.symbol,
+                            statusBadge: badgeText,
+                            items: items,
+                            emptyMessage: "今日暂无飞书日程，可在日历视图新建或让 Amber 帮你安排。",
+                            footerActionTitle: "打开飞书工作台",
+                            opensWorkspaceViewID: plugin.manifest.ui.workspaceViews.first?.id
+                        ))
+                    } else {
+                        pluginCards.append(evaluateInspectorCardSnapshot(plugin: plugin, card: card, today: today))
                     }
-                    let badgeText = todayEvents.isEmpty ? "\(calendarEvents.count)" : "\(todayEvents.count)"
-                    pluginCards.append(DesktopInspectorCardSnapshot(
-                        pluginID: plugin.id,
-                        pluginName: plugin.manifest.name,
-                        cardID: card.id,
-                        title: card.title,
-                        symbol: card.symbol,
-                        statusBadge: badgeText,
-                        items: items,
-                        emptyMessage: "今日暂无飞书日程，可在日历视图新建或让 Amber 帮你安排。",
-                        footerActionTitle: "打开飞书工作台",
-                        opensWorkspaceViewID: plugin.manifest.ui.workspaceViews.first?.id
-                    ))
-                } else {
-                    pluginCards.append(evaluateInspectorCardSnapshot(plugin: plugin, card: card, today: today))
                 }
             }
             nextCards.append(contentsOf: pluginCards)
 
             let pluginStorage = plugin.id == "feishu_calendar" ? [:] : readPluginStorage(pluginID: plugin.id)
             let fallbackCardItemsCount = pluginCards.reduce(0) { $0 + $1.items.count }
-            for view in plugin.manifest.ui.workspaceViews {
-                let badge: Int
-                if plugin.id == "feishu_calendar" {
-                    if view.id == "bot_studio" {
-                        badge = botActivities.count
+            if canRenderCustomViews {
+                for view in plugin.manifest.ui.workspaceViews {
+                    let badge: Int
+                    if plugin.id == "feishu_calendar" {
+                        if view.id == "bot_studio" {
+                            badge = botActivities.count
+                        } else {
+                            badge = calendarEvents.filter { $0.datePrefix == today }.count
+                        }
+                    } else if let explicit = Int(pluginStorage["badge:\(view.id)"] ?? pluginStorage["badge_count"] ?? "") {
+                        badge = max(0, explicit)
                     } else {
-                        badge = calendarEvents.filter { $0.datePrefix == today }.count
+                        badge = fallbackCardItemsCount
                     }
-                } else if let explicit = Int(pluginStorage["badge:\(view.id)"] ?? pluginStorage["badge_count"] ?? "") {
-                    badge = max(0, explicit)
-                } else {
-                    badge = fallbackCardItemsCount
+                    nextViews.append(DesktopPluginWorkspaceViewEntry(
+                        pluginID: plugin.id,
+                        pluginName: plugin.manifest.name,
+                        viewID: view.id,
+                        title: view.title,
+                        symbol: view.symbol,
+                        subtitle: view.subtitle,
+                        badgeCount: badge,
+                        entryPath: view.entry
+                    ))
                 }
-                nextViews.append(DesktopPluginWorkspaceViewEntry(
-                    pluginID: plugin.id,
-                    pluginName: plugin.manifest.name,
-                    viewID: view.id,
-                    title: view.title,
-                    symbol: view.symbol,
-                    subtitle: view.subtitle,
-                    badgeCount: badge,
-                    entryPath: view.entry
-                ))
             }
 
-            let canRenderCustomViews = !plugin.manifest.isV3 || hasPermission(plugin: plugin, permission: "ui.views")
             if canRenderCustomViews {
                 var allCustomViews = plugin.manifest.ui.views
                 if let host = runtimeHosts[plugin.id] {

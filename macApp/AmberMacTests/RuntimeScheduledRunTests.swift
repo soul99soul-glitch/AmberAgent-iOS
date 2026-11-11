@@ -1,4 +1,6 @@
 import XCTest
+@preconcurrency import GatewayCore
+@preconcurrency import GatewayTransport
 @testable import AmberMac
 
 /// Headless scheduled runs through DesktopWorkspace with a scripted provider.
@@ -210,5 +212,101 @@ import XCTest
         tasks.autoApproveHighRisk = true
         XCTAssertFalse(tasks.autoApproves("workspace_file_write", policy: DesktopUnattendedApproval().policy))
         XCTAssertFalse(tasks.autoApproves("terminal_exec", policy: DesktopUnattendedApproval(autoApproveOrdinary: true).policy))
+    }
+
+    private final class SummaryProvider: DesktopTextProvider {
+        var generations: [DesktopGeneration] = []
+        func start(configuration: DesktopProviderConfiguration, apiKey: String, messages: [DesktopMessage], responseID: UUID) throws -> DesktopGeneration {
+            let gen = DesktopGeneration()
+            generations.append(gen)
+            return gen
+        }
+    }
+
+    func testPostRunSummaryReleasesConversationWithoutClobberingSubsequentRun() async throws {
+        let target = DesktopConversation(title: "日报", messages: [DesktopMessage(role: .user, text: "昨天")])
+        let (workspace, provider, _, tasks) = try setup([target])
+        let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("asr-\(UUID().uuidString.prefix(8))")
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let paths = GatewayPaths(stateDir: dir)
+        let reporter = DesktopGatewayReporter(paths: paths, isEnabled: { true }, process: nil)
+        let summaryProvider = SummaryProvider()
+        let boardWriter = DesktopBoardWriter(
+            provider: summaryProvider,
+            paths: paths,
+            available: { true },
+            request: { workspace.boardWriterRequest() }
+        )
+        workspace.gatewayReporter = reporter
+        workspace.boardWriter = boardWriter
+
+        var firstTask = task(.appendTo(target.id))
+        firstTask.name = "早报"
+        var secondTask = task(.appendTo(target.id))
+        secondTask.name = "午报"
+
+        let run1Task = Task { await workspace.runScheduled(firstTask) }
+        await waitForRun(provider, count: 1)
+        let run1SessionKey = try XCTUnwrap(reporter.sessionKey(forConversation: target.id))
+        XCTAssertEqual(tasks.unattendedConversations[target.id], "早报")
+
+        provider.runs[0].yield(.snapshot(text: "早报一切正常", reasoning: ""))
+        provider.runs[0].yield(.complete)
+
+        let summaryDeadline = Date().addingTimeInterval(2)
+        while summaryProvider.generations.count < 1, summaryDeadline.timeIntervalSince(Date()) > 0 {
+            await Task.yield()
+        }
+        XCTAssertEqual(summaryProvider.generations.count, 1)
+
+        // While Run 1 is suspended inside boardWriter.summarize, conversation ownership is completely released:
+        XCTAssertFalse(workspace.scheduledRunConversationIDs.contains(target.id))
+        XCTAssertNil(tasks.unattendedConversations[target.id])
+        XCTAssertNil(reporter.sessionKey(forConversation: target.id))
+
+        // Run 2 starts on the same conversation while Run 1's summary is still in flight:
+        let run2Task = Task { await workspace.runScheduled(secondTask) }
+        await waitForRun(provider, count: 2)
+        let run2SessionKey = try XCTUnwrap(reporter.sessionKey(forConversation: target.id))
+        XCTAssertNotEqual(run1SessionKey, run2SessionKey)
+        XCTAssertTrue(workspace.scheduledRunConversationIDs.contains(target.id))
+        XCTAssertEqual(tasks.unattendedConversations[target.id], "午报")
+
+        // Finish Run 1's summary (quiet): must NOT clobber Run 2's active conversation ownership or gateway session!
+        summaryProvider.generations[0].yield(.snapshot(text: #"{"summary":"早报无异常","noteworthy":false}"#, reasoning: ""))
+        summaryProvider.generations[0].yield(.complete)
+        let record1 = await run1Task.value
+        XCTAssertEqual(record1.status, .completed)
+        XCTAssertEqual(record1.summary, "早报无异常")
+        XCTAssertEqual(record1.noteworthy, false)
+
+        XCTAssertTrue(workspace.scheduledRunConversationIDs.contains(target.id))
+        XCTAssertEqual(tasks.unattendedConversations[target.id], "午报")
+        XCTAssertEqual(reporter.sessionKey(forConversation: target.id), run2SessionKey)
+
+        // Finish Run 2 cleanly as well:
+        provider.runs[1].yield(.snapshot(text: "午报有新告警", reasoning: ""))
+        provider.runs[1].yield(.complete)
+        while summaryProvider.generations.count < 2, Date().timeIntervalSinceNow < 2 {
+            await Task.yield()
+        }
+        summaryProvider.generations[1].yield(.snapshot(text: #"{"summary":"发现新告警","noteworthy":true}"#, reasoning: ""))
+        summaryProvider.generations[1].yield(.complete)
+        let record2 = await run2Task.value
+        XCTAssertEqual(record2.status, .completed)
+
+        // Verify both runExit events were delivered to Spool with Run 1 marked quiet == true:
+        let drainDeadline = Date().addingTimeInterval(2)
+        var runExits: [GatewayEvent] = []
+        while runExits.count < 2, drainDeadline.timeIntervalSince(Date()) > 0 {
+            Spool(dir: paths.spoolDir).drain { event in
+                if event.kind == .runExit { runExits.append(event) }
+            }
+            if runExits.count < 2 { try? await Task.sleep(for: .milliseconds(20)) }
+        }
+        let exit1 = try XCTUnwrap(runExits.first { "amber:" + $0.sessionId == run1SessionKey })
+        let exit2 = try XCTUnwrap(runExits.first { "amber:" + $0.sessionId == run2SessionKey })
+        XCTAssertEqual(exit1.quiet, true)
+        XCTAssertNotEqual(exit2.quiet, true)
     }
 }

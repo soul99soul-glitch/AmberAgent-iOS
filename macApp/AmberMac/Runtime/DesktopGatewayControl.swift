@@ -152,14 +152,26 @@ import Foundation
         let audit = AuditLog(url: paths.audit)
         let decisionText = request.allow == true ? "allow" : "deny"
         guard let key = request.sessionKey, let call = request.toolCallId, let allow = request.allow,
-              let conversation = reporter.conversation(forSessionKey: key),
-              let run = tasks.records.first(where: { $0.conversationID == conversation && $0.status == .waiting })
+              let conversation = reporter.conversation(forSessionKey: key)
         else {
             audit.record("amber-decision-result", [
                 "task": request.sessionKey ?? "",
                 "run": (request.sessionKey ?? "").replacingOccurrences(of: "amber:", with: ""),
                 "toolCallId": request.toolCallId ?? "",
                 "allow": String(request.allow == true),
+                "decision": decisionText,
+                "outcome": "stale",
+                "device": request.deviceName ?? ""
+            ])
+            return .failure(409, "这次审批已经结束")
+        }
+        let waitingRuns = tasks.records.filter { $0.conversationID == conversation && $0.status == .waiting }
+        guard let run = waitingRuns.first(where: { $0.approval?.id == call }) ?? waitingRuns.first else {
+            audit.record("amber-decision-result", [
+                "task": key,
+                "run": key.replacingOccurrences(of: "amber:", with: ""),
+                "toolCallId": call,
+                "allow": String(allow),
                 "decision": decisionText,
                 "outcome": "stale",
                 "device": request.deviceName ?? ""

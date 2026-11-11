@@ -88,7 +88,10 @@ enum DesktopPluginPermissionCatalog {
             )
         }
         if token == "workspace.read" || token.hasPrefix("workspace.read:") {
-            let prefixes = manifest.capabilities.workspaceReadPrefixes
+            let scopedPrefix = token.hasPrefix("workspace.read:")
+                ? String(token.dropFirst("workspace.read:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                : ""
+            let prefixes = !scopedPrefix.isEmpty ? [scopedPrefix] : manifest.capabilities.workspaceReadPrefixes
             let scopeText = prefixes.isEmpty ? "当前会话工作区" : "当前会话工作区子目录（\(prefixes.joined(separator: "、"))）"
             return DesktopPluginPermissionDescriptor(
                 token: token,
@@ -99,7 +102,10 @@ enum DesktopPluginPermissionCatalog {
             )
         }
         if token == "workspace.write" || token.hasPrefix("workspace.write:") {
-            let prefixes = manifest.capabilities.workspaceWritePrefixes
+            let scopedPrefix = token.hasPrefix("workspace.write:")
+                ? String(token.dropFirst("workspace.write:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                : ""
+            let prefixes = !scopedPrefix.isEmpty ? [scopedPrefix] : manifest.capabilities.workspaceWritePrefixes
             let scopeText = prefixes.isEmpty ? "当前会话工作区" : "当前会话工作区子目录（\(prefixes.joined(separator: "、"))）"
             return DesktopPluginPermissionDescriptor(
                 token: token,
@@ -212,10 +218,17 @@ extension DesktopPluginStore {
         if let stored = defaults.stringArray(forKey: Self.approvedPermissionsPrefix + pluginID) {
             return Set(stored)
         }
-        if let plugin = plugins.first(where: { $0.id == pluginID }) {
+        if let plugin = plugins.first(where: { $0.id == pluginID }),
+           plugin.isBuiltIn || !plugin.manifest.isV3 {
             return Set(DesktopPluginPermissionCatalog.canonicalPermissions(for: plugin.manifest))
         }
         return []
+    }
+
+    func canStartV3Runtime(for plugin: DesktopInstalledPlugin) -> Bool {
+        guard plugin.manifest.isV3, !plugin.isBuiltIn else { return true }
+        let canonical = DesktopPluginPermissionCatalog.canonicalPermissions(for: plugin.manifest)
+        return canonical.isEmpty || !approvedPermissions(for: plugin.id).isEmpty
     }
 
     func approvePluginPermissions(pluginID: String, permissions: [String]) {
@@ -233,6 +246,11 @@ extension DesktopPluginStore {
 
     func revokePluginPermissions(pluginID: String) {
         defaults.set([String](), forKey: Self.approvedPermissionsPrefix + pluginID)
+        if let plugin = plugins.first(where: { $0.id == pluginID }),
+           !canStartV3Runtime(for: plugin),
+           let host = runtimeHosts[pluginID] {
+            host.stop()
+        }
         rebuildProjections()
     }
 
@@ -331,14 +349,52 @@ extension DesktopPluginStore {
     func effectiveWorkspaceReadPrefixes(for plugin: DesktopInstalledPlugin) -> [String] {
         guard hasPermission(plugin: plugin, permission: "workspace.read") else { return [] }
         let explicit = plugin.manifest.capabilities.workspaceReadPrefixes
-        if !explicit.isEmpty { return explicit }
-        return plugin.manifest.isV3 ? ["*"] : []
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard plugin.manifest.isV3 else { return explicit }
+        let declared = Set(DesktopPluginPermissionCatalog.canonicalPermissions(for: plugin.manifest))
+        let active = declared.intersection(approvedPermissions(for: plugin.id))
+        if active.contains("workspace.read") {
+            return explicit.isEmpty ? ["*"] : explicit
+        }
+        let scoped = active.compactMap { token -> String? in
+            guard token.hasPrefix("workspace.read:") else { return nil }
+            let prefix = String(token.dropFirst("workspace.read:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            return prefix.isEmpty ? nil : prefix
+        }.sorted()
+        guard !explicit.isEmpty else { return scoped }
+        return scoped.filter { candidate in
+            let cleanCandidate = candidate.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            return explicit.contains { allowed in
+                let cleanAllowed = allowed.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                return cleanAllowed == "*" || cleanCandidate == cleanAllowed || cleanCandidate.hasPrefix(cleanAllowed + "/")
+            }
+        }
     }
 
     func effectiveWorkspaceWritePrefixes(for plugin: DesktopInstalledPlugin) -> [String] {
         guard hasPermission(plugin: plugin, permission: "workspace.write") else { return [] }
         let explicit = plugin.manifest.capabilities.workspaceWritePrefixes
-        if !explicit.isEmpty { return explicit }
-        return plugin.manifest.isV3 ? ["*"] : []
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard plugin.manifest.isV3 else { return explicit }
+        let declared = Set(DesktopPluginPermissionCatalog.canonicalPermissions(for: plugin.manifest))
+        let active = declared.intersection(approvedPermissions(for: plugin.id))
+        if active.contains("workspace.write") {
+            return explicit.isEmpty ? ["*"] : explicit
+        }
+        let scoped = active.compactMap { token -> String? in
+            guard token.hasPrefix("workspace.write:") else { return nil }
+            let prefix = String(token.dropFirst("workspace.write:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            return prefix.isEmpty ? nil : prefix
+        }.sorted()
+        guard !explicit.isEmpty else { return scoped }
+        return scoped.filter { candidate in
+            let cleanCandidate = candidate.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            return explicit.contains { allowed in
+                let cleanAllowed = allowed.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                return cleanAllowed == "*" || cleanCandidate == cleanAllowed || cleanCandidate.hasPrefix(cleanAllowed + "/")
+            }
+        }
     }
 }

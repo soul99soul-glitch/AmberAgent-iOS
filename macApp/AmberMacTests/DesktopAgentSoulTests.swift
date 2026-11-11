@@ -73,6 +73,10 @@ final class DesktopAgentSoulTests: XCTestCase {
         XCTAssertEqual(soulStore.source, "legacy_migration")
         XCTAssertEqual(soulStore.soulMarkdown, "说话简练果断，像宋太祖赵匡胤。")
         XCTAssertEqual(try String(contentsOf: revFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), "1")
+        let gwDirPerms = (try FileManager.default.attributesOfItem(atPath: revFile.deletingLastPathComponent().path)[.posixPermissions] as? NSNumber)?.intValue
+        let revFilePerms = (try FileManager.default.attributesOfItem(atPath: revFile.path)[.posixPermissions] as? NSNumber)?.intValue
+        XCTAssertEqual(gwDirPerms.map { $0 & 0o777 }, 0o700)
+        XCTAssertEqual(revFilePerms.map { $0 & 0o777 }, 0o600)
 
         // System prompt decouples immutable host discipline from mutable persona and never uses banned wording
         let prompt = try knowledge.stableContext()

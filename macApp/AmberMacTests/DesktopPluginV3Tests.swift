@@ -840,6 +840,128 @@ final class DesktopPluginV3Tests: XCTestCase {
         )
         XCTAssertTrue(deleteOut.contains(addedCardID))
     }
+
+    // MARK: - 11. Scoped v3 Workspace Tokens & Unapproved Disk-Dropped v3 Gate
+
+    func testScopedWorkspaceTokensAndUnapprovedDiskPluginGate() async throws {
+        let store = makeStore()
+
+        // Part A: v3 scoped `workspace.read:<prefix>` / `workspace.write:<prefix>` without legacy capabilities
+        let scopedDir = rootDirectory.appendingPathComponent("scoped-ws", isDirectory: true)
+        try FileManager.default.createDirectory(at: scopedDir, withIntermediateDirectories: true)
+        let scopedManifest = """
+        {
+          "manifest_version": 3,
+          "schema": "amber.plugin.v3",
+          "id": "scoped-ws",
+          "name": "前缀隔离测试",
+          "version": "1.0.0",
+          "description": "仅通过 v3 token 声明 notes 目录读写",
+          "permissions": ["workspace.read:notes", "workspace.write:notes"]
+        }
+        """
+        try Data(scopedManifest.utf8).write(to: scopedDir.appendingPathComponent("plugin.json"))
+        try Data("function onload() {}".utf8).write(to: scopedDir.appendingPathComponent("main.js"))
+
+        let plan = try store.inspectPluginPackage(at: scopedDir)
+        XCTAssertTrue(plan.permissions.allSatisfy { $0.summary.contains("notes") })
+        _ = try store.importPlugin(from: scopedDir, approvePermissions: true)
+
+        _ = try await store.dispatchBridgeRPC(
+            pluginID: "scoped-ws",
+            namespace: "workspace",
+            method: "write",
+            args: ["notes/ok.md", "scoped-ok"]
+        )
+        let readScoped = try await store.dispatchBridgeRPC(
+            pluginID: "scoped-ws",
+            namespace: "workspace",
+            method: "read",
+            args: ["notes/ok.md"]
+        )
+        XCTAssertEqual(readScoped, #""scoped-ok""#)
+
+        let secretURL = workspaceDirectory.appendingPathComponent("other/secret.md")
+        try FileManager.default.createDirectory(at: secretURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("TOP_SECRET".utf8).write(to: secretURL)
+
+        do {
+            _ = try await store.dispatchBridgeRPC(
+                pluginID: "scoped-ws",
+                namespace: "workspace",
+                method: "read",
+                args: ["other/secret.md"]
+            )
+            XCTFail("Expected read outside 'notes/' to be denied")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("未授权") || error.localizedDescription.contains("前缀"))
+        }
+
+        do {
+            _ = try await store.dispatchBridgeRPC(
+                pluginID: "scoped-ws",
+                namespace: "workspace",
+                method: "write",
+                args: ["other/escape.md", "nope"]
+            )
+            XCTFail("Expected write outside 'notes/' to be denied")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("未授权") || error.localizedDescription.contains("前缀"))
+        }
+
+        // Part B: Unapproved third-party v3 plugin dropped directly into pluginsDirectory
+        let droppedDir = pluginsDirectory.appendingPathComponent("disk-drop", isDirectory: true)
+        try FileManager.default.createDirectory(at: droppedDir, withIntermediateDirectories: true)
+        let droppedManifest = """
+        {
+          "manifest_version": 3,
+          "schema": "amber.plugin.v3",
+          "id": "disk-drop",
+          "name": "未审批落盘插件",
+          "version": "1.0.0",
+          "description": "未经导入审批不得自动执行 onload 或挂载视图",
+          "permissions": ["storage", "agent.tools", "ui.views"],
+          "ui": {
+            "views": [
+              { "id": "side_panel", "slot": "right_sidebar", "title": "侧栏小组件", "entry": "sidebar.html" }
+            ]
+          }
+        }
+        """
+        let droppedScript = """
+        function onload() {
+          amber.storage.set("booted", "yes");
+          amber.agent.registerTool({
+            name: "disk_ping",
+            description: "Ping",
+            effect: "pure",
+            handler: function () { return { ok: true }; }
+          });
+        }
+        """
+        try Data(droppedManifest.utf8).write(to: droppedDir.appendingPathComponent("plugin.json"))
+        try Data(droppedScript.utf8).write(to: droppedDir.appendingPathComponent("main.js"))
+        try Data("<html><body>sidebar</body></html>".utf8).write(to: droppedDir.appendingPathComponent("sidebar.html"))
+
+        try store.setPluginEnabled("feishu_calendar", enabled: false)
+        store.reload()
+        XCTAssertEqual(store.approvedPermissions(for: "disk-drop"), [])
+        XCTAssertNil(store.readPluginStorage(pluginID: "disk-drop")["booted"])
+        XCTAssertFalse(store.activeToolDeclarations.contains { $0.name == "plugin__disk-drop__disk_ping" })
+        XCTAssertTrue(store.activeInspectorCustomViews.isEmpty)
+        XCTAssertFalse(store.hasInspectorPluginItems)
+
+        store.approvePluginPermissions(pluginID: "disk-drop", permissions: ["storage", "agent.tools", "ui.views"])
+        XCTAssertEqual(store.readPluginStorage(pluginID: "disk-drop")["booted"], "yes")
+        XCTAssertTrue(store.activeToolDeclarations.contains { $0.name == "plugin__disk-drop__disk_ping" })
+        XCTAssertTrue(store.activeInspectorCustomViews.contains { $0.id == "disk-drop:side_panel" })
+        XCTAssertTrue(store.hasInspectorPluginItems)
+
+        store.revokePluginPermissions(pluginID: "disk-drop")
+        XCTAssertFalse(store.activeToolDeclarations.contains { $0.name == "plugin__disk-drop__disk_ping" })
+        XCTAssertTrue(store.activeInspectorCustomViews.isEmpty)
+        XCTAssertFalse(store.hasInspectorPluginItems)
+    }
 }
 
 private final class MockV3PluginHTTPTransport: DesktopPluginHTTPTransport, @unchecked Sendable {

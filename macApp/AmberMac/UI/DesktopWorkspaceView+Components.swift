@@ -139,7 +139,7 @@ struct DesktopToolbarLiquidCapsule: View, Animatable {
 
     var body: some View {
         let isChat = workspace.activeSurface == .chat
-        let hasPluginItem = !workspace.plugins.inspectorSnapshots.isEmpty
+        let hasPluginItem = workspace.plugins.hasInspectorPluginItems
         let extraItemCount = isChat ? (hasPluginItem ? 5 : 4) : 0
         let transform = DesktopLiquidMotion.toolbarCapsuleTransform(
             extensionProgress: isChat ? extensionProgress : 0.0,
@@ -212,7 +212,9 @@ struct DesktopToolbarLiquidCapsule: View, Animatable {
                     if hasPluginItem {
                         collapsibleItem(index: 4, totalCount: extraItemCount) {
                             DesktopToolbarIconButton(
-                                systemName: workspace.plugins.inspectorSnapshots.first?.symbol ?? "puzzlepiece.extension",
+                                systemName: workspace.plugins.inspectorSnapshots.first?.symbol
+                                    ?? workspace.plugins.activeInspectorCustomViews.first?.symbol
+                                    ?? "puzzlepiece.extension",
                                 help: "插件右侧栏卡片",
                                 accessibilityLabel: "插件右侧栏卡片",
                                 isActive: pluginInspectorPresented,

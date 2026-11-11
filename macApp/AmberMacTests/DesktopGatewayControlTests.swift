@@ -209,4 +209,29 @@ import XCTest
         XCTAssertEqual(approvedAudit["decision"], "allow")
         XCTAssertEqual(approvedAudit["device"], "iPhone")
     }
+
+    func testConcurrentWaitingTasksInSameConversationMatchExactToolCallId() async throws {
+        let (control, tasks, _, paths, conversation) = try await make()
+        let key = await sessionKey(paths)
+
+        let run1 = try await tasks.begin(conversationID: conversation, title: "任务一", cancel: {})
+        try await tasks.requestApproval(
+            runID: run1,
+            approval: DesktopToolApproval(id: "call-alpha", name: "terminal_exec", arguments: "{}", reason: "")
+        )
+
+        let run2 = try await tasks.begin(conversationID: conversation, title: "任务二", cancel: {})
+        try await tasks.requestApproval(
+            runID: run2,
+            approval: DesktopToolApproval(id: "call-beta", name: "workspace_file_write", arguments: "{}", reason: "")
+        )
+
+        let waitRun2 = Task { await tasks.awaitDecision(runID: run2, toolID: "call-beta") }
+        let reply = await control.handle(.init(action: .decide, sessionKey: key, toolCallId: "call-beta", allow: true, deviceName: "iPhone"))
+        XCTAssertEqual(reply.status, 200)
+        let allowedRun2 = await waitRun2.value
+        XCTAssertTrue(allowedRun2)
+        XCTAssertEqual(tasks.records.first { $0.id == run1 }?.status, .waiting, "run1 remains untouched waiting on call-alpha")
+        XCTAssertEqual(tasks.records.first { $0.id == run2 }?.status, .running)
+    }
 }

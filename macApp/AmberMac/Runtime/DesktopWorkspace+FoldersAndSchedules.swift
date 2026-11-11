@@ -515,15 +515,25 @@ extension DesktopWorkspace {
             isNew = false
         }
         record.conversationID = conversationID
+        let runID = record.id
         scheduledRunConversationIDs.insert(conversationID)
         scheduledRunTaskConversations[task.id] = conversationID
         agentTasks.unattendedConversations[conversationID] = task.name
-        gatewayReporter?.runStarted(runID: record.id, conversationID: conversationID, taskName: task.name)
-        defer {
-            scheduledRunConversationIDs.remove(conversationID); scheduledGenerations[conversationID] = nil
-            scheduledRunTaskConversations[task.id] = nil
+        gatewayReporter?.runStarted(runID: runID, conversationID: conversationID, taskName: task.name)
+        var holdsConversation = true
+        func releaseConversationOwnership() {
+            guard holdsConversation else { return }
+            holdsConversation = false
+            scheduledRunConversationIDs.remove(conversationID)
+            scheduledGenerations[conversationID] = nil
             agentTasks.unattendedConversations[conversationID] = nil
-            gatewayReporter?.runFinished(conversationID: conversationID, succeeded: record.status == .completed,
+            gatewayReporter?.releaseConversation(conversationID, runID: runID)
+        }
+        defer {
+            releaseConversationOwnership()
+            scheduledRunSummarizingTaskIDs.remove(task.id)
+            scheduledRunTaskConversations[task.id] = nil
+            gatewayReporter?.runFinished(runID: runID, conversationID: conversationID, succeeded: record.status == .completed,
                 quiet: record.status == .completed && record.noteworthy == false)
         }
 
@@ -622,7 +632,8 @@ extension DesktopWorkspace {
         }
         // The conversation is done: hand it back to the user before the (slow) summary call. The board keeps showing
         // the run until it returns.
-        scheduledRunConversationIDs.remove(conversationID); scheduledGenerations[conversationID] = nil
+        scheduledRunSummarizingTaskIDs.insert(task.id)
+        releaseConversationOwnership()
         // A watchtower run that found nothing new stays quiet on the board and in Notification Center: that is the
         // whole point of a page watcher, and it overrides the title model's judgement because it is factual.
         if record.status == .completed,

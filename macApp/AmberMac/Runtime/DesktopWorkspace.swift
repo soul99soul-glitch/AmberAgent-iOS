@@ -135,9 +135,13 @@ final class DesktopWorkspace {
     func boardItems(now: Date = Date()) -> [AmberControl.BoardItem] {
         guard let scheduler else { return [] }
         let live = scheduledRunTaskConversations.map { taskID, conversation in
-            DesktopBoard.LiveRun(taskID: taskID, sessionKey: gatewayReporter?.sessionKey(forConversation: conversation),
-                approval: agentTasks.records.first { $0.conversationID == conversation && $0.status == .waiting }?.approval,
-                conversationID: conversation)
+            let isSummarizing = scheduledRunSummarizingTaskIDs.contains(taskID)
+            return DesktopBoard.LiveRun(
+                taskID: taskID,
+                sessionKey: isSummarizing ? nil : gatewayReporter?.sessionKey(forConversation: conversation),
+                approval: isSummarizing ? nil : agentTasks.records.first { $0.conversationID == conversation && $0.status == .waiting }?.approval,
+                conversationID: conversation
+            )
         }
         let sessions = gateway?.isEnabled == true ? gatewaySessions() : []
         return DesktopBoard.build(tasks: scheduler.tasks, live: live, paused: scheduler.isPaused, sessions: sessions, now: now)
@@ -257,6 +261,7 @@ final class DesktopWorkspace {
     var scheduledRunConversationIDs: Set<UUID> = []
     /// Scheduled runs in flight: task id → the conversation it writes into (task board).
     var scheduledRunTaskConversations: [UUID: UUID] = [:]
+    @ObservationIgnored var scheduledRunSummarizingTaskIDs: Set<UUID> = []
     @ObservationIgnored var scheduledGenerations: [UUID: DesktopGeneration] = [:]
 
     @ObservationIgnored var conversationLoads: [UUID: Task<Void, Never>] = [:]

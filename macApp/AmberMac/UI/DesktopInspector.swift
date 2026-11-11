@@ -36,14 +36,15 @@ struct DesktopInspector: View {
                     }
 
                     // Module 1b: Custom WebView Inspector / Right Sidebar Views (amber.plugin.v3)
-                    ForEach(workspace.plugins.activeCustomViews.filter { $0.slot == .inspector || $0.slot == .rightSidebar }) { customView in
+                    ForEach(workspace.plugins.activeInspectorCustomViews) { customView in
                         floatingIsland {
                             sectionBlock(
                                 "plugin.webview.\(customView.id)",
                                 title: customView.title,
                                 glyph: .calendar,
                                 tone: .amber,
-                                badge: customView.pluginName
+                                badge: customView.pluginName,
+                                keepsContentMountedWhenCollapsed: true
                             ) {
                                 DesktopPluginWebView(
                                     store: workspace.plugins,
@@ -231,6 +232,7 @@ struct DesktopInspector: View {
     }
 
     private func sectionBlock<Content: View>(_ key: String, title: String, glyph: DesktopCraftGlyph, tone: DesktopCraftTone, badge: String?,
+        keepsContentMountedWhenCollapsed: Bool = false,
         @ViewBuilder content: () -> Content) -> some View {
         let collapsed = isCollapsed(key)
         return VStack(alignment: .leading, spacing: 0) {
@@ -260,7 +262,16 @@ struct DesktopInspector: View {
             .buttonStyle(.plain)
             .accessibilityLabel(collapsed ? "展开\(title)" : "收起\(title)")
 
-            if !collapsed {
+            if keepsContentMountedWhenCollapsed {
+                content()
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, collapsed ? 0 : 18)
+                    .frame(height: collapsed ? 0 : nil, alignment: .top)
+                    .clipped()
+                    .opacity(collapsed ? 0 : 1)
+                    .allowsHitTesting(!collapsed)
+                    .accessibilityHidden(collapsed)
+            } else if !collapsed {
                 content()
                     .padding(.horizontal, 20)
                     .padding(.bottom, 18)
@@ -454,90 +465,123 @@ struct DesktopPluginInspectorPopoverView: View {
     @Bindable var workspace: DesktopWorkspace
     var onFocusComposer: () -> Void = {}
     var onDismiss: () -> Void = {}
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(workspace.plugins.inspectorSnapshots) { snapshot in
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 7) {
-                        Image(systemName: snapshot.symbol)
-                            .font(.system(size: 12, weight: .semibold))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(workspace.plugins.inspectorSnapshots) { snapshot in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 7) {
+                            Image(systemName: snapshot.symbol)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(DesktopTheme.accent)
+                            Text(snapshot.title)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(DesktopTheme.ink)
+                            Spacer()
+                            if let badge = snapshot.statusBadge {
+                                Text(badge)
+                                    .font(.system(size: 11).monospacedDigit())
+                                    .foregroundStyle(DesktopTheme.inkTertiary)
+                            }
+                        }
+                        if snapshot.items.isEmpty {
+                            Text(snapshot.emptyMessage)
+                                .font(.system(size: 12))
+                                .foregroundStyle(DesktopTheme.inkTertiary)
+                        } else {
+                            ForEach(snapshot.items) { item in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack(alignment: .center, spacing: 6) {
+                                        Text(item.title)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundStyle(DesktopTheme.ink)
+                                            .lineLimit(1)
+                                        Spacer(minLength: 4)
+                                        if let actionTitle = item.actionTitle, let prompt = item.prompt {
+                                            Button(actionTitle) {
+                                                workspace.openChatSurface()
+                                                workspace.draft = prompt
+                                                workspace.agentTasks.toolsEnabled = true
+                                                onFocusComposer()
+                                                onDismiss()
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .font(.system(size: 11, weight: .medium))
+                                            .foregroundStyle(DesktopTheme.accent)
+                                        }
+                                    }
+                                    HStack(alignment: .center, spacing: 6) {
+                                        if !item.badge.isEmpty {
+                                            Text(item.badge)
+                                                .font(.system(size: 10.5, design: .monospaced).weight(.medium))
+                                                .foregroundStyle(DesktopTheme.accent)
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 1.5)
+                                                .background(DesktopTheme.honeySoft, in: RoundedRectangle(cornerRadius: 4))
+                                        }
+                                        if let sub = item.subtitle, !sub.isEmpty {
+                                            Text(sub)
+                                                .font(.system(size: 11))
+                                                .foregroundStyle(DesktopTheme.inkTertiary)
+                                                .lineLimit(1)
+                                        }
+                                    }
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                        if let footer = snapshot.footerActionTitle, let viewID = snapshot.opensWorkspaceViewID {
+                            Button(footer) {
+                                workspace.openPluginView(pluginID: snapshot.pluginID, viewID: viewID)
+                                onDismiss()
+                            }
+                            .buttonStyle(.borderless)
+                            .font(.system(size: 12))
                             .foregroundStyle(DesktopTheme.accent)
-                        Text(snapshot.title)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(DesktopTheme.ink)
-                        Spacer()
-                        if let badge = snapshot.statusBadge {
-                            Text(badge)
-                                .font(.system(size: 11).monospacedDigit())
+                            .padding(.top, 2)
+                        }
+                    }
+                    .padding(12)
+                    .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.hairline))
+                }
+
+                ForEach(workspace.plugins.activeInspectorCustomViews) { customView in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 7) {
+                            Image(systemName: customView.symbol)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(DesktopTheme.accent)
+                            Text(customView.title)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(DesktopTheme.ink)
+                            Spacer()
+                            Text(customView.pluginName)
+                                .font(.system(size: 11))
                                 .foregroundStyle(DesktopTheme.inkTertiary)
                         }
+                        DesktopPluginWebView(
+                            store: workspace.plugins,
+                            pluginID: customView.pluginID,
+                            viewID: customView.viewID,
+                            entryPath: customView.entryPath,
+                            reloadRevision: workspace.plugins.pluginReloadRevisions[customView.pluginID] ?? 0,
+                            isDark: scheme == .dark
+                        )
+                        .frame(height: max(180, customView.height ?? 240))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
-                    if snapshot.items.isEmpty {
-                        Text(snapshot.emptyMessage)
-                            .font(.system(size: 12))
-                            .foregroundStyle(DesktopTheme.inkTertiary)
-                    } else {
-                        ForEach(snapshot.items) { item in
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack(alignment: .center, spacing: 6) {
-                                    Text(item.title)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(DesktopTheme.ink)
-                                        .lineLimit(1)
-                                    Spacer(minLength: 4)
-                                    if let actionTitle = item.actionTitle, let prompt = item.prompt {
-                                        Button(actionTitle) {
-                                            workspace.openChatSurface()
-                                            workspace.draft = prompt
-                                            workspace.agentTasks.toolsEnabled = true
-                                            onFocusComposer()
-                                            onDismiss()
-                                        }
-                                        .buttonStyle(.borderless)
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundStyle(DesktopTheme.accent)
-                                    }
-                                }
-                                HStack(alignment: .center, spacing: 6) {
-                                    if !item.badge.isEmpty {
-                                        Text(item.badge)
-                                            .font(.system(size: 10.5, design: .monospaced).weight(.medium))
-                                            .foregroundStyle(DesktopTheme.accent)
-                                            .padding(.horizontal, 5)
-                                            .padding(.vertical, 1.5)
-                                            .background(DesktopTheme.honeySoft, in: RoundedRectangle(cornerRadius: 4))
-                                    }
-                                    if let sub = item.subtitle, !sub.isEmpty {
-                                        Text(sub)
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(DesktopTheme.inkTertiary)
-                                            .lineLimit(1)
-                                    }
-                                }
-                            }
-                            .padding(.vertical, 2)
-                        }
-                    }
-                    if let footer = snapshot.footerActionTitle, let viewID = snapshot.opensWorkspaceViewID {
-                        Button(footer) {
-                            workspace.openPluginView(pluginID: snapshot.pluginID, viewID: viewID)
-                            onDismiss()
-                        }
-                        .buttonStyle(.borderless)
-                        .font(.system(size: 12))
-                        .foregroundStyle(DesktopTheme.accent)
-                        .padding(.top, 2)
-                    }
+                    .padding(12)
+                    .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.hairline))
                 }
-                .padding(12)
-                .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.hairline))
             }
+            .padding(14)
         }
-        .padding(14)
         .frame(width: 340)
-        .frame(maxHeight: 360)
+        .frame(maxHeight: 420)
         .fixedSize(horizontal: false, vertical: true)
         .background(DesktopTheme.paper)
     }

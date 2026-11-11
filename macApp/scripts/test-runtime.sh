@@ -38,6 +38,9 @@ for source in "$project_dir"/AmberMacTests/*.swift; do
   cp "$source" "$test_dir/Tests/AmberMacTests/"
 done
 cp -R "$project_dir/AmberMacTests/Fixtures" "$test_dir/Tests/AmberMacTests/"
+if [ -d "$project_dir/../examples" ]; then
+  ln -s "$project_dir/../examples" "$test_dir/examples"
+fi
 # Runtime sources import the embedded gateway modules for the task board, control channel and reporting.
 cat > "$test_dir/Package.swift" <<SWIFT
 // swift-tools-version: 6.0

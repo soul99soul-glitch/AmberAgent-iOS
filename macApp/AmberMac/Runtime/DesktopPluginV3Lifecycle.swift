@@ -303,14 +303,16 @@ extension DesktopPluginStore {
     @discardableResult
     func ensureRuntimeHost(for plugin: DesktopInstalledPlugin) -> DesktopPluginRuntimeHost {
         if let existing = runtimeHosts[plugin.id] {
-            if !existing.isLoaded {
+            if !existing.isLoaded && canStartV3Runtime(for: plugin) {
                 try? existing.start(plugin: plugin, workspaceDirectory: workspaceDirectory)
             }
             return existing
         }
         let host = DesktopPluginRuntimeHost(pluginID: plugin.id, store: self)
         runtimeHosts[plugin.id] = host
-        try? host.start(plugin: plugin, workspaceDirectory: workspaceDirectory)
+        if canStartV3Runtime(for: plugin) {
+            try? host.start(plugin: plugin, workspaceDirectory: workspaceDirectory)
+        }
         if plugin.manifest.devReload && !plugin.isBuiltIn {
             let folder = directory.appendingPathComponent(plugin.id, isDirectory: true)
             host.startDirectoryHotReloadWatcher(folderURL: folder) { [weak self] in
@@ -356,7 +358,7 @@ extension DesktopPluginStore {
         plugins = nextPlugins
         pluginReloadRevisions[id, default: 0] += 1
 
-        if updatedPlugin.enabled && updatedPlugin.manifest.isV3 {
+        if updatedPlugin.enabled && updatedPlugin.manifest.isV3 && canStartV3Runtime(for: updatedPlugin) {
             let host = runtimeHosts[id] ?? DesktopPluginRuntimeHost(pluginID: id, store: self)
             runtimeHosts[id] = host
             try host.start(plugin: updatedPlugin, workspaceDirectory: workspaceDirectory)

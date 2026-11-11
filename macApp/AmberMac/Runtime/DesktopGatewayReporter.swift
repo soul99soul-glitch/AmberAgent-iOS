@@ -13,6 +13,8 @@ import Foundation
     private let queue = DispatchQueue(label: "amber.gateway.reporter")
     /// Runs in flight: conversation → (session id, task name), so approval callbacks can find their run.
     private var runs: [UUID: (session: String, name: String)] = [:]
+    /// Open reported sessions (session id → task name), kept until `runFinished` even after the conversation slot unlocks.
+    private var sessions: [String: String] = [:]
     /// `toolDone` must name the call it answers: the last one asked per conversation.
     private var pendingCall: [UUID: (tool: String, id: String)] = [:]
 
@@ -37,8 +39,19 @@ import Foundation
     /// even if the gateway is switched off meanwhile, so no session is left open on the phone.
     func runStarted(runID: UUID, conversationID: UUID, taskName: String) {
         guard isEnabled() else { return }
-        runs[conversationID] = (runID.uuidString.lowercased(), taskName)
+        let session = runID.uuidString.lowercased()
+        runs[conversationID] = (session, taskName)
+        sessions[session] = taskName
         send(.runStart, conversationID: conversationID)
+    }
+
+    /// Detaches conversation-scoped approval routing once generation ends so slow post-run summary work cannot
+    /// intercept a subsequent interactive turn or clobber another scheduled run on the same conversation.
+    func releaseConversation(_ conversationID: UUID, runID: UUID) {
+        let session = runID.uuidString.lowercased()
+        guard runs[conversationID]?.session == session else { return }
+        runs[conversationID] = nil
+        pendingCall[conversationID] = nil
     }
 
     func approval(conversationID: UUID, _ approval: DesktopToolApproval?) {
@@ -55,8 +68,26 @@ import Foundation
     }
 
     /// `quiet`: completed with nothing new, so the gateway records it without pushing (failures push regardless).
-    func runFinished(conversationID: UUID?, succeeded: Bool, quiet: Bool = false) {
+    func runFinished(runID: UUID? = nil, conversationID: UUID?, succeeded: Bool, quiet: Bool = false) {
+        if let runID {
+            let session = runID.uuidString.lowercased()
+            if let conversationID, runs[conversationID]?.session == session {
+                runs[conversationID] = nil
+                pendingCall[conversationID] = nil
+            }
+            guard let name = sessions.removeValue(forKey: session) else { return }
+            var event = GatewayEvent(agent: .amber, kind: .runExit, sessionId: session, process: process, origin: .headless, title: name)
+            event.exitCode = succeeded ? 0 : 1
+            if quiet { event.quiet = true }
+            let delivered = event
+            let paths = paths
+            queue.async { EventDelivery.deliver(delivered, paths: paths) }
+            return
+        }
         guard let conversationID else { return }
+        if let session = runs[conversationID]?.session {
+            sessions.removeValue(forKey: session)
+        }
         send(.runExit, conversationID: conversationID) {
             $0.exitCode = succeeded ? 0 : 1
             if quiet { $0.quiet = true }
@@ -74,8 +105,9 @@ import Foundation
             event.tool = call.tool
             event.toolCallId = call.id
         }
+        let delivered = event
         let paths = paths
-        queue.async { EventDelivery.deliver(event, paths: paths) }
+        queue.async { EventDelivery.deliver(delivered, paths: paths) }
     }
 
     /// Whitespace-collapsed argument excerpt. Over TLS only (`/v1/status`), never in a push body.
