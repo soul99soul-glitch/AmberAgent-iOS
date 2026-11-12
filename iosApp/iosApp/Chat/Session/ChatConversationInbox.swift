@@ -7,46 +7,47 @@ import SwiftUI
 
 extension ChatViewModel {
 
-    func enqueueSteerMessage(text: String) -> Bool {
+    func enqueueSteerMessage(text: String, targetRunId: String? = nil, consumesComposer: Bool = true) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let images = pendingImages
-        let selectedFile = pendingSelectedFilePreview
+        let images = consumesComposer ? pendingImages : []
+        let selectedFile = consumesComposer ? pendingSelectedFilePreview : nil
         guard !trimmed.isEmpty || !images.isEmpty || selectedFile != nil else { return false }
         guard isGenerationActive else { return false }
-        ensureSteerQueueLoaded(state: currentRun.state)
+        let state = currentRun.state
+        ensureSteerQueueLoaded(state: state)
         guard steerQueue.count < IOSSteerQueueStore.maxPendingUserMessages else { return false }
-        currentRun.state.clearChildResultWait()
-        steerQueue.append(IOSSteerQueueEntry(
-            id: UUID().uuidString,
-            text: trimmed,
-            createdAt: Date(),
+        state.clearChildResultWait()
+        let entry = IOSSteerQueueEntry(
+            id: UUID().uuidString, text: trimmed, createdAt: Date(),
             images: images.map { IOSSteerQueueImage(dataUrl: $0.dataUrl, previewData: $0.previewData) },
-            selectedFile: selectedFile.map(IOSSteerQueuedFile.init)
-        ))
+            selectedFile: selectedFile.map(IOSSteerQueuedFile.init), targetRunId: targetRunId
+        )
+        state.steerQueue.append(entry)
         persistSteerQueue()
-        // P1-d: steer 入队即打断同会话的 wait_agent（信号在入队成功后发射；
-        // wait_agent 事件后复查 mailbox 为空 → 返回 "Wait interrupted by new input."）。
-        if let conversationId = currentConversationId {
-            let center = inboxIO
-            let hex = conversationId.toHexDashString()
-            Task { @MainActor in
-                await center.signal(conversationIdHex: hex)
-            }
+        projectQueuedEntry(entry, receipt: "queued", state: state, reason: .userAppend)
+        Task { @MainActor [weak self] in
+            guard state.pendingAssistantRegeneration == nil else { return }
+            _ = await self?.persistMessages(state: state)
         }
-        inputText = ""
-        invalidateSuggestionRequest()
-        chatSuggestions = []
-        pendingSelectedFilePreview = nil
-        clearPendingImages()
-        selectedFileContextError = nil
+        if let conversationId = state.conversationId {
+            let center = inboxIO
+            Task { await center.signal(conversationIdHex: conversationId.toHexDashString()) }
+        }
+        if consumesComposer {
+            inputText = ""
+            invalidateSuggestionRequest()
+            chatSuggestions = []
+            pendingSelectedFilePreview = nil
+            clearPendingImages()
+            selectedFileContextError = nil
+            state.selectedFollowupRunId = nil
+        }
         return true
     }
 
     /// 撤销一条排队消息；同步更新 sidecar（exactly once）。
     func removeSteerMessage(id: String) {
-        guard steerQueue.contains(where: { $0.id == id }) else { return }
-        steerQueue.removeAll { $0.id == id }
-        persistSteerQueue()
+        restoreSteerMessageToComposer(id: id)
     }
 
     /// 工具循环边界消费：出队全部排队消息 → 作为真实 user 消息上屏并按既有路径
@@ -60,12 +61,12 @@ extension ChatViewModel {
 
     func drainSteerQueue(state: ChatConversationRunState) async -> [UIMessage] {
         ensureSteerQueueLoaded(state: state)
-        return await commitSteerQueueEntries(state.steerQueue, state: state)
+        return await commitSteerQueueEntries(state.steerQueue.filter { $0.status == .received && $0.targetRunId == nil }, state: state)
     }
 
     /// Keep the sidecar authoritative until the conversation contains this batch.
     /// Stable IDs make a successful write followed by an interrupted dequeue safe to replay.
-    private func commitSteerQueueEntries(
+    func commitSteerQueueEntries(
         _ entries: [IOSSteerQueueEntry], state: ChatConversationRunState
     ) async -> [UIMessage] {
         // A regenerated answer owns its variant transaction until terminal commit.
@@ -80,47 +81,26 @@ extension ChatViewModel {
                 restoreSteerQueueLeftoverToComposer(state: state)
             }
         }
-        let drained = entries.map { entry -> UIMessage in
-            let prompt = Self.promptText(
-                userText: entry.text,
-                selectedFilePreview: entry.selectedFile?.asSelectedDocument
-            )
-            let images = entry.images.map {
-                PendingChatImage(dataUrl: $0.dataUrl, previewData: $0.previewData)
+        let drained = entries.map { queuedUserMessage($0, receipt: "applied") }
+        for entry in entries { projectQueuedEntry(entry, receipt: "applied", state: state) }
+        guard await persistMessages(state: state) else {
+            for entry in entries {
+                let cancelled = state.steerQueue.first(where: { $0.id == entry.id })?.status == .cancelled
+                projectQueuedEntry(entry, receipt: cancelled ? "not_applied" : "queued", state: state)
             }
-            let message = makeUserMessage(prompt: prompt, images: images)
-            let digest = Array(chatInputDigest(for: "amber-steer-message:\(entry.id)"))
-            let stableId = [
-                String(digest[0..<8]), String(digest[8..<12]), String(digest[12..<16]),
-                String(digest[16..<20]), String(digest[20..<32])
-            ].joined(separator: "-")
-            return UIMessage(
-                id: KotlinUuid.companion.parse(uuidString: stableId), role: message.role,
-                parts: message.parts, annotations: message.annotations,
-                createdAt: message.createdAt, finishedAt: message.finishedAt,
-                modelId: message.modelId, usage: message.usage, translation: message.translation
-            )
+            return []
         }
-        let existingIds = Set(state.messages.map { $0.id.toHexDashString().lowercased() })
-        let appended = drained.filter { !existingIds.contains($0.id.toHexDashString().lowercased()) }
-        guard await persistInboxMessages(state.messages + appended, state: state) else { return [] }
-        let consumedIds = Set(entries.map(\.id))
+        let consumedIds = Set(entries.filter { entry in
+            state.steerQueue.first(where: { $0.id == entry.id })?.status == .received
+        }.map(\.id))
         state.steerQueue.removeAll { consumedIds.contains($0.id) }
         inboxIO.persistQueue(state.steerQueue, for: state.conversationId)
-        let publishedIds = Set(state.messages.map { $0.id.toHexDashString().lowercased() })
-        let unpublished = appended.filter { !publishedIds.contains($0.id.toHexDashString().lowercased()) }
-        withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
-            state.messages.append(contentsOf: unpublished)
-            if !unpublished.isEmpty, isCurrentConversation(state.conversationId) {
-                bumpMessageRevision(reason: .userAppend)
-            }
-        }
         if isCurrentConversation(state.conversationId) {
             invalidateSuggestionRequest()
             chatSuggestions = []
             selectedFileContextError = nil
         }
-        return appended
+        return drained.filter { message in entries.contains { consumedIds.contains($0.id) && $0.messageId == message.id.toHexDashString() } }
     }
 
     /// run 终态：成功则出队头一条上屏并自动开下一轮；取消/失败则回填 composer。
@@ -129,24 +109,56 @@ extension ChatViewModel {
         handleSteerQueueAtRunTerminal(state: currentRun.state, autoContinue: autoContinue)
     }
 
-    func handleSteerQueueAtRunTerminal(state: ChatConversationRunState, autoContinue: Bool) {
+    func handleSteerQueueAtRunTerminal(
+        state: ChatConversationRunState,
+        autoContinue: Bool,
+        completedSlot: ChatAsyncTaskSlot? = nil
+    ) {
         ensureSteerQueueLoaded(state: state)
+        if let completedSlot,
+           state.selectedFollowupRunId == completedSlot.runId || state.selectedFollowupRunId == completedSlot.slotId {
+            state.selectedFollowupRunId = nil
+        }
         if !autoContinue { state.steerQueueAutoContinueTask?.cancel() }
-        guard !state.steerQueue.isEmpty else { return }
+        let completedIds: Set<String> = completedSlot.map { [$0.runId, $0.slotId] } ?? []
+        if !completedIds.isEmpty {
+            for index in state.steerQueue.indices where state.steerQueue[index].status == .received {
+                if let target = state.steerQueue[index].targetRunId, completedIds.contains(target) {
+                    state.routingEntryIds.remove(state.steerQueue[index].id)
+                }
+            }
+        }
+        guard state.steerQueue.contains(where: { entry in
+            entry.status == .received && (entry.targetRunId == nil || entry.targetRunId.map(completedIds.contains) == true)
+        }) else { return }
         if autoContinue {
-            guard state.steerQueueAutoContinueTask == nil else { return }
+            guard state.steerQueueAutoContinueTask == nil else {
+                if !completedIds.isEmpty {
+                    var rebound = false
+                    for index in state.steerQueue.indices where state.steerQueue[index].status == .received {
+                        if let target = state.steerQueue[index].targetRunId, completedIds.contains(target) {
+                            state.steerQueue[index].targetRunId = nil
+                            rebound = true
+                        }
+                    }
+                    if rebound { inboxIO.persistQueue(state.steerQueue, for: state.conversationId) }
+                }
+                return
+            }
             state.steerQueueAutoContinueTask = Task { @MainActor [weak self] in
                 defer { state.steerQueueAutoContinueTask = nil }
-                await self?.sendNextSteerQueueEntry(state: state)
+                await self?.sendNextSteerQueueEntry(state: state, completedIds: completedIds)
             }
             return
         }
         restoreSteerQueueLeftoverToComposer(state: state)
     }
 
-    /// 出队头一条 → 上屏 →（若开启自动生成）立刻开下一轮。剩余条目继续留在队列。
-    private func sendNextSteerQueueEntry(state: ChatConversationRunState) async {
-        guard let entry = state.steerQueue.first else { return }
+    /// 出队头一条 → 上屏 →（若开启自动生成）立刻开下一轮。剩余同任务补充重绑到续答槽位。
+    private func sendNextSteerQueueEntry(state: ChatConversationRunState, completedIds: Set<String> = []) async {
+        guard let entry = state.steerQueue.first(where: {
+            $0.status == .received && ($0.targetRunId == nil || $0.targetRunId.map(completedIds.contains) == true)
+        }) else { return }
         let prompt = Self.promptText(
             userText: entry.text,
             selectedFilePreview: entry.selectedFile?.asSelectedDocument
@@ -154,27 +166,57 @@ extension ChatViewModel {
         let digest = chatInputDigest(for: prompt.isEmpty ? "[image]" : prompt)
         guard !Task.isCancelled,
               !(await commitSteerQueueEntries([entry], state: state)).isEmpty,
-              !Task.isCancelled, autoGenerateResponses,
-              state.conversationId.map({ isGenerationActive(conversationId: $0) }) != true else { return }
-        if isCurrentConversation(state.conversationId) {
-            generateResponse(inputDigest: digest, conversationId: state.conversationId)
-        } else if let configuration = state.generationConfiguration,
-                  let conversationId = state.conversationId {
-            let run = runRegistry.current(for: conversationId)
-            let anchorId = state.messages.last.map(ChatMessageProjector.messageId(for:))
-            let baseline = buildTaskBaselineMessages(in: run, anchorUserMessageId: anchorId)
-            let slot = ChatAsyncTaskSlot(
-                conversationId: conversationId,
-                inputDigest: digest,
-                anchorUserMessageId: anchorId,
-                phoneControlUserInitiated: false,
-                providerSetting: configuration.provider,
-                params: configuration.params,
-                toolExposureBridge: state.toolExposureBridge,
-                recipeCatalogSnapshot: configuration.dynamicSnapshot,
-                baselineMessages: baseline
-            )
-            _ = startOrEnqueueTaskSlot(slot, in: run)
+              !Task.isCancelled else { return }
+        let run = runRegistry.current(for: state.conversationId)
+        var continuationSlot: ChatAsyncTaskSlot?
+        if autoGenerateResponses,
+           !run.orderedSlots.contains(where: { $0.isActiveOrQueued && $0.anchorUserMessageId == entry.messageId }) {
+            if isCurrentConversation(state.conversationId) {
+                generateResponse(
+                    inputDigest: digest,
+                    conversationId: state.conversationId,
+                    anchorUserMessageId: entry.messageId
+                )
+                continuationSlot = run.orderedSlots.last {
+                    $0.isActiveOrQueued && $0.anchorUserMessageId == entry.messageId
+                }
+            } else if let configuration = state.generationConfiguration,
+                      let conversationId = state.conversationId {
+#if DEBUG
+                let overridden = generationActiveOverrideForTesting?(conversationId) == true
+#else
+                let overridden = false
+#endif
+                if !overridden, !IOSChatBackgroundGenerationCoordinator.shared.hasActiveJob(conversationId: conversationId) {
+                    let anchorId = entry.messageId
+                    let baseline = buildTaskBaselineMessages(in: run, anchorUserMessageId: anchorId)
+                    let slot = ChatAsyncTaskSlot(
+                        conversationId: conversationId,
+                        inputDigest: digest,
+                        anchorUserMessageId: anchorId,
+                        phoneControlUserInitiated: false,
+                        providerSetting: configuration.provider,
+                        params: configuration.params,
+                        toolExposureBridge: state.toolExposureBridge,
+                        recipeCatalogSnapshot: configuration.dynamicSnapshot,
+                        baselineMessages: baseline
+                    )
+                    _ = startOrEnqueueTaskSlot(slot, in: run)
+                    continuationSlot = slot
+                }
+            }
+        }
+        if !completedIds.isEmpty {
+            var didUpdate = false
+            for index in state.steerQueue.indices where state.steerQueue[index].status == .received {
+                if let target = state.steerQueue[index].targetRunId, completedIds.contains(target) {
+                    state.steerQueue[index].targetRunId = continuationSlot?.runId
+                    didUpdate = true
+                }
+            }
+            if didUpdate {
+                inboxIO.persistQueue(state.steerQueue, for: state.conversationId)
+            }
         }
     }
 
@@ -194,8 +236,9 @@ extension ChatViewModel {
             return
         }
         guard !state.steerQueue.isEmpty else { return }
-        let textOnly = state.steerQueue.filter { !$0.hasAttachments }
-        let withAttachments = state.steerQueue.filter(\.hasAttachments)
+        let textOnly = state.steerQueue.filter { !$0.hasAttachments && $0.targetRunId == nil }
+        let withAttachments = state.steerQueue.filter { $0.hasAttachments || $0.targetRunId != nil }
+        for entry in textOnly { projectQueuedEntry(entry, receipt: "not_applied", state: state) }
         state.steerQueue = withAttachments
         inboxIO.persistQueue(state.steerQueue, for: state.conversationId)
         guard !textOnly.isEmpty else { return }
@@ -360,12 +403,8 @@ extension ChatViewModel {
     }
 
     private func persistInboxMessages(_ messages: [UIMessage], state: ChatConversationRunState) async -> Bool {
-        await persistMessagesSnapshot(
-            messages, targetConversationId: state.conversationId,
-            pendingRegeneration: nil, store: conversationStore,
-            writeBaseline: state.conversationId.flatMap { conversationStore?.writeBaseline(for: $0) },
-            state: state
-        )
+        // Merge and publish inside the write gate before the next live snapshot starts.
+        await persistMessages(state: state, appending: messages)
     }
 
     private func mailboxMessages(_ envelopes: [IOSMailboxStore.EnvelopeSnapshot]) -> [UIMessage] {
@@ -408,10 +447,11 @@ extension ChatViewModel {
         inboxIO.persistQueue(steerQueue, for: currentConversationId)
     }
 
-    private func ensureSteerQueueLoaded(state: ChatConversationRunState) {
+    func ensureSteerQueueLoaded(state: ChatConversationRunState) {
         guard !state.steerQueueLoaded else { return }
         state.steerQueue = inboxIO.loadQueue(conversationId: state.conversationId)
         state.steerQueueLoaded = true
+        recoverQueuedFollowups(state: state)
     }
 
 

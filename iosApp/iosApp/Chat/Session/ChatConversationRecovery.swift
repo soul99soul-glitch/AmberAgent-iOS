@@ -66,6 +66,7 @@ extension ChatViewModel {
                     guard let self, state.steerQueueRevision == revision else { return }
                     state.steerQueue = loaded
                     state.steerQueueLoaded = true
+                    self.recoverQueuedFollowups(state: state)
                 }
             } else {
                 state.steerQueue = []

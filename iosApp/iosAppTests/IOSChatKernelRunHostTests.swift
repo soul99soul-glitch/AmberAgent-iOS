@@ -686,10 +686,9 @@ final class IOSForegroundApprovalResumeTests: IOSChatKernelRunHostTestCase {
         XCTAssertNotNil(approval)
         let runID = try XCTUnwrap(host.currentRunId)
         run.rebindSlotRunId(slot: slot, newRunId: runID)
-        slot.targetedFollowups = [ChatLocalTaskFollowup(
-            id: "pending-input", runId: runID, text: "保留待消费补充", createdAtMillis: 1, status: .received
+        run.state.steerQueue = [IOSSteerQueueEntry(
+            id: "pending-input", text: "保留待消费补充", createdAt: Date(), targetRunId: runID
         )]
-        owner.syncFollowupsToState(slot: slot, state: run.state)
         run.state.selectedFollowupRunId = runID
 
         let interrupted = owner.reconcileForegroundRunsAfterSystemSuspensionIfNeeded(hasValidKeepAliveLease: false)
@@ -698,7 +697,7 @@ final class IOSForegroundApprovalResumeTests: IOSChatKernelRunHostTestCase {
         XCTAssertTrue(host.hasPendingToolApproval)
         XCTAssertTrue(host.isRunning)
         XCTAssertFalse(slot.isTerminal)
-        XCTAssertEqual(slot.targetedFollowups.first?.status, .received)
+        XCTAssertEqual(run.state.steerQueue.first?.status, .received)
         XCTAssertEqual(run.state.selectedFollowupRunId, runID)
         XCTAssertEqual(harness.pendingSearchApproval?.id, approval?.id)
         host.approvePendingSearchTool()

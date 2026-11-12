@@ -469,6 +469,13 @@ private struct MessageBubbleStatefulContent: View {
                         }
                         variantSwitcher
                         messagePartsWithAnchorHighlight
+                        if let part = message.parts.compactMap({ $0 as? UIMessagePart.Text }).first,
+                           let receipt = IosToolOutputJsonBridge.shared.metadataString(part: part, key: "chat_followup_state") {
+                            Text(receipt == "queued" ? "已收到 · 待当前步骤结束后生效" :
+                                 receipt == "applied" ? "已采纳" : "未生效")
+                                .font(.caption2)
+                                .foregroundStyle(AmberTheme.muted)
+                        }
                     }
                     .frame(maxWidth: ChatLayout.userMaxWidth, alignment: .trailing)
                 }

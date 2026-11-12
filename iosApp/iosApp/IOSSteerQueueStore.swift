@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Shared
 
 /// 排队图（与 composer `PendingChatImage` 同构；preview 用 base64 落盘）。
@@ -55,6 +56,11 @@ struct IOSSteerQueuedFile: Codable, Equatable, Sendable {
 /// 一条生成中排队的 steer 消息。旧 sidecar 仅有 text 时 images/selectedFile 缺省为空。
 struct IOSSteerQueueEntry: Codable, Equatable, Identifiable, Sendable {
     let id: String
+    enum Status: String, Codable, Sendable { case received, consumed, cancelled }
+    var targetRunId: String?
+    let messageId: String
+    var status: Status
+    var isShownAsExecuted: Bool { status == .consumed }
     let text: String
     let createdAt: Date
     var images: [IOSSteerQueueImage]
@@ -69,9 +75,15 @@ struct IOSSteerQueueEntry: Codable, Equatable, Identifiable, Sendable {
         text: String,
         createdAt: Date,
         images: [IOSSteerQueueImage] = [],
-        selectedFile: IOSSteerQueuedFile? = nil
+        selectedFile: IOSSteerQueuedFile? = nil,
+        targetRunId: String? = nil,
+        messageId: String? = nil,
+        status: Status = .received
     ) {
         self.id = id
+        self.targetRunId = targetRunId
+        self.messageId = messageId ?? Self.stableMessageId(id)
+        self.status = status
         self.text = text
         self.createdAt = createdAt
         self.images = images
@@ -79,16 +91,26 @@ struct IOSSteerQueueEntry: Codable, Equatable, Identifiable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, text, createdAt, images, selectedFile
+        case id, text, createdAt, images, selectedFile, targetRunId, messageId, status
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
+        targetRunId = try c.decodeIfPresent(String.self, forKey: .targetRunId)
+        messageId = try c.decodeIfPresent(String.self, forKey: .messageId) ?? Self.stableMessageId(id)
+        status = try c.decodeIfPresent(Status.self, forKey: .status) ?? .received
         text = try c.decode(String.self, forKey: .text)
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         images = try c.decodeIfPresent([IOSSteerQueueImage].self, forKey: .images) ?? []
         selectedFile = try c.decodeIfPresent(IOSSteerQueuedFile.self, forKey: .selectedFile)
+    }
+    private static func stableMessageId(_ id: String) -> String {
+        let hash = SHA256.hash(data: Data("amber-steer-message:\(id)".utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let digest = Array(hash)
+        return [String(digest[0..<8]), String(digest[8..<12]), String(digest[12..<16]),
+                String(digest[16..<20]), String(digest[20..<32])].joined(separator: "-")
     }
 }
 

@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 @preconcurrency import Shared
 
-/// Targeted follow-up (`inputs`) explicitly bound to a specific local task (`runId`).
+/// Read-only compatibility projection of follow-up receipts in the transcript.
 /// Aligns with the Cloud Dialogue v1 `work-items/{id}/inputs` lifecycle (`received` -> `consumed` | `cancelled`).
 struct ChatLocalTaskFollowup: Identifiable, Equatable, Sendable {
     enum Status: String, Equatable, Sendable {
@@ -24,7 +24,7 @@ struct ChatLocalTaskFollowup: Identifiable, Equatable, Sendable {
 
 /// Per-task isolation slot within a conversation (`ChatConversationRun`).
 /// Each task owns its own `ChatKernelRunHost`, baseline transcript, generated message IDs,
-/// anchor position in `state.messages`, and targeted follow-up queue.
+/// anchor position in `state.messages`; follow-ups live in the conversation queue.
 @MainActor
 final class ChatAsyncTaskSlot {
     let slotId: String
@@ -89,9 +89,6 @@ final class ChatAsyncTaskSlot {
     var isQueuedForConcurrencySlot: Bool = false
     var isTerminal: Bool = false
 
-    /// Follow-ups explicitly targeted at this task via `selectTaskForFollowup(runId:)`.
-    var targetedFollowups: [ChatLocalTaskFollowup] = []
-
     var host: ChatKernelRunHost?
 
     var allOwnedMessageIds: Set<String> {
@@ -139,7 +136,7 @@ final class ChatAsyncTaskSlot {
 extension ChatViewModel {
     nonisolated static let queuedTaskPlaceholderText = "排队中，等待前序任务完成后自动开始…"
 
-    /// Explicit task selection for follow-up (`inputs`). When `nil`, plain composer messages start a new question.
+    /// Explicit follow-up target; otherwise inbound triage chooses the focused task.
     var selectedFollowupRunId: String? {
         get { currentRun.state.selectedFollowupRunId }
         set { currentRun.state.selectedFollowupRunId = newValue }
@@ -260,120 +257,62 @@ extension ChatViewModel {
 
     func taskFollowups(forRunId runId: String, conversationId: KotlinUuid? = nil) -> [ChatLocalTaskFollowup] {
         let run = conversationId.flatMap { runRegistry.run(for: $0) } ?? currentRun
-        if let slot = run.slot(forRunId: runId) {
-            return slot.targetedFollowups
+        return run.state.messages.compactMap { message in
+            guard let part = message.parts.compactMap({ $0 as? UIMessagePart.Text }).first,
+                  IosToolOutputJsonBridge.shared.metadataString(part: part, key: "chat_followup_run_id") == runId,
+                  let id = IosToolOutputJsonBridge.shared.metadataString(part: part, key: "chat_followup_id"),
+                  let receipt = IosToolOutputJsonBridge.shared.metadataString(part: part, key: "chat_followup_state") else { return nil }
+            return ChatLocalTaskFollowup(id: id, runId: runId, text: message.toText(), createdAtMillis: 0,
+                status: receipt == "applied" ? .consumed : receipt == "not_applied" ? .cancelled : .received)
         }
-        return run.state.followupsByRunId[runId] ?? []
     }
 
-    /// Enqueues a follow-up message explicitly targeted at `runId`.
-    /// Consumed at `runId`'s next reasoning boundary (`drainSteerQueue`).
     @discardableResult
-    func enqueueTaskFollowup(
-        runId: String,
-        text: String,
-        consumesComposer: Bool = true
-    ) -> ChatLocalTaskFollowup? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        guard let (run, slot) = runRegistry.findSlot(runId: runId),
-              slot.isActiveOrQueued else {
-            return nil
-        }
-        let followup = ChatLocalTaskFollowup(
-            id: UUID().uuidString.lowercased(),
-            runId: slot.runId,
-            text: trimmed,
-            createdAtMillis: Int64(Date().timeIntervalSince1970 * 1_000),
-            status: .received
-        )
-        slot.targetedFollowups.append(followup)
-        syncFollowupsToState(slot: slot, state: run.state)
-        if consumesComposer {
-            inputText = ""
-            pendingSelectedFilePreview = nil
-            clearPendingImages()
-            selectedFileContextError = nil
-            run.state.selectedFollowupRunId = nil
-        }
-        runActivityRevision &+= 1
-        return followup
+    func enqueueTaskFollowup(runId: String, text: String, consumesComposer: Bool = true) -> ChatLocalTaskFollowup? {
+        guard let (run, slot) = runRegistry.findSlot(runId: runId), run === currentRun, slot.isActiveOrQueued,
+              enqueueSteerMessage(text: text, targetRunId: slot.runId, consumesComposer: consumesComposer),
+              let entry = run.state.steerQueue.last else { return nil }
+        return ChatLocalTaskFollowup(id: entry.id, runId: slot.runId, text: entry.text,
+            createdAtMillis: Int64(entry.createdAt.timeIntervalSince1970 * 1_000), status: .received)
     }
 
-    /// Drains `.received` follow-ups targeted at `slot` at its next reasoning boundary.
-    func drainTaskSteerQueue(
-        slot: ChatAsyncTaskSlot,
-        state: ChatConversationRunState
-    ) async -> [UIMessage] {
-        var drainedMessages: [UIMessage] = []
-        var didMutate = false
-        for index in slot.targetedFollowups.indices {
-            guard slot.targetedFollowups[index].status == .received else { continue }
-            slot.targetedFollowups[index].status = .consumed
-            didMutate = true
-            let userMsg = makeUserMessage(
-                prompt: slot.targetedFollowups[index].text,
-                images: []
-            )
-            drainedMessages.append(userMsg)
+    func drainTaskSteerQueue(slot: ChatAsyncTaskSlot, state: ChatConversationRunState) async -> [UIMessage] {
+        ensureSteerQueueLoaded(state: state)
+        let single = runRegistry.current(for: state.conversationId).orderedSlots.filter(\.isActiveOrQueued).count <= 1
+        let entries = state.steerQueue.filter {
+            $0.status == .received && !state.routingEntryIds.contains($0.id) &&
+            ($0.targetRunId == slot.runId || $0.targetRunId == slot.slotId || ($0.targetRunId == nil && single))
         }
-        if didMutate {
-            syncFollowupsToState(slot: slot, state: state)
-        }
-        guard !drainedMessages.isEmpty else {
-            // If no task-specific follow-ups exist and this is the only task in the conversation,
-            // also drain any legacy conversation-level steerQueue entries.
-            if runRegistry.current(for: state.conversationId).orderedSlots.filter(\.isActiveOrQueued).count <= 1,
-               !state.steerQueue.isEmpty {
-                return await drainSteerQueue(state: state)
-            }
-            return []
-        }
-
-        let updatedTranscript = slot.currentTranscript + drainedMessages
-        spliceTaskTranscript(updatedTranscript, for: slot, into: state)
-        if isCurrentConversation(state.conversationId) {
-            bumpMessageRevision(reason: .userAppend)
-        }
-        let targetConversationId = state.conversationId
-        Task { @MainActor [weak self] in
-            _ = await self?.persistMessages(state: state)
-            if let targetConversationId {
-                _ = self?.targetConversationIdForTouch(targetConversationId)
-            }
-        }
-        runActivityRevision &+= 1
-        return drainedMessages
+        let drained = await commitSteerQueueEntries(entries, state: state)
+        guard !drained.isEmpty else { return [] }
+        spliceTaskTranscript(slot.currentTranscript + drained, for: slot, into: state)
+        return drained
     }
 
-    private func targetConversationIdForTouch(_ id: KotlinUuid) -> KotlinUuid { id }
-
-    /// Marks any `.received` follow-ups on `slot` as `.cancelled` when the task is stopped before consuming them.
-    func cancelUnconsumedFollowups(
-        for slot: ChatAsyncTaskSlot,
-        state: ChatConversationRunState
-    ) {
+    func cancelUnconsumedFollowups(for slot: ChatAsyncTaskSlot, state: ChatConversationRunState) {
         var didChange = false
-        for index in slot.targetedFollowups.indices where slot.targetedFollowups[index].status == .received {
-            slot.targetedFollowups[index].status = .cancelled
+        for index in state.steerQueue.indices {
+            guard state.steerQueue[index].status == .received,
+                  state.steerQueue[index].targetRunId == slot.runId || state.steerQueue[index].targetRunId == slot.slotId else { continue }
+            state.steerQueue[index].status = .cancelled
             didChange = true
+            projectQueuedEntry(state.steerQueue[index], receipt: "not_applied", state: state)
         }
         if didChange {
-            syncFollowupsToState(slot: slot, state: state)
+            inboxIO.persistQueue(state.steerQueue, for: state.conversationId)
+            Task { @MainActor [weak self] in _ = await self?.persistMessages(state: state) }
         }
         if state.selectedFollowupRunId == slot.runId || state.selectedFollowupRunId == slot.slotId {
             state.selectedFollowupRunId = nil
         }
     }
 
-    func syncFollowupsToState(
-        slot: ChatAsyncTaskSlot,
-        state: ChatConversationRunState
-    ) {
-        state.followupsByRunId[slot.runId] = slot.targetedFollowups
-        if slot.slotId != slot.runId {
-            state.followupsByRunId[slot.slotId] = slot.targetedFollowups
+    func rebindQueuedFollowups(slot: ChatAsyncTaskSlot, state: ChatConversationRunState) {
+        for index in state.steerQueue.indices where state.steerQueue[index].targetRunId == slot.slotId {
+            state.steerQueue[index].targetRunId = slot.runId
+            projectQueuedEntry(state.steerQueue[index], receipt: "queued", state: state)
         }
+        inboxIO.persistQueue(state.steerQueue, for: state.conversationId)
     }
 
     // MARK: - Task-Isolated Transcript Splicing
@@ -400,7 +339,8 @@ extension ChatViewModel {
             prefixSlice = allMessages[...]
         }
         return prefixSlice.compactMap { message -> UIMessage? in
-            guard !otherLiveIds.contains(ChatMessageProjector.messageId(for: message)) else { return nil }
+            guard !otherLiveIds.contains(ChatMessageProjector.messageId(for: message)),
+                  !run.state.steerQueue.contains(where: { $0.messageId == message.id.toHexDashString() }) else { return nil }
             guard message.role == MessageRole.assistant else { return message }
             // This is a new task's upload snapshot. Keep the timeline and the
             // current task's subsequent tool rounds untouched.
@@ -453,7 +393,7 @@ extension ChatViewModel {
         if let latestProseSig, latestProseSig != previousProseSig {
             slot.recordMeaningfulUserVisibleProgress()
         }
-        let previousOwnedIds = slot.allOwnedMessageIds
+        let previousOwnedIds = slot.allOwnedMessageIds.union(newGenerated.map { ChatMessageProjector.messageId(for: $0) })
         var combined = state.messages
         var firstRemovedIndex: Int?
         if !previousOwnedIds.isEmpty {
@@ -617,7 +557,7 @@ extension ChatViewModel {
         )
         if let actualRunId = host.currentRunId, !actualRunId.isEmpty {
             run.rebindSlotRunId(slot: slot, newRunId: actualRunId)
-            syncFollowupsToState(slot: slot, state: run.state)
+            rebindQueuedFollowups(slot: slot, state: run.state)
         }
         slot.recordMeaningfulUserVisibleProgress()
         startKeepaliveMonitor(for: slot, in: run)
@@ -673,7 +613,9 @@ extension ChatViewModel {
                 ChatMessageProjector.messageId(for: $0) == placeholderId
             }
         }
-        cancelUnconsumedFollowups(for: slot, state: run.state)
+        if run.state.selectedFollowupRunId == slot.runId || run.state.selectedFollowupRunId == slot.slotId {
+            run.state.selectedFollowupRunId = nil
+        }
         refreshLiveTaskMessageIds(in: run)
         runActivityRevision &+= 1
         dequeueNextPendingTasksIfPossible()

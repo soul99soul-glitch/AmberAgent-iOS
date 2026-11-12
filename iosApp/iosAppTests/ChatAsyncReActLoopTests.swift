@@ -483,7 +483,7 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         let slotA = try XCTUnwrap(viewModel.currentRun.orderedSlots.first)
         XCTAssertTrue(slotA.generatedMessages.allSatisfy { $0.toText().isEmpty && $0.getTools().isEmpty })
 
-        viewModel.inputText = "TASK_B: Synthetic queued question"
+        viewModel.inputText = "独立问题：TASK_B: Synthetic queued question"
         XCTAssertTrue(viewModel.sendMessage())
         let queuedB = await waitForCondition { viewModel.currentRun.orderedSlots.count == 2 }
         XCTAssertTrue(queuedB)
@@ -491,7 +491,7 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         XCTAssertFalse(slotA.isTerminal, "An independent question must not cancel A before its first token")
         XCTAssertTrue(slotB.isQueuedForConcurrencySlot)
 
-        viewModel.inputText = "TASK_C: Synthetic independent question"
+        viewModel.inputText = "新任务：TASK_C: Synthetic independent question"
         XCTAssertTrue(viewModel.sendMessage())
         let queuedC = await waitForCondition { viewModel.currentRun.orderedSlots.count == 3 }
         XCTAssertTrue(queuedC)
@@ -532,10 +532,10 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         let aEnteredRound2 = await waitForCondition { provider.callCount(for: "A") >= 2 }
         XCTAssertTrue(aEnteredRound2)
         XCTAssertTrue(viewModel.isGenerationActive)
-        XCTAssertNil(viewModel.composerSendBlockReason(for: "TASK_B: 顺便回答一个独立问题"))
+        XCTAssertNil(viewModel.composerSendBlockReason(for: "独立问题：TASK_B: 顺便回答一个独立问题"))
 
-        // 2. While Task A is still running, send plain message B without selecting Task A.
-        viewModel.inputText = "TASK_B: 顺便回答一个独立问题"
+        // 2. While Task A is still running, send an explicitly independent question B without selecting Task A.
+        viewModel.inputText = "独立问题：TASK_B: 顺便回答一个独立问题"
         XCTAssertTrue(viewModel.sendMessage())
 
         // 3. Task B immediately runs and finishes without waiting for Task A.
@@ -591,7 +591,7 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         XCTAssertTrue(aStarted)
         let runIdA = try XCTUnwrap(viewModel.activeTaskRunIdsForCurrentConversation.first)
 
-        viewModel.inputText = "TASK_B: 独立长任务"
+        viewModel.inputText = "独立问题：TASK_B: 独立长任务"
         XCTAssertTrue(viewModel.sendMessage())
         let bStarted = await waitForCondition { provider.hasStarted("B") }
         XCTAssertTrue(bStarted)
@@ -653,7 +653,7 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         // Start Task A and Task B (filling maxConcurrentLocalRuns = 2).
         viewModel.inputText = "TASK_A"
         XCTAssertTrue(viewModel.sendMessage())
-        viewModel.inputText = "TASK_B"
+        viewModel.inputText = "新任务：TASK_B"
         XCTAssertTrue(viewModel.sendMessage())
         let bothStarted = await waitForCondition {
             provider.hasStarted("A") && provider.hasStarted("B")
@@ -662,7 +662,7 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         XCTAssertEqual(viewModel.activeForegroundLocalRunCount, 2)
 
         // Send Task C while 2 local runs are active -> C queues with visible status placeholder.
-        viewModel.inputText = "TASK_C"
+        viewModel.inputText = "新任务：TASK_C"
         XCTAssertTrue(viewModel.sendMessage())
         XCTAssertFalse(provider.hasStarted("C"), "Task C should be queued while 2 local runs are active")
         XCTAssertTrue(

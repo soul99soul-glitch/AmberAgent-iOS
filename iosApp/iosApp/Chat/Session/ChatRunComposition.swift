@@ -184,14 +184,7 @@ extension ChatViewModel {
                 },
                 persistMessages: { [weak self] conversationId in
                     guard let self else { return false }
-                    return await self.persistMessagesSnapshot(
-                        state.messages,
-                        targetConversationId: conversationId,
-                        pendingRegeneration: state.pendingAssistantRegeneration,
-                        store: self.conversationStore,
-                        writeBaseline: conversationId.flatMap { self.conversationStore?.writeBaseline(for: $0) },
-                        state: state
-                    )
+                    return await self.persistMessages(state: state)
                 },
                 capturePersistMessagesBaseline: { [weak self] conversationId in
                     guard let store = self?.conversationStore,
@@ -202,30 +195,16 @@ extension ChatViewModel {
                 },
                 persistMessagesSnapshot: { [weak self] snapshot, conversationId, writeBaseline in
                     guard let self else { return false }
-                    let effectiveSnapshot: [UIMessage]
-                    let effectiveBaseline: IOSConversationWriteBaseline?
                     if let taskSlot {
                         if !taskSlot.isTerminal {
                             self.spliceTaskTranscript(snapshot, for: taskSlot, into: state)
                         }
-                        effectiveSnapshot = state.messages
-                        let run = self.runRegistry.current(for: state.conversationId)
-                        let targetId = conversationId ?? state.conversationId
-                        effectiveBaseline = run.taskOrder.count > 1
-                            ? targetId.flatMap { self.conversationStore?.writeBaseline(for: $0) }
-                            : writeBaseline
-                    } else {
-                        effectiveSnapshot = snapshot
-                        effectiveBaseline = writeBaseline
+                        return await self.persistMessages(state: state)
                     }
-                    return await self.persistMessagesSnapshot(
-                        effectiveSnapshot,
-                        targetConversationId: conversationId,
-                        pendingRegeneration: state.pendingAssistantRegeneration,
-                        store: self.conversationStore,
-                        writeBaseline: effectiveBaseline,
-                        state: state
-                    )
+                    return await self.persistMessagesSnapshot(snapshot,
+                        targetConversationId: conversationId, pendingRegeneration: state.pendingAssistantRegeneration,
+                        store: self.conversationStore, writeBaseline: writeBaseline, state: state)
+
                 },
                 recordRun: { [weak self] runId, startedAt, status, inputDigest, conversationId, protocolContext in
                     guard let self else { return false }
@@ -315,7 +294,15 @@ extension ChatViewModel {
                     await self?.drainMailbox(state: state) ?? []
                 },
                 handleSteerQueueAtTerminal: { [weak self] conversationId, autoContinue in
-                    self?.handleSteerQueueAtRunTerminal(state: state, autoContinue: autoContinue)
+                    guard let self else { return }
+                    if let taskSlot, !autoContinue {
+                        self.cancelUnconsumedFollowups(for: taskSlot, state: state)
+                    }
+                    self.handleSteerQueueAtRunTerminal(
+                        state: state,
+                        autoContinue: autoContinue,
+                        completedSlot: autoContinue ? taskSlot : nil
+                    )
                 },
                 restoreSteerQueueLeftover: { [weak self] conversationId in
                     guard let self else { return }
@@ -334,6 +321,9 @@ extension ChatViewModel {
                         messages: finalMessages
                     )
                     if let taskSlot {
+                        if terminalStatus != .completed {
+                            self.cancelUnconsumedFollowups(for: taskSlot, state: state)
+                        }
                         self.markTaskSlotTerminal(taskSlot, in: self.runRegistry.current(for: state.conversationId))
                     }
                     self.observeYieldedChildResults(state: state, runId: runId)

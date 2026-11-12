@@ -63,7 +63,7 @@ struct ChatSteerQueueStrip: View {
                             .contentShape(.interaction, Rectangle().inset(by: -8))
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("撤销第 \(index + 1) 条排队消息")
+                    .accessibilityLabel("回填第 \(index + 1) 条消息")
                 }
                 .frame(minHeight: rowMinHeight)
                 if index < entries.count - 1 {
@@ -79,7 +79,7 @@ struct ChatSteerQueueStrip: View {
     /// 测试与预览共用的行标题规则。
     static func rowTitle(for entry: IOSSteerQueueEntry) -> String {
         let trimmed = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { return trimmed }
+        if !trimmed.isEmpty { return entry.status == .cancelled ? "未生效 · " + trimmed : trimmed }
         let imageLabel: String? = {
             guard !entry.images.isEmpty else { return nil }
             return entry.images.count == 1 ? "图片" : "\(entry.images.count) 张图片"

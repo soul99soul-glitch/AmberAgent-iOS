@@ -8,6 +8,12 @@ struct PendingAssistantRegeneration {
     let generatedMessageIndex: Int
 }
 
+struct ChatMessagePersistenceResult {
+    let saved: Bool
+    let acceptedBaselines: [IOSConversationWriteBaseline]
+    let after: IOSConversationWriteBaseline?
+}
+
 /// A live run keeps its presentation even while another conversation is on screen.
 /// The Host's bindings capture this state, never the currently selected conversation.
 @MainActor @Observable
@@ -65,7 +71,9 @@ final class ChatConversationRunState {
     var selectedFollowupRunId: String?
     var liveTaskMessageIds: Set<String> = []
     var liveTaskTailMessageIds: Set<String> = []
-    var followupsByRunId: [String: [ChatLocalTaskFollowup]] = [:]
+    @ObservationIgnored var routingEntryIds: Set<String> = []
+    @ObservationIgnored var messagePersistencePendingCount = 0
+    @ObservationIgnored var messagePersistenceTail: Task<ChatMessagePersistenceResult, Never>?
     @ObservationIgnored var isCommittingSteerQueue = false
     @ObservationIgnored var restoreSteerQueueAfterCommit = false
     @ObservationIgnored var steerQueueAutoContinueTask: Task<Void, Never>?

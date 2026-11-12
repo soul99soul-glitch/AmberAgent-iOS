@@ -48,33 +48,45 @@ extension ChatViewModel {
             }
             return false
         }
-        // 生成中：仅当用户显式选中某个任务（selectedFollowupRunId）时才将输入作为该任务的追问（inputs），
-        // 在其下一轮推理边界消费；否则普通消息默认作为新问题立即开始（或进入并发排队）。
-        // 兼容测试缝（generationActiveOverrideForTesting）与后台任务沿用原 steerQueue。
         if isGenerationActive {
-            if let targetRunId = selectedFollowupRunId, isTaskActiveOrQueued(runId: targetRunId) {
-                return enqueueTaskFollowup(runId: targetRunId, text: text) != nil
+            if let selected = selectedFollowupRunId,
+               currentRun.slot(forRunId: selected)?.isActiveOrQueued != true {
+                configurationError = "所选任务已结束，请重新选择任务或发送为新需求。"
+                return false
             }
-            var shouldUseLegacySteerQueue = false
-#if DEBUG
-            if generationActiveOverrideForTesting?(currentConversationId) == true {
-                shouldUseLegacySteerQueue = true
-            }
-#endif
-            if let currentConversationId,
-               IOSChatBackgroundGenerationCoordinator.shared.hasActiveJob(conversationId: currentConversationId) {
-                shouldUseLegacySteerQueue = true
-            }
-            if shouldUseLegacySteerQueue {
+            let route = ChatInboundTurnTriage.route(text: text,
+                hasAttachments: hasImages || pendingSelectedFilePreview != nil,
+                hasExplicitTarget: selectedFollowupRunId != nil)
+            if handleInboundControl(route, text: text) { return true }
+            if route != .independent {
                 if hasImages, pendingImages.count > Self.maxImagesPerMessage {
-                    selectedFileContextError = IOSAppLocalization.formatted(
-                        "一次最多发送 %lld 张图片",
-                        defaultValue: "一次最多发送 %lld 张图片",
-                        arguments: [Int64(Self.maxImagesPerMessage)]
-                    )
+                    selectedFileContextError = "一次最多发送 \(Self.maxImagesPerMessage) 张图片"
                     return false
                 }
-                return enqueueSteerMessage(text: text)
+                let target = focusedActiveTask
+                guard enqueueSteerMessage(text: prompt, targetRunId: target?.runId) else { return false }
+                if route == .ambiguous, let target,
+                   sharedSettings.jevSettings.effectiveMode(for: .subagentIntent) != .off,
+                   let entry = currentRun.state.steerQueue.last {
+                    let state = currentRun.state
+                    state.routingEntryIds.insert(entry.id)
+                    Task { @MainActor [weak self] in
+                        let resolved = await ChatInboundTurnTriage.resolve(text: prompt,
+                            taskText: target.baselineMessages.last(where: { $0.role == MessageRole.user })?.toText() ?? "",
+                            runId: target.runId)
+                        state.routingEntryIds.remove(entry.id)
+                        guard let self, let index = state.steerQueue.firstIndex(where: { $0.id == entry.id }),
+                              state.steerQueue[index].status == .received else { return }
+                        if resolved == .independent, self.isCurrentConversation(state.conversationId) {
+                            self.projectQueuedEntry(entry, receipt: "applied", state: state)
+                            state.steerQueue.remove(at: index)
+                            self.inboxIO.persistQueue(state.steerQueue, for: state.conversationId)
+                            self.generateResponse(inputDigest: chatInputDigest(for: prompt),
+                                conversationId: state.conversationId, anchorUserMessageId: entry.messageId)
+                        }
+                    }
+                }
+                return true
             }
         }
         // 空闲发送：按模型视觉能力判断（对齐安卓 ImageAttachmentValidator）：

@@ -964,6 +964,11 @@ final class ChatViewModel {
         }
         if isGenerationActive {
             // 生成中发送改为入队（含图/附件）；队列满时回到禁用态。
+            let route = ChatInboundTurnTriage.route(text: text,
+                hasAttachments: !pendingImages.isEmpty || pendingSelectedFilePreview != nil,
+                hasExplicitTarget: selectedFollowupRunId != nil)
+            if route == .status { return nil }
+            if case .stop = route { return nil }
             return steerQueue.count >= IOSSteerQueueStore.maxPendingUserMessages
                 ? .steerQueueFull
                 : nil
