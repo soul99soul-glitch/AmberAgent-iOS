@@ -74,10 +74,8 @@ struct AmberDuetBottomSwitcher: View {
 
     private var resolvedTaskCounts: (active: Int, needsAttention: Int) {
         if let subAgentStore {
-            let groups = AmberUnifiedTaskBuilder.buildTasks(
-                gateway: gateway,
-                subAgentStore: subAgentStore,
-                hubStore: hubStore ?? .shared
+            let groups = AmberUnifiedTaskProjectionCache.shared.groups(
+                gateway: gateway, subAgentStore: subAgentStore, hubStore: hubStore ?? .shared
             )
             return (groups.activeCount, groups.needsAttention.count)
         }
@@ -517,13 +515,9 @@ struct AmberDuetTaskCenterCard: View {
     @State private var inlineDeliverableTask: AmberUnifiedTaskItem? = nil
 
     private var groups: AmberUnifiedTaskBuilder.Groups {
-        AmberUnifiedTaskBuilder.buildTasks(
-            gateway: gateway,
-            subAgentStore: subAgentStore,
-            taskStore: taskStore,
-            wakeStore: wakeStore,
-            hubStore: hubStore,
-            filterHubId: selectedHubFilterId
+        AmberUnifiedTaskProjectionCache.shared.groups(
+            gateway: gateway, subAgentStore: subAgentStore, taskStore: taskStore,
+            wakeStore: wakeStore, hubStore: hubStore, filterHubId: selectedHubFilterId
         )
     }
 
@@ -1296,12 +1290,9 @@ struct AmberDuetHubsCard: View {
     @State private var newHubMemoryPolicy: AmberHubMemoryPolicy = .sharedWithGlobal
 
     private var allActiveTasks: [AmberUnifiedTaskItem] {
-        let grouped = AmberUnifiedTaskBuilder.buildTasks(
-            gateway: gateway,
-            subAgentStore: subAgentStore,
-            taskStore: taskStore,
-            wakeStore: wakeStore,
-            hubStore: hubStore
+        let grouped = AmberUnifiedTaskProjectionCache.shared.groups(
+            gateway: gateway, subAgentStore: subAgentStore, taskStore: taskStore,
+            wakeStore: wakeStore, hubStore: hubStore
         )
         return grouped.needsAttention + grouped.running
     }

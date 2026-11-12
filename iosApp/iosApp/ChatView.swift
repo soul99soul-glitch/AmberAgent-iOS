@@ -690,7 +690,8 @@ struct ChatView: View {
             refreshChatListSummary(
                 resetTitleSeed: signal.event == .conversationLoaded ||
                     signal.event == .conversationSwitched ||
-                    signal.event == .branchChanged
+                    signal.event == .branchChanged ||
+                    signal.reason == .settingsRefresh
             )
         }
         // 后台内容若在本轮前台生成期间落盘,门控当时跳过且未消费;收尾时补查上屏。

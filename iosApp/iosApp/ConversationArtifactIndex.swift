@@ -149,9 +149,113 @@ struct ConversationArtifactIndex: Equatable {
         widgetSettings: IOSGenerativeWidgetSettings = IOSGenerativeWidgetSettings(),
         contentCache: ConversationArtifactContentCache? = nil
     ) -> ConversationArtifactIndex {
+        if let cache = contentCache,
+           let snap = cache.incrementalSnapshot,
+           snap.settings == widgetSettings {
+            if snap.fullMessages.count == messages.count,
+               sameMessageIdentities(snap.fullMessages, messages) {
+                return snap.fullIndex
+            }
+            if !snap.fullMessages.isEmpty,
+               messages.count > snap.fullMessages.count,
+               samePrefixMessageIdentities(prefix: snap.fullMessages, in: messages) {
+                var state = snap.fullState
+                let lastIndex = messages.count - 1
+                if snap.fullMessages.count < lastIndex {
+                    for idx in snap.fullMessages.count..<lastIndex {
+                        state.ingest(messages[idx], widgetSettings: widgetSettings, contentCache: cache)
+                    }
+                }
+                let prefixState = state
+                let prefixMessages = lastIndex == snap.fullMessages.count
+                    ? snap.fullMessages
+                    : Array(messages.prefix(lastIndex))
+                state.ingest(messages[lastIndex], widgetSettings: widgetSettings, contentCache: cache)
+                let built = state.buildIndex()
+                cache.incrementalSnapshot = ConversationArtifactContentCache.IncrementalSnapshot(
+                    settings: widgetSettings,
+                    fullMessages: messages,
+                    fullState: state,
+                    fullIndex: built,
+                    prefixMessages: prefixMessages,
+                    prefixState: prefixState
+                )
+                cache.clearTouchedWithoutPruning()
+                return built
+            }
+            if !messages.isEmpty,
+               messages.count == snap.prefixMessages.count + 1,
+               samePrefixMessageIdentities(prefix: snap.prefixMessages, in: messages) {
+                var state = snap.prefixState
+                state.ingest(messages[messages.count - 1], widgetSettings: widgetSettings, contentCache: cache)
+                let built = state.buildIndex()
+                cache.incrementalSnapshot = ConversationArtifactContentCache.IncrementalSnapshot(
+                    settings: widgetSettings,
+                    fullMessages: messages,
+                    fullState: state,
+                    fullIndex: built,
+                    prefixMessages: snap.prefixMessages,
+                    prefixState: snap.prefixState
+                )
+                cache.clearTouchedWithoutPruning()
+                return built
+            }
+        }
+
+        var state = BuilderState()
+        var prefixState = BuilderState()
+        let lastIndex = messages.count - 1
+        for (idx, message) in messages.enumerated() {
+            if idx == lastIndex {
+                prefixState = state
+            }
+            state.ingest(message, widgetSettings: widgetSettings, contentCache: contentCache)
+        }
+        contentCache?.prune()
+        let built = state.buildIndex()
+        if let cache = contentCache {
+            cache.incrementalSnapshot = ConversationArtifactContentCache.IncrementalSnapshot(
+                settings: widgetSettings,
+                fullMessages: messages,
+                fullState: state,
+                fullIndex: built,
+                prefixMessages: messages.isEmpty ? [] : Array(messages.prefix(lastIndex)),
+                prefixState: prefixState
+            )
+        }
+        return built
+    }
+
+    private static func sameMessageIdentities(_ lhs: [UIMessage], _ rhs: [UIMessage]) -> Bool {
+        guard lhs.count == rhs.count else { return false }
+        for idx in 0..<lhs.count where lhs[idx] !== rhs[idx] {
+            return false
+        }
+        return true
+    }
+
+    private static func samePrefixMessageIdentities(prefix: [UIMessage], in full: [UIMessage]) -> Bool {
+        guard prefix.count <= full.count else { return false }
+        for idx in 0..<prefix.count where prefix[idx] !== full[idx] {
+            return false
+        }
+        return true
+    }
+
+    fileprivate struct BuilderState {
         var images: [Image] = []
         var imageIndicesByKey: [String: Int] = [:]
-        func appendImage(_ item: ChatMediaItem, source: Source, id: String? = nil, prompt: String? = nil) {
+        var files: [FileGroup] = []
+        var fileIndices: [String: Int] = [:]
+        var webPages: [WebPage] = []
+        var webPageIndices: [String: Int] = [:]
+        var htmlPages: [HTMLPage] = []
+        var miniAppIndices: [String: Int] = [:]
+        var widgetIndices: [String: Int] = [:]
+        var seenTools: Set<ToolIdentity> = []
+        var turn = 0
+
+        mutating func appendImage(_ item: ChatMediaItem, source: Source, id: String? = nil, prompt: String? = nil) {
             let resolvedPrompt = prompt ?? nonBlank(item.title)
             let canonical = canonicalImageIdentity(item.url)
             if let existingIndex = imageIndicesByKey[canonical.dedupKey] {
@@ -175,29 +279,24 @@ struct ConversationArtifactIndex: Equatable {
             imageIndicesByKey[canonical.dedupKey] = images.count
             images.append(Image(id: stableID, url: displayURL, prompt: resolvedPrompt, source: source))
         }
-        var files: [FileGroup] = []
-        var fileIndices: [String: Int] = [:]
-        var webPages: [WebPage] = []
-        var webPageIndices: [String: Int] = [:]
-        var htmlPages: [HTMLPage] = []
-        var miniAppIndices: [String: Int] = [:]
-        var widgetIndices: [String: Int] = [:]
-        var seenTools: Set<ToolIdentity> = []
-        var turn = 0
 
-        for message in messages {
-            guard ChatMessageProjector.isConversationMessage(message) else { continue }
+        mutating func ingest(
+            _ message: UIMessage,
+            widgetSettings: IOSGenerativeWidgetSettings,
+            contentCache: ConversationArtifactContentCache?
+        ) {
+            guard ChatMessageProjector.isConversationMessage(message) else { return }
             if message.role == MessageRole.user {
                 turn += 1
-                continue
+                return
             }
-            guard message.role == MessageRole.assistant else { continue }
+            guard message.role == MessageRole.assistant else { return }
 
             let messageID = ChatMessageProjector.messageId(for: message)
             let messageSource = Source(messageID: messageID, turn: max(turn, 1), toolCallID: nil)
-            for (partIndex, part) in message.parts.enumerated() {
+            let parts = message.parts
+            for (partIndex, part) in parts.enumerated() {
                 if let miniApp = part as? UIMessagePart.MiniApp {
-                    // 修改后的小程序沿用同一 appId，运行时总打开最新版；只保留最新卡片。
                     let page = HTMLPage(
                         id: "miniapp:\(miniApp.appId)",
                         title: nonBlank(miniApp.title) ?? "未命名小程序",
@@ -240,7 +339,7 @@ struct ConversationArtifactIndex: Equatable {
                     }
                 }
             }
-            for case let tool as UIMessagePart.Tool in message.parts {
+            for case let tool as UIMessagePart.Tool in parts {
                 let identity = ToolIdentity(messageID: messageID, toolCallID: tool.toolCallId)
                 guard !tool.toolCallId.isEmpty, seenTools.insert(identity).inserted else { continue }
                 let source = Source(
@@ -248,29 +347,24 @@ struct ConversationArtifactIndex: Equatable {
                     turn: max(turn, 1),
                     toolCallID: tool.toolCallId
                 )
+                let extracted = contentCache?.toolArtifact(
+                    key: "\(messageID):tool:\(tool.toolCallId)",
+                    tool: tool,
+                    compute: { extractToolArtifact(from: tool) }
+                ) ?? extractToolArtifact(from: tool)
                 let generated = tool.toolName == "generate_image"
-                let prompt = generated ? (inputObject(tool.input)["prompt"] as? String)?.nilIfBlank : nil
-                for (imageIndex, image) in ChatMediaItem.toolImages(tool.output).enumerated() {
-                    appendImage(image, source: source,
-                                id: generated ? "\(messageID):\(tool.toolCallId):image:\(imageIndex)" : nil,
-                                prompt: prompt)
+                for (imageIndex, image) in extracted.images.enumerated() {
+                    appendImage(
+                        image,
+                        source: source,
+                        id: generated ? "\(messageID):\(tool.toolCallId):image:\(imageIndex)" : nil,
+                        prompt: extracted.generatedPrompt
+                    )
                 }
-                switch tool.toolName {
-                case "workspace_file_write":
-                    let input = inputObject(tool.input)
-                    let output = ChatToolOutputFormatter.analysis(for: tool).firstJSONObject
-                    guard let output, output["ok"] as? Bool == true,
-                          let path = canonicalWorkspacePath(
-                              output["path"] as? String ?? input["path"] as? String
-                          ) else { continue }
-                    let content: String?
-                    if let candidate = input["content"] as? String,
-                       let size = output["size_bytes"] as? Int,
-                       candidate.utf8.count == size {
-                        content = candidate
-                    } else {
-                        content = nil
-                    }
+                switch extracted.payload {
+                case .none:
+                    continue
+                case let .fileVersion(path, content):
                     appendFileVersion(
                         path: path,
                         content: content,
@@ -278,57 +372,111 @@ struct ConversationArtifactIndex: Equatable {
                         files: &files,
                         fileIndices: &fileIndices
                     )
-                case "workspace_file_edit":
-                    let input = inputObject(tool.input)
-                    let output = ChatToolOutputFormatter.analysis(for: tool).firstJSONObject
-                    guard let output, output["ok"] as? Bool == true,
-                          output["changed"] as? Bool == true,
-                          let path = canonicalWorkspacePath(
-                              output["path"] as? String ?? input["path"] as? String
-                          ) else { continue }
-                    // workspace 可被其他对话或终端改写，有限 diff 回执不足以证明全文。
-                    appendFileVersion(
-                        path: path,
-                        content: nil,
-                        source: source,
-                        files: &files,
-                        fileIndices: &fileIndices
+                case let .webPage(id, title, displayURL, dedupKey, previewText):
+                    appendWebPage(
+                        WebPage(
+                            id: id,
+                            title: title,
+                            url: displayURL,
+                            preview: previewText,
+                            source: source
+                        ),
+                        dedupKey: dedupKey,
+                        pages: &webPages,
+                        indices: &webPageIndices
                     )
-                case "scrape_web":
-                    let output = ChatToolOutputFormatter.analysis(for: tool).firstJSONObject
-                    guard let output, isSuccessful(output),
-                          let rawURL = nonBlank(output["url"] as? String) else { continue }
-                    let canonical = canonicalWebIdentity(rawURL)
-                    let title = nonBlank(output["title"] as? String) ?? canonical.displayURL
-                    appendWebPage(WebPage(
-                        id: "web:\(canonical.displayURL)",
-                        title: title,
-                        url: canonical.displayURL,
-                        preview: nonBlank(output["content"] as? String).map(preview),
-                        source: source
-                    ), dedupKey: canonical.dedupKey, pages: &webPages, indices: &webPageIndices)
-                case "wm_open", "wm_extract":
-                    let output = ChatToolOutputFormatter.analysis(for: tool).firstJSONObject
-                    guard let output, let page = webMountPage(output),
-                          let rawURL = nonBlank(page.url) ?? nonBlank(page.currentURL),
-                          isSuccessful(output) else { continue }
-                    let canonical = canonicalWebIdentity(rawURL)
-                    let title = nonBlank(page.title) ?? canonical.displayURL
-                    appendWebPage(WebPage(
-                        id: "web:\(canonical.displayURL)",
-                        title: title,
-                        url: canonical.displayURL,
-                        preview: nonBlank(page.preview).map(preview),
-                        source: source
-                    ), dedupKey: canonical.dedupKey, pages: &webPages, indices: &webPageIndices)
-                default:
-                    continue
                 }
             }
         }
 
-        contentCache?.prune()
-        return ConversationArtifactIndex(images: images, files: files, webPages: webPages, htmlPages: htmlPages)
+        func buildIndex() -> ConversationArtifactIndex {
+            ConversationArtifactIndex(images: images, files: files, webPages: webPages, htmlPages: htmlPages)
+        }
+    }
+
+    fileprivate struct ExtractedToolArtifact {
+        enum Payload {
+            case none
+            case fileVersion(path: String, content: String?)
+            case webPage(id: String, title: String, displayURL: String, dedupKey: String, preview: String?)
+        }
+
+        let images: [ChatMediaItem]
+        let generatedPrompt: String?
+        let payload: Payload
+    }
+
+    private static func extractToolArtifact(from tool: UIMessagePart.Tool) -> ExtractedToolArtifact {
+        let generated = tool.toolName == "generate_image"
+        let prompt = generated ? (inputObject(tool.input)["prompt"] as? String)?.nilIfBlank : nil
+        let media = ChatMediaItem.toolImages(tool.output)
+        let payload: ExtractedToolArtifact.Payload
+        switch tool.toolName {
+        case "workspace_file_write":
+            let input = inputObject(tool.input)
+            let output = ChatToolOutputFormatter.analysis(for: tool).firstJSONObject
+            if let output, output["ok"] as? Bool == true,
+               let path = canonicalWorkspacePath(output["path"] as? String ?? input["path"] as? String) {
+                let content: String?
+                if let candidate = input["content"] as? String,
+                   let size = output["size_bytes"] as? Int,
+                   candidate.utf8.count == size {
+                    content = candidate
+                } else {
+                    content = nil
+                }
+                payload = .fileVersion(path: path, content: content)
+            } else {
+                payload = .none
+            }
+        case "workspace_file_edit":
+            let input = inputObject(tool.input)
+            let output = ChatToolOutputFormatter.analysis(for: tool).firstJSONObject
+            if let output, output["ok"] as? Bool == true,
+               output["changed"] as? Bool == true,
+               let path = canonicalWorkspacePath(output["path"] as? String ?? input["path"] as? String) {
+                // workspace 可被其他对话或终端改写，有限 diff 回执不足以证明全文。
+                payload = .fileVersion(path: path, content: nil)
+            } else {
+                payload = .none
+            }
+        case "scrape_web":
+            let output = ChatToolOutputFormatter.analysis(for: tool).firstJSONObject
+            if let output, isSuccessful(output),
+               let rawURL = nonBlank(output["url"] as? String) {
+                let canonical = canonicalWebIdentity(rawURL)
+                let title = nonBlank(output["title"] as? String) ?? canonical.displayURL
+                payload = .webPage(
+                    id: "web:\(canonical.displayURL)",
+                    title: title,
+                    displayURL: canonical.displayURL,
+                    dedupKey: canonical.dedupKey,
+                    preview: nonBlank(output["content"] as? String).map(preview)
+                )
+            } else {
+                payload = .none
+            }
+        case "wm_open", "wm_extract":
+            let output = ChatToolOutputFormatter.analysis(for: tool).firstJSONObject
+            if let output, let page = webMountPage(output),
+               let rawURL = nonBlank(page.url) ?? nonBlank(page.currentURL),
+               isSuccessful(output) {
+                let canonical = canonicalWebIdentity(rawURL)
+                let title = nonBlank(page.title) ?? canonical.displayURL
+                payload = .webPage(
+                    id: "web:\(canonical.displayURL)",
+                    title: title,
+                    displayURL: canonical.displayURL,
+                    dedupKey: canonical.dedupKey,
+                    preview: nonBlank(page.preview).map(preview)
+                )
+            } else {
+                payload = .none
+            }
+        default:
+            payload = .none
+        }
+        return ExtractedToolArtifact(images: media, generatedPrompt: prompt, payload: payload)
     }
 
     private static func markdownImages(in text: String) -> [ChatMediaItem] {
@@ -379,7 +527,7 @@ struct ConversationArtifactIndex: Equatable {
         let preview: String?
     }
 
-    private struct ToolIdentity: Hashable {
+    fileprivate struct ToolIdentity: Hashable {
         let messageID: String
         let toolCallID: String
     }
@@ -606,8 +754,44 @@ final class ConversationArtifactContentCache {
         let widgets: [IOSGenerativeWidget]
     }
 
+    fileprivate struct IncrementalSnapshot {
+        let settings: IOSGenerativeWidgetSettings
+        let fullMessages: [UIMessage]
+        let fullState: ConversationArtifactIndex.BuilderState
+        let fullIndex: ConversationArtifactIndex
+        let prefixMessages: [UIMessage]
+        let prefixState: ConversationArtifactIndex.BuilderState
+    }
+
+    private struct ToolEntry {
+        let tool: UIMessagePart.Tool
+        let extracted: ConversationArtifactIndex.ExtractedToolArtifact
+    }
+
+    fileprivate var incrementalSnapshot: IncrementalSnapshot?
     private var entries: [String: Entry] = [:]
+    private var toolEntries: [String: ToolEntry] = [:]
     private var touched: Set<String> = []
+    private var touchedTools: Set<String> = []
+
+    fileprivate func toolArtifact(
+        key: String,
+        tool: UIMessagePart.Tool,
+        compute: () -> ConversationArtifactIndex.ExtractedToolArtifact
+    ) -> ConversationArtifactIndex.ExtractedToolArtifact {
+        touchedTools.insert(key)
+        if let entry = toolEntries[key], entry.tool === tool {
+            return entry.extracted
+        }
+        let extracted = compute()
+        toolEntries[key] = ToolEntry(tool: tool, extracted: extracted)
+        return extracted
+    }
+
+    fileprivate func clearTouchedWithoutPruning() {
+        touched.removeAll(keepingCapacity: true)
+        touchedTools.removeAll(keepingCapacity: true)
+    }
 
     func widgets(
         key: String,
@@ -628,6 +812,9 @@ final class ConversationArtifactContentCache {
     func prune() {
         entries = entries.filter { touched.contains($0.key) }
         imageEntries = imageEntries.filter { touched.contains($0.key) }
+        toolEntries = toolEntries.filter { touchedTools.contains($0.key) }
         touched.removeAll(keepingCapacity: true)
+        touchedTools.removeAll(keepingCapacity: true)
+        incrementalSnapshot = nil
     }
 }

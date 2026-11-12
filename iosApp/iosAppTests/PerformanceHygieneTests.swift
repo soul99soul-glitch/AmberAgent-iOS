@@ -196,4 +196,18 @@ final class PerformanceHygieneTests: XCTestCase {
             "AmberTableLayout 必须实现 updateCache，否则 SwiftUI 默认实现会在每次布局都重新调用 makeCache，导致历史区任意一行动画都触发所有表格整表重测。"
         )
     }
+
+    func testConversationTitleForIslandConsumesSummaryInsteadOfRawMessages() throws {
+        let content = try source("iosApp/Chat/Presentation/ChatViewScreenSignals.swift")
+        let titleSlice = try slice(
+            of: content,
+            from: "var conversationTitleForIsland: String",
+            untilLineContaining: "func compactIslandText"
+        )
+        XCTAssertFalse(
+            titleSlice.contains("viewModel.messages"),
+            "conversationTitleForIsland 在 ChatView.body -> topBar 路径求值，不得直接读取 viewModel.messages，否则封存 Episode 后每次流式增量都会击穿整页隔离。"
+        )
+        XCTAssertTrue(titleSlice.contains("chatListSummary.isAtEmptyEpisodeBoundary"))
+    }
 }

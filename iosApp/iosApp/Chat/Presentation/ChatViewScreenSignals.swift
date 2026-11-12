@@ -39,6 +39,11 @@ extension ChatView {
         }.count
         next.updateTimelineAnchors(from: messages)
         next.recapBranchID = conversationStore.currentRecapBranchID ?? ""
+        next.isAtEmptyEpisodeBoundary = !ChatEpisodeStore.shared.episodes(for: currentConversationIdString).isEmpty
+            && ChatEpisodeStore.shared.isAtEmptyBoundary(
+                conversationId: currentConversationIdString,
+                messages: messages
+            )
         let taskCounts = taskCountCache.counts(messages: messages, isGenerationActive: viewModel.isGenerationActive)
         next.inChatActiveTaskCount = taskCounts.active
         next.inChatNeedsAttentionCount = taskCounts.needsAttention
@@ -154,13 +159,7 @@ extension ChatView {
             return "\(resolvedSoulName) · 云端"
         }
         _ = conversationStore.currentRevision
-        _ = ChatEpisodeStore.shared.mutationRevision
-        let isAtEmptyEpisodeBoundary = !ChatEpisodeStore.shared.episodes(for: currentConversationIdString).isEmpty
-            && ChatEpisodeStore.shared.isAtEmptyBoundary(
-                conversationId: currentConversationIdString,
-                messages: viewModel.messages
-            )
-        if !isAtEmptyEpisodeBoundary {
+        if !chatListSummary.isAtEmptyEpisodeBoundary {
             let storedTitle = conversationStore.currentConversation?.title
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !storedTitle.isEmpty {

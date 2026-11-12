@@ -56,6 +56,8 @@ struct ChatListSummarySnapshot: Equatable {
     /// 当前会话的回顾分支标识（依赖 `conversation.messageNodes` 的 variant 选择，
     /// 不依赖消息内容），随会话切换 / 分支变化刷新。
     var recapBranchID = ""
+    /// 当前会话是否正停在已封存 Episode 的空新话题边界，供顶栏灵动岛标题免读 `viewModel.messages`。
+    var isAtEmptyEpisodeBoundary = false
     var inChatActiveTaskCount = 0
     var inChatNeedsAttentionCount = 0
 
@@ -75,6 +77,7 @@ struct ChatListSummarySnapshot: Equatable {
             lhs.lastMessageIsAssistant == rhs.lastMessageIsAssistant &&
             lhs.messageIDsBeforeLatestUser == rhs.messageIDsBeforeLatestUser &&
             lhs.recapBranchID == rhs.recapBranchID &&
+            lhs.isAtEmptyEpisodeBoundary == rhs.isAtEmptyEpisodeBoundary &&
             lhs.inChatActiveTaskCount == rhs.inChatActiveTaskCount &&
             lhs.inChatNeedsAttentionCount == rhs.inChatNeedsAttentionCount &&
             lhs.activeToolStep?.id == rhs.activeToolStep?.id &&

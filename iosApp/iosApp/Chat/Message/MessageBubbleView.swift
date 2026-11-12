@@ -885,7 +885,10 @@ private struct MessageBubbleStatefulContent: View {
                 )
             }
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: message.parts.map(Self.partAnimationKey).joined(separator: "|"))
+        .animation(
+            reduceMotion ? nil : .easeInOut(duration: 0.28),
+            value: message.parts.map { Self.partAnimationKey($0, isLiveStream: isGenerating && isLastMessage) }.joined(separator: "|")
+        )
     }
 
     @ViewBuilder
@@ -1169,7 +1172,10 @@ private struct MessageBubbleStatefulContent: View {
                 }
             }
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: message.parts.map(Self.partAnimationKey).joined(separator: "|"))
+        .animation(
+            reduceMotion ? nil : .easeInOut(duration: 0.28),
+            value: message.parts.map { Self.partAnimationKey($0, isLiveStream: isGenerating && isLastMessage) }.joined(separator: "|")
+        )
     }
 
     private var messagePartsWithAnchorHighlight: some View {
@@ -1251,7 +1257,7 @@ private struct MessageBubbleStatefulContent: View {
         isLiveStream && IOSMiniAppChatMessageFactory.mightContainMiniApp(text)
     }
 
-    private static func partAnimationKey(_ part: UIMessagePart) -> String {
+    private static func partAnimationKey(_ part: UIMessagePart, isLiveStream: Bool) -> String {
         if let tool = part as? UIMessagePart.Tool {
             let imageCount = tool.output.compactMap { $0 as? UIMessagePart.Image }.count
             return "tool:\(tool.toolCallId):\(tool.output.isEmpty):\(imageCount)"
@@ -1259,10 +1265,11 @@ private struct MessageBubbleStatefulContent: View {
         if let miniApp = part as? UIMessagePart.MiniApp {
             return "mini_app:\(miniApp.appId):\(miniApp.version):\(miniApp.htmlHash ?? "")"
         }
-        if let text = part as? UIMessagePart.Text,
+        if isLiveStream,
+           let text = part as? UIMessagePart.Text,
            IOSMiniAppChatMessageFactory.mightContainMiniApp(text.text) {
             // Coarse key so streaming length growth does not thrash every token.
-            return "mini_app_stream:\(text.text.count / 64)"
+            return "mini_app_stream:\(text.text.utf8.count / 64)"
         }
         return String(describing: type(of: part))
     }

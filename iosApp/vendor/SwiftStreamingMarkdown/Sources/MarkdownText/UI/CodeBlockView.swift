@@ -15,12 +15,12 @@ private actor HighlightTaskManager: ObservableObject {
   private static let sharedHighlight = Highlight()
   private static let minimumHighlightIntervalNs: UInt64 = 90_000_000
 
-  private var latestCode: String?
+  private var latestRequest: (code: String, language: String)?
   private var isProcessing = false
   private var lastHighlightFinishedUptimeNs: UInt64 = 0
 
-  func enqueueCode(_ code: String, completion: @escaping (String, AttributedString) -> Void) {
-    latestCode = code
+  func enqueueCode(_ code: String, language: String, completion: @escaping (String, AttributedString) -> Void) {
+    latestRequest = (code, language)
 
     if !isProcessing {
       Task {
@@ -34,7 +34,7 @@ private actor HighlightTaskManager: ObservableObject {
 
     isProcessing = true
 
-    while latestCode != nil {
+    while latestRequest != nil {
       if lastHighlightFinishedUptimeNs > 0 {
         let nowNs = DispatchTime.now().uptimeNanoseconds
         let elapsedNs = nowNs >= lastHighlightFinishedUptimeNs ? nowNs - lastHighlightFinishedUptimeNs : 0
@@ -42,11 +42,28 @@ private actor HighlightTaskManager: ObservableObject {
           try? await Task.sleep(nanoseconds: Self.minimumHighlightIntervalNs - elapsedNs)
         }
       }
-      guard let codeToProcess = latestCode else { break }
-      latestCode = nil
+      guard let request = latestRequest else { break }
+      latestRequest = nil
+      let codeToProcess = request.code
+      let normalizedLanguage = request.language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
       let css: String = await CodeBlockView.syntaxHighlightingCss
-      if let result = try? await Self.sharedHighlight.attributedText(codeToProcess, colors: .custom(css: css, background: "")) {
+      let highlightColors: HighlightColors = .custom(css: css, background: "")
+      let highlighted: AttributedString?
+      if !normalizedLanguage.isEmpty,
+         let explicit = try? await Self.sharedHighlight.attributedText(
+           codeToProcess,
+           language: normalizedLanguage,
+           colors: highlightColors
+         ) {
+        highlighted = explicit
+      } else {
+        highlighted = try? await Self.sharedHighlight.attributedText(
+          codeToProcess,
+          colors: highlightColors
+        )
+      }
+      if let result = highlighted {
         lastHighlightFinishedUptimeNs = DispatchTime.now().uptimeNanoseconds
         await MainActor.run {
           completion(codeToProcess, result)
@@ -108,8 +125,8 @@ public struct CodeBlockView: View {
     }
   }
 
-  private func updateAttributedString(code: String) async {
-    await taskManager.enqueueCode(code) { processedCode, newAttributedString in
+  private func updateAttributedString(code: String, language: String? = nil) async {
+    await taskManager.enqueueCode(code, language: language ?? self.language) { processedCode, newAttributedString in
       self.highlightedCode = processedCode
       self.attributedString = newAttributedString
     }
@@ -131,6 +148,17 @@ public struct CodeBlockView: View {
     }
     if highlightedCode == currentCode {
       return attributedString
+    }
+    if currentCode.utf8.starts(with: highlightedCode.utf8),
+       let utf8Split = currentCode.utf8.index(
+         currentCode.utf8.startIndex,
+         offsetBy: highlightedCode.utf8.count,
+         limitedBy: currentCode.utf8.endIndex
+       ),
+       let scalarBoundary = utf8Split.samePosition(in: currentCode) {
+      var combined = attributedString
+      combined.append(AttributedString(String(currentCode[scalarBoundary...])))
+      return combined
     }
     if currentCode.hasPrefix(highlightedCode) {
       var combined = attributedString
@@ -255,6 +283,11 @@ public struct CodeBlockView: View {
     .onChange(of: displayedCode, perform: { value in
       Task {
         await updateAttributedString(code: value)
+      }
+    })
+    .onChange(of: language, perform: { newLanguage in
+      Task {
+        await updateAttributedString(code: displayedCode, language: newLanguage)
       }
     })
     .onAppear(perform: {

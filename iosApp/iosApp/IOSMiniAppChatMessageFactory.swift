@@ -1,14 +1,97 @@
+import Darwin
 import Foundation
 import Shared
 
 /// Aligns iOS chat MiniApp finish handling with Android `MiniAppOutputTransformer`:
 /// replace the assistant JSON text with a short status + `UIMessagePart.MiniApp` card ref.
 enum IOSMiniAppChatMessageFactory {
+    private static let jsonDescriptionBytes: [UInt8] = Array("\"description\"".utf8)
+    private static let jsonHtmlBytes: [UInt8] = Array("\"html\"".utf8)
+    private static let jsonTitleBytes: [UInt8] = Array("\"title\"".utf8)
+    private static let doctypeLowerBytes: [UInt8] = Array("<!doctype html".utf8)
+    private static let htmlTagLowerBytes: [UInt8] = Array("<html".utf8)
+
     static func mightContainMiniApp(_ text: String) -> Bool {
-        let hasJSONFields = text.contains("\"html\"") && text.contains("\"title\"") && text.contains("\"description\"")
-        if hasJSONFields { return true }
-        let lowered = text.lowercased()
-        return lowered.contains("<!doctype html") || lowered.contains("<html")
+        if let hit = text.utf8.withContiguousStorageIfAvailable({ mightContainMiniApp(in: $0) }) {
+            return hit
+        }
+        let contiguous = Array(text.utf8)
+        return contiguous.withUnsafeBufferPointer { mightContainMiniApp(in: $0) }
+    }
+
+    private static func mightContainMiniApp(in buffer: UnsafeBufferPointer<UInt8>) -> Bool {
+        guard let base = buffer.baseAddress, buffer.count >= 5 else { return false }
+        if containsExactASCII(base: base, count: buffer.count, needle: jsonDescriptionBytes),
+           containsExactASCII(base: base, count: buffer.count, needle: jsonHtmlBytes),
+           containsExactASCII(base: base, count: buffer.count, needle: jsonTitleBytes) {
+            return true
+        }
+        return containsHTMLMarkerCaseInsensitive(base: base, count: buffer.count)
+    }
+
+    private static func containsExactASCII(
+        base: UnsafePointer<UInt8>,
+        count: Int,
+        needle: [UInt8]
+    ) -> Bool {
+        let needleCount = needle.count
+        guard count >= needleCount, let firstByte = needle.first else { return false }
+        let lastStart = count - needleCount
+        return needle.withUnsafeBufferPointer { needleBuf in
+            guard let needleBase = needleBuf.baseAddress else { return false }
+            var offset = 0
+            while offset <= lastStart {
+                guard let found = memchr(base.advanced(by: offset), Int32(firstByte), lastStart - offset + 1) else {
+                    return false
+                }
+                let matchPtr = found.assumingMemoryBound(to: UInt8.self)
+                if memcmp(matchPtr, needleBase, needleCount) == 0 {
+                    return true
+                }
+                offset = base.distance(to: matchPtr) + 1
+            }
+            return false
+        }
+    }
+
+    private static func containsHTMLMarkerCaseInsensitive(
+        base: UnsafePointer<UInt8>,
+        count: Int
+    ) -> Bool {
+        let minLen = htmlTagLowerBytes.count // 5 ("<html")
+        guard count >= minLen else { return false }
+        let lastStart = count - minLen
+        var offset = 0
+        while offset <= lastStart {
+            guard let found = memchr(base.advanced(by: offset), Int32(0x3C), lastStart - offset + 1) else {
+                return false
+            }
+            let ptr = found.assumingMemoryBound(to: UInt8.self)
+            let idx = base.distance(to: ptr)
+            let remaining = count - idx
+            if remaining >= htmlTagLowerBytes.count,
+               matchesASCIILower(ptr, lowerNeedle: htmlTagLowerBytes) {
+                return true
+            }
+            if remaining >= doctypeLowerBytes.count,
+               matchesASCIILower(ptr, lowerNeedle: doctypeLowerBytes) {
+                return true
+            }
+            offset = idx + 1
+        }
+        return false
+    }
+
+    @inline(__always)
+    private static func matchesASCIILower(_ ptr: UnsafePointer<UInt8>, lowerNeedle: [UInt8]) -> Bool {
+        for i in 1..<lowerNeedle.count {
+            let b = ptr[i]
+            let lowered = (b >= 0x41 && b <= 0x5A) ? (b &+ 0x20) : b
+            if lowered != lowerNeedle[i] {
+                return false
+            }
+        }
+        return true
     }
 
     /// Newest MiniApp-looking assistant in the current turn (after `afterUserIndex`), skipping trailing notices.

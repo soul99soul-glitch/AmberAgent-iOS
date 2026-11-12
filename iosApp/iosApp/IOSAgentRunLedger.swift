@@ -17,6 +17,32 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
 
     private let dao: AgentRuntimeDao
     private let store: RoomAgentEventStore
+    private let ledgerInstanceId = UUID()
+    private var lastRequestSnapshotIndexByRunId: [String: (roundIndex: Int, writerGeneration: UInt64)] = [:]
+
+    private final class RequestSnapshotWriterEpoch: @unchecked Sendable {
+        static let shared = RequestSnapshotWriterEpoch()
+        private let lock = NSLock()
+        private var entries: [String: (writerId: UUID, generation: UInt64)] = [:]
+
+        func matches(runId: String, writerId: UUID, generation: UInt64) -> Bool {
+            lock.withLock {
+                guard let entry = entries[runId] else { return false }
+                return entry.writerId == writerId && entry.generation == generation
+            }
+        }
+
+        func recordWrite(runId: String, writerId: UUID) -> UInt64 {
+            lock.withLock {
+                if entries.count >= 256, entries[runId] == nil {
+                    entries.removeAll(keepingCapacity: true)
+                }
+                let nextGen = (entries[runId]?.generation ?? 0) &+ 1
+                entries[runId] = (writerId: writerId, generation: nextGen)
+                return nextGen
+            }
+        }
+    }
 
     private struct RunCandidate: Sendable {
         let runId: String
@@ -47,7 +73,7 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         guard let data = try? encoder.encode(persistedSnapshot),
               let payload = String(data: data, encoding: .utf8) else { return false }
-        return await append(
+        let appended = await append(
             runId: runId,
             event: AgentRunEvent(
                 eventId: UUID().uuidString,
@@ -62,10 +88,28 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
                 toolCallId: nil
             )
         )
+        if appended {
+            if lastRequestSnapshotIndexByRunId.count >= 256, lastRequestSnapshotIndexByRunId[runId] == nil {
+                lastRequestSnapshotIndexByRunId.removeAll(keepingCapacity: true)
+            }
+            let generation = RequestSnapshotWriterEpoch.shared.recordWrite(runId: runId, writerId: ledgerInstanceId)
+            lastRequestSnapshotIndexByRunId[runId] = (roundIndex: roundIndex, writerGeneration: generation)
+        } else {
+            lastRequestSnapshotIndexByRunId.removeValue(forKey: runId)
+        }
+        return appended
     }
 
     private func nextRequestSnapshotIndex(runId: String) async -> Int? {
-        await withCheckedContinuation { continuation in
+        if let cached = lastRequestSnapshotIndexByRunId[runId],
+           RequestSnapshotWriterEpoch.shared.matches(
+               runId: runId,
+               writerId: ledgerInstanceId,
+               generation: cached.writerGeneration
+           ) {
+            return cached.roundIndex + 1
+        }
+        return await withCheckedContinuation { continuation in
             dao.listEventsForRun(id: runId) { rows, error in
                 guard error == nil, let rows else {
                     continuation.resume(returning: nil)

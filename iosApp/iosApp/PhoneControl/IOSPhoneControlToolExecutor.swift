@@ -663,9 +663,13 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                 && controller.canDispatchAction(runID: runID) && !Task.isCancelled
             fields["observation_id"] = observation.observationID
             fields["fresh_observation_available"] = reusable
-            fields["next_step_hint"] = reusable
-                ? "已返回最新界面及可用 ref；若无需新的截图，不必重复 phone_observe。多步导航、浏览或作答优先 phone_run_goal（只给 goal、bundle_id、completion）；固定小流程用 phone_run_flow。只规划未完成内容，禁止整体重放。"
-                : "该观察已不可用于后续动作；任务仍获授权时重新 phone_observe，禁止重放已派发步骤。"
+            if reusable {
+                fields["next_step_hint"] = IOSPhoneAutomationRequestPolicy.liveGoalPlanningActiveProvider()
+                    ? "已返回最新界面及可用 ref；若无需新的截图，不必重复 phone_observe。多步导航、浏览或作答优先 phone_run_goal（只给 goal、bundle_id、completion）；固定小流程用 phone_run_flow。只规划未完成内容，禁止整体重放。"
+                    : "已返回最新界面及可用 ref；若无需新的截图，不必重复 phone_observe。当前未启用后台目标规划，请勿调用 phone_run_goal；连续固定步骤优先合并为一次 phone_run_flow，单步动作使用 phone_act。只规划未完成内容，禁止整体重放。"
+            } else {
+                fields["next_step_hint"] = "该观察已不可用于后续动作；任务仍获授权时重新 phone_observe，禁止重放已派发步骤。"
+            }
             parts[0] = UIMessagePart.Text(text: Self.json(fields), metadata: nil)
         }
         return requiresReplan ? .replanRequired(parts) : .filledParts(parts)

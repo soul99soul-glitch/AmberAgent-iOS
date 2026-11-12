@@ -508,12 +508,33 @@ final class NativeTimelineProjectionCache {
         return (splitEntryIndex, splitMessageIndex)
     }
 
+    /// Off-window prefix strictly before the paginated viewport's last preceding user boundary.
+    /// Callers still enforce `===` pointer identity on every message, so any replaced message is
+    /// detected in O(1) without bridging Kotlin `JsonObject` metadata on off-screen history rows.
+    func streamingUnchangedHistoryMetadataCutoff(messageCount: Int) -> Int {
+        guard compactBoundaries.isEmpty, startIndex > 0 else { return 0 }
+        let upper = min(startIndex, min(orderedFacts.count, min(sourceMessages.count, messageCount)))
+        guard upper > 0 else { return 0 }
+        for idx in stride(from: upper - 1, through: 0, by: -1) {
+            let fact = orderedFacts[idx]
+            if fact.isVisibleInTimeline, fact.rawRole == MessageRole.user, !fact.isSubAgentResult {
+                return idx
+            }
+        }
+        return 0
+    }
+
     private func streamingHistoryIsUnchanged(messages: [UIMessage]) -> Bool {
         // SwiftUI can coalesce tool-result and text-delta notifications into one
         // render. A final stream event does not prove that only the tail changed.
         guard sourceMessages.count == messages.count,
               orderedFacts.count == messages.count else { return false }
-        for index in 0 ..< max(0, messages.count - 1) {
+        let historyCount = max(0, messages.count - 1)
+        let cutoff = min(streamingUnchangedHistoryMetadataCutoff(messageCount: messages.count), historyCount)
+        for index in 0 ..< cutoff {
+            guard sourceMessages[index] === messages[index] else { return false }
+        }
+        for index in cutoff ..< historyCount {
             guard sourceMessages[index] === messages[index],
                   orderedFacts[index].identity.matches(messages[index]) else { return false }
         }

@@ -55,6 +55,7 @@ final class IOSSubAgentActivityStore {
     private static let database = IosDatabaseFactory.shared.createDatabase()
 
     private(set) var items: [IOSSubAgentActivity] = []
+    var backingTaskRecords: [IOSAdvancedTaskRecord] { tasks.tasks }
     var isEnabled: Bool {
         didSet {
             guard oldValue != isEnabled else { return }

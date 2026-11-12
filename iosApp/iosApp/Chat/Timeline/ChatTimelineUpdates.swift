@@ -100,7 +100,19 @@ final class ChatTimelineUpdates {
         var result: [ChatMessageContentIdentity] = []
         result.reserveCapacity(messages.count)
         let reusableCount = min(sourceIdentities.count, messages.count)
-        for index in 0..<reusableCount {
+        let metadataCutoff = min(
+            projectionCache.streamingUnchangedHistoryMetadataCutoff(messageCount: messages.count),
+            reusableCount
+        )
+        for index in 0..<metadataCutoff {
+            let existing = sourceIdentities[index]
+            if existing.message === messages[index] {
+                result.append(existing)
+            } else {
+                result.append(ChatMessageContentIdentity(messages[index]))
+            }
+        }
+        for index in metadataCutoff..<reusableCount {
             let existing = sourceIdentities[index]
             if existing.matches(messages[index]) {
                 result.append(existing)
@@ -161,9 +173,22 @@ final class ChatTimelineUpdates {
             ChatRenderProbe.record("tail-fastpath:fail-metadata")
             return false
         }
-        guard zip(sourceIdentities.dropLast(), messages.dropLast()).allSatisfy({ $0.matches($1) }) else {
-            ChatRenderProbe.record("tail-fastpath:fail-history-match")
-            return false
+        let historyCount = max(0, messages.count - 1)
+        let metadataCutoff = min(
+            projectionCache.streamingUnchangedHistoryMetadataCutoff(messageCount: messages.count),
+            historyCount
+        )
+        for index in 0 ..< metadataCutoff {
+            guard sourceIdentities[index].message === messages[index] else {
+                ChatRenderProbe.record("tail-fastpath:fail-history-match")
+                return false
+            }
+        }
+        for index in metadataCutoff ..< historyCount {
+            guard sourceIdentities[index].matches(messages[index]) else {
+                ChatRenderProbe.record("tail-fastpath:fail-history-match")
+                return false
+            }
         }
         let partsMatch = zip(previous.parts, current.parts).allSatisfy { old, new in
             if old is UIMessagePart.Text, new is UIMessagePart.Text { return true }

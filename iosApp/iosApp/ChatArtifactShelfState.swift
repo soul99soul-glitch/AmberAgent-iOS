@@ -17,6 +17,12 @@ struct ChatArtifactShelfState {
         isForegroundRunning: Bool,
         allowArrival: Bool
     ) {
+        if hasLoaded, self.conversationID == conversationID, index == next {
+            if !allowArrival, arrival != nil {
+                arrival = nil
+            }
+            return
+        }
         let previousIDs = Set(entries(index).map(\.id))
         if !hasLoaded || self.conversationID != conversationID || !allowArrival {
             arrival = nil
