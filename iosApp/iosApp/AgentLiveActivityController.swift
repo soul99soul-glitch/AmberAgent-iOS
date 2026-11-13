@@ -406,8 +406,12 @@ final class AgentLiveActivityController {
         activitiesByRunId[runId] = owned
         let content = Self.content(presentation: presentation, now: now)
         await write(owned.card) { await $0.performUpdate(content) }
-        if presentation.phase == .running, presentation.stage.isToolStage {
+        if presentation.phase == .running,
+           presentation.phoneControlPhase != .paused,
+           presentation.stage.isToolStage {
             startToolHeartbeatIfNeeded(runId: runId)
+        } else {
+            stopToolHeartbeat(runId: runId)
         }
     }
 
@@ -436,24 +440,46 @@ final class AgentLiveActivityController {
         return .phoneControl(phase)
     }
 
+    var activeToolHeartbeatCountForTesting: Int {
+        heartbeats.count
+    }
+
+    private func stopToolHeartbeat(runId: String) {
+        heartbeats.removeValue(forKey: runId)?.cancel()
+    }
+
+    private func stopAllToolHeartbeats() {
+        for task in heartbeats.values {
+            task.cancel()
+        }
+        heartbeats.removeAll()
+    }
+
     /// 工具执行期间没有流式输出（终端命令、生图、子代理可能持续数分钟），
     /// 只要 App 仍在执行，就按间隔续期；步骤一变或卡片结束即退出。
     /// App 被挂起时这里不会运行，系统照常把卡片显示为失联。
     private func startToolHeartbeatIfNeeded(runId: String) {
         guard heartbeats[runId] == nil else { return }
-        heartbeats[runId] = Task { @MainActor [weak self, heartbeatSleep] in
+        var createdTask: Task<Void, Never>?
+        createdTask = Task { @MainActor [weak self, heartbeatSleep] in
+            defer {
+                if let self, let createdTask, self.heartbeats[runId] == createdTask {
+                    self.heartbeats[runId] = nil
+                }
+            }
             while !Task.isCancelled {
                 await heartbeatSleep(AgentActivityLifecyclePolicy.progressRefreshInterval)
-                guard let self else { return }
+                guard let self, !Task.isCancelled else { return }
                 guard let owned = self.activitiesByRunId[runId],
                       owned.lastPresentation.phase == .running,
+                      owned.lastPresentation.phoneControlPhase != .paused,
                       owned.lastPresentation.stage.isToolStage else {
-                    self.heartbeats[runId] = nil
                     return
                 }
                 self.noteProgress(runId: runId)
             }
         }
+        heartbeats[runId] = createdTask
     }
 
     /// 流式输出仍在前进时调用，逐 chunk 调用也只是一次字典查找。
@@ -503,6 +529,7 @@ final class AgentLiveActivityController {
         // 请求在途：系统请求可能仍未返回，这里不阻塞等待，只记录撤销终态；
         // `resolvePendingStart` 落地后会立即用这份终态结束刚创建/复用的卡片。
         if let pending = pendingStarts[runId] {
+            stopToolHeartbeat(runId: runId)
             pendingStarts[runId]?.revocation = PendingRevocation(
                 presentation: presentation.preservingUnknownPhoneOutcome(from: pending.presentation),
                 dismissalDelay: dismissalDelay
@@ -520,6 +547,7 @@ final class AgentLiveActivityController {
         )
         terminalPresentation.recentSteps = finishedSteps.isEmpty ? nil : finishedSteps
         activitiesByRunId.removeValue(forKey: runId)
+        stopToolHeartbeat(runId: runId)
         let card = owned.card
         let resolvedDismissalDelay = dismissalDelay
             ?? AgentActivityLifecyclePolicy.lockScreenDismissalDelay(for: terminalPresentation.phase)
@@ -627,11 +655,21 @@ final class AgentLiveActivityController {
 
         let owned = activitiesByRunId
         activitiesByRunId.removeAll()
+        stopAllToolHeartbeats()
         let ownedCardIDs = Set(owned.values.map(\.card.id))
-
-        let discovered = Activity<AgentActivityAttributes>.activities
-        endingActivityIDs.formUnion(discovered.map(\.id).filter { !lingeringCardIDs.contains($0) })
+        // Reserve the old cards before the asynchronous system enumeration so
+        // a new start cannot adopt a card that this stop is about to end.
         endingActivityIDs.formUnion(ownedCardIDs)
+
+        let snapshot = await fetchSystemSnapshot()
+        let newlyOwnedCardIDs = Set(activitiesByRunId.values.map(\.card.id))
+        let newlyPendingRunIDs = Set(
+            pendingStarts.compactMap { key, value in value.revocation == nil ? key : nil }
+        )
+        let discovered = snapshot.activities.filter {
+            !newlyOwnedCardIDs.contains($0.id) && !newlyPendingRunIDs.contains($0.attributes.runId)
+        }
+        endingActivityIDs.formUnion(discovered.map(\.id).filter { !lingeringCardIDs.contains($0) })
 
         for activity in discovered where !ownedCardIDs.contains(activity.id) && !lingeringCardIDs.contains(activity.id) {
             let kind = owned[activity.attributes.runId]?.lastPresentation.kind
@@ -662,35 +700,42 @@ final class AgentLiveActivityController {
         }
     }
 
-    func restoreExistingActivity(ownedRunIds: Set<String>) {
-        let existing = Activity<AgentActivityAttributes>.activities
+    func restoreExistingActivity(ownedRunIds: Set<String>) async {
+        let existing = (await fetchSystemSnapshot()).activities
+        let activePendingRunIds = Set(
+            pendingStarts.compactMap { key, value in value.revocation == nil ? key : nil }
+        )
+        let effectiveOwnedRunIds = ownedRunIds
+            .union(activitiesByRunId.keys)
+            .union(activePendingRunIds)
         let candidates = existing.filter {
             isAdoptable($0) && AgentActivityLifecyclePolicy.shouldRestore(
                 runId: $0.attributes.runId,
-                ownedRunIds: ownedRunIds,
+                ownedRunIds: effectiveOwnedRunIds,
                 activityState: $0.activityState
             )
         }
         let retainedIDs = AgentActivityOwnershipPolicy.retainedActivityIDs(
             from: candidates.map(Self.ownershipCandidate),
-            ownedRunIds: ownedRunIds
+            ownedRunIds: effectiveOwnedRunIds
         )
 
-        activitiesByRunId = Dictionary(uniqueKeysWithValues: candidates.compactMap { candidate in
-            guard retainedIDs.contains(candidate.id) else { return nil }
-            return (
-                candidate.attributes.runId,
-                OwnedActivity(
-                    runId: candidate.attributes.runId,
-                    conversationId: candidate.attributes.conversationId,
-                    card: Self.wrap(candidate),
-                    lastPresentation: candidate.content.state.presentation,
-                    lastUpdateAt: candidate.content.state.updatedAt
-                )
+        for candidate in candidates where retainedIDs.contains(candidate.id) {
+            let runId = candidate.attributes.runId
+            guard activitiesByRunId[runId] == nil else { continue }
+            activitiesByRunId[runId] = OwnedActivity(
+                runId: runId,
+                conversationId: candidate.attributes.conversationId,
+                card: Self.wrap(candidate),
+                lastPresentation: candidate.content.state.presentation,
+                lastUpdateAt: candidate.content.state.updatedAt
             )
-        })
+        }
 
-        for obsolete in existing where !retainedIDs.contains(obsolete.id) {
+        let inMemoryCardIDs = Set(activitiesByRunId.values.map(\.card.id))
+        for obsolete in existing where !retainedIDs.contains(obsolete.id)
+            && !inMemoryCardIDs.contains(obsolete.id)
+            && !activePendingRunIds.contains(obsolete.attributes.runId) {
             scheduleEnd(activity: obsolete, dismissalDelay: 1)
         }
     }
@@ -837,6 +882,7 @@ final class AgentLiveActivityController {
         let runId = activity.attributes.runId
         if activitiesByRunId[runId]?.card.id == activity.id {
             activitiesByRunId.removeValue(forKey: runId)
+            stopToolHeartbeat(runId: runId)
         }
         let presentation = AgentActivityPresentation(
             kind: activity.content.state.presentation.kind,
@@ -865,6 +911,7 @@ final class AgentLiveActivityController {
         guard endingActivityIDs.insert(owned.card.id).inserted else { return }
         if activitiesByRunId[runId]?.card.id == owned.card.id {
             activitiesByRunId.removeValue(forKey: runId)
+            stopToolHeartbeat(runId: runId)
         }
         let presentation = AgentActivityPresentation(
             kind: owned.lastPresentation.kind,

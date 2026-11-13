@@ -989,14 +989,7 @@ struct AmberDotGridOverlay: View {
     }
 
     /// Warm brown dots on light cream; pale dots on dark grounds (brand-spec grid ink).
-    static var dotColor: Color {
-        Color(uiColor: UIColor { trait in
-            let dark = trait.userInterfaceStyle == .dark
-            // Light: rgba(40,32,20,0.055) ≈ warm draft ink; dark: soft pale.
-            let hex: UInt32 = dark ? 0xF4F1ED : 0x281F14
-            return UIColor(hex: hex, alpha: dark ? darkAlpha : lightAlpha)
-        })
-    }
+    static let dotColor: Color = AmberTheme.ResolvedTokens.dynamicColor(light: UIColor(hex: 0x281F14, alpha: lightAlpha), dark: UIColor(hex: 0xF4F1ED, alpha: darkAlpha))
 }
 
 /// Fine paper grain: deterministic sparse 1pt flecks, quieter than `dotGrid`.
@@ -1035,13 +1028,10 @@ struct AmberPaperGrainOverlay: View {
         }
     }
 
-    static var grainColor: Color {
-        Color(uiColor: UIColor { trait in
-            let dark = trait.userInterfaceStyle == .dark
-            let hex: UInt32 = dark ? 0xF4F1ED : 0x281F14
-            return UIColor(hex: hex, alpha: dark ? darkAlpha : lightAlpha)
-        })
-    }
+    static let grainColor: Color = AmberTheme.ResolvedTokens.dynamicColor(
+        light: UIColor(hex: 0x281F14, alpha: lightAlpha),
+        dark: UIColor(hex: 0xF4F1ED, alpha: darkAlpha)
+    )
 }
 
 /// Faint texture for **solid cards** (session rows / control card) when canvas is gridded.
@@ -1119,21 +1109,8 @@ struct AmberLineGridOverlay: View {
     }
 
     /// Line ink: a notch more visible than pure brand 0.055 so it reads on-device.
-    static var lineColor: Color {
-        Color(uiColor: UIColor { trait in
-            let dark = trait.userInterfaceStyle == .dark
-            let hex: UInt32 = dark ? 0xF4F1ED : 0x281F14
-            return UIColor(hex: hex, alpha: dark ? 0.11 : 0.08)
-        })
-    }
-
-    static var dotColor: Color {
-        Color(uiColor: UIColor { trait in
-            let dark = trait.userInterfaceStyle == .dark
-            let hex: UInt32 = dark ? 0xF4F1ED : 0x281F14
-            return UIColor(hex: hex, alpha: dark ? 0.14 : 0.10)
-        })
-    }
+    static let lineColor: Color = AmberTheme.ResolvedTokens.dynamicColor(light: UIColor(hex: 0x281F14, alpha: 0.08), dark: UIColor(hex: 0xF4F1ED, alpha: 0.11))
+    static let dotColor: Color = AmberTheme.ResolvedTokens.dynamicColor(light: UIColor(hex: 0x281F14, alpha: 0.10), dark: UIColor(hex: 0xF4F1ED, alpha: 0.14))
 }
 
 // MARK: - Brand mark

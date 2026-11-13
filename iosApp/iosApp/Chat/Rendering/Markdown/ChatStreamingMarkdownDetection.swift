@@ -65,7 +65,12 @@ struct ChatStreamingTableDetectionState {
     private var pendingLineBytes: [UInt8] = []
     private var previousHeaderColumnCount: Int?
     private var fenceState = ChatStreamingMarkdownFenceState()
+    private var lastCheckedText: String?
     private(set) var containsTable = false
+    // Tail checkpoints cannot prove that the earlier prefix is unchanged.
+    // Resolve output flags only when consumed, from the complete current text.
+    var containsCarriageReturn: Bool { lastCheckedText?.utf8.contains(0x0D) ?? false }
+    var hasNonWhitespace: Bool { lastCheckedText?.contains(where: { !$0.isWhitespace }) ?? false }
     private(set) var totalConsumedUTF8Count = 0
 
     init(text: String = "") {
@@ -75,7 +80,12 @@ struct ChatStreamingTableDetectionState {
     }
 
     mutating func update(with text: String) {
+        if lastCheckedText == text {
+            return
+        }
+        lastCheckedText = text
         guard !containsTable else { return }
+
         let ns = text as NSString
         let utf16Count = ns.length
         let matches = checkpointMatches(in: ns)
@@ -107,12 +117,15 @@ struct ChatStreamingTableDetectionState {
 
     private func checkpointMatches(in ns: NSString) -> Bool {
         guard processedUTF16Count > 0 else { return true }
-        guard processedUTF16Count <= ns.length, checkpointUTF16.count <= processedUTF16Count else { return false }
+        let count = checkpointUTF16.count
+        guard processedUTF16Count <= ns.length, count <= processedUTF16Count else { return false }
         if let last = checkpointUTF16.last, (0xD800...0xDBFF).contains(last) { return false }
-        return Self.codeUnits(
-            in: ns,
-            range: NSRange(location: processedUTF16Count - checkpointUTF16.count, length: checkpointUTF16.count)
-        ) == checkpointUTF16
+        guard count > 0 else { return true }
+        let range = NSRange(location: processedUTF16Count - count, length: count)
+        return withUnsafeTemporaryAllocation(of: UInt16.self, capacity: count) { buffer in
+            ns.getCharacters(buffer.baseAddress!, range: range)
+            return buffer.elementsEqual(checkpointUTF16)
+        }
     }
 
     private static func codeUnits(in ns: NSString, range: NSRange) -> [UInt16] {

@@ -24,6 +24,7 @@ struct ChatGeneratedImageTile: View {
     }
 
     var body: some View {
+        let resolvedURL = isDataURL ? nil : url
         VStack(spacing: 6) {
             Group {
                 if isDataURL {
@@ -44,7 +45,7 @@ struct ChatGeneratedImageTile: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 } else {
-                    AsyncImage(url: url) { phase in
+                    AsyncImage(url: resolvedURL) { phase in
                         switch phase {
                         case .success(let image):
                             image
@@ -92,10 +93,10 @@ struct ChatGeneratedImageTile: View {
                 dataImageState = resolved
             }
 
-            if url != nil || isDataURL {
+            if resolvedURL != nil || isDataURL {
                 HStack(spacing: 6) {
-                    if let url {
-                        ShareLink(item: url) {
+                    if let resolvedURL {
+                        ShareLink(item: resolvedURL) {
                             generatedImageShareLabel
                         }
                         .accessibilityLabel("分享图片")

@@ -48,6 +48,7 @@ enum ChatMarkdownRendererPolicy {
 struct ChatAssistantMarkdownView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.chatIsActivelyPacingReveal) private var isActivelyPacingReveal
+    @Environment(\.chatIsInsideStreamingGraphHost) private var isInsideStreamingGraphHost
     let markdown: String
     var renderCacheNamespace: String?
     var displaySetting: DisplaySetting?
@@ -143,7 +144,7 @@ struct ChatAssistantMarkdownView: View {
     }
 
     var body: some View {
-        let _ = ChatTimelineRowLayoutInvalidation.markRowDirty(sourceMessageID)
+        let _ = isInsideStreamingGraphHost ? () : ChatTimelineRowLayoutInvalidation.markRowDirty(sourceMessageID)
         let _ = ChatRenderProbe.record("markdown", id: sourceMessageID ?? "unattributed")
         let widgetSettings = IOSGenerativeWidgetSettings(generativeUiSetting)
         let renderedMarkdown = renderedMarkdownText

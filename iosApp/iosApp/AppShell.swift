@@ -85,7 +85,7 @@ struct AppShell: View {
             sharedSettings: sharedSettingsStore,
             providerRegistry: providerRegistry,
             permissionStore: permissionStore,
-            durableRunStore: IOSDurableRunStore()
+            durableRunStore: chatViewModel.runStore
         )
         let novelCreationViewModel: NovelCreationViewModel?
         let novelSessionViewModel: NovelSessionViewModel?
@@ -113,7 +113,12 @@ struct AppShell: View {
         self._sharedSettings = State(initialValue: sharedSettingsStore)
         self._mcpConfigStore = State(initialValue: .shared)
         self._conversationStore = State(initialValue: conversationStore)
-        self._conversationActivityCenter = State(initialValue: ConversationActivityCenter(conversationStore: conversationStore))
+        self._conversationActivityCenter = State(
+            initialValue: ConversationActivityCenter(
+                conversationStore: conversationStore,
+                dao: chatViewModel.agentRuntimeDao
+            )
+        )
         self._chatViewModel = State(initialValue: chatViewModel)
         self._councilChatViewModel = State(initialValue: councilChatViewModel)
         self._novelCreationViewModel = State(initialValue: novelCreationViewModel)
@@ -301,10 +306,12 @@ struct AppShell: View {
             let backgroundRunIds = IOSChatBackgroundGenerationCoordinator.shared.restorableRunIds
             let backgroundRecoveryExclusions = IOSChatBackgroundGenerationCoordinator.shared
                 .startupRecoveryExclusionRunIds
+            let runStore = chatViewModel.runStore
             let recoveredPendingApprovals = await IOSRunRecovery.recoverPendingApprovalDescriptors(
-                excludingRunIds: backgroundRecoveryExclusions
+                excludingRunIds: backgroundRecoveryExclusions,
+                runStore: runStore
             )
-            let startupRecoverableRuns = try? await IOSDurableRunStore().recoverableRuns()
+            let startupRecoverableRuns = try? await runStore.recoverableRuns()
             let startupCandidateRunIds = Set(startupRecoverableRuns?.map(\.runId) ?? [])
             IOSBuiltinSkills.installIfMissing(enableWith: sharedSettings)
             await chatViewModel.reconcilePendingMiniAppMutationsAfterConversationBootstrap()
@@ -318,7 +325,8 @@ struct AppShell: View {
                 let excludedFromInterrupted = backgroundRecoveryExclusions.union(pendingApprovalRunIds)
                 if let interruptedRunConversationPairs = await IOSRunRecovery.unfinishedRunConversationPairs(
                     candidateRunIds: startupCandidateRunIds,
-                    excludingRunIds: excludedFromInterrupted
+                    excludingRunIds: excludedFromInterrupted,
+                    runStore: runStore
                 ) {
                     let recoveryResult = await chatViewModel.applyToolCallLedgerRecovery(
                         forInterruptedRuns: interruptedRunConversationPairs
@@ -332,11 +340,12 @@ struct AppShell: View {
                         candidateRunIds: startupCandidateRunIds,
                         excludingRunIds: excludedFromInterrupted
                             .union(unreconciledRunIds)
-                            .union(recoveryResult.outcomeUnknownRunIds)
+                            .union(recoveryResult.outcomeUnknownRunIds),
+                        runStore: runStore
                     )
                 }
             }
-            AgentLiveActivityController.shared.restoreExistingActivity(
+            await AgentLiveActivityController.shared.restoreExistingActivity(
                 ownedRunIds: backgroundRunIds
             )
             IOSAlarmService.shared.reconcileOnLaunch()

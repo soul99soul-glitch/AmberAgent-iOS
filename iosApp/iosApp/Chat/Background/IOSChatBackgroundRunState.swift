@@ -283,22 +283,33 @@ final class IOSChatBackgroundAssistantTextSnapshot: @unchecked Sendable {
 
 final class IOSChatBackgroundMessagesSnapshot: @unchecked Sendable {
     private let lock = NSLock()
-    private var latestMessages: [UIMessage]
+    private var materializedMessages: [UIMessage]?
+    private var pendingPrefix: [UIMessage] = []
+    private var pendingSuffix: [UIMessage] = []
     private var durableResponseSequenceNumber: Int64?
+    private(set) var materializationCountForTesting = 0
 
     init(_ messages: [UIMessage]) {
-        latestMessages = messages
+        materializedMessages = messages
     }
 
     var messages: [UIMessage] {
         lock.lock()
         defer { lock.unlock() }
-        return latestMessages
+        if let materializedMessages {
+            return materializedMessages
+        }
+        let combined = pendingSuffix.isEmpty ? pendingPrefix : (pendingPrefix + pendingSuffix)
+        materializedMessages = combined
+        materializationCountForTesting += 1
+        return combined
     }
 
     func replace(with messages: [UIMessage]) {
         lock.lock()
-        latestMessages = messages
+        materializedMessages = messages
+        pendingPrefix = []
+        pendingSuffix = []
         lock.unlock()
     }
 
@@ -308,7 +319,25 @@ final class IOSChatBackgroundMessagesSnapshot: @unchecked Sendable {
         // Reconnect replays from event zero. Keep the previous connection's
         // complete snapshot until this replay has caught up to its event.
         if let durableResponseSequenceNumber, sequenceNumber < durableResponseSequenceNumber { return }
-        latestMessages = messages
+        materializedMessages = messages
+        pendingPrefix = []
+        pendingSuffix = []
+        durableResponseSequenceNumber = sequenceNumber
+    }
+
+    func publishDurableResponseCheckpoint(
+        displayMessages: [UIMessage],
+        sequenceNumber: Int64,
+        generatedMessages: () -> [UIMessage]
+    ) {
+        lock.lock()
+        defer { lock.unlock() }
+        // Reconnect replays from event zero. Keep the previous connection's
+        // complete snapshot until this replay has caught up to its event.
+        if let durableResponseSequenceNumber, sequenceNumber < durableResponseSequenceNumber { return }
+        pendingPrefix = displayMessages
+        pendingSuffix = generatedMessages()
+        materializedMessages = nil
         durableResponseSequenceNumber = sequenceNumber
     }
 }
@@ -319,6 +348,9 @@ final class IOSChatDurableResponseAccumulator: @unchecked Sendable {
     private let messagesSnapshot: IOSChatBackgroundMessagesSnapshot
     private let seedId: KotlinUuid
     private let accumulator: MessageStreamAccumulator
+    private var chunkMutationCount: UInt64 = 0
+    private var cachedGeneratedSnapshot: (mutationCount: UInt64, messages: [UIMessage])?
+    private(set) var bridgeSnapshotCountForTesting = 0
 
     init(displayMessages: [UIMessage], model: Model, messagesSnapshot: IOSChatBackgroundMessagesSnapshot) {
         self.displayMessages = displayMessages
@@ -345,6 +377,7 @@ final class IOSChatDurableResponseAccumulator: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         accumulator.append(chunk: chunk)
+        chunkMutationCount &+= 1
     }
 
     func recordCheckpoint(sequenceNumber: Int64) {
@@ -352,18 +385,27 @@ final class IOSChatDurableResponseAccumulator: @unchecked Sendable {
         defer { lock.unlock() }
         // The transport checkpoints after delivering every chunk for this event.
         messagesSnapshot.publishDurableResponseCheckpoint(
-            with: combinedMessages(), sequenceNumber: sequenceNumber
+            displayMessages: displayMessages,
+            sequenceNumber: sequenceNumber,
+            generatedMessages: { self.generatedMessagesLocked() }
         )
     }
 
     var messages: [UIMessage] {
         lock.lock()
         defer { lock.unlock() }
-        return combinedMessages()
+        let suffix = generatedMessagesLocked()
+        return suffix.isEmpty ? displayMessages : (displayMessages + suffix)
     }
 
-    private func combinedMessages() -> [UIMessage] {
-        displayMessages + accumulator.snapshot().filter { $0.id != seedId }
+    private func generatedMessagesLocked() -> [UIMessage] {
+        if let cached = cachedGeneratedSnapshot, cached.mutationCount == chunkMutationCount {
+            return cached.messages
+        }
+        bridgeSnapshotCountForTesting += 1
+        let generated = accumulator.snapshot().filter { $0.id != seedId }
+        cachedGeneratedSnapshot = (chunkMutationCount, generated)
+        return generated
     }
 }
 

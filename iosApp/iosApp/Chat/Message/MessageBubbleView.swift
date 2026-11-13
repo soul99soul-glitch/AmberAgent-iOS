@@ -331,6 +331,114 @@ private struct MessageBubbleEquatableContent: View, @MainActor Equatable {
     }
 }
 
+private struct MessageBubbleOuterShellSignature: Equatable {
+    let awaitingSegmentedFirstBlock: Bool
+    let isAssistantContinuation: Bool
+    let showsVariantSwitcher: Bool
+    let variantSelectedIndex: Int
+    let variantCount: Int
+    let annotationsCount: Int
+    let displaySignature: Int
+    let generativeSignature: Int
+    let reduceMotion: Bool
+    let appLanguage: String
+    let localeIdentifier: String
+    let hostedTextPartMask: UInt64
+    let hostedTextEmptyMask: UInt64
+}
+
+@MainActor
+private final class MessageBubbleOuterLayoutTracker {
+    private var lastMessageID: String?
+    private var hostedTextPartIndices: Set<Int> = []
+    private var lastSignature: MessageBubbleOuterShellSignature?
+
+    func shouldMarkRowDirty(
+        messageID: String,
+        canUseGraphHost: Bool,
+        hasOuterMediaOrNonTextParts: Bool,
+        parts: [UIMessagePart],
+        isLiveStreaming: Bool,
+        isMiniAppStreamingCard: (String, Bool) -> Bool,
+        displayTextProvider: (UIMessagePart.Text, Int) -> String,
+        awaitingSegmentedFirstBlock: Bool,
+        isAssistantContinuation: Bool,
+        showsVariantSwitcher: Bool,
+        variantSelectedIndex: Int,
+        variantCount: Int,
+        annotationsCount: Int,
+        displaySignature: Int,
+        generativeSignature: Int,
+        reduceMotion: Bool,
+        appLanguage: String,
+        localeIdentifier: String
+    ) -> Bool {
+        if lastMessageID != messageID {
+            lastMessageID = messageID
+            hostedTextPartIndices.removeAll(keepingCapacity: true)
+            lastSignature = nil
+        }
+
+        guard canUseGraphHost, !hasOuterMediaOrNonTextParts else {
+            lastSignature = nil
+            return true
+        }
+
+        var hostedMask: UInt64 = 0
+        var emptyMask: UInt64 = 0
+        var nonEmptyTextCount = 0
+
+        for (partIndex, part) in parts.enumerated() {
+            guard let textPart = part as? UIMessagePart.Text, !textPart.text.isEmpty else {
+                continue
+            }
+            if partIndex >= 64 || isMiniAppStreamingCard(textPart.text, isLiveStreaming) {
+                lastSignature = nil
+                return true
+            }
+            if isLiveStreaming {
+                hostedTextPartIndices.insert(partIndex)
+            }
+            guard hostedTextPartIndices.contains(partIndex) else {
+                lastSignature = nil
+                return true
+            }
+            let bit = UInt64(1) << UInt64(partIndex)
+            hostedMask |= bit
+            nonEmptyTextCount += 1
+            if displayTextProvider(textPart, partIndex).isEmpty {
+                emptyMask |= bit
+            }
+        }
+
+        guard nonEmptyTextCount > 0 else {
+            lastSignature = nil
+            return true
+        }
+
+        let signature = MessageBubbleOuterShellSignature(
+            awaitingSegmentedFirstBlock: awaitingSegmentedFirstBlock,
+            isAssistantContinuation: isAssistantContinuation,
+            showsVariantSwitcher: showsVariantSwitcher,
+            variantSelectedIndex: variantSelectedIndex,
+            variantCount: variantCount,
+            annotationsCount: annotationsCount,
+            displaySignature: displaySignature,
+            generativeSignature: generativeSignature,
+            reduceMotion: reduceMotion,
+            appLanguage: appLanguage,
+            localeIdentifier: localeIdentifier,
+            hostedTextPartMask: hostedMask,
+            hostedTextEmptyMask: emptyMask
+        )
+        if signature == lastSignature {
+            return false
+        }
+        lastSignature = signature
+        return true
+    }
+}
+
 private struct MessageBubbleStatefulContent: View {
     let message: UIMessage
     let displayTexts: [Int: String]
@@ -366,6 +474,8 @@ private struct MessageBubbleStatefulContent: View {
     @State private var workspaceSaveAlert: WorkspaceSaveAlert?
     @State private var toolDetailTarget: ToolDetailTarget?
     @State private var taskStepCache = ChatTaskToolStepCache()
+    @State private var outerLayoutTracker = MessageBubbleOuterLayoutTracker()
+    @Environment(\.chatTimelineGrowth) private var timelineGrowth
     @AccessibilityFocusState private var focusedGeneratedImageToolCallID: String?
 
     private var onRegenerate: () -> Void { actions.onRegenerate }
@@ -390,31 +500,30 @@ private struct MessageBubbleStatefulContent: View {
         messageEditingAllowed && !isGenerating
     }
 
-    private func streamingBoundaryKey(
+    private func streamingBoundarySignature(
         text: String,
         partIndex: Int,
         nonEmptyTextPartCount: Int,
         isSourceMessageComplete: Bool
-    ) -> Int {
+    ) -> ChatStreamingGraphContentSignature {
         let isLiveStreaming = isGenerating && isLastMessage
         let isSegmented = IOSChatRenderPreferences.shared.isSegmentedReplyDelivery
-        var hasher = Hasher()
-        if isSegmented && isLiveStreaming && liveMarkdownRenderingEnabled {
-            hasher.combine(ChatSegmentedMarkdownCommitPolicy.committedUTF16Count(in: text, isStreaming: true))
-        } else {
-            hasher.combine(text)
-        }
-        hasher.combine(isSegmented)
-        hasher.combine(partIndex)
-        hasher.combine(isLiveStreaming)
-        hasher.combine(reduceMotion)
-        hasher.combine(liveMarkdownRenderingEnabled)
-        hasher.combine(hasEverStreamed)
-        hasher.combine(nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil)
-        hasher.combine(isSourceMessageComplete)
-        hasher.combine(displaySignature)
-        hasher.combine(generativeSignature)
-        return hasher.finalize()
+        let textToken: ChatStreamingGraphContentSignature.TextToken = (isSegmented && isLiveStreaming && liveMarkdownRenderingEnabled)
+            ? .segmentedCommittedUTF16(ChatSegmentedMarkdownCommitPolicy.committedUTF16Count(in: text, isStreaming: true))
+            : .full(text)
+        return ChatStreamingGraphContentSignature(
+            partIndex: partIndex,
+            isSegmented: isSegmented,
+            isLiveStreaming: isLiveStreaming,
+            reduceMotion: reduceMotion,
+            liveMarkdownRenderingEnabled: liveMarkdownRenderingEnabled,
+            hasEverStreamed: hasEverStreamed,
+            isSourceMessageComplete: isSourceMessageComplete,
+            displaySignature: displaySignature,
+            generativeSignature: generativeSignature,
+            textToken: textToken,
+            frozenMarkdownSnapshot: nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil
+        )
     }
 
     private var hasNonTextVisibleAssistantParts: Bool {
@@ -438,14 +547,54 @@ private struct MessageBubbleStatefulContent: View {
         return !ChatSegmentedBubbleReadiness.shared.isReady(messageID: messageHexID)
     }
 
+    private func markOuterRowDirtyIfNeeded(
+        messageHexID: String,
+        isSubAgentResult: Bool,
+        awaitingSegmentedFirstBlock: Bool
+    ) {
+        let hasMediaTurnTools = assistantTurn?.progress?.tools.contains(where: ChatTaskStreamGrouping.isMediaBearing) == true
+        let hasOuterMediaOrNonTextParts = hasNonTextVisibleAssistantParts || hasMediaTurnTools || automationScreenshotGroup != nil
+        let shouldInvalidate = outerLayoutTracker.shouldMarkRowDirty(
+            messageID: messageHexID,
+            canUseGraphHost: timelineGrowth != nil && !isUser && !isSubAgentResult,
+            hasOuterMediaOrNonTextParts: hasOuterMediaOrNonTextParts,
+            parts: message.parts,
+            isLiveStreaming: isGenerating && isLastMessage,
+            isMiniAppStreamingCard: Self.shouldRenderMiniAppStreamingCard,
+            displayTextProvider: { part, index in displayText(for: part, at: index) },
+            awaitingSegmentedFirstBlock: awaitingSegmentedFirstBlock,
+            isAssistantContinuation: isAssistantContinuation,
+            showsVariantSwitcher: (variantInfo?.hasMultipleVariants == true) && canBranch,
+            variantSelectedIndex: variantInfo?.selectedIndex ?? 0,
+            variantCount: variantInfo?.variantCount ?? 0,
+            annotationsCount: message.annotations.count,
+            displaySignature: displaySignature,
+            generativeSignature: generativeSignature,
+            reduceMotion: reduceMotion,
+            appLanguage: appLanguage,
+            localeIdentifier: locale.identifier
+        )
+        if shouldInvalidate {
+            ChatTimelineRowLayoutInvalidation.markRowDirty(messageHexID)
+        }
+    }
+
     var body: some View {
         let messageHexID = message.id.toHexDashString()
-        let _ = ChatTimelineRowLayoutInvalidation.markRowDirty(messageHexID)
+        let isSubAgentResult = ChatMessageProjector.isSubAgentResult(message)
+        let awaitingSegmentedFirstBlock = (!isUser && !isSubAgentResult)
+            ? isAwaitingSegmentedFirstBlock(messageHexID: messageHexID)
+            : false
+        let _ = markOuterRowDirtyIfNeeded(
+            messageHexID: messageHexID,
+            isSubAgentResult: isSubAgentResult,
+            awaitingSegmentedFirstBlock: awaitingSegmentedFirstBlock
+        )
         #if DEBUG
         let _ = ChatRenderProbe.record("message", id: messageHexID)
         #endif
         Group {
-            if ChatMessageProjector.isSubAgentResult(message) {
+            if isSubAgentResult {
                 ChatSubAgentResultCard(
                     sender: IosMailboxMessageBridge.shared.sender(message: message) ?? "subagent",
                     displayText: message.parts.enumerated().compactMap { index, part in
@@ -480,7 +629,6 @@ private struct MessageBubbleStatefulContent: View {
                     .frame(maxWidth: ChatLayout.userMaxWidth, alignment: .trailing)
                 }
             } else {
-                let awaitingSegmentedFirstBlock = isAwaitingSegmentedFirstBlock(messageHexID: messageHexID)
                 let animateSegmentedHeader = IOSChatRenderPreferences.shared.isSegmentedReplyDelivery
                     && isGenerating && isLastMessage && !reduceMotion
                 ChatAssistantStack {
@@ -806,7 +954,7 @@ private struct MessageBubbleStatefulContent: View {
                     ChatStreamingGraphBoundary(
                         isStreaming: isGenerating && isLastMessage,
                         messageID: messageHexID,
-                        contentKey: streamingBoundaryKey(
+                        contentSignature: streamingBoundarySignature(
                             text: sanitizedText,
                             partIndex: partIndex,
                             nonEmptyTextPartCount: nonEmptyTextPartCount,
@@ -1030,7 +1178,7 @@ private struct MessageBubbleStatefulContent: View {
                     ChatStreamingGraphBoundary(
                         isStreaming: isGenerating && isLastMessage,
                         messageID: messageHexID,
-                        contentKey: streamingBoundaryKey(
+                        contentSignature: streamingBoundarySignature(
                             text: sanitizedText,
                             partIndex: partIndex,
                             nonEmptyTextPartCount: nonEmptyTextPartCount,

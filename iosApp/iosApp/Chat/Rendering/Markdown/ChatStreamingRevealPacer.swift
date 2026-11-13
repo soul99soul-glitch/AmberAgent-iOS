@@ -14,6 +14,10 @@ private struct ChatStreamingTailCoordinatorKey: EnvironmentKey {
     static let defaultValue: ChatStreamingTailCoordinator? = nil
 }
 
+private struct ChatIsInsideStreamingGraphHostKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 extension EnvironmentValues {
     var chatPacesStreamingTextBlocks: Bool {
         get { self[ChatPacesStreamingTextBlocksKey.self] }
@@ -28,6 +32,11 @@ extension EnvironmentValues {
     var chatStreamingTailCoordinator: ChatStreamingTailCoordinator? {
         get { self[ChatStreamingTailCoordinatorKey.self] }
         set { self[ChatStreamingTailCoordinatorKey.self] = newValue }
+    }
+
+    var chatIsInsideStreamingGraphHost: Bool {
+        get { self[ChatIsInsideStreamingGraphHostKey.self] }
+        set { self[ChatIsInsideStreamingGraphHostKey.self] = newValue }
     }
 }
 
@@ -809,6 +818,10 @@ private final class ChatStreamingRevealPacerBox {
     var lastGrowthUptime: TimeInterval?
     let tailCoordinator = ChatStreamingTailCoordinator()
     private var tableDetector = ChatStreamingTableDetectionState()
+    private var lastSegmentedText: String?
+    private var lastSegmentedIsStreaming: Bool?
+    private var lastSegmentedBaseUTF16Count: Int = 0
+    private var lastCommittedSegmentedUTF16Count: Int = 0
 
     init(initialUTF16Count: Int = 0) {
         self.currentUTF16Count = initialUTF16Count
@@ -824,11 +837,21 @@ private final class ChatStreamingRevealPacerBox {
         if currentUTF16Count > totalUTF16 {
             currentUTF16Count = 0
         }
+        if lastSegmentedText == text,
+           lastSegmentedIsStreaming == isStreaming,
+           lastSegmentedBaseUTF16Count == currentUTF16Count {
+            return lastCommittedSegmentedUTF16Count
+        }
+        let baseUTF16Count = currentUTF16Count
         let next = ChatSegmentedMarkdownCommitPolicy.committedUTF16Count(
             in: text,
             isStreaming: isStreaming,
-            previouslyCommittedUTF16Count: currentUTF16Count
+            previouslyCommittedUTF16Count: baseUTF16Count
         )
+        lastSegmentedText = text
+        lastSegmentedIsStreaming = isStreaming
+        lastSegmentedBaseUTF16Count = baseUTF16Count
+        lastCommittedSegmentedUTF16Count = next
         currentUTF16Count = next
         return next
     }
@@ -875,11 +898,10 @@ enum ChatSegmentedMarkdownCommitPolicy {
             // 未以换行结束的尾部行仍在生成中，不能闭合当前结构块。
             guard hasNewline else { break }
 
-            let lineString = String(lineSlice)
-            let trimmed = lineString.trimmingCharacters(in: .whitespaces)
+            let trimmed = trimmingWhitespaces(lineSlice)
 
             let wasInsideCodeFence = fenceState.isInsideFence
-            if fenceState.consumesCodeLine(lineString) {
+            if fenceState.consumesCodeLine(lineSlice) {
                 lastNonBlankContentEnd = lineContentEnd
                 hasUncommittedBlockContent = true
                 if wasInsideCodeFence && !fenceState.isInsideFence && !insideMathBlock {
@@ -943,11 +965,26 @@ enum ChatSegmentedMarkdownCommitPolicy {
         return ChatStreamingRevealTiming.slicedPrefix(of: text, utf16Count: count)
     }
 
-    private static func isDisplayMathFenceLine(_ trimmed: String) -> Bool {
+    private static func trimmingWhitespaces(_ slice: Substring) -> Substring {
+        var start = slice.startIndex
+        let end = slice.endIndex
+        while start < end, slice[start].isWhitespace {
+            start = slice.index(after: start)
+        }
+        var sliceEnd = end
+        while sliceEnd > start {
+            let prev = slice.index(before: sliceEnd)
+            guard slice[prev].isWhitespace else { break }
+            sliceEnd = prev
+        }
+        return slice[start..<sliceEnd]
+    }
+
+    private static func isDisplayMathFenceLine(_ trimmed: Substring) -> Bool {
         trimmed.hasPrefix("$$")
     }
 
-    private static func isSingleLineDisplayMath(_ trimmed: String) -> Bool {
+    private static func isSingleLineDisplayMath(_ trimmed: Substring) -> Bool {
         trimmed.count >= 4 && trimmed.hasPrefix("$$") && trimmed.hasSuffix("$$")
     }
 }
@@ -1033,13 +1070,35 @@ enum ChatStreamingRevealTiming {
     }
 }
 
+/// 流式边界值等价签名：把标量开关排在前面优先短路，字符串字段依赖 Swift `String == String`
+/// 的 `_StringGuts` 缓冲区身份/长度 O(1) 短路，彻底避免每次网络 delta 与外层刷新在主线程上
+/// 对正文和快照执行 `Hasher.combine(String)` 全文 SipHash 扫描。
+struct ChatStreamingGraphContentSignature: Equatable {
+    enum TextToken: Equatable {
+        case full(String)
+        case segmentedCommittedUTF16(Int)
+    }
+
+    let partIndex: Int
+    let isSegmented: Bool
+    let isLiveStreaming: Bool
+    let reduceMotion: Bool
+    let liveMarkdownRenderingEnabled: Bool
+    let hasEverStreamed: Bool
+    let isSourceMessageComplete: Bool
+    let displaySignature: Int
+    let generativeSignature: Int
+    let textToken: TextToken
+    let frozenMarkdownSnapshot: String?
+}
+
 /// Keeps the streaming subtree's graph updates local; the surrounding timeline
 /// receives only a changed natural height. Non-native and settled history keep
 /// their existing hosting path.
 struct ChatStreamingGraphBoundary<Content: View>: View {
     let isStreaming: Bool
     var messageID: String = ""
-    var contentKey: Int? = nil
+    var contentSignature: ChatStreamingGraphContentSignature? = nil
     let content: Content
     @State private var didStream: Bool
     @Environment(\.chatTimelineGrowth) private var growth
@@ -1047,12 +1106,12 @@ struct ChatStreamingGraphBoundary<Content: View>: View {
     init(
         isStreaming: Bool,
         messageID: String = "",
-        contentKey: Int? = nil,
+        contentSignature: ChatStreamingGraphContentSignature? = nil,
         @ViewBuilder content: () -> Content
     ) {
         self.isStreaming = isStreaming
         self.messageID = messageID
-        self.contentKey = contentKey
+        self.contentSignature = contentSignature
         self.content = content()
         _didStream = State(initialValue: isStreaming)
     }
@@ -1063,7 +1122,7 @@ struct ChatStreamingGraphBoundary<Content: View>: View {
                 ChatStreamingGraphHost(
                     isStreaming: isStreaming,
                     messageID: messageID,
-                    contentKey: contentKey,
+                    contentSignature: contentSignature,
                     content: content
                 )
             } else {
@@ -1079,7 +1138,7 @@ struct ChatStreamingGraphBoundary<Content: View>: View {
 private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresentable {
     let isStreaming: Bool
     let messageID: String
-    let contentKey: Int?
+    let contentSignature: ChatStreamingGraphContentSignature?
     let content: Content
 
     struct HostEnvironmentKey: Equatable {
@@ -1134,7 +1193,7 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
         var host: UIHostingController<Root>!
         var messageID: String
         private var lastIsStreaming: Bool
-        private var lastContentKey: Int?
+        private var lastContentSignature: ChatStreamingGraphContentSignature?
         private var lastEnvKey: HostEnvironmentKey
         private var measuredWidth: CGFloat?
         private var hasMeasured = false
@@ -1145,12 +1204,12 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
             environment: EnvironmentValues,
             isStreaming: Bool,
             messageID: String,
-            contentKey: Int?,
+            contentSignature: ChatStreamingGraphContentSignature?,
             envKey: HostEnvironmentKey
         ) {
             self.messageID = messageID
             self.lastIsStreaming = isStreaming
-            self.lastContentKey = contentKey
+            self.lastContentSignature = contentSignature
             self.lastEnvKey = envKey
             super.init(nibName: nil, bundle: nil)
             ChatRenderProbe.record("graph-host-created")
@@ -1173,7 +1232,10 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
             host.view.frame = view.bounds
         }
         func root(_ content: Content, environment: EnvironmentValues) -> Root {
-            Root(content: content, environment: environment, heightChanged: { [weak self] height in
+            var hostedEnvironment = environment
+            hostedEnvironment.markdownLayoutInvalidationID = ChatTimelineRowLayoutInvalidation.graphHostContainedID
+            hostedEnvironment.chatIsInsideStreamingGraphHost = true
+            return Root(content: content, environment: hostedEnvironment, heightChanged: { [weak self] height in
                 guard let self, height.isFinite, height >= 0,
                       abs(sizedView.height - height) > 0.5 else { return }
                 sizedView.height = height
@@ -1186,12 +1248,12 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
         }
         func shouldUpdate(
             isStreaming: Bool,
-            contentKey: Int?,
+            contentSignature: ChatStreamingGraphContentSignature?,
             envKey: HostEnvironmentKey
         ) -> Bool {
-            if let contentKey, let lastContentKey {
+            if let contentSignature, let lastContentSignature {
                 return isStreaming != lastIsStreaming ||
-                    contentKey != lastContentKey ||
+                    contentSignature != lastContentSignature ||
                     envKey != lastEnvKey
             }
             if !isStreaming && !lastIsStreaming && envKey == lastEnvKey {
@@ -1204,12 +1266,12 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
             environment: EnvironmentValues,
             isStreaming: Bool,
             messageID: String,
-            contentKey: Int?,
+            contentSignature: ChatStreamingGraphContentSignature?,
             envKey: HostEnvironmentKey
         ) {
             self.messageID = messageID
             self.lastIsStreaming = isStreaming
-            self.lastContentKey = contentKey
+            self.lastContentSignature = contentSignature
             self.lastEnvKey = envKey
             host.rootView = root(content, environment: environment)
         }
@@ -1231,7 +1293,7 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
             environment: context.environment,
             isStreaming: isStreaming,
             messageID: messageID,
-            contentKey: contentKey,
+            contentSignature: contentSignature,
             envKey: envKey
         )
     }
@@ -1239,7 +1301,7 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
         let envKey = HostEnvironmentKey(context.environment)
         guard controller.shouldUpdate(
             isStreaming: isStreaming,
-            contentKey: contentKey,
+            contentSignature: contentSignature,
             envKey: envKey
         ) else {
             return
@@ -1250,7 +1312,7 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
             environment: context.environment,
             isStreaming: isStreaming,
             messageID: messageID,
-            contentKey: contentKey,
+            contentSignature: contentSignature,
             envKey: envKey
         )
     }

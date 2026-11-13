@@ -682,7 +682,7 @@ extension MacGatewayStore {
         startCloudDialoguePollingIfNeeded()
     }
 
-    private static func cloudDialogueDisplayEvent(_ source: MacGatewayCloudDialogueEvent) -> MacGatewayCloudDialogueEvent {
+    nonisolated private static func cloudDialogueDisplayEvent(_ source: MacGatewayCloudDialogueEvent) -> MacGatewayCloudDialogueEvent {
         var event = source
         if event.kind == .assistantReply || event.kind == .taskResult || event.kind == .processEvent {
             event.text = IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope(event.text)
@@ -690,7 +690,7 @@ extension MacGatewayStore {
         return event
     }
 
-    private static func redactedEnvelopeForPersistence(
+    nonisolated static func redactedEnvelopeForPersistence(
         _ source: MacGatewayCloudDialoguePersistedEnvelope
     ) -> MacGatewayCloudDialoguePersistedEnvelope {
         var copy = source
@@ -764,16 +764,15 @@ extension MacGatewayStore {
             }
             return
         }
-        let envelope = Self.redactedEnvelopeForPersistence(
-            MacGatewayCloudDialoguePersistedEnvelope(
-                gatewayId: connection.gatewayId, deviceId: connection.deviceId,
-                isCloudMainDialogueSelected: isCloudMainDialogueSelected, cursor: cloudDialogueCursor,
-                events: cloudDialogueEvents, receipts: cloudDialogueReceipts, followups: cloudDialogueFollowups,
-                progressByWorkItem: cloudDialogueProgressByWorkItem, submissions: cloudDialogueSubmissions
-            )
+        let rawEnvelope = MacGatewayCloudDialoguePersistedEnvelope(
+            gatewayId: connection.gatewayId, deviceId: connection.deviceId,
+            isCloudMainDialogueSelected: isCloudMainDialogueSelected, cursor: cloudDialogueCursor,
+            events: cloudDialogueEvents, receipts: cloudDialogueReceipts, followups: cloudDialogueFollowups,
+            progressByWorkItem: cloudDialogueProgressByWorkItem, submissions: cloudDialogueSubmissions
         )
         let writeBlock: @Sendable () -> Void = {
             guard coordinator.canCommit(epoch: epoch, identity: identity) else { return }
+            let envelope = Self.redactedEnvelopeForPersistence(rawEnvelope)
             if let data = try? JSONEncoder().encode(envelope) {
                 sendableDefaults.set(data, forKey: Self.cloudDialogueStateKey)
             }
@@ -1065,8 +1064,12 @@ extension MacGatewayStore {
         do {
             let page = try await client.dialogueEvents(after: currentCursor, limit: limit)
             guard self.client === client else { return .failure(CancellationError()) }
-            cloudDialogueTransportState = .healthy
-            isReachable = true
+            if cloudDialogueTransportState != .healthy {
+                cloudDialogueTransportState = .healthy
+            }
+            if isReachable != true {
+                isReachable = true
+            }
             let soulStore = boundSoulStore ?? .shared
             var pulledAuthoritativeSoul = false
             if let rev = page.soulRevision {
@@ -1076,12 +1079,14 @@ extension MacGatewayStore {
                 )
             }
             if !page.items.isEmpty {
-                ingestCloudDialogueEventsPage(
+                let didMutate = ingestCloudDialogueEventsPage(
                     page,
                     requestedAfter: currentCursor,
                     skipSoulSync: pulledAuthoritativeSoul
                 )
-                persistCloudDialogueState()
+                if didMutate {
+                    persistCloudDialogueState()
+                }
             }
             return .success(page)
         } catch {
@@ -1144,13 +1149,14 @@ extension MacGatewayStore {
         }
     }
 
+    @discardableResult
     func ingestCloudDialogueEventsPage(
         _ page: MacGatewayCloudDialogueEventsPage,
         requestedAfter: Int64,
         skipSoulSync: Bool = false
-    ) {
+    ) -> Bool {
         // Empty page must NOT advance cursor.
-        guard !page.items.isEmpty else { return }
+        guard !page.items.isEmpty else { return false }
         let pageHasAuthoritativeSoulRevision = page.soulRevision != nil
 
         var eventsById = Dictionary(uniqueKeysWithValues: cloudDialogueEvents.map { ($0.id, $0) })
@@ -1159,6 +1165,7 @@ extension MacGatewayStore {
             lhs.seq != rhs.seq ? lhs.seq < rhs.seq : lhs.id < rhs.id
         }.map(Self.cloudDialogueDisplayEvent)
         var newlyAcceptedEvents: [MacGatewayCloudDialogueEvent] = []
+        var didApplySyntheticProgress = false
         for event in sortedIncoming {
             // Deduplicate by stable event.id so duplicate or overlapping pages apply each event at most once,
             // while allowing unseen late events to merge at their historical seq position.
@@ -1193,6 +1200,7 @@ extension MacGatewayStore {
                             allowHeuristicSoulFallback: !pageHasAuthoritativeSoulRevision,
                             skipSoulSync: skipSoulSync
                         )
+                        didApplySyntheticProgress = true
                     }
                     continue
                 }
@@ -1203,8 +1211,15 @@ extension MacGatewayStore {
             }
             newlyAcceptedEvents.append(event)
         }
-        cloudDialogueEvents = eventsById.values.sorted { lhs, rhs in
-            lhs.seq != rhs.seq ? lhs.seq < rhs.seq : lhs.id < rhs.id
+        var eventsChanged = false
+        if !newlyAcceptedEvents.isEmpty {
+            let sortedEvents = eventsById.values.sorted { lhs, rhs in
+                lhs.seq != rhs.seq ? lhs.seq < rhs.seq : lhs.id < rhs.id
+            }
+            if cloudDialogueEvents != sortedEvents {
+                cloudDialogueEvents = sortedEvents
+                eventsChanged = true
+            }
         }
         for event in newlyAcceptedEvents {
             applyCloudDialogueEvent(
@@ -1215,7 +1230,12 @@ extension MacGatewayStore {
             updateCloudSuggestionTrigger(event)
         }
         let maxSeenSeq = page.items.map(\.seq).max() ?? requestedAfter
-        cloudDialogueCursor = max(cloudDialogueCursor, max(page.nextCursor, maxSeenSeq))
+        let nextCursor = max(cloudDialogueCursor, max(page.nextCursor, maxSeenSeq))
+        let cursorChanged = nextCursor != cloudDialogueCursor
+        if cursorChanged {
+            cloudDialogueCursor = nextCursor
+        }
+        return eventsChanged || !newlyAcceptedEvents.isEmpty || didApplySyntheticProgress || cursorChanged
     }
 
     private func resolveWorkItemProgress(
@@ -1377,23 +1397,30 @@ extension MacGatewayStore {
 
     private func updateCloudDialogueTransportState(for error: Error) {
         if case MacGatewayError.unreachable = error {
-            isReachable = false
-            cloudDialogueTransportState = .failed(error.localizedDescription)
+            if isReachable != false { isReachable = false }
+            let nextState: MacGatewayCloudDialogueTransportState = .failed(error.localizedDescription)
+            if cloudDialogueTransportState != nextState { cloudDialogueTransportState = nextState }
             return
         }
         if case MacGatewayError.certificateMismatch = error {
-            isReachable = false
-            cloudDialogueTransportState = .failed(error.localizedDescription)
+            if isReachable != false { isReachable = false }
+            let nextState: MacGatewayCloudDialogueTransportState = .failed(error.localizedDescription)
+            if cloudDialogueTransportState != nextState { cloudDialogueTransportState = nextState }
             return
         }
         if case MacGatewayError.server(let message) = error {
             let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if normalized == "not found" || normalized == "not_found" || normalized.contains("404") {
-                cloudDialogueTransportState = .unsupportedEndpoint
+                if cloudDialogueTransportState != .unsupportedEndpoint {
+                    cloudDialogueTransportState = .unsupportedEndpoint
+                }
                 return
             }
         }
-        cloudDialogueTransportState = .failed(error.localizedDescription)
+        let nextState: MacGatewayCloudDialogueTransportState = .failed(error.localizedDescription)
+        if cloudDialogueTransportState != nextState {
+            cloudDialogueTransportState = nextState
+        }
     }
 
     private func cloudDialogueFriendlyErrorMessage(for error: Error) -> String {

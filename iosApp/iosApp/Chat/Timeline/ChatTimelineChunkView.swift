@@ -12,7 +12,7 @@ struct ChatTimelineChunkView<EntryContent: View>: View, @MainActor Equatable {
     let chunk: NativeTimelineChunk
     let presentationSignature: Int
     let firstEntryID: String?
-    let firstHistoryEntryID: String?
+    let historyLoadTriggerID: String?
     let historyBoundaryIDs: Set<String>
     let activity: ChatTimelineActivity?
     let hasActivityAnchor: Bool
@@ -32,7 +32,8 @@ struct ChatTimelineChunkView<EntryContent: View>: View, @MainActor Equatable {
         let _ = ChatRenderProbe.record("chunk", id: chunk.id)
         VStack(alignment: .leading, spacing: 0) {
             ForEach(chunk.entries) { entry in
-                let isHistoryBoundary = entry.id == firstHistoryEntryID || historyBoundaryIDs.contains(entry.id)
+                let observesHistoryBoundary = entry.id == historyLoadTriggerID
+                let hasHistoryBoundaryAnchor = observesHistoryBoundary || historyBoundaryIDs.contains(entry.id)
                 let activityHere = entry.messageId != nil && entry.messageId == activity?.anchorMessageID
                 let awaitingSegmentedFirstBlock = entry.isAwaitingSegmentedFirstBlock
                 let statusReplacesEntry = activityHere && entry.isGlobalStatusOnly
@@ -47,16 +48,19 @@ struct ChatTimelineChunkView<EntryContent: View>: View, @MainActor Equatable {
                     isHiddenStatus ? 0 : (
                     entry.isAssistantContinuation ? ChatLayout.assistantPartSpacing : 14
                 )
-                if isHistoryBoundary {
+                if hasHistoryBoundaryAnchor {
                     Color.clear
                         .frame(height: 0)
                         .id("history-boundary-" + entry.id)
                         .accessibilityHidden(true)
                         .onGeometryChange(for: CGFloat?.self) { proxy in
-                            guard let viewport = proxy.bounds(of: .scrollView),
+                            guard observesHistoryBoundary,
+                                  let viewport = proxy.bounds(of: .scrollView),
                                   viewport.height > 0 else { return nil }
-                            return -viewport.minY / viewport.height
+                            let relativeTop = -viewport.minY / viewport.height
+                            return relativeTop < 0 ? -1 : relativeTop
                         } action: { previous, current in
+                            guard observesHistoryBoundary else { return }
                             callbacks.boundary(entry.id, previous, current)
                         }
                         .padding(.top, topSpacing)
@@ -73,7 +77,7 @@ struct ChatTimelineChunkView<EntryContent: View>: View, @MainActor Equatable {
                         entryView(entry)
                     }
                 }
-                .padding(.top, (isHistoryBoundary || awaitingSegmentedFirstBlock) ? 0 : topSpacing)
+                .padding(.top, (hasHistoryBoundaryAnchor || awaitingSegmentedFirstBlock) ? 0 : topSpacing)
                 if let activity, activityHere, !statusReplacesEntry, activity.shouldDisplayBelow(entry) {
                     // 仅当当前轮气泡正在吐正文时收起进度行（防流式结束 28pt 下坠）；工具执行与次轮思考仍展示在首轮气泡下方。
                     let isAfterUserMessage = entry.role == MessageRole.user

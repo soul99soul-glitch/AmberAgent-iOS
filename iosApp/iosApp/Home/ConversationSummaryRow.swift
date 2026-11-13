@@ -307,10 +307,7 @@ struct ConversationSummaryRow: View, Equatable {
     private var relativeTime: String {
         let ms = summary.updateAt.toEpochMilliseconds()
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let formatter = RelativeDateTimeFormatter()
-        formatter.locale = IOSAppLanguagePreference.selected().resolvedLocale()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        return ConversationRelativeTimeFormatter.string(for: date)
     }
 
     /// E 版 meta 淡切：~4.2s 一轮，0.4s 淡出换文；仅当前会话且有浓缩预览时启用。
@@ -427,8 +424,37 @@ private struct CurrentConversationAvatarGlow: View {
     }
 }
 
+@MainActor
+enum ConversationRelativeTimeFormatter {
+    private static let formatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+    private static var cachedLocale: Locale?
+
+    static func string(
+        for date: Date,
+        relativeTo referenceDate: Date = Date(),
+        locale: Locale = IOSAppLanguagePreference.selected().resolvedLocale()
+    ) -> String {
+        if cachedLocale != locale {
+            formatter.locale = locale
+            cachedLocale = locale
+        }
+        return formatter.localizedString(for: date, relativeTo: referenceDate)
+    }
+}
+
 /// 用宿主 layer 驱动静态光晕的透明度，保留 SwiftUI 主题颜色和模糊效果。
-private struct AvatarGlowOpacityHost<Content: View>: UIViewControllerRepresentable {
+struct AvatarGlowOpacityHost<Content: View>: UIViewControllerRepresentable {
+    final class Coordinator {
+        var start: Date?
+        var reduceMotion: Bool?
+        var accentHex: UInt32?
+        var paper: AmberThemeRuntime.Paper?
+    }
+
     let start: Date
     let reduceMotion: Bool
     let accentHex: UInt32
@@ -449,21 +475,41 @@ private struct AvatarGlowOpacityHost<Content: View>: UIViewControllerRepresentab
         self.content = content()
     }
 
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeUIViewController(context: Context) -> UIHostingController<Content> {
         let controller = UIHostingController(rootView: content)
         controller.safeAreaRegions = []
         controller.view.backgroundColor = .clear
         controller.view.isUserInteractionEnabled = false
+        context.coordinator.start = start
+        context.coordinator.reduceMotion = reduceMotion
+        context.coordinator.accentHex = accentHex
+        context.coordinator.paper = paper
         updateOpacityAnimation(on: controller.view.layer)
         return controller
     }
 
     func updateUIViewController(_ controller: UIHostingController<Content>, context: Context) {
-        controller.rootView = content
-        updateOpacityAnimation(on: controller.view.layer)
+        let coordinator = context.coordinator
+        if coordinator.accentHex != accentHex || coordinator.paper != paper {
+            controller.rootView = content
+            coordinator.accentHex = accentHex
+            coordinator.paper = paper
+        }
+        let timingChanged = coordinator.start != start || coordinator.reduceMotion != reduceMotion
+        let missingExpectedAnimation = !reduceMotion
+            && controller.view.layer.animation(forKey: "homeAvatarGlowBreath") == nil
+        if timingChanged || missingExpectedAnimation {
+            coordinator.start = start
+            coordinator.reduceMotion = reduceMotion
+            updateOpacityAnimation(on: controller.view.layer)
+        }
     }
 
-    static func dismantleUIViewController(_ controller: UIHostingController<Content>, coordinator: ()) {
+    static func dismantleUIViewController(_ controller: UIHostingController<Content>, coordinator: Coordinator) {
         controller.view.layer.removeAnimation(forKey: "homeAvatarGlowBreath")
     }
 

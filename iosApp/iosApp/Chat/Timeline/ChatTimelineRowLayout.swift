@@ -2,6 +2,11 @@ import SwiftUI
 import SwiftStreamingMarkdown
 
 enum ChatTimelineRowLayoutInvalidation {
+    /// 流式图宿主（`ChatStreamingGraphHost`）内部子树专用失效哨兵 ID。
+    /// 宿主内部由 `SizedView` 自主跟踪自然高度并在实际高度变化（> 0.5pt）时显式标脏外层行，
+    /// 因此内部 `ParagraphUIView` / Markdown 子树透传该哨兵时必须直接忽略——绝不可传 `nil` 或 `""`，
+    /// 否则会落入全局 `unscopedGeneration` 分支清空所有历史行布局缓存。
+    static let graphHostContainedID = "__chat_streaming_graph_host__"
     nonisolated(unsafe) private static var isHookInstalled = false
     nonisolated(unsafe) private static var unscopedGeneration: UInt64 = 0
     nonisolated(unsafe) private static var rowGenerations: [String: UInt64] = [:]
@@ -9,6 +14,14 @@ enum ChatTimelineRowLayoutInvalidation {
     nonisolated(unsafe) static var placedRowBounds: [String: CGRect] = [:]
     nonisolated(unsafe) static var placedSubAgentCardSizes: [String: CGSize] = [:]
     nonisolated(unsafe) private static var subAgentCardToggleHandlers: [String: () -> Void] = [:]
+
+    static func rowGenerationForTesting(_ messageID: String) -> UInt64 {
+        rowGenerations[messageID, default: 0]
+    }
+
+    static func unscopedGenerationForTesting() -> UInt64 {
+        unscopedGeneration
+    }
 
     static func registerSubAgentCardToggle(id: String?, action: @escaping () -> Void) {
         guard let id, !id.isEmpty else { return }
@@ -33,6 +46,9 @@ enum ChatTimelineRowLayoutInvalidation {
         guard !isHookInstalled else { return }
         isHookInstalled = true
         ParagraphLayoutInvalidationHook.onInvalidate = { messageID in
+            if messageID == graphHostContainedID {
+                return
+            }
             if let messageID, !messageID.isEmpty {
                 rowGenerations[messageID, default: 0] &+= 1
             } else {
@@ -43,6 +59,9 @@ enum ChatTimelineRowLayoutInvalidation {
 
     static func markRowDirty(_ messageID: String?) {
         installHookIfNeeded()
+        if messageID == graphHostContainedID {
+            return
+        }
         guard let messageID, !messageID.isEmpty else {
             unscopedGeneration &+= 1
             return

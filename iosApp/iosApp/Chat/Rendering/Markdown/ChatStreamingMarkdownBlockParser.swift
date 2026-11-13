@@ -12,8 +12,8 @@ struct ChatStreamingMarkdownFenceState {
 
     var isInsideFence: Bool { activeFence != nil }
 
-    mutating func consumesCodeLine(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    mutating func consumesCodeLine<S: StringProtocol>(_ line: S) -> Bool {
+        let trimmed = Self.trimmedWhitespaceAndNewlines(line)
         if let activeFence {
             let runLength = trimmed.prefix { $0 == activeFence.marker }.count
             // A shorter run or a line with an info string remains code content.
@@ -29,6 +29,22 @@ struct ChatStreamingMarkdownFenceState {
         guard runLength >= 3 else { return false }
         activeFence = Fence(marker: marker, runLength: runLength)
         return true
+    }
+
+    private static func trimmedWhitespaceAndNewlines<S: StringProtocol>(_ line: S) -> S.SubSequence {
+        var start = line.startIndex
+        let end = line.endIndex
+        while start < end, line[start].isWhitespace || line[start].isNewline {
+            start = line.index(after: start)
+        }
+        var sliceEnd = end
+        while sliceEnd > start {
+            let prev = line.index(before: sliceEnd)
+            let ch = line[prev]
+            guard ch.isWhitespace || ch.isNewline else { break }
+            sliceEnd = prev
+        }
+        return line[start..<sliceEnd]
     }
 }
 

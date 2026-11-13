@@ -123,7 +123,7 @@ struct NativeChatTimelineView: View {
                 : contentHashCache.contentHash(for: row)
         }
         let firstHistoryMessageEntry = projection.entries.first(where: { $0.kind == .message })
-        let firstHistoryEntryID = firstHistoryMessageEntry?.id
+        let historyLoadTriggerID = startIndex > 0 ? firstHistoryMessageEntry?.id : nil
         let hasActivityAnchor = activity.map { status in
             projection.entries.contains { $0.messageId == status.anchorMessageID }
         } ?? true
@@ -140,7 +140,8 @@ struct NativeChatTimelineView: View {
         )
         let _ = chunkCallbacks.action = onAction
         let _ = chunkCallbacks.boundary = { id, previous, current in
-            guard id == firstHistoryEntryID, let previous, let current,
+            ChatRenderProbe.record("history-boundary-action", id: id)
+            guard id == historyLoadTriggerID, let previous, let current,
                   previous < 0, current >= 0,
                   !(historyResetRevision != signal.revision &&
                     (signal.event == .conversationLoaded || signal.event == .conversationSwitched ||
@@ -170,9 +171,9 @@ struct NativeChatTimelineView: View {
                         ChatTimelineChunkView(
                             chunk: chunk,
                             presentationSignature: chunkPresentationSignature(chunk, firstEntryID: projection.entries.first?.id,
-                                firstHistoryEntryID: firstHistoryEntryID, display: displaySettingSignature,
+                                historyLoadTriggerID: historyLoadTriggerID, display: displaySettingSignature,
                                 generative: generativeUiSettingSignature),
-                            firstEntryID: projection.entries.first?.id, firstHistoryEntryID: firstHistoryEntryID,
+                            firstEntryID: projection.entries.first?.id, historyLoadTriggerID: historyLoadTriggerID,
                             historyBoundaryIDs: historyBoundaryIDs, activity: chunkActivity,
                             hasActivityAnchor: hasActivityAnchor, contextCompactState: contextCompactState,
                             callbacks: chunkCallbacks,
@@ -789,7 +790,7 @@ struct NativeChatTimelineView: View {
     }
 
     private func chunkPresentationSignature(_ chunk: NativeTimelineChunk, firstEntryID: String?,
-                                            firstHistoryEntryID: String?, display: Int, generative: Int) -> Int {
+                                            historyLoadTriggerID: String?, display: Int, generative: Int) -> Int {
         var hash = Hasher()
         hash.combine(display); hash.combine(generative)
         hash.combine(isGenerationActive && chunk.entries.contains(where: \.observesGenerationState))
@@ -804,7 +805,8 @@ struct NativeChatTimelineView: View {
         }
         for entry in chunk.entries {
             hash.combine(entry.id == firstEntryID)
-            hash.combine(entry.id == firstHistoryEntryID || historyBoundaryIDs.contains(entry.id))
+            hash.combine(entry.id == historyLoadTriggerID)
+            hash.combine(historyBoundaryIDs.contains(entry.id))
             let messageID = entry.messageId
             let highlighted = highlightedMessageAnchor?.conversationID == currentConversationID &&
                 highlightedMessageAnchor?.messageID == messageID

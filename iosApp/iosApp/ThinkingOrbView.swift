@@ -67,8 +67,14 @@ final class OrbCanvasView: UIView {
     private var isDark = false
     private var isReduceMotion = false
     private var isPaused = false
+    private var isSceneBackgrounded = false
     private var displayLink: CADisplayLink?
     private var configuredSize: CGFloat = 24
+    private var scratch = OrbScratch()
+
+    var isDisplayLinkRunningForTesting: Bool {
+        displayLink != nil && displayLink?.isPaused == false
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -80,6 +86,10 @@ final class OrbCanvasView: UIView {
     }
 
     required init?(coder: NSCoder) { nil }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
 
     override var intrinsicContentSize: CGSize {
         CGSize(width: configuredSize, height: configuredSize)
@@ -122,7 +132,7 @@ final class OrbCanvasView: UIView {
     // MARK: Display link lifecycle
 
     private func updateRunning() {
-        let shouldRun = !isPaused && !isReduceMotion && window != nil && !isHidden && alpha > 0.01
+        let shouldRun = !isPaused && !isReduceMotion && !isSceneBackgrounded && window != nil && !isHidden && alpha > 0.01
         if shouldRun {
             if displayLink == nil {
                 let proxy = OrbLinkProxy(self)
@@ -142,13 +152,42 @@ final class OrbCanvasView: UIView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window != nil {
+        NotificationCenter.default.removeObserver(self, name: UIScene.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIScene.willEnterForegroundNotification, object: nil)
+        if let window {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(handleSceneDidEnterBackground(_:)),
+                name: UIScene.didEnterBackgroundNotification, object: nil
+            )
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(handleSceneWillEnterForeground(_:)),
+                name: UIScene.willEnterForegroundNotification, object: nil
+            )
+            isSceneBackgrounded = window.windowScene?.activationState == .background
             updateRunning()
             setNeedsDisplay()
         } else {
+            isSceneBackgrounded = false
             displayLink?.invalidate()
             displayLink = nil
         }
+    }
+
+    @objc private func handleSceneDidEnterBackground(_ notification: Notification) {
+        if let scene = notification.object as? UIScene, let myScene = window?.windowScene, scene !== myScene {
+            return
+        }
+        isSceneBackgrounded = true
+        updateRunning()
+    }
+
+    @objc private func handleSceneWillEnterForeground(_ notification: Notification) {
+        if let scene = notification.object as? UIScene, let myScene = window?.windowScene, scene !== myScene {
+            return
+        }
+        isSceneBackgrounded = false
+        updateRunning()
+        if window != nil { setNeedsDisplay() }
     }
 
     override var isHidden: Bool {
@@ -175,6 +214,6 @@ final class OrbCanvasView: UIView {
         } else {
             t = CACurrentMediaTime() * effSpeed
         }
-        orbDraw(resolved.mode, ctx, size: s, t: t, dark: isDark, opts: resolved.opts)
+        orbDraw(resolved, ctx, size: s, t: t, dark: isDark, scratch: &scratch)
     }
 }

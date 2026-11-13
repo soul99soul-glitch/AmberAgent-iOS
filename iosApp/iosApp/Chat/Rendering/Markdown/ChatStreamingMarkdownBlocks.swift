@@ -126,10 +126,10 @@ final class ChatStreamingMarkdownBlockController: ObservableObject {
     private var lastPublishAt = Date.distantPast
 
     init(text: String, includeTrailingPartialTableRow: Bool) {
-        var detector = ChatStreamingTableDetectionState(text: text)
+        let detector = ChatStreamingTableDetectionState(text: text)
         let initialBlocks = ChatPerfTrace.measure("MarkdownBlockSplitInitial", count: { text.utf16.count }) {
-            if !detector.containsTable, (text as NSString).range(of: "\r").location == NSNotFound {
-                return text.contains(where: { !$0.isWhitespace })
+            if !detector.containsTable, !detector.containsCarriageReturn {
+                return detector.hasNonWhitespace
                     ? [ChatStreamingMarkdownBlock(id: "text-0", kind: .text(text))]
                     : []
             }
@@ -212,9 +212,8 @@ final class ChatStreamingMarkdownBlockController: ObservableObject {
                 pendingParse = nil
 
                 tableDetector.update(with: target.text)
-                if !tableDetector.containsTable,
-                   (target.text as NSString).range(of: "\r").location == NSNotFound {
-                    let parsed: [ChatStreamingMarkdownBlock] = target.text.contains(where: { !$0.isWhitespace })
+                if !tableDetector.containsTable, !tableDetector.containsCarriageReturn {
+                    let parsed: [ChatStreamingMarkdownBlock] = tableDetector.hasNonWhitespace
                         ? [ChatStreamingMarkdownBlock(id: "text-0", kind: .text(target.text))]
                         : []
                     lastPublishAt = Date()
