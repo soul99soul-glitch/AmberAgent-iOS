@@ -418,7 +418,7 @@ class CloudOrchestrationKernelTest {
             assertTrue(pageB.items.any { it.previewText.contains("CI 报错日志") })
 
             // 同时 Router 的全局可观测列表中仍保留该事件
-            assertTrue(h.kernel.listObservableRouterEvents().any { it.sourceMessageId == "msg-pr-101-followup" })
+            assertTrue(h.kernel.listObservableRouterEvents().any { it.sourceMessageId == imMessageIdentity(ChannelKind.TELEGRAM, "chat-1", "msg-pr-101-followup") })
         }
     }
 
@@ -488,7 +488,7 @@ class CloudOrchestrationKernelTest {
                 kernel = h.kernel,
                 sink = sink,
                 brain = RouterBrain { input ->
-                    if (input.events.any { it.sourceMessageId == "m-1" }) {
+                    if (input.events.any { it.sourceMessageId == imMessageIdentity(ChannelKind.TELEGRAM, "chat-1", "m-1") }) {
                         turn1Entered.complete(Unit)
                         turn1Gate.await()
                     }
@@ -508,7 +508,7 @@ class CloudOrchestrationKernelTest {
                     text = "第一条请求",
                 )
             )
-            turn1Entered.await()
+            kotlinx.coroutines.withTimeout(3_000) { turn1Entered.await() }
             assertTrue(h.kernel.isRouterTurnBusy)
 
             // 在 Turn 1 推理期间连续到达 m-2, m-3, m-4 -> 全部进入批处理队列且不阻塞确认

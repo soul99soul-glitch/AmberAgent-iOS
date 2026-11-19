@@ -1,6 +1,8 @@
 package app.amber.cloud.runtime
 
 import app.amber.cloud.channel.PRIMARY_CONVERSATION_ID
+import app.amber.cloud.gateway.DeviceContextSnapshotStore
+import app.amber.cloud.gateway.PairedDevice
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.security.EnvelopeCredentialVault
 import app.amber.cloud.security.PlaceholderCredentialException
@@ -27,6 +29,8 @@ internal object CloudBuiltinTools {
         memoryStore: CloudMemoryStore,
         vault: EnvelopeCredentialVault,
         workspaceDir: File,
+        deviceContextStore: DeviceContextSnapshotStore? = null,
+        pairedIosDevicesProvider: () -> List<PairedDevice> = { emptyList() },
     ) {
         toolRegistry.register(
             CloudToolDefinition(
@@ -211,5 +215,26 @@ internal object CloudBuiltinTools {
                 toolRegistry.executeGate(stepTool, stepArgs, ExecutionScope.RECIPE)
             }
         )
+
+        if (deviceContextStore != null) {
+            toolRegistry.register(
+                CloudToolDefinition(
+                    name = "device_context_read",
+                    description = "只读读取主人已配对 iOS 设备主动共享的近期上下文摘要（日历/提醒/Artifact），返回不可信数据包裹结果",
+                    parameters = app.amber.cloud.tasks.schema("{\"domain\":{\"type\":\"string\",\"enum\":[\"all\",\"calendar\",\"reminders\",\"artifacts\"]},\"deviceId\":{\"type\":\"string\"}}"),
+                    highRisk = false,
+                    effect = ToolEffect.PURE,
+                    ownerOnly = true,
+                ) { args ->
+                    val domain = args["domain"]?.jsonPrimitive?.contentOrNull ?: "all"
+                    val deviceId = args["deviceId"]?.jsonPrimitive?.contentOrNull
+                    deviceContextStore.readForOwnerDevices(
+                        pairedIosDevices = pairedIosDevicesProvider(),
+                        domainFilter = domain,
+                        requestedDeviceId = deviceId,
+                    )
+                }
+            )
+        }
     }
 }

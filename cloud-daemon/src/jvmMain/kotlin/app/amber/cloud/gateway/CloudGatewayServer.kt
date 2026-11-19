@@ -275,7 +275,11 @@ fun Application.configureCloudGateway(
         post("/v1/amber/schedules/{id}/run") {
             val device = call.authenticate() ?: return@post
             val id = call.parameters["id"]?.let { URLDecoder.decode(it, StandardCharsets.UTF_8) }.orEmpty()
-            val (status, result) = state.triggerScheduleNow(id, device.id)
+            val (status, result) = if (agentApi != null) {
+                agentApi.kernel.scheduleRunner.triggerManual(id, device)
+            } else {
+                state.triggerScheduleNow(id, device.id)
+            }
             if (status >= 300) {
                 call.respondError(status, result.toString())
             } else {

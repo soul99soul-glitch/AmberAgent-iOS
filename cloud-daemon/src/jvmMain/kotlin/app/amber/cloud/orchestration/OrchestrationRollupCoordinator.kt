@@ -168,7 +168,11 @@ internal class OrchestrationRollupCoordinator(
         return settled
     }
 
-    suspend fun maybeTriggerBatchRollup(batchId: String, nowEpochMs: Long) {
+    suspend fun maybeTriggerBatchRollup(
+        batchId: String,
+        nowEpochMs: Long,
+        ignoreClaimTtl: Boolean = false,
+    ) {
         val batchItems = kernel.store.listWorkItemsByBatch(batchId)
         if (batchItems.isEmpty() || !batchItems.all { it.state.isTerminal }) {
             return
@@ -186,6 +190,7 @@ internal class OrchestrationRollupCoordinator(
             }
         }.trim()
 
+        val replyAddress = batchItems.firstNotNullOfOrNull { it.replyAddress }
         val claimId = "wake:" + UUID.randomUUID().toString().lowercase()
         val claimedRollup = kernel.store.tryClaimBatchWake(
             batchId = batchId,
@@ -194,6 +199,8 @@ internal class OrchestrationRollupCoordinator(
             rollupMarkdown = rollupMarkdown,
             nowMs = nowEpochMs,
             ttlMs = kernel.config.wakeClaimTtlMs,
+            replyAddress = replyAddress,
+            ignoreClaimTtl = ignoreClaimTtl,
         ) ?: return
 
         val coordinatorPrincipal = CloudPrincipal.CloudCoordinator(

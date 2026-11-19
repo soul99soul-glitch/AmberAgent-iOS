@@ -19,6 +19,13 @@ import java.security.SecureRandom
 import java.time.Instant
 import java.util.Base64
 import java.util.UUID
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.withContext
+
+internal class DecisionActorContext(val actorDevice: String) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<DecisionActorContext>
+}
 
 @Serializable
 data class GatewayIdentity(
@@ -146,6 +153,12 @@ data class ScheduleSummaryDto(
     val lastStatus: String? = null,
     val lastRunAt: Double? = null,
     val autoApprovesHighRisk: Boolean = false,
+    val ownerDeviceId: String? = null,
+    val intervalMinutes: Int? = null,
+    val lastRunDeviceId: String? = null,
+    val lastWorkItemId: String? = null,
+    val lastSlotEpochSec: Long? = null,
+    val lastError: String? = null,
 )
 
 @Serializable
@@ -164,6 +177,8 @@ data class PushMessagePayload(
     val toolCallId: String? = null,
     val category: String? = null,
     val highRisk: Boolean = false,
+    val deepLink: String? = null,
+    val workItemId: String? = null,
 )
 
 fun interface PushSender {
@@ -185,6 +200,7 @@ class CloudGatewayState(
     gatewayNameOverride: String? = null,
     var pushSender: PushSender = PushSender { Result.success(Unit) },
     var soulRevisionProvider: () -> Long = { 0L },
+    private val clockEpochSeconds: () -> Double = { nowEpochSeconds() },
 ) {
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
     private val compactJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -197,6 +213,7 @@ class CloudGatewayState(
     val sessionsFile = File(dataDir, "sessions.json")
     val schedulesFile = File(dataDir, "schedules.json")
     val tlsIdentityFile = File(dataDir, "tls-identity.p12")
+    val deviceContextStore = DeviceContextSnapshotStore(File(dataDir, "device-context"))
 
     val identity: GatewayIdentity
 
@@ -209,6 +226,7 @@ class CloudGatewayState(
         identity = loadOrCreateIdentity(gatewayNameOverride)
         loadSessionsFromDisk()
         loadSchedulesFromDisk()
+        deviceContextStore.purgeExpired()
     }
 
     @Synchronized
@@ -233,7 +251,7 @@ class CloudGatewayState(
     }
 
     @Synchronized
-    fun issuePairingTicket(nowSeconds: Double = nowEpochSeconds(), ttlSeconds: Double = 300.0): String {
+    fun issuePairingTicket(nowSeconds: Double = clockEpochSeconds(), ttlSeconds: Double = 300.0): String {
         val secretBytes = ByteArray(16).also { secureRandom.nextBytes(it) }
         val secret = Base64.getUrlEncoder().withoutPadding().encodeToString(secretBytes)
         val ticket = PairingTicket(
@@ -257,7 +275,7 @@ class CloudGatewayState(
         protocolVersion: Int = 1,
         nodeRole: String = "hybrid",
         trustedApprovalSurface: Boolean? = null,
-        nowSeconds: Double = nowEpochSeconds(),
+        nowSeconds: Double = clockEpochSeconds(),
     ): PairResult {
         val normalizedPlatform = platform.trim().lowercase()
         if (secret.isBlank() || normalizedPlatform !in VALID_PLATFORMS) {
@@ -359,8 +377,56 @@ class CloudGatewayState(
         val current = loadDevicesStrict()
         val target = current.firstOrNull { it.id == deviceId } ?: return false
         saveDevicesStrict(current.filterNot { it.id == deviceId })
+        deviceContextStore.delete(deviceId)
+        var scheduleChanged = false
+        for ((schedId, schedule) in schedules.toMap()) {
+            if (schedule.ownerDeviceId == deviceId) {
+                schedules[schedId] = schedule.copy(
+                    running = false,
+                    paused = true,
+                    lastError = "owner_unpaired",
+                )
+                scheduleChanged = true
+            }
+        }
+        if (scheduleChanged) persistSchedules()
         recordAudit("unpair", mapOf("device" to target.id, "name" to target.name))
         return true
+    }
+
+    @Synchronized
+    fun findDeviceById(deviceId: String): PairedDevice? =
+        runCatching { loadDevicesStrict().firstOrNull { it.id == deviceId } }.getOrNull()
+
+    /**
+     * Privacy-preserving push payload for scheduled Cloud tasks (X2).
+     * Never exposes schedule prompt, execution output, error details, or tool names.
+     */
+    fun buildSchedulePushPayload(
+        device: PairedDevice,
+        schedule: ScheduleSummaryDto,
+        workItemId: String,
+        outcome: String,
+    ): PushMessagePayload? {
+        val pushToken = device.pushToken ?: return null
+        val body = when (outcome.trim().lowercase()) {
+            "completed" -> "定时任务已完成，点击查看详情"
+            "blocked", "paused", "needsyou" -> "定时任务需要你的确认，请在 App 内查看"
+            else -> "定时任务执行失败，点击查看详情"
+        }
+        return PushMessagePayload(
+            deviceId = device.id,
+            platform = device.platform,
+            pushToken = pushToken,
+            title = "定时任务更新",
+            body = body,
+            sessionKey = null,
+            toolCallId = null,
+            category = "amber.cloud.task",
+            highRisk = false,
+            deepLink = "amber://cloud-task/$workItemId",
+            workItemId = workItemId,
+        )
     }
 
     @Synchronized
@@ -666,27 +732,31 @@ class CloudGatewayState(
         }
 
         val listeners = synchronized(this) { decisionListeners.toList() }
-        var handled = false
-        for (listener in listeners) {
-            if (listener(sessionKey, toolCallId, allow)) {
-                handled = true
-                break
+        val handled = withContext(DecisionActorContext(actorDevice)) {
+            var matched = false
+            for (listener in listeners) {
+                if (listener(sessionKey, toolCallId, allow)) {
+                    matched = true
+                    break
+                }
             }
+            matched
         }
         if (!handled) {
-            synchronized(this) {
-                val current = sessions[sessionKey]
-                if (current == null || current.pendingApproval?.toolCallId != toolCallId) {
-                    return DecisionHttpResult(409, "这次审批已经结束", outcome = "stale")
-                }
-                sessions[sessionKey] = current.copy(
-                    state = if (allow) "running" else "completed",
-                    waitReason = null,
-                    pendingApproval = null,
-                    updatedAt = nowEpochSeconds(),
-                )
-                persistSessions()
-            }
+            recordAudit(
+                "amber-decision-result",
+                mapOf(
+                    "task" to sessionKey,
+                    "run" to runId,
+                    "tool" to pending.tool,
+                    "toolCallId" to toolCallId,
+                    "allow" to allow.toString(),
+                    "decision" to if (allow) "allow" else "deny",
+                    "outcome" to "stale",
+                    "device" to actorDevice,
+                ),
+            )
+            return DecisionHttpResult(409, "这次审批已经结束", outcome = "stale")
         }
 
         val outcome = if (allow) "approved" else "denied"
@@ -716,6 +786,9 @@ class CloudGatewayState(
     fun listSchedules(): List<ScheduleSummaryDto> = schedules.values.toList()
 
     @Synchronized
+    fun getSchedule(id: String): ScheduleSummaryDto? = schedules[id]
+
+    @Synchronized
     fun createSchedule(
         name: String?,
         prompt: String?,
@@ -729,11 +802,19 @@ class CloudGatewayState(
         if (cleanName.isEmpty() || cleanPrompt.isEmpty() || cleanRule !in VALID_SCHEDULE_RULES) {
             return 400 to "需要 name、prompt 与合法的 rule"
         }
-        if (cleanRule == "interval" && (intervalMinutes == null || intervalMinutes < 15)) {
-            return 400 to "interval 规则间隔不得小于 15 分钟"
+        if (intervalMinutes != null && intervalMinutes !in 15..10080) {
+            return 400 to "规则间隔须为 15..10080 分钟"
         }
+        val resolvedInterval = when (cleanRule) {
+            "interval" -> intervalMinutes ?: 60
+            "hourly" -> intervalMinutes?.coerceAtLeast(15) ?: 60
+            "daily", "weekdays" -> intervalMinutes?.coerceAtLeast(15) ?: 1440
+            "weekly" -> intervalMinutes?.coerceAtLeast(15) ?: 10080
+            else -> intervalMinutes?.coerceAtLeast(15) ?: 60
+        }
+        val boundOwnerDeviceId = deviceId.trim().takeIf { it.isNotEmpty() && it != "remote" }
         // C3 §5.2: Remote schedule creation NEVER enables autoApproveOrdinary or autoApproveHighRisk
-        val now = nowEpochSeconds()
+        val now = clockEpochSeconds()
         val schedule = ScheduleSummaryDto(
             id = UUID.randomUUID().toString().lowercase(),
             name = cleanName,
@@ -742,8 +823,10 @@ class CloudGatewayState(
             enabled = true,
             running = false,
             paused = false,
-            nextRunAt = now + ((intervalMinutes ?: 60) * 60.0),
+            nextRunAt = now + (resolvedInterval * 60.0),
             autoApprovesHighRisk = false,
+            ownerDeviceId = boundOwnerDeviceId,
+            intervalMinutes = resolvedInterval,
         )
         schedules[schedule.id] = schedule
         persistSchedules()
@@ -754,7 +837,17 @@ class CloudGatewayState(
     @Synchronized
     fun setScheduleEnabled(id: String, enabled: Boolean, deviceId: String = "remote"): Pair<Int, Any> {
         val existing = schedules[id] ?: return 404 to "找不到这个定时任务"
-        val updated = existing.copy(enabled = enabled)
+        val now = clockEpochSeconds()
+        val nextRunAt = if (enabled) {
+            existing.nextRunAt?.takeIf { it > now } ?: (now + (existing.intervalMinutes ?: 60).coerceIn(15, 10080) * 60.0)
+        } else {
+            existing.nextRunAt
+        }
+        val updated = existing.copy(
+            enabled = enabled,
+            paused = if (enabled) false else existing.paused,
+            nextRunAt = nextRunAt,
+        )
         schedules[id] = updated
         persistSchedules()
         recordAudit(
@@ -766,18 +859,210 @@ class CloudGatewayState(
 
     @Synchronized
     fun triggerScheduleNow(id: String, deviceId: String = "remote"): Pair<Int, Any> {
-        val existing = schedules[id] ?: return 404 to "找不到这个定时任务"
-        if (existing.running) return 409 to "定时任务已在运行中"
-        val now = nowEpochSeconds()
+        if (schedules[id] == null) return 404 to "找不到这个定时任务"
+        return 409 to "定时任务须通过已认证的任务执行入口运行"
+    }
+
+    data class ClaimedScheduleRun(
+        val schedule: ScheduleSummaryDto,
+        val ownerDevice: PairedDevice,
+        val slotEpochSec: Long,
+    )
+
+    sealed interface ManualClaimResult {
+        data class Claimed(val claim: ClaimedScheduleRun) : ManualClaimResult
+        data class Error(val status: Int, val message: String) : ManualClaimResult
+    }
+
+    @Synchronized
+    fun claimScheduleForManualRun(
+        id: String,
+        requesterDevice: PairedDevice,
+        nowSeconds: Double = clockEpochSeconds(),
+    ): ManualClaimResult {
+        val existing = schedules[id] ?: return ManualClaimResult.Error(404, "找不到这个定时任务")
+        if (existing.running) return ManualClaimResult.Error(409, "定时任务已在运行中")
+        val ownerDevice = loadDevicesStrict().firstOrNull { it.id == requesterDevice.id }
+            ?: return ManualClaimResult.Error(403, "调用设备已解绑")
+        val baseEpochSec = kotlin.math.floor(nowSeconds).toLong()
+        val slotEpochSec = maxOf(baseEpochSec, (existing.lastSlotEpochSec ?: 0L) + 1L)
+        val claimed = existing.copy(
+            running = true,
+            paused = false,
+            lastStatus = "submitting",
+            lastWorkItemId = null,
+            lastRunDeviceId = ownerDevice.id,
+            lastSlotEpochSec = slotEpochSec,
+            lastError = null,
+            ownerDeviceId = existing.ownerDeviceId ?: ownerDevice.id,
+        )
+        schedules[id] = claimed
+        persistSchedules()
+        recordAudit("amber-schedule-run", mapOf("device" to requesterDevice.id, "schedule" to id, "slot" to slotEpochSec.toString()))
+        return ManualClaimResult.Claimed(ClaimedScheduleRun(claimed, ownerDevice, slotEpochSec))
+    }
+
+    @Synchronized
+    fun claimDueSchedules(nowSeconds: Double = clockEpochSeconds()): List<ClaimedScheduleRun> {
+        val claimed = mutableListOf<ClaimedScheduleRun>()
+        var changed = false
+        val pairedDevices = loadDevicesStrict()
+        for ((id, existing) in schedules.toMap()) {
+            if (!existing.enabled || existing.paused) continue
+            // Legacy records lack a complete execution contract and require manual binding.
+            val ownerId = existing.ownerDeviceId ?: continue
+            val interval = existing.intervalMinutes ?: continue
+            val nextRun = existing.nextRunAt ?: continue
+            if (nowSeconds < nextRun) continue
+            val ownerDevice = pairedDevices.firstOrNull { it.id == ownerId }
+            if (ownerDevice == null) {
+                schedules[id] = existing.copy(lastError = "owner_unpaired")
+                changed = true
+                continue
+            }
+            val stepSec = interval.coerceIn(15, 10080) * 60.0
+            val future = nextRun + (kotlin.math.floor((nowSeconds - nextRun) / stepSec) + 1) * stepSec
+            if (existing.running) {
+                schedules[id] = existing.copy(nextRunAt = future)
+                recordAudit("amber-schedule-skipped_overlap", mapOf("schedule" to id))
+            } else {
+                val slot = kotlin.math.floor(nextRun).toLong()
+                val updated = existing.copy(
+                    enabled = if (existing.rule == "once") false else existing.enabled,
+                    running = true,
+                    nextRunAt = if (existing.rule == "once") null else future,
+                    lastStatus = "submitting",
+                    lastWorkItemId = null,
+                    lastRunDeviceId = ownerId,
+                    lastSlotEpochSec = slot,
+                    lastError = null,
+                )
+                schedules[id] = updated
+                claimed += ClaimedScheduleRun(updated, ownerDevice, slot)
+                recordAudit("amber-schedule-due-claim", mapOf("schedule" to id, "slot" to slot.toString()))
+            }
+            changed = true
+        }
+        if (changed) persistSchedules()
+        return claimed
+    }
+
+    @Synchronized
+    fun attachScheduleWorkItem(
+        id: String,
+        workItemId: String,
+        expectedSlotEpochSec: Long? = null,
+        nowSeconds: Double = clockEpochSeconds(),
+    ): ScheduleSummaryDto? {
+        val existing = schedules[id] ?: return null
+        if (expectedSlotEpochSec != null && (!existing.running || existing.lastSlotEpochSec != expectedSlotEpochSec)) return null
         val updated = existing.copy(
-            running = false,
-            lastStatus = "completed",
-            lastRunAt = now,
+            lastStatus = "running",
+            lastWorkItemId = workItemId,
+            lastRunAt = nowSeconds,
         )
         schedules[id] = updated
         persistSchedules()
-        recordAudit("amber-schedule-run", mapOf("device" to deviceId, "schedule" to id))
-        return 200 to updated
+        return updated
+    }
+
+    @Synchronized
+    fun failScheduleDispatch(
+        id: String,
+        error: String,
+        expectedSlotEpochSec: Long? = null,
+        nowSeconds: Double = clockEpochSeconds(),
+    ): ScheduleSummaryDto? {
+        val existing = schedules[id] ?: return null
+        if (expectedSlotEpochSec != null && existing.lastSlotEpochSec != expectedSlotEpochSec) return null
+        // Submission may have committed before an interruption. Preserve its idempotency key.
+        val updated = existing.copy(
+            running = true,
+            lastStatus = "submitting",
+            lastRunAt = nowSeconds,
+            lastError = CredentialRedactor.redact(error).take(200),
+        )
+        schedules[id] = updated
+        persistSchedules()
+        return updated
+    }
+
+    @Synchronized
+    fun settleScheduleForWorkItem(
+        workItemId: String,
+        outcome: String,
+        errorDetail: String?,
+        nowSeconds: Double = clockEpochSeconds(),
+    ): Pair<ScheduleSummaryDto, PairedDevice?>? {
+        val entry = schedules.entries.firstOrNull { it.value.running && it.value.lastWorkItemId == workItemId } ?: return null
+        val normalized = outcome.trim().lowercase()
+        val isCompleted = normalized == "completed"
+        val isBlocked = normalized == "blocked"
+        val updated = entry.value.copy(
+            running = false,
+            paused = isBlocked || entry.value.paused,
+            lastStatus = when {
+                isCompleted -> "completed"
+                isBlocked -> "blocked"
+                else -> "failed"
+            },
+            lastRunAt = nowSeconds,
+            lastError = if (isCompleted) null else errorDetail?.let(CredentialRedactor::redact)?.take(200),
+        )
+        schedules[entry.key] = updated
+        persistSchedules()
+        val owner = updated.ownerDeviceId?.let { ownerId ->
+            runCatching { loadDevicesStrict().firstOrNull { it.id == ownerId } }.getOrNull()
+        }
+        return updated to owner
+    }
+
+    @Synchronized
+    fun listRunningSchedules(): List<ScheduleSummaryDto> =
+        schedules.values.filter { it.running }
+
+    @Synchronized
+    fun reconcileSchedulesOnRestart(
+        workersWillRelaunch: Boolean,
+        lookupWorkItem: (String) -> app.amber.cloud.orchestration.CloudWorkItemRecord?,
+        nowSeconds: Double = clockEpochSeconds(),
+    ): List<ScheduleSummaryDto> {
+        // WAITING and IDLE are live states too. Only durable worker terminal evidence settles a run.
+        for (s in schedules.values.toList().filter { it.running }) {
+            val workId = s.lastWorkItemId ?: continue
+            val item = lookupWorkItem(workId) ?: continue
+            if (item.state.isTerminal) {
+                settleScheduleForWorkItem(
+                    workId,
+                    item.settlementOutcome ?: if (item.state == app.amber.cloud.orchestration.WorkItemState.COMPLETED) "completed" else "failed",
+                    item.failureReason,
+                    nowSeconds,
+                )
+            }
+        }
+        return schedules.values.toList()
+    }
+
+    @Synchronized
+    fun pendingScheduleSubmissions(): List<ClaimedScheduleRun> = schedules.values.toList().mapNotNull { schedule ->
+        if (!schedule.running || schedule.lastWorkItemId != null) return@mapNotNull null
+        val slot = schedule.lastSlotEpochSec ?: return@mapNotNull null
+        val deviceId = schedule.lastRunDeviceId ?: schedule.ownerDeviceId ?: return@mapNotNull null
+        val device = loadDevicesStrict().firstOrNull { it.id == deviceId } ?: run {
+            schedules[schedule.id] = schedule.copy(running = false, lastError = "owner_unpaired")
+            persistSchedules()
+            return@mapNotNull null
+        }
+        ClaimedScheduleRun(schedule, device, slot)
+    }
+
+    @Synchronized
+    fun setScheduleNextRunAtForTesting(id: String, nextRunAt: Double?): ScheduleSummaryDto? {
+        val existing = schedules[id] ?: return null
+        val updated = existing.copy(nextRunAt = nextRunAt)
+        schedules[id] = updated
+        persistSchedules()
+        return updated
     }
 
     @Synchronized
@@ -851,7 +1136,7 @@ class CloudGatewayState(
         runCatching {
             val loaded = json.decodeFromString<List<ScheduleSummaryDto>>(schedulesFile.readText())
             for (s in loaded) {
-                schedules[s.id] = s.copy(running = false)
+                schedules[s.id] = s
             }
         }
     }
@@ -870,7 +1155,7 @@ class CloudGatewayState(
     companion object {
         val VALID_PLATFORMS = setOf("ios", "android", "harmony", "macos", "linux")
         val NATIVE_PLATFORMS = setOf("ios", "android", "harmony", "macos")
-        val VALID_SCHEDULE_RULES = setOf("once", "daily", "weekdays", "weekly", "interval")
+        val VALID_SCHEDULE_RULES = setOf("once", "hourly", "daily", "weekdays", "weekly", "interval")
 
         fun nowEpochSeconds(): Double = System.currentTimeMillis() / 1000.0
 

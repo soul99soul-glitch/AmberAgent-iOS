@@ -24,6 +24,7 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
@@ -40,6 +41,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
@@ -48,13 +50,6 @@ import java.util.concurrent.atomic.AtomicInteger
 // ============================================================================
 // Router 层：对外交互 + 派单（不挂执行类工具）
 // ============================================================================
-
-/** IM 投递地址。 */
-data class ImAddress(
-    val channel: ChannelKind,
-    val chatId: String,
-    val threadId: String? = null,
-)
 
 /**
  * IM 状态出口：投递新消息 / 编辑同一条消息。
@@ -76,17 +71,26 @@ interface EditableChannelConnector {
 /** 生产适配：把 [ImStatusSink] 接到已注册的 [ChannelConnector]。 */
 class ConnectorImStatusSink(
     private val connectorLookup: (ChannelKind) -> ChannelConnector?,
+    private val onPostFailed: ((ImAddress, String) -> Unit)? = null,
 ) : ImStatusSink {
     override suspend fun post(address: ImAddress, text: String): String {
-        val connector = connectorLookup(address.channel) ?: return ""
-        return connector.send(
+        val connector = connectorLookup(address.channel)
+        if (connector == null) {
+            onPostFailed?.invoke(address, "connector_not_registered:${address.channel.wireName}")
+            return ""
+        }
+        val result = connector.send(
             OutboundMessage(
                 channel = address.channel,
                 chatId = address.chatId,
                 threadId = address.threadId,
                 text = text,
             )
-        ).getOrDefault("")
+        )
+        result.onFailure { error ->
+            onPostFailed?.invoke(address, CredentialRedactor.redact(error.message ?: error::class.simpleName ?: "send_failed"))
+        }
+        return result.getOrDefault("")
     }
 
     override suspend fun edit(address: ImAddress, messageId: String, text: String): Boolean {
@@ -244,7 +248,9 @@ class CloudRouter(
         val startedAt = System.nanoTime()
         val address = ImAddress(message.channel, message.chatId, message.threadId)
         if (message.senderRole == SenderRole.OWNER) lastOwnerAddress = address
-        eventAddress["trig:${message.messageId}"] = address
+        val messageIdentity = if (message.channel == ChannelKind.APP) message.messageId
+            else imMessageIdentity(message.channel, message.chatId, message.messageId)
+        eventAddress["trig:$messageIdentity"] = address
 
         val routing = kernel.routeInboundMessage(message, sessionId, clockMs())
         val ackText = when (routing) {
@@ -270,7 +276,13 @@ class CloudRouter(
 
     /** 唤醒 Router 后台循环（幂等；已在运行时由循环自行 drain 新积压）。 */
     fun kick() {
-        scope.launch { runLoop() }
+        if (!kernel.store.isClosed) scope.launch { runLoop() }
+    }
+
+    internal fun shutdown() {
+        scope.cancel()
+        nativeTurns.values.forEach { it.cancel() }
+        nativeTurns.clear()
     }
 
     /**
@@ -298,14 +310,9 @@ class CloudRouter(
                     if (events.isEmpty()) break
                     kernel.isRouterTurnBusy = true
                     try {
-                        for (conversationEvents in events.groupBy { it.conversationId }.values) {
-                            // A native message is a durable operation; its plan/replay boundary stays stable across restarts.
-                            val turns = if (conversationEvents.any { it.sourceMessageId?.startsWith("native:")==true }) conversationEvents.map(::listOf)
-                                else agentCoordinator?.splitTurns(conversationEvents) ?: listOf(conversationEvents)
-                            for (turn in turns) {
-                                if (turn.all { it.sourceMessageId?.startsWith("native:") == true }) launchNativeTurn(turn)
-                                else processTurnSafely(turn)
-                            }
+                        for (turn in splitRouterTurns(events)) {
+                            if (turn.all { it.sourceMessageId?.startsWith("native:") == true }) launchNativeTurn(turn)
+                            else processTurnSafely(turn)
                         }
                     } finally {
                         kernel.isRouterTurnBusy = false
@@ -316,7 +323,26 @@ class CloudRouter(
             }
         }
         // 关闭窗口内新到的事件：再踢一次
-        if (kernel.hasPendingRouterEvents()) kick()
+        if (!kernel.store.isClosed && kernel.hasPendingRouterEvents()) kick()
+    }
+
+    private fun splitRouterTurns(events: List<RouterTriggerEvent>): List<List<RouterTriggerEvent>> {
+        val savedPlanIds = events.associate { event ->
+            event.eventId to event.dialogueInputId?.let(kernel.store.dialogue::input)?.routerPlanId
+        }
+        return events.groupBy { it.conversationId to it.replyAddress }.values.flatMap { conversationEvents ->
+            conversationEvents.groupBy { event ->
+                when {
+                    event.sourceMessageId?.startsWith("native:") == true -> event.eventId
+                    event.kind == "batch_rollup" -> event.eventId
+                    else -> savedPlanIds[event.eventId]
+                }
+            }.values.flatMap { group ->
+                // A frozen plan owns its members even if agent settings changed during the restart.
+                if (group.any { savedPlanIds[it.eventId] != null }) listOf(group)
+                else agentCoordinator?.splitTurns(group) ?: listOf(group)
+            }
+        }
     }
 
     private fun launchNativeTurn(events: List<RouterTriggerEvent>) {
@@ -332,6 +358,7 @@ class CloudRouter(
         try { processTurn(events) }
         catch (e: CancellationException) { throw e }
         catch (e: Exception) {
+            if (kernel.store.isClosed) throw CancellationException("store closed")
             kernel.store.appendDiagnosticEvent(events.first().conversationId, null, "router_turn_failed",
                 detail = CredentialRedactor.redact(e.stackTraceToString()), nowMs = clockMs())
             onEventsHandled(events, listOf(app.amber.cloud.runtime.cloudFailureSummary(e)))
@@ -345,9 +372,9 @@ class CloudRouter(
             .filter { it.kind == "user_message" }
             .mapNotNull { it.sourceMessageId }
             .filter { kernel.store.getSourceMessage(it)?.canAuthorizeNewWork == true }
-        val address = events.asReversed().firstNotNullOfOrNull { eventAddress[it.eventId] }
-            ?: events.firstNotNullOfOrNull { ev -> ev.conversationId.let { conv -> batchAddressForConversation(conv) } }
-            ?: lastOwnerAddress
+        val address = events.asReversed().firstNotNullOfOrNull { it.replyAddress ?: eventAddress[it.eventId] }
+            ?: events.firstNotNullOfOrNull { ev -> batchAddressForConversation(ev.conversationId) }
+            ?: lastOwnerAddress.takeIf { events.none { it.dialogueInputId != null || it.kind == "batch_rollup" } }
         val input = RouterTurnInput(
             events = events,
             activeTasks = kernel.store.listWorkItems().filter { item ->
@@ -357,22 +384,26 @@ class CloudRouter(
             batchPrompt = kernel.formatRouterBatchPrompt(events),
         )
         val native = events.all { it.sourceMessageId?.startsWith("native:")==true }
-        val planId = "dialogue-plan:"+events.joinToString("|") {it.eventId}
-        val decision = (if(native) kernel.store.dialogue.plan(planId) else null) ?: try {
-            agentCoordinator?.plan(events, ownerIds) ?: brain.decide(input)
+        val shouldFreezePlan = native || events.any { it.dialogueInputId != null || it.kind == "batch_rollup" }
+        val planId = events.firstNotNullOfOrNull { it.dialogueInputId?.let(kernel.store.dialogue::input)?.routerPlanId }
+            ?: "dialogue-plan:"+events.joinToString("|") {it.eventId}
+        val decision = (if(shouldFreezePlan) kernel.store.dialogue.plan(planId) else null) ?: try {
+            (agentCoordinator?.plan(events, ownerIds) ?: brain.decide(input)).also {
+                if (shouldFreezePlan) kernel.store.dialogue.savePlan(planId, it, events.mapNotNull { event -> event.dialogueInputId })
+            }
         } catch (e: CancellationException) { throw e }
           catch (e: Exception) {
             kernel.store.appendDiagnosticEvent(events.first().conversationId, null, "router_model_failed",
                 detail = CredentialRedactor.redact(e.stackTraceToString()), nowMs = clockMs())
             RouterDecision(reply = app.amber.cloud.runtime.cloudFailureSummary(e))
         }
-            .also { if(native) kernel.store.dialogue.savePlan(planId,it) }
 
         val replies = mutableListOf<String>()
         decision.proposeAgent?.let { profile ->
             val coordinator = agentCoordinator
             if (coordinator != null) {
-                replies += runCatching { coordinator.propose(profile, ownerIds) }
+                val deterministicProposalId = UUID.nameUUIDFromBytes(planId.toByteArray()).toString()
+                replies += runCatching { coordinator.propose(profile, ownerIds, deterministicProposalId) }
                     .getOrElse { "无法创建这个提议，请核对名称、权限和主人授权。" }
             }
         }
@@ -383,7 +414,7 @@ class CloudRouter(
                 try {
                     val conversationId = events.first().conversationId
                     val requestId = "router:" + OrchestrationHash.sha256Hex(
-                        events.joinToString("|") { it.eventId } + "|" + decision.dispatch.joinToString("|") { it.taskKey }
+                        planId.removePrefix("dialogue-plan:") + "|" + decision.dispatch.joinToString("|") { it.taskKey }
                     ).take(32)
                     val result = kernel.submitWorkBatch(
                         principal = CloudPrincipal.CloudCoordinator(
@@ -393,7 +424,8 @@ class CloudRouter(
                         requestId = requestId,
                         contextMessageIds = ownerIds,
                         items = decision.dispatch.map { spec ->
-                            if(native) spec.copy(subscribedThreadKeys=(spec.subscribedThreadKeys+events.mapNotNull {it.threadId}).distinct()) else spec
+                            val withThread = if(native) spec.copy(subscribedThreadKeys=(spec.subscribedThreadKeys+events.mapNotNull {it.threadId}).distinct()) else spec
+                            withThread.copy(replyAddress = withThread.replyAddress ?: address)
                         },
                         nowEpochMs = clockMs(),
                     )
@@ -422,12 +454,10 @@ class CloudRouter(
         for (steer in decision.steer) {
             if(ownerIds.isEmpty())continue
             runCatching {
-                kernel.steerWorker(
-                    principal = CloudPrincipal.CloudCoordinator(activeSessionId = events.first().conversationId, activeTurnId = "steer:"+events.joinToString {it.eventId}),
-                    workItemId = steer.workItemId,
-                    followupInstruction = steer.instruction,
-                    nowEpochMs = clockMs(),
-                )
+                val principal = CloudPrincipal.CloudCoordinator(activeSessionId = events.first().conversationId,
+                    activeTurnId = if (native) "steer:"+events.joinToString {it.eventId} else "steer:$planId")
+                if (native) kernel.steerWorker(principal, steer.workItemId, steer.instruction, clockMs())
+                else kernel.steerImWorker(principal, steer.workItemId, steer.instruction, clockMs())
             }
         }
         if(ownerIds.isNotEmpty())for(id in decision.cancel)kernel.cancelWorkItem(
@@ -438,9 +468,32 @@ class CloudRouter(
         }
         if (address != null) {
             for (reply in replies) emit(address, reply, if(native)null else events.first().conversationId)
+        } else if (!native && replies.isNotEmpty()) {
+            val convId = events.first().conversationId
+            for (reply in replies) {
+                recordOutwardReply(reply, convId)
+            }
+            kernel.store.appendDiagnosticEvent(
+                sessionId = convId,
+                workItemId = events.firstNotNullOfOrNull { it.batchId },
+                kind = "im_reply_address_missing",
+                messageId = events.firstOrNull()?.sourceMessageId,
+                detail = "无法解析 IM 回复地址: channel=${events.firstOrNull()?.channelId}, chatId=${events.firstOrNull()?.chatId}",
+                nowMs = clockMs(),
+            )
         }
         onEventsHandled(events,replies.map { OutwardTextSanitizer.sanitize(it,forbiddenToolNames) })
         if (replies.isNotEmpty() && decision.dispatch.isEmpty() && events.any { it.kind == "user_message" }) onTurnCompleted(input)
+        events.filter { it.kind == "batch_rollup" }
+            .mapNotNull { it.batchId }
+            .distinct()
+            .forEach { kernel.store.markBatchRollupDelivered(it) }
+        val turnImInputs = events.mapNotNull { it.dialogueInputId }
+            .distinct()
+            .mapNotNull { kernel.store.dialogue.input(it) }
+        if (turnImInputs.isNotEmpty()) {
+            kernel.store.dialogue.consume(turnImInputs)
+        }
     }
 
     private fun batchAddressForConversation(conversationId: String): ImAddress? =
@@ -528,8 +581,8 @@ class CloudRouter(
                 append(item.settlementReportPath?.let(kernel.store::readArchivedDocumentText)?.take(2_000).orEmpty())
             }
         }
-        val address = batchAddress[rollup.batchId]
-        val eventId = "rollup:${rollup.wakeClaimId}"
+        val address = rollup.replyAddress ?: batchAddress[rollup.batchId] ?: items.firstNotNullOfOrNull { it.replyAddress }
+        val eventId = "rollup:${rollup.batchId}"
         if (address != null) eventAddress[eventId] = address
         kernel.enqueueRouterTriggerWhileBusy(
             RouterTriggerEvent(
@@ -538,9 +591,12 @@ class CloudRouter(
                 conversationId = items.firstOrNull()?.sourceProvenance?.firstOrNull()?.sessionId ?: rollup.batchId,
                 channelId = address?.channel?.wireName ?: "internal",
                 chatId = address?.chatId ?: "internal",
+                threadId = address?.threadId,
                 senderId = "system",
                 summaryText = summary,
                 createdAtMs = clockMs(),
+                replyAddress = address,
+                batchId = rollup.batchId,
             )
         )
     }
@@ -549,12 +605,15 @@ class CloudRouter(
     // 4. 统一出口：净化 + 100 词预算 + 归档引用
     // ------------------------------------------------------------------------
 
-    private suspend fun emit(address: ImAddress, raw: String, conversationId: String? = null): String {
+    private suspend fun emit(address: ImAddress, raw: String, conversationId: String? = null): String =
+        sink.post(address, recordOutwardReply(raw, conversationId))
+
+    private suspend fun recordOutwardReply(raw: String, conversationId: String?): String {
         val sanitized = OutwardTextSanitizer.sanitize(raw, forbiddenToolNames).ifBlank { "好的。" }
         val budgeted = kernel.enforceImReplyWordBudget(sanitized)
         outboundLog.add(budgeted)
         if (conversationId != null) onReply(conversationId, budgeted)
-        return sink.post(address, budgeted)
+        return budgeted
     }
 
     // ------------------------------------------------------------------------
@@ -562,6 +621,7 @@ class CloudRouter(
     // ------------------------------------------------------------------------
 
     private fun registerRouterTools(registry: CloudToolRegistry) {
+        kernel.toolRegistry.get("device_context_read")?.let(registry::register)
         registry.register(CloudToolDefinition("cancel_work_item","显式取消指定任务并停止其实际进程",false,ToolEffect.PURE) {
             buildJsonObject {put("ok",true);put("status","Accepted")}
         })
@@ -701,6 +761,7 @@ class CloudRouter(
             "cancel_work_item",
             "agent_soul_get",
             "agent_soul_update",
+            "device_context_read",
         )
 
         fun parseDispatchSpecs(args: JsonObject): List<WorkItemSubmissionSpec> {

@@ -62,14 +62,24 @@ class AgentRegistry(
     }
 
     @Synchronized
-    fun propose(principal: CloudPrincipal, profile: AgentProfile, sourceMessageIds: List<String>, nowMs: Long = System.currentTimeMillis()): AgentProposal {
+    fun propose(
+        principal: CloudPrincipal,
+        profile: AgentProfile,
+        sourceMessageIds: List<String>,
+        nowMs: Long = System.currentTimeMillis(),
+        proposalId: String = UUID.randomUUID().toString(),
+    ): AgentProposal {
         if (principal !is CloudPrincipal.CloudCoordinator || principal.principalId != "coordinator:main") {
             throw PrincipalPermissionException("只有主 Router 可以提议创建 agent")
         }
         sources.resolveAuthorizedSourceMessages(sourceMessageIds)
+        db.prepare("SELECT proposal_json FROM agent_proposals WHERE id = ?").use {
+            it.bindText(1, proposalId)
+            if (it.step()) return json.decodeFromString<AgentProposal>(it.getText(0))
+        }
         require(get(profile.id) == null && profile.id != MAIN_AGENT_ID) { "Agent 已存在" }
-        val proposal = AgentProposal(UUID.randomUUID().toString(), validate(profile).copy(revision = 0), sourceMessageIds, nowMs)
-        db.prepare("INSERT INTO agent_proposals (id, proposal_json) VALUES (?, ?)").use {
+        val proposal = AgentProposal(proposalId, validate(profile).copy(revision = 0), sourceMessageIds, nowMs)
+        db.prepare("INSERT OR IGNORE INTO agent_proposals (id, proposal_json) VALUES (?, ?)").use {
             it.bindText(1, proposal.id); it.bindText(2, json.encodeToString(proposal)); it.step()
         }
         return proposal

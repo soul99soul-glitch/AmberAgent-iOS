@@ -5,11 +5,15 @@ import app.amber.ai.core.Tool
 import app.amber.ai.provider.*
 import app.amber.ai.provider.claude.claudeProviderWithClient
 import app.amber.ai.provider.openai.openAIProviderWithClient
+import app.amber.ai.ui.MessageStreamAccumulator
 import app.amber.ai.ui.UIMessage
+import app.amber.ai.ui.UIMessagePart
+import app.amber.ai.ui.finishReasoning
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.HttpTimeoutConfig
 import io.ktor.client.plugins.sse.SSE
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -26,6 +30,16 @@ internal fun cloudModelHttpClient(requestTimeoutMs: Long = 180_000, socketTimeou
     engine { config { retryOnConnectionFailure(false) } }
 }
 
+internal fun cloudStreamHttpClient(idleTimeoutMs: Long = 180_000): HttpClient = HttpClient(OkHttp) {
+    install(HttpTimeout) {
+        requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
+        socketTimeoutMillis = idleTimeoutMs
+        connectTimeoutMillis = 15_000
+    }
+    install(SSE)
+    engine { config { retryOnConnectionFailure(false) } }
+}
+
 class CloudModelTimeoutException(val attempts: Int, cause: Throwable) : Exception("model_request_timeout: attempts=$attempts", cause)
 
 internal fun cloudFailureSummary(error: Throwable): String = when (error) {
@@ -39,9 +53,13 @@ class KmpProviderModelClient(
     private val modelId: String,
     private val httpClient: HttpClient = cloudModelHttpClient(),
     private val retryDelayMs: Long = 500,
+    private val streamHttpClient: HttpClient? = null,
 ) : CloudModelClient {
+    private val resolvedStreamHttpClient by lazy { streamHttpClient ?: cloudStreamHttpClient() }
     private val openAIProvider by lazy { openAIProviderWithClient(httpClient) }
     private val claudeProvider by lazy { claudeProviderWithClient(httpClient) }
+    private val streamOpenAIProvider by lazy { openAIProviderWithClient(resolvedStreamHttpClient) }
+    private val streamClaudeProvider by lazy { claudeProviderWithClient(resolvedStreamHttpClient) }
 
     override suspend fun generateReply(messages: List<UIMessage>, tools: List<Tool>): UIMessage {
         val params = TextGenerationParams(
@@ -57,11 +75,7 @@ class KmpProviderModelClient(
                 return UIMessage(role = MessageRole.ASSISTANT, parts = emptyList()) + chunk
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
-                val timeout = generateSequence<Throwable>(e) { it.cause }.any {
-                    it is SocketTimeoutException || it is HttpRequestTimeoutException ||
-                        it is io.ktor.client.network.sockets.SocketTimeoutException ||
-                        it is io.ktor.client.network.sockets.ConnectTimeoutException
-                }
+                val timeout = isTimeoutException(e)
                 if (!timeout) throw e
                 if (attempt == 1) throw CloudModelTimeoutException(attempt + 1, e)
                 // Only generation is retried: no returned tool call has been executed yet.
@@ -70,4 +84,64 @@ class KmpProviderModelClient(
         }
         error("unreachable")
     }
+
+    override suspend fun streamReply(
+        messages: List<UIMessage>,
+        tools: List<Tool>,
+        onActivity: (StreamActivity) -> Unit,
+    ): UIMessage {
+        val model = Model(
+            modelId = modelId,
+            abilities = if (tools.isEmpty()) emptyList() else listOf(ModelAbility.TOOL),
+        )
+        val params = TextGenerationParams(model = model, tools = tools)
+        repeat(2) { attempt ->
+            var receivedChunk = false
+            val accumulator = MessageStreamAccumulator(
+                initialMessages = listOf(UIMessage(role = MessageRole.ASSISTANT, parts = emptyList())),
+                model = model,
+            )
+            try {
+                val flow = when (providerSetting) {
+                    is ProviderSetting.OpenAI -> streamOpenAIProvider.streamText(providerSetting, messages, params)
+                    is ProviderSetting.Claude -> streamClaudeProvider.streamText(providerSetting, messages, params)
+                    else -> error("Unsupported cloud provider: ${providerSetting::class.simpleName}")
+                }
+                flow.collect { chunk ->
+                    receivedChunk = true
+                    accumulator.append(chunk)
+                    val delta = chunk.choices.firstOrNull()?.delta ?: chunk.choices.firstOrNull()?.message
+                    val textChars = delta?.parts?.filterIsInstance<UIMessagePart.Text>()?.sumOf { it.text.length } ?: 0
+                    val toolName = delta?.parts?.filterIsInstance<UIMessagePart.Tool>()?.firstOrNull()?.toolName?.takeIf { it.isNotBlank() }
+                    val kind = when {
+                        toolName != null -> "tool_delta"
+                        delta?.parts?.any { it is UIMessagePart.Reasoning } == true -> "reasoning"
+                        textChars > 0 -> "text"
+                        else -> "chunk"
+                    }
+                    onActivity(StreamActivity(kind = kind, deltaTextChars = textChars, toolName = toolName))
+                }
+                return accumulator.snapshot().last().finishReasoning()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val timeout = isTimeoutException(e)
+                if (receivedChunk) {
+                    if (timeout) throw CloudModelTimeoutException(attempt + 1, e)
+                    throw e
+                }
+                if (!timeout) throw e
+                if (attempt == 1) throw CloudModelTimeoutException(attempt + 1, e)
+                delay(retryDelayMs)
+            }
+        }
+        error("unreachable")
+    }
+
+    private fun isTimeoutException(e: Throwable): Boolean =
+        generateSequence<Throwable>(e) { it.cause }.any {
+            it is SocketTimeoutException || it is HttpRequestTimeoutException ||
+                it is io.ktor.client.network.sockets.SocketTimeoutException ||
+                it is io.ktor.client.network.sockets.ConnectTimeoutException
+        }
 }

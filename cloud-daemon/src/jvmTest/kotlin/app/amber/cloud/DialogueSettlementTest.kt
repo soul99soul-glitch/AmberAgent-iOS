@@ -33,7 +33,7 @@ class DialogueSettlementTest {
             assertFailsWith<IllegalArgumentException> {k.nativeDialogue.submit(device,"new-followup","too late",kind="followup",workItemId=item.id)}
             assertEquals(WorkItemState.COMPLETED,k.orchestrationKernel.cancelWorkItem(CloudPrincipal.OwnerUser(device.id,"app"),item.id).state)
         } finally {
-            k.router.awaitIdle(includeWorkers=true);k.conversationTagger.closeAndJoin()
+            k.router.awaitIdle(includeWorkers=true);k.nativeDialogue.closeAndJoin();k.conversationTagger.closeAndJoin()
             k.agentRegistry.close();k.orchestrationStore.close();k.supertagStore.close()
             dir.deleteRecursively()
         }

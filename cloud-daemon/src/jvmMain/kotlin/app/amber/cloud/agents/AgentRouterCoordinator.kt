@@ -52,10 +52,11 @@ class AgentRouterCoordinator(
         )))
     }
 
-    fun propose(profile: AgentProfile, ownerIds: List<String>): String {
+    fun propose(profile: AgentProfile, ownerIds: List<String>, proposalId: String? = null): String {
         val proposal = registry.propose(
             CloudPrincipal.CloudCoordinator(activeSessionId = PRIMARY_CONVERSATION_ID.toString(), activeTurnId = "propose"),
             profile, ownerIds,
+            proposalId = proposalId ?: java.util.UUID.randomUUID().toString(),
         )
         val policy = if (profile.memoryPolicy == AgentMemoryPolicy.HUB_ISOLATED) "独立记忆" else "本中心记忆与全局偏好"
         return "建议创建「${proposal.profile.name}」（$policy，工具权限 ${profile.toolScope.size} 项，可在提议详情查看）。如同意，请回复：确认创建 agent ${proposal.id}"

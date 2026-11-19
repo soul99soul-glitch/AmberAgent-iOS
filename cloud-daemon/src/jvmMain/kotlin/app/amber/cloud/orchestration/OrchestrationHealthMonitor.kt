@@ -2,6 +2,7 @@ package app.amber.cloud.orchestration
 
 import app.amber.ai.ui.UIMessage
 import app.amber.cloud.channel.OutboundCard
+import app.amber.cloud.channel.PRIMARY_CONVERSATION_ID
 import app.amber.cloud.security.CredentialRedactor
 
 /**
@@ -40,19 +41,24 @@ internal class OrchestrationHealthMonitor(
 
                 val queuedDurationMs = nowEpochMs - item.createdAtMs
                 if (queuedDurationMs > kernel.config.macOfflineQueueTtlMs) {
-                    val expired = item.copy(
-                        state = WorkItemState.FAILED,
-                        slotHeld = false,
-                        failureReason = "mac_node_offline_timeout_24h",
-                        updatedAtMs = nowEpochMs,
-                    )
-                    kernel.store.upsertWorkItem(expired)
+                    val expired = synchronized(kernel.store) {
+                        val current = kernel.store.getWorkItem(item.workItemId) ?: return@synchronized null
+                        if (current.state.isTerminal || current.state != item.state || current.updatedAtMs != item.updatedAtMs) {
+                            return@synchronized null
+                        }
+                        current.copy(
+                            state = WorkItemState.FAILED,
+                            slotHeld = false,
+                            failureReason = "mac_node_offline_timeout_24h",
+                            updatedAtMs = nowEpochMs,
+                        ).also { kernel.store.upsertWorkItem(it) }
+                    } ?: continue
                     kernel.store.unsubscribeAllForWorkItem(item.workItemId)
                     kernel.emitActivityInternal(expired, ActivityPhase.FAILED)
-                    val detail = "派给 Mac 节点 (${target.deviceId}) 的任务「${item.title}」因设备离线超过 24 小时已转为 FAILED"
+                    val detail = "派给 Mac 节点 (${target.deviceId}) 的任务「${expired.title}」因设备离线超过 24 小时已转为 FAILED"
                     kernel.store.appendDiagnosticEvent(
-                        sessionId = item.workerSessionId ?: item.workItemId,
-                        workItemId = item.workItemId,
+                        sessionId = expired.workerSessionId ?: expired.workItemId,
+                        workItemId = expired.workItemId,
                         kind = "mac_offline_expired",
                         detail = detail,
                         nowMs = nowEpochMs,
@@ -64,17 +70,17 @@ internal class OrchestrationHealthMonitor(
                             headerTemplate = "red",
                             highRisk = false,
                         ),
-                        item.workItemId,
+                        expired.workItemId,
                     )
                     actions.add(
                         HealthTickAction(
-                            workItemId = item.workItemId,
+                            workItemId = expired.workItemId,
                             action = HealthActionKind.EXPIRE_OFFLINE_MAC_QUEUE,
                             finding = "mac_node_offline_timeout_24h",
                             detail = detail,
                         )
                     )
-                    kernel.maybeTriggerBatchRollupInternal(item.batchId, nowEpochMs)
+                    kernel.maybeTriggerBatchRollupInternal(expired.batchId, nowEpochMs)
                 }
                 continue
             }
@@ -99,7 +105,7 @@ internal class OrchestrationHealthMonitor(
                             detail = detail,
                         )
                     )
-                    actions.add(advanceRecoveryLadder(item, "remote_node_disconnected", nowEpochMs))
+                    advanceRecoveryLadder(item, "remote_node_disconnected", nowEpochMs)?.let(actions::add)
                 }
                 continue
             }
@@ -107,12 +113,15 @@ internal class OrchestrationHealthMonitor(
             if (item.state == WorkItemState.STARTING) {
                 val startElapsed = nowEpochMs - (item.startedAtMs ?: item.createdAtMs)
                 if (startElapsed >= kernel.config.neverStartedTimeoutMs) {
-                    actions.add(advanceRecoveryLadder(item, "never_started", nowEpochMs))
+                    advanceRecoveryLadder(item, "never_started", nowEpochMs)?.let(actions::add)
                 }
                 continue
             }
 
             if (item.state == WorkItemState.WAITING) {
+                if (kernel.expireTimedOutApprovalsForWorkItem(item.workItemId, nowEpochMs)) {
+                    continue
+                }
                 val waitElapsed = nowEpochMs - (item.waitingStartedAtMs ?: item.lastActivityAtMs)
                 if (waitElapsed >= kernel.config.approvalStuckTimeoutMs) {
                     val detail = "任务 ${item.workItemId} 等待审批或输入已卡住 ${waitElapsed / 1000}s（超过 5 分钟阈值）"
@@ -149,14 +158,25 @@ internal class OrchestrationHealthMonitor(
                         )
                         continue
                     } else {
-                        actions.add(advanceRecoveryLadder(item, "tool_overtime", nowEpochMs))
+                        advanceRecoveryLadder(item, "tool_overtime", nowEpochMs)?.let(actions::add)
                         continue
                     }
                 }
 
                 val quietElapsed = nowEpochMs - item.lastActivityAtMs
+                if (kernel.hasBackgroundProcesses(item.workItemId) && quietElapsed <= BACKGROUND_PROCESS_EXEMPTION_MS) {
+                    actions.add(
+                        HealthTickAction(
+                            workItemId = item.workItemId,
+                            action = HealthActionKind.EXEMPT_LONG_TOOL,
+                            finding = "background_process_active",
+                            detail = "存在活跃后台进程且距上次活动 ${quietElapsed / 1000}s（660s 内豁免打断）",
+                        )
+                    )
+                    continue
+                }
                 if (quietElapsed >= kernel.config.runningQuietNudgeMs) {
-                    actions.add(advanceRecoveryLadder(item, "running_quiet", nowEpochMs))
+                    advanceRecoveryLadder(item, "running_quiet", nowEpochMs)?.let(actions::add)
                 }
             }
         }
@@ -168,42 +188,18 @@ internal class OrchestrationHealthMonitor(
         item: CloudWorkItemRecord,
         finding: String,
         nowEpochMs: Long,
-    ): HealthTickAction {
-        val sessionId = item.workerSessionId ?: item.workItemId
-
+    ): HealthTickAction? {
         if (item.recoveriesUsed >= kernel.config.maxRecoveryAttempts) {
-            val exhausted = item.copy(
-                state = WorkItemState.FAILED,
-                slotHeld = false,
-                recoveryStage = RecoveryStage.EXHAUSTED,
-                needsYouEscalated = true,
-                failureReason = "recovery_exhausted:$finding",
-                updatedAtMs = nowEpochMs,
-            )
-            kernel.store.upsertWorkItem(exhausted)
-            kernel.store.unsubscribeAllForWorkItem(item.workItemId)
-            kernel.emitActivityInternal(exhausted, ActivityPhase.FAILED)
-            val detail = "任务「${item.title}」(${item.workItemId}) 异常 ($finding) 且已用尽 ${kernel.config.maxRecoveryAttempts} 次自愈上限，请求主人介入"
-            kernel.store.appendDiagnosticEvent(
-                sessionId = sessionId,
+            val escalated = kernel.exhaustWorkerRecovery(
                 workItemId = item.workItemId,
-                kind = "recovery_exhausted",
-                detail = detail,
-                nowMs = nowEpochMs,
-            )
-            kernel.onOwnerNotificationCard?.invoke(
-                OutboundCard(
-                    title = "Worker 自愈耗尽需介入 · ${item.title}",
-                    markdownBody = detail,
-                    headerTemplate = "red",
-                    highRisk = false,
-                ),
-                item.workItemId,
-            )
-            kernel.pumpWorkQueue(nowEpochMs)
-            kernel.maybeTriggerBatchRollupInternal(item.batchId, nowEpochMs)
+                expectedState = item.state,
+                expectedUpdatedAtMs = item.updatedAtMs,
+                finding = finding,
+                nowEpochMs = nowEpochMs,
+            ) ?: return null
+            val detail = "任务「${escalated.title}」(${escalated.workItemId}) 异常 ($finding) 且已用尽 ${kernel.config.maxRecoveryAttempts} 次自愈上限，请求主人介入"
             return HealthTickAction(
-                workItemId = item.workItemId,
+                workItemId = escalated.workItemId,
                 action = HealthActionKind.ESCALATE_NEEDS_YOU,
                 finding = "recovery_exhausted:$finding",
                 detail = detail,
@@ -211,21 +207,13 @@ internal class OrchestrationHealthMonitor(
         }
 
         if (item.recoveryStage == RecoveryStage.NONE) {
-            val nudged = item.copy(
-                recoveryStage = RecoveryStage.NUDGED,
-                lastNudgedAtMs = nowEpochMs,
-                updatedAtMs = nowEpochMs,
-            )
-            kernel.store.upsertWorkItem(nudged)
-            val nudgeText = "【系统巡检催促】检测到任务已静默超过 10 分钟 ($finding)，请汇报当前进度或调用结算工具提交结果。"
-            kernel.appendMessageToSessionInternal(sessionId, UIMessage.user(nudgeText), nowEpochMs)
-            kernel.store.appendDiagnosticEvent(
-                sessionId = sessionId,
+            kernel.nudgeWorker(
                 workItemId = item.workItemId,
-                kind = "recovery_nudge",
-                detail = nudgeText,
-                nowMs = nowEpochMs,
-            )
+                expectedState = item.state,
+                expectedUpdatedAtMs = item.updatedAtMs,
+                finding = finding,
+                nowEpochMs = nowEpochMs,
+            ) ?: return null
             return HealthTickAction(
                 workItemId = item.workItemId,
                 action = HealthActionKind.NUDGE,
@@ -236,33 +224,18 @@ internal class OrchestrationHealthMonitor(
 
         val sinceNudge = nowEpochMs - (item.lastNudgedAtMs ?: item.lastActivityAtMs)
         if (sinceNudge >= kernel.config.recoveryRedeliverDelayMs || finding == "never_started" || finding == "remote_node_disconnected") {
-            val nextRecoveries = item.recoveriesUsed + 1
-            val redelivered = item.copy(
-                state = WorkItemState.WORKING,
-                slotHeld = true,
-                recoveriesUsed = nextRecoveries,
-                recoveryStage = RecoveryStage.NONE,
-                lastNudgedAtMs = null,
-                activeToolName = null,
-                activeToolStartedAtMs = null,
-                lastActivityAtMs = nowEpochMs,
-                updatedAtMs = nowEpochMs,
-            )
-            kernel.store.upsertWorkItem(redelivered)
-            val redeliverText = "【系统自愈重派 #$nextRecoveries/${kernel.config.maxRecoveryAttempts}】中断卡住轮次并重派任务：${item.brief}"
-            kernel.appendMessageToSessionInternal(sessionId, UIMessage.user(redeliverText), nowEpochMs)
-            kernel.store.appendDiagnosticEvent(
-                sessionId = sessionId,
+            val redelivered = kernel.redeliverWorker(
                 workItemId = item.workItemId,
-                kind = "agent-recovery:interrupt_and_redeliver",
-                detail = "Step 2 中断重派 ($finding), recoveriesUsed=$nextRecoveries/${kernel.config.maxRecoveryAttempts}",
-                nowMs = nowEpochMs,
-            )
+                reason = finding,
+                nowEpochMs = nowEpochMs,
+                expectedState = item.state,
+                expectedUpdatedAtMs = item.updatedAtMs,
+            ) ?: return null
             return HealthTickAction(
-                workItemId = item.workItemId,
+                workItemId = redelivered.workItemId,
                 action = HealthActionKind.INTERRUPT_AND_REDELIVER,
                 finding = finding,
-                detail = "Step 2 中断并重派 (recoveriesUsed=$nextRecoveries/${kernel.config.maxRecoveryAttempts})",
+                detail = "Step 2 中断并重派 (recoveriesUsed=${redelivered.recoveriesUsed}/${kernel.config.maxRecoveryAttempts})",
             )
         }
 
@@ -272,6 +245,10 @@ internal class OrchestrationHealthMonitor(
             finding = finding,
             detail = "已处于 NUDGED 观察窗口内 (${sinceNudge / 1000}s)",
         )
+    }
+
+    companion object {
+        private const val BACKGROUND_PROCESS_EXEMPTION_MS = 660_000L
     }
 
     suspend fun runWatchdogTick(nowEpochMs: Long): List<WatchdogAssessment> {
@@ -300,8 +277,13 @@ internal class OrchestrationHealthMonitor(
                         )
                     }
                     "stop" -> {
-                        kernel.transitionWorkItemState(item.workItemId, WorkItemState.CANCELLED, nowEpochMs, "Watchdog 判定偏离停止")
-                        kernel.pumpWorkQueue(nowEpochMs)
+                        kernel.cancelWorkItem(
+                            CloudPrincipal.CloudCoordinator(
+                                activeSessionId = PRIMARY_CONVERSATION_ID.toString(),
+                                activeTurnId = "watchdog:$nowEpochMs",
+                            ),
+                            item.workItemId,
+                        )
                     }
                 }
             }

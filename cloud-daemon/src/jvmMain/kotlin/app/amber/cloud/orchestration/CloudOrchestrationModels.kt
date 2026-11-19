@@ -1,10 +1,13 @@
 package app.amber.cloud.orchestration
 
+import app.amber.cloud.channel.ChannelKind
 import app.amber.cloud.channel.SenderRole
 import app.amber.cloud.runtime.ExecutionScope
 import app.amber.core.native.AmberNativeBridge
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.nio.charset.StandardCharsets
 
 // ============================================================================
@@ -39,6 +42,10 @@ data class OrchestrationConfig(
     val modelWatchdogEnabled: Boolean = false,
     /** 享受 45 分钟长耗时豁免的工具名称集合 */
     val longRunningToolNames: Set<String> = DEFAULT_LONG_RUNNING_TOOLS,
+    /** Worker 写工具前台审批开关（默认关闭；开启时向授权 Worker 声明写工具并通过 WAITING 审批执行） */
+    val workerApprovals: Boolean = false,
+    /** Worker 待审批记录 TTL：默认 30 分钟 */
+    val workerApprovalTtlMs: Long = 30 * 60_000L,
 ) {
     init {
         require(maxConcurrentWorkers in 3..8) {
@@ -220,6 +227,17 @@ enum class RecoveryStage {
 }
 
 @Serializable
+data class ImAddress(
+    val channel: ChannelKind,
+    val chatId: String,
+    val threadId: String? = null,
+)
+
+/** Platform message numbers are local to a channel/chat; encode components without delimiter ambiguity. */
+internal fun imMessageIdentity(channel: ChannelKind, chatId: String, messageId: String): String =
+    "im:" + OrchestrationHash.sha256Hex(Json.encodeToString(listOf(channel.wireName, chatId, messageId)))
+
+@Serializable
 data class WorkItemSubmissionSpec(
     /** 逻辑任务幂等键（正则 [a-z0-9._:-]{1,128}） */
     val taskKey: String,
@@ -230,6 +248,7 @@ data class WorkItemSubmissionSpec(
     /** 任务初始订阅的 Thread Key 列表（用于同一话题/PR/任务的后续消息直通） */
     val subscribedThreadKeys: List<String> = emptyList(),
     val agentId: String = app.amber.cloud.agents.MAIN_AGENT_ID,
+    val replyAddress: ImAddress? = null,
 ) {
     init {
         require(TASK_KEY_REGEX.matches(taskKey)) {
@@ -278,6 +297,21 @@ data class CloudWorkItemRecord(
     val createdAtMs: Long,
     val updatedAtMs: Long,
     val agentId: String = app.amber.cloud.agents.MAIN_AGENT_ID,
+    val replyAddress: ImAddress? = null,
+)
+
+@Serializable
+data class WorkerApprovalRecord(
+    val id: String,
+    val workItemId: String,
+    val toolCallId: String,
+    val toolName: String,
+    val argsDigest: String,
+    val redactedArgs: String,
+    val state: String, // pending | approved | denied | expired | executing | done | outcome_unknown
+    val createdMs: Long,
+    val decidedMs: Long? = null,
+    val actor: String? = null,
 )
 
 @Serializable
@@ -314,6 +348,7 @@ data class BatchRollupRecord(
     val wakeClaimId: String,
     val claimedAtMs: Long,
     val deliveredToRouter: Boolean = false,
+    val replyAddress: ImAddress? = null,
 )
 
 // ============================================================================
@@ -496,6 +531,9 @@ data class RouterTriggerEvent(
     val summaryText: String,
     val createdAtMs: Long,
     val sourceMessageId: String? = null,
+    val replyAddress: ImAddress? = null,
+    val dialogueInputId: String? = null,
+    val batchId: String? = null,
 )
 
 // ============================================================================

@@ -3,6 +3,8 @@ package app.amber.cloud.runtime
 import app.amber.ai.core.InputSchema
 import app.amber.ai.core.Tool
 import app.amber.ai.ui.UIMessagePart
+import app.amber.cloud.orchestration.CloudPrincipal
+import app.amber.cloud.orchestration.OrchestrationHash
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.security.PlaceholderCredentialException
 import app.amber.cloud.tasks.TaskCallContext
@@ -43,6 +45,7 @@ data class CloudToolDefinition(
     val requiredCapability: String? = null,
     val parameters: InputSchema? = null,
     val taskHandler: (suspend (JsonObject, TaskCallContext) -> JsonElement)? = null,
+    val ownerOnly: Boolean = false,
     val handler: suspend (JsonObject) -> JsonElement = { error("工具需要任务调用上下文") },
 )
 
@@ -114,38 +117,60 @@ class CloudToolRegistry(
         return toolName in BUILTIN_HIGH_RISK_NAMES || toolName.startsWith("plugin__")
     }
 
+    @Synchronized
+    fun isWorkerApprovalTool(toolName: String): Boolean {
+        val def = tools[toolName] ?: return false
+        if (def.ownerOnly || def.name in EXCLUDED_WORKER_APPROVAL_TOOLS) return false
+        return def.highRisk || def.effect == ToolEffect.SIDE_EFFECT
+    }
+
     /**
      * Returns the tools visible to the given [scope].
      *
      * - Defect #5: `SUBAGENT`, `MODEL_COUNCIL`, and `JS_SANDBOX` are physically stripped of all
-     *   high-risk and side-effect write tools.
+     *   high-risk and side-effect write tools unless [includeWorkerApprovalTools] is explicitly enabled
+     *   for managed Worker approval gating (never including `terminal_exec` or `ownerOnly`).
      * - Defect #9: Only tools that are actually wired in [tools] AND whose [CloudToolDefinition.requiredCapability]
      *   is enabled in [capabilities] are advertised.
      */
     @Synchronized
-    fun declaredTools(scope: ExecutionScope = ExecutionScope.MAIN_AGENT): List<Tool> {
-        return availableDefinitions(scope).map { def ->
+    fun declaredTools(
+        scope: ExecutionScope = ExecutionScope.MAIN_AGENT,
+        principal: CloudPrincipal? = null,
+        includeWorkerApprovalTools: Boolean = false,
+    ): List<Tool> {
+        return availableDefinitions(scope, principal, includeWorkerApprovalTools).map { def ->
+            val gatedForWorker = scope == ExecutionScope.SUBAGENT && (def.highRisk || def.effect == ToolEffect.SIDE_EFFECT)
+            val requiresApproval = def.highRisk || gatedForWorker
             Tool(
                 name = def.name,
                 description = def.description,
                 parameters = { def.parameters },
-                needsApproval = def.highRisk,
-                allowsAutoApproval = !def.highRisk,
-                mandatoryApproval = def.highRisk,
+                needsApproval = requiresApproval,
+                allowsAutoApproval = !requiresApproval,
+                mandatoryApproval = requiresApproval,
                 execute = { args ->
                     val obj = runCatching { args.jsonObject }.getOrDefault(JsonObject(emptyMap()))
-                    listOf(UIMessagePart.Text(executeGate(def.name, obj, scope).toString()))
+                    listOf(UIMessagePart.Text(executeGate(def.name, obj, scope, principal = principal).toString()))
                 },
             )
         }
     }
 
     @Synchronized
-    fun availableDefinitions(scope: ExecutionScope = ExecutionScope.MAIN_AGENT): List<CloudToolDefinition> {
+    fun availableDefinitions(
+        scope: ExecutionScope = ExecutionScope.MAIN_AGENT,
+        principal: CloudPrincipal? = null,
+        includeWorkerApprovalTools: Boolean = false,
+    ): List<CloudToolDefinition> {
         return tools.values.filter { def ->
             if (!capabilities.isEnabled(def.requiredCapability)) return@filter false
+            if (def.ownerOnly && !isOwnerAuthorized(scope, principal)) return@filter false
             when (scope) {
-                ExecutionScope.SUBAGENT,
+                ExecutionScope.SUBAGENT -> {
+                    (!def.highRisk && def.effect != ToolEffect.SIDE_EFFECT) ||
+                        (includeWorkerApprovalTools && def.name !in EXCLUDED_WORKER_APPROVAL_TOOLS)
+                }
                 ExecutionScope.MODEL_COUNCIL,
                 ExecutionScope.JS_SANDBOX,
                 -> !def.highRisk && def.effect != ToolEffect.SIDE_EFFECT
@@ -156,6 +181,18 @@ class CloudToolRegistry(
         }.sortedBy { it.name }
     }
 
+    private fun isOwnerAuthorized(scope: ExecutionScope, principal: CloudPrincipal?, recipeDepth: Int = 0): Boolean {
+        return recipeDepth == 0 && scope == ExecutionScope.MAIN_AGENT && principal is CloudPrincipal.OwnerUser
+    }
+
+    data class ApprovalGrant(
+        val workItemId: String,
+        val toolCallId: String,
+        val toolName: String,
+        val argsDigest: String,
+        val consumeOnce: () -> Boolean,
+    )
+
     /**
      * Innermost execution gate used by direct tool calls, subagents, and `recipe_run`.
      */
@@ -165,6 +202,8 @@ class CloudToolRegistry(
         scope: ExecutionScope = ExecutionScope.MAIN_AGENT,
         context: TaskCallContext? = null,
         recipeDepth: Int = 0,
+        principal: CloudPrincipal? = null,
+        approvalGrant: ApprovalGrant? = null,
     ): JsonElement {
         if (context != null && toolName !in context.allowedTools) return buildJsonObject {
             put("ok", false); put("error", "Agent 未获授该工具")
@@ -183,34 +222,55 @@ class CloudToolRegistry(
             }
         }
 
-        // Defect #5: Enforce scope boundary even if a subagent/sandbox fabricates a tool call
+        if (def.ownerOnly && !isOwnerAuthorized(scope, principal, recipeDepth)) {
+            return buildJsonObject {
+                put("ok", false)
+                put("error", "工具 $toolName 仅限主人 OwnerUser 上下文执行 ($scope)")
+            }
+        }
+
+        // Defect #4: Reject placeholder credentials before computing approval digest or executing
+        val placeholderKey = CredentialRedactor.findPlaceholderCredentialKey(args)
+        if (placeholderKey != null) {
+            throw PlaceholderCredentialException("工具参数 $placeholderKey 包含占位符凭据，已拒绝执行")
+        }
+
+        val scopedArgs = if (context != null && toolName in setOf("history_search", "history_fetch")) {
+            val requested = args["conversation_id"]?.jsonPrimitive?.contentOrNull
+            require(requested == null || requested == context.sessionId) { "禁止跨会话读取" }
+            JsonObject(args + ("conversation_id" to JsonPrimitive(context.sessionId)))
+        } else args
+
+        // Defect #5: Enforce scope boundary even if a subagent/sandbox fabricates a tool call.
+        // The only exception is a one-time foreground-approved grant for authorized SUBAGENT write tools.
         if (
             scope in setOf(ExecutionScope.SUBAGENT, ExecutionScope.MODEL_COUNCIL, ExecutionScope.JS_SANDBOX) &&
             (def.highRisk || def.effect == ToolEffect.SIDE_EFFECT)
         ) {
-            return buildJsonObject {
-                put("ok", false)
-                put("error", "当前执行域 ($scope) 禁止调用高风险或宿主写工具: $toolName")
+            val grantValid = scope == ExecutionScope.SUBAGENT &&
+                recipeDepth == 0 &&
+                def.name !in EXCLUDED_WORKER_APPROVAL_TOOLS &&
+                !def.ownerOnly &&
+                approvalGrant != null &&
+                context != null &&
+                approvalGrant.workItemId == context.workItemId &&
+                approvalGrant.toolName == toolName &&
+                approvalGrant.argsDigest == OrchestrationHash.sha256Hex(scopedArgs.toString()) &&
+                approvalGrant.consumeOnce()
+            if (!grantValid) {
+                return buildJsonObject {
+                    put("ok", false)
+                    put("error", "当前执行域 ($scope) 禁止调用高风险或宿主写工具: $toolName")
+                }
             }
-        }
-
-        // Defect #4: Reject placeholder credentials before executing
-        val placeholderKey = CredentialRedactor.findPlaceholderCredentialKey(args)
-        if (placeholderKey != null) {
-            throw PlaceholderCredentialException("工具参数 $placeholderKey 包含占位符凭据，已拒绝执行")
         }
 
         if (toolName == "recipe_run") {
             require(recipeDepth < 4) { "recipe 嵌套超过限额" }
             val nested = args["tool"]?.jsonPrimitive?.contentOrNull.orEmpty()
             require(nested.isNotBlank()) { "recipe_run 需要 tool 和 args，不接受配方名或 steps" }
-            return executeGate(nested, args["args"]?.jsonObject ?: JsonObject(emptyMap()), scope, context, recipeDepth + 1)
+            return executeGate(nested, args["args"]?.jsonObject ?: JsonObject(emptyMap()), scope, context, recipeDepth + 1, principal)
         }
-        val scopedArgs = if (context != null && toolName in setOf("history_search", "history_fetch")) {
-            val requested = args["conversation_id"]?.jsonPrimitive?.contentOrNull
-            require(requested == null || requested == context.sessionId) { "禁止跨会话读取" }
-            JsonObject(args + ("conversation_id" to JsonPrimitive(context.sessionId)))
-        } else args
         return def.taskHandler?.invoke(scopedArgs, requireNotNull(context) { "工具需要已认证任务身份" }) ?: def.handler(scopedArgs)
     }
 
@@ -218,6 +278,14 @@ class CloudToolRegistry(
         val BUILTIN_HIGH_RISK_NAMES = setOf(
             "terminal_exec",
             "workspace_artifact_delete",
+            "mcp_call_tool",
+            "interrupt_agent",
+            "ssh_profile_create",
+            "ssh_profile_update",
+            "ssh_profile_delete",
+        )
+        val EXCLUDED_WORKER_APPROVAL_TOOLS = setOf(
+            "terminal_exec",
             "mcp_call_tool",
             "interrupt_agent",
             "ssh_profile_create",

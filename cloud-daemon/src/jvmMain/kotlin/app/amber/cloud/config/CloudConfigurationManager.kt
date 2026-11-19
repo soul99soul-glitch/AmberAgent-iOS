@@ -36,9 +36,20 @@ class CloudConfigurationManager internal constructor(
     private val active = AtomicReference(buildSnapshot(state, keys))
     private val encryption = ConfigurationEncryption(vault, gatewayId)
 
-    val modelClient = CloudModelClient { messages, tools ->
-        val pinned = currentCoroutineContext()[RuntimeConfigurationSnapshot] ?: snapshot()
-        pinned.model.generateReply(messages, tools)
+    val modelClient: CloudModelClient = object : CloudModelClient {
+        override suspend fun generateReply(messages: List<app.amber.ai.ui.UIMessage>, tools: List<app.amber.ai.core.Tool>): app.amber.ai.ui.UIMessage {
+            val pinned = currentCoroutineContext()[RuntimeConfigurationSnapshot] ?: snapshot()
+            return pinned.model.generateReply(messages, tools)
+        }
+
+        override suspend fun streamReply(
+            messages: List<app.amber.ai.ui.UIMessage>,
+            tools: List<app.amber.ai.core.Tool>,
+            onActivity: (app.amber.cloud.runtime.StreamActivity) -> Unit,
+        ): app.amber.ai.ui.UIMessage {
+            val pinned = currentCoroutineContext()[RuntimeConfigurationSnapshot] ?: snapshot()
+            return pinned.model.streamReply(messages, tools, onActivity)
+        }
     }
     fun snapshot(): RuntimeConfigurationSnapshot = active.get()
 

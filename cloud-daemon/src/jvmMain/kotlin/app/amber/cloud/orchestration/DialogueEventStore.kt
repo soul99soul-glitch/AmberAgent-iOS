@@ -11,6 +11,9 @@ import java.util.UUID
 @Serializable data class DialogueInput(
     val id: String, val deviceId: String, val requestId: String, val kind: String,
     val text: String, val topicId: String, val workItemId: String? = null,
+    val replyAddress: ImAddress? = null, val sourceMessageId: String? = null,
+    val senderId: String? = null, val threadId: String? = null, val createdAtMs: Long? = null,
+    val routerPlanId: String? = null, val directWorkItemIds: List<String>? = null,
 )
 @Serializable data class DialogueReceipt(
     val eventId: String, val requestId: String, val topicId: String, val workItemIds: List<String>,
@@ -26,7 +29,7 @@ class DialogueConflict(val code: String) : IllegalArgumentException(code)
 
 /** Uses the orchestration connection and its monitor; input + outward event commit before ACK. */
 class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any) {
-    private val json = Json { encodeDefaults = true }
+    private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
     init { synchronized(lock) {
         db.execSQL("CREATE TABLE IF NOT EXISTS dialogue_inputs(id TEXT PRIMARY KEY, device_id TEXT NOT NULL, request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, payload TEXT NOT NULL, consumed INTEGER NOT NULL DEFAULT 0, UNIQUE(device_id,request_id))")
         db.execSQL("CREATE TABLE IF NOT EXISTS dialogue_events(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,payload TEXT NOT NULL)")
@@ -44,6 +47,12 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
             if (it.step()) json.decodeFromString<DialogueInput>(it.getText(0)) else null
         }
     }
+    fun input(id: String): DialogueInput? = synchronized(lock) {
+        db.prepare("SELECT payload FROM dialogue_inputs WHERE id=?").use {
+            it.bindText(1, id)
+            if (it.step()) json.decodeFromString<DialogueInput>(it.getText(0)) else null
+        }
+    }
     fun accept(input: DialogueInput, fingerprint: String, validate: () -> Unit): Pair<DialogueInput, Boolean> = transaction {
         db.prepare("SELECT payload,fingerprint FROM dialogue_inputs WHERE device_id=? AND request_id=?").use {
             it.bindText(1,input.deviceId); it.bindText(2,input.requestId)
@@ -56,6 +65,18 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
         insertInput(input, fingerprint)
         append(DialogueEvent(input.id, if(input.kind=="message") "user_message" else if(input.kind=="stop") "stop_requested" else "followup",
             "user", input.text, input.topicId, input.workItemId))
+        input to false
+    }
+    /** Persist an input idempotently without mirroring into native `dialogue_events`. */
+    fun acceptSilent(input: DialogueInput, fingerprint: String): Pair<DialogueInput, Boolean> = transaction {
+        db.prepare("SELECT payload,fingerprint FROM dialogue_inputs WHERE device_id=? AND request_id=?").use {
+            it.bindText(1, input.deviceId); it.bindText(2, input.requestId)
+            if (it.step()) {
+                if (it.getText(1) != fingerprint) throw DialogueConflict("request_id_conflict")
+                return@transaction json.decodeFromString<DialogueInput>(it.getText(0)) to true
+            }
+        }
+        insertInput(input, fingerprint)
         input to false
     }
     private fun insertInput(input: DialogueInput, fingerprint: String) {
@@ -82,13 +103,15 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
     fun abandonPending(workItemId:String)=transaction {
         pending(workItemId=workItemId).filter {it.kind!="stop"}.forEach {input->
             db.prepare("UPDATE dialogue_inputs SET consumed=2 WHERE id=?").use {it.bindText(1,input.id);it.step()}
-            if(input.kind=="followup")append(DialogueEvent("cancelled:${input.id}","input_cancelled","system","任务已停止，这条补充未执行",input.topicId,workItemId))
+            if(input.kind=="followup" && !input.deviceId.startsWith("im:") && !input.deviceId.startsWith("system:"))append(DialogueEvent("cancelled:${input.id}","input_cancelled","system","任务已停止，这条补充未执行",input.topicId,workItemId))
         }
     }
     fun consume(inputs: List<DialogueInput>) = transaction {
         inputs.forEach { input ->
             db.prepare("UPDATE dialogue_inputs SET consumed=1 WHERE id=?").use {it.bindText(1,input.id);it.step()}
-            if(input.kind=="followup") append(DialogueEvent("consumed:${input.id}","input_consumed","system","补充已被任务消费",input.topicId,input.workItemId))
+            if(input.kind=="followup" && !input.deviceId.startsWith("im:") && !input.deviceId.startsWith("system:")) {
+                append(DialogueEvent("consumed:${input.id}","input_consumed","system","补充已被任务消费",input.topicId,input.workItemId))
+            }
         }
     }
     fun routerResult(input: DialogueInput, replies: List<String>) = transaction {
@@ -97,6 +120,21 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
     }
     fun append(event: DialogueEvent) = synchronized(lock) {
         db.prepare("INSERT OR IGNORE INTO dialogue_events(id,payload) VALUES(?,?)").use {it.bindText(1,event.id);it.bindText(2,json.encodeToString(event));it.step()}
+    }
+    fun hasEvent(id: String): Boolean = synchronized(lock) {
+        db.prepare("SELECT 1 FROM dialogue_events WHERE id=?").use { it.bindText(1, id); it.step() }
+    }
+    fun latestMeaningfulFeedback(topicId: String): DialogueEvent? = synchronized(lock) {
+        db.prepare("SELECT payload FROM dialogue_events WHERE json_extract(payload,'$.topicId')=? AND (id LIKE 'ack:progress:%' OR id LIKE 'reply:%') ORDER BY seq DESC LIMIT 1").use {
+            it.bindText(1, topicId)
+            if (it.step()) json.decodeFromString<DialogueEvent>(it.getText(0)) else null
+        }
+    }
+    fun latestWaitingFeedback(topicId: String): DialogueEvent? = synchronized(lock) {
+        db.prepare("SELECT payload FROM dialogue_events WHERE json_extract(payload,'$.topicId')=? AND id LIKE 'ack:%' AND id NOT LIKE 'ack:progress:%' ORDER BY seq DESC LIMIT 1").use {
+            it.bindText(1, topicId)
+            if (it.step()) json.decodeFromString<DialogueEvent>(it.getText(0)) else null
+        }
     }
     fun page(after: Long, limit: Int): DialoguePage = synchronized(lock) {
         require(after>=0&&limit in 1..100)
@@ -109,8 +147,15 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
     fun plan(id: String): RouterDecision? = synchronized(lock) {
         db.prepare("SELECT payload FROM dialogue_plans WHERE id=?").use {it.bindText(1,id);if(it.step())json.decodeFromString<RouterDecision>(it.getText(0))else null}
     }
-    fun savePlan(id: String, decision: RouterDecision) = synchronized(lock) {
+    fun savePlan(id: String, decision: RouterDecision, inputIds: List<String> = emptyList()) = transaction {
         db.prepare("INSERT OR IGNORE INTO dialogue_plans(id,payload) VALUES(?,?)").use {it.bindText(1,id);it.bindText(2,json.encodeToString(decision));it.step()}
+        // Freeze membership with the decision: recovery must not merge a decided turn with newer inputs.
+        inputIds.forEach { inputId ->
+            val input = input(inputId) ?: error("Missing Router input: $inputId")
+            db.prepare("UPDATE dialogue_inputs SET payload=? WHERE id=?").use {
+                it.bindText(1, json.encodeToString(input.copy(routerPlanId = id))); it.bindText(2, inputId); it.step()
+            }
+        }
     }
     fun processStarted(id: String, owner: String, pid: Long, startedAtMs: Long) = synchronized(lock) {
         db.prepare("INSERT INTO task_processes(id,owner,pid,started_ms) VALUES(?,?,?,?)").use {

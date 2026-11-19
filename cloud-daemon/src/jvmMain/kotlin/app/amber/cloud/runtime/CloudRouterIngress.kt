@@ -8,6 +8,7 @@ import app.amber.cloud.channel.OutboundMessage
 import app.amber.cloud.channel.PRIMARY_CONVERSATION_ID
 import app.amber.cloud.channel.SenderRole
 import app.amber.cloud.channel.resolveConversationId
+import app.amber.cloud.orchestration.imMessageIdentity
 import app.amber.cloud.orchestration.ModelRouterBrain
 import app.amber.cloud.orchestration.RouterTurnInput
 import app.amber.cloud.security.CredentialRedactor
@@ -41,14 +42,22 @@ internal class CloudRouterIngress(private val kernel: CloudAgentKernel) : Channe
                 kernel.ownerBinding.bindOwnerDirectly(message.channel.wireName, message.senderId, message.chatId)
             }
             val userMessage = UIMessage.user(CredentialRedactor.redact(message.text)).let {
-                message.metadata["native_event_id"]?.let { id -> it.copy(id=Uuid.parse(id)) } ?: it
+                val explicitId = message.metadata["native_event_id"]?.let { id -> Uuid.parse(id) }
+                if (explicitId != null) {
+                    it.copy(id = explicitId)
+                } else {
+                    val deterministic = java.util.UUID.nameUUIDFromBytes(
+                        imMessageIdentity(message.channel, message.chatId, message.messageId).toByteArray()
+                    )
+                    it.copy(id = Uuid.parse(deterministic.toString()))
+                }
             }
             kernel.conversationStorage.saveConversation(conversation.copy(
                 messageNodes = if(conversation.messageNodes.any {it.currentMessage.id==userMessage.id}) conversation.messageNodes else conversation.messageNodes + userMessage.toMessageNode(),
                 updateAt = Clock.System.now(),
             ))
         }
-        message.metadata["native_event_id"]?.let { kernel.nativeDialogue.acknowledge(it) }
+        message.metadata["native_event_id"]?.let { kernel.nativeDialogue.watchFeedback(it) }
         // The connector sends the returned acknowledgement; Router only sends subsequent replies/status.
         val ack = kernel.router.onInbound(message, postAck = false, sessionId = conversationId.toString())
         return response(message, ack.text)

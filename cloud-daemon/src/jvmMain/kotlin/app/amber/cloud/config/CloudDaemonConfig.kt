@@ -49,6 +49,7 @@ data class CloudDaemonConfig(
     val modelProvider: String = "claude",
     val modelId: String = "claude-sonnet-4-5-20250929",
     val modelBaseUrl: String = "",
+    val workerApprovals: Boolean = false,
 ) {
     fun toQuietHoursConfig(zoneId: ZoneId = ZoneId.of("Asia/Shanghai")): QuietHoursConfig {
         val start = runCatching { LocalTime.parse(quietHoursStart.trim()) }.getOrDefault(LocalTime.of(23, 0))
@@ -208,6 +209,7 @@ object CloudConfigLoader {
             modelProvider = resolveValue(KEY_MODEL_PROVIDER, ENV_MODEL_PROVIDER) ?: "claude",
             modelId = resolveValue(KEY_MODEL_ID, ENV_MODEL_ID) ?: "claude-sonnet-4-5-20250929",
             modelBaseUrl = resolveValue(KEY_MODEL_BASE_URL, ENV_MODEL_BASE_URL).orEmpty(),
+            workerApprovals = resolveValue("worker.approvals", "AMBER_WORKER_APPROVALS")?.toBooleanStrictOrNull() ?: false,
         )
 
         if (ownerBinding != null) {

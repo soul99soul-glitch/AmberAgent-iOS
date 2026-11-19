@@ -15,15 +15,15 @@ internal fun JsonObject.strings(key: String) = this[key]?.jsonArray?.map { it.js
 class TaskExecutionTools(val workspace: TaskWorkspace, val processes: TaskProcessRunner) {
     private val json = Json { encodeDefaults = true }
     fun register(registry: CloudToolRegistry) {
-        fun register(name: String, description: String, parameters: InputSchema, capability: String? = null,
+        fun register(name: String, description: String, parameters: InputSchema, capability: String? = null, effect: ToolEffect = ToolEffect.TASK_LOCAL,
                      action: suspend (JsonObject, TaskCallContext) -> JsonElement) {
-            registry.register(CloudToolDefinition(name, description, false, ToolEffect.TASK_LOCAL, capability, parameters, action))
+            registry.register(CloudToolDefinition(name, description, false, effect, capability, parameters, action))
         }
         val path = "\"path\":{\"type\":\"string\",\"description\":\"当前任务目录内的相对路径\"}"
         register("workspace_file_list", "列举当前任务文件（最多200个，深度8）", schema(), "workspace_files") { _, c -> workspace.operation(c.workItemId,"list") }
         register("workspace_file_read", "读取当前任务UTF-8文件", schema("{$path,\"maxChars\":{\"type\":\"integer\"}}", "path"), "workspace_files") { a,c -> workspace.operation(c.workItemId,"read",a) }
-        register("workspace_file_write", "真实写入当前任务文件；不会写入宿主或其他任务", schema("{$path,\"content\":{\"type\":\"string\"}}", "path","content"), "workspace_files") { a,c -> workspace.operation(c.workItemId,"write",a) }
-        register("workspace_file_edit", "精确替换一次；old必须唯一匹配", schema("{$path,\"old\":{\"type\":\"string\"},\"replacement\":{\"type\":\"string\"}}", "path","old","replacement"), "workspace_files") { a,c -> workspace.operation(c.workItemId,"edit",a) }
+        register("workspace_file_write", "真实写入当前任务文件；不会写入宿主或其他任务", schema("{$path,\"content\":{\"type\":\"string\"}}", "path","content"), "workspace_files", effect = ToolEffect.SIDE_EFFECT) { a,c -> workspace.operation(c.workItemId,"write",a) }
+        register("workspace_file_edit", "精确替换一次；old必须唯一匹配", schema("{$path,\"old\":{\"type\":\"string\"},\"replacement\":{\"type\":\"string\"}}", "path","old","replacement"), "workspace_files", effect = ToolEffect.SIDE_EFFECT) { a,c -> workspace.operation(c.workItemId,"edit",a) }
         register("workspace_file_search", "搜索当前任务UTF-8文件内容", schema("{\"query\":{\"type\":\"string\"}}", "query"), "workspace_files") { a,c -> workspace.operation(c.workItemId,"search",a) }
         val command = schema("""{"argv":{"type":"array","items":{"type":"string"},"description":"直接argv，例如[\"/usr/bin/python3\",\"script.py\"]或[\"/bin/sh\",\"-c\",\"...\"]"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":600},"background":{"type":"boolean"}}""", "argv")
         register("process_run", "在强制OS隔离内真实执行，默认后台立即返回id；完成事件自动投回任务。仅当前任务目录可写、无网络/凭据。exitCode=0才成功，后台用process_wait/stop；宿主管理不在此权限内", command, "terminal") { a,c ->

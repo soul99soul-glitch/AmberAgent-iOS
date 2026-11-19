@@ -16,12 +16,107 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.*
 
 class NativeDialogueReliabilityTest {
+    @Test fun worker_progress_resets_silence_but_repeated_commentary_and_polling_do_not() = runBlocking {
+        val dir = Files.createTempDirectory("native-dialogue-feedback").toFile()
+        val now = java.util.concurrent.atomic.AtomicLong(0)
+        val workerStarted = CompletableDeferred<Unit>()
+        val begin = CompletableDeferred<Unit>()
+        val firstMilestone = CompletableDeferred<Unit>()
+        val nextMilestone = CompletableDeferred<Unit>()
+        val finalStarted = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        var step = 0
+        val k = CloudAgentKernel(dir, CloudModelClient { messages, tools ->
+            if (messages.first().toText().contains("<native-wait-feedback>")) {
+                return@CloudModelClient UIMessage.assistant(when {
+                    messages.last().toText().contains("silent_without_new_visible_progress") && messages.last().toText().contains("已核对任务文件") -> "还没等到最后的结果，我接着留意。"
+                    messages.last().toText().contains("silent_without_new_visible_progress") -> "这一步还没等到新结果，我会继续留意。"
+                    else -> "这项检查我会继续，你先稍等一下。"
+                })
+            }
+            if (tools.any { it.name == "dispatch_work" }) {
+                UIMessage.assistant("").copy(parts = listOf(UIMessagePart.Tool("dispatch", "dispatch_work",
+                    """{"tasks":[{"task_key":"probe","title":"检查环境","brief":"检查环境"}]}""")))
+            } else if (messages.first().toText().contains("受管 Worker")) {
+                val current = step++
+                val text = when (current) {
+                    0 -> { workerStarted.complete(Unit); begin.await(); "继续查。" }
+                    1, 3 -> "已确认运行环境，接下来核对任务文件。"
+                    2 -> "我继续查一下。"
+                    4 -> { firstMilestone.complete(Unit); nextMilestone.await(); "已核对任务文件，可以整理结果了。" }
+                    else -> { finalStarted.complete(Unit); finish.await(); "" }
+                }
+                val tool = if (current < 5) UIMessagePart.Tool("probe-$current", "host_info", "{}")
+                    else UIMessagePart.Tool("finish", "task_finish", """{"outcome":"completed","summary":"环境核对完成","artifacts":[]}""")
+                UIMessage.assistant("").copy(parts = listOf(UIMessagePart.Text(text), tool))
+            } else UIMessage.assistant("""{"tags":[]}""")
+        }, masterSecretOverride = "native-feedback-test")
+        k.nativeDialogue.clockMs = now::get
+        k.gatewayState.pairDevice(k.gatewayState.issuePairingTicket(), "ios", "fixture")
+        val device = k.gatewayState.loadDevicesStrict().single()
+        fun assistantEvents() = k.orchestrationStore.dialogue.page(0, 100).items.filter { it.role == "assistant" }
+        try {
+            k.nativeDialogue.submit(device, "long", "检查环境")
+            withTimeout(2_000) {
+                workerStarted.await()
+                while (assistantEvents().none { it.text == "这项检查我会继续，你先稍等一下。" }) delay(10)
+            }
+            assertEquals(listOf("这项检查我会继续，你先稍等一下。"), assistantEvents().map { it.text })
+            begin.complete(Unit)
+            withTimeout(2_000) { firstMilestone.await() }
+            assertEquals(1, assistantEvents().count { it.text == "已确认运行环境，接下来核对任务文件。" })
+            assertTrue(assistantEvents().none { it.text == "继续查。" || it.text == "我继续查一下。" })
+            now.set(59_999); k.nativeDialogue.evaluateFeedback()
+            assertEquals(0, assistantEvents().count { it.id.startsWith("ack:keepalive:") })
+            now.set(60_000); k.nativeDialogue.evaluateFeedback()
+            withTimeout(2_000) { while (assistantEvents().none { it.id.startsWith("ack:keepalive:") }) delay(10) }
+            now.set(120_000); k.nativeDialogue.evaluateFeedback()
+            assertEquals(1, assistantEvents().count { it.id.startsWith("ack:keepalive:") }, "无进展静默窗口最多一条保活")
+            nextMilestone.complete(Unit)
+            withTimeout(2_000) { finalStarted.await() }
+            now.set(179_999); k.nativeDialogue.evaluateFeedback()
+            assertEquals(1, assistantEvents().count { it.id.startsWith("ack:keepalive:") }, "从实质进展重新计时")
+            now.set(180_000); k.nativeDialogue.evaluateFeedback()
+            withTimeout(2_000) { while (assistantEvents().count { it.id.startsWith("ack:keepalive:") } < 2) delay(10) }
+            assertEquals(2, assistantEvents().count { it.id.startsWith("ack:keepalive:") })
+            val beforeRecovery = assistantEvents()
+            val recovered = NativeDialogueService(k, { error("no pending ingress expected") }, clockMs = now::get) { id, text ->
+                CloudRouterIngress(k).recordReply(PRIMARY_CONVERSATION_ID.toString(), text,
+                    kotlin.uuid.Uuid.parse(java.util.UUID.nameUUIDFromBytes(id.toByteArray()).toString()))
+            }
+            try {
+                recovered.recover()
+                now.set(240_000); recovered.evaluateFeedback()
+                assertEquals(beforeRecovery, assistantEvents(), "活动任务恢复必须沿用已发送的静默窗口，不能重复 ACK 或保活")
+            } finally { recovered.closeAndJoin() }
+            finish.complete(Unit)
+            k.router.awaitIdle(includeWorkers = true)
+            assertEquals("环境核对完成", assistantEvents().single { it.kind == "task_result" }.text)
+            val settled = assistantEvents()
+            now.set(300_000); k.nativeDialogue.evaluateFeedback()
+            k.nativeDialogue.recover()
+            assertEquals(settled, assistantEvents(), "终态、重连和恢复不得再产生进度正文")
+            assertEquals(1, settled.count { it.text == "这项检查我会继续，你先稍等一下。" })
+            assertTrue(settled.all { it.text.isNotBlank() }, "事件流不能创建空气泡")
+            val history = k.conversationStorage.loadConversation(PRIMARY_CONVERSATION_ID)!!.messageNodes
+                .filter { it.role == app.amber.ai.core.MessageRole.ASSISTANT }.map { it.currentMessage.toText() }
+            assertTrue(history.all { it.isNotBlank() })
+            assertEquals(1, history.count { it == "已确认运行环境，接下来核对任务文件。" })
+        } finally {
+            begin.complete(Unit); nextMilestone.complete(Unit); finish.complete(Unit)
+            k.router.awaitIdle(includeWorkers = true); k.nativeDialogue.evaluateFeedback()
+            k.nativeDialogue.closeAndJoin(); k.conversationTagger.closeAndJoin(); k.agentRegistry.close(); k.orchestrationStore.close(); k.supertagStore.close()
+            dir.deleteRecursively()
+        }
+    }
+
     @Test fun paired_http_dialogue_acknowledges_dispatch_and_pushes_safe_timeout_then_success() = runBlocking {
         val dir = Files.createTempDirectory("native-dialogue-http").toFile()
         val workerStarted = CompletableDeferred<Unit>()
         val releaseWorker = CompletableDeferred<Unit>()
         val contexts = CopyOnWriteArrayList<String>()
         val k = CloudAgentKernel(dir, CloudModelClient { messages, tools ->
+            if (messages.first().toText().contains("<native-wait-feedback>")) return@CloudModelClient UIMessage.assistant("这项检查我会继续，你先稍等一下。")
             val text = messages.last().toText().lineSequence().last()
             if (tools.any { it.name == "dispatch_work" }) {
                 contexts += messages.joinToString { it.toText() }
@@ -55,9 +150,14 @@ class NativeDialogueReliabilityTest {
                 }.bodyAsText()).jsonObject.getValue("items").jsonArray.map { it.jsonObject }
                 assertEquals(202, send("dispatch", "派活").status.value)
                 withTimeout(2_000) { workerStarted.await() }
-                assertTrue(page().any { it["text"]?.jsonPrimitive?.content?.contains("收到") == true })
-                assertEquals(202, send("math", "7+8").status.value)
+                withTimeout(2_000) { while (page().none { it["text"]?.jsonPrimitive?.content == "这项检查我会继续，你先稍等一下。" }) delay(10) }
+                val math = send("math", "7+8")
+                assertEquals(202, math.status.value)
+                val mathTopic = Json.parseToJsonElement(math.bodyAsText()).jsonObject.getValue("topicId").jsonPrimitive.content
                 withTimeout(2_000) { while (page().none { it["text"]?.jsonPrimitive?.content == "15" }) delay(10) }
+                assertEquals(listOf("15"), page().filter {
+                    it["topicId"]?.jsonPrimitive?.content == mathTopic && it["role"]?.jsonPrimitive?.content == "assistant"
+                }.map { it.getValue("text").jsonPrimitive.content }, "简单问题只能有实质答案，不能额外生成通用 ACK 正文")
                 releaseWorker.complete(Unit)
                 withTimeout(2_000) { while (page().none { it["kind"]?.jsonPrimitive?.content == "task_result" }) delay(10) }
                 val failure = page().single { it["kind"]?.jsonPrimitive?.content == "task_result" }
@@ -73,7 +173,7 @@ class NativeDialogueReliabilityTest {
             }
         } finally {
             releaseWorker.complete(Unit)
-            k.router.awaitIdle(includeWorkers = true); k.conversationTagger.closeAndJoin()
+            k.router.awaitIdle(includeWorkers = true); k.nativeDialogue.closeAndJoin(); k.conversationTagger.closeAndJoin()
             k.agentRegistry.close(); k.orchestrationStore.close(); k.supertagStore.close()
             dir.deleteRecursively()
         }
@@ -81,14 +181,14 @@ class NativeDialogueReliabilityTest {
 
     private suspend fun fixture(block: suspend (CloudAgentKernel, PairedDevice) -> Unit) {
         val dir = Files.createTempDirectory("native-dialogue-reliability").toFile()
-        val kernel = CloudAgentKernel(dir, CloudModelClient { _, _ -> UIMessage.assistant("fixture") },
+        val kernel = CloudAgentKernel(dir, CloudModelClient { messages, _ -> UIMessage.assistant(if (messages.first().toText().contains("<native-wait-feedback>")) "这项检查我会继续，你先稍等一下。" else "fixture") },
             masterSecretOverride = "dialogue-reliability-test")
         kernel.orchestrationKernel.autoExecuteWorkersInBackground = false
         kernel.gatewayState.pairDevice(kernel.gatewayState.issuePairingTicket(), "ios", "fixture")
         try { block(kernel, kernel.gatewayState.loadDevicesStrict().single()) }
         finally {
             kernel.router.awaitIdle(includeWorkers = true)
-            kernel.conversationTagger.closeAndJoin()
+            kernel.nativeDialogue.closeAndJoin(); kernel.conversationTagger.closeAndJoin()
             kernel.agentRegistry.close(); kernel.orchestrationStore.close(); kernel.supertagStore.close()
             dir.deleteRecursively()
         }
@@ -96,6 +196,8 @@ class NativeDialogueReliabilityTest {
 
     @Test fun acknowledgement_is_durable_before_model_finishes_and_replay_does_not_duplicate_it() = runBlocking {
         fixture { k, device ->
+            val now = java.util.concurrent.atomic.AtomicLong(0)
+            k.nativeDialogue.clockMs = now::get
             val started = CompletableDeferred<Unit>()
             val release = CompletableDeferred<Unit>()
             k.router.brain = RouterBrain {
@@ -105,8 +207,14 @@ class NativeDialogueReliabilityTest {
             try {
                 val receipt = k.nativeDialogue.submit(device, "dispatch", "查一下状态")
                 withTimeout(2_000) { started.await() }
+                assertEquals("received", receipt.state)
+                assertTrue(k.orchestrationStore.dialogue.page(0, 100).items.none { it.role == "assistant" }, "快速路径先等待实质回答")
+                now.set(1_499); k.nativeDialogue.evaluateFeedback()
+                assertTrue(k.orchestrationStore.dialogue.page(0, 100).items.none { it.role == "assistant" })
+                now.set(1_500); k.nativeDialogue.evaluateFeedback()
+                withTimeout(2_000) { while (!k.orchestrationStore.dialogue.hasEvent("ack:${receipt.eventId}")) delay(10) }
                 val replies = k.orchestrationStore.dialogue.page(0, 100).items.filter { it.role == "assistant" }
-                assertTrue(replies.any { it.topicId == receipt.topicId && it.text.contains("收到") }, "等待模型时用户必须已收到人话回执")
+                assertEquals(listOf("这项检查我会继续，你先稍等一下。"), replies.map { it.text }, "模型等待超过短阈值时才出现一次反馈")
                 k.nativeDialogue.submit(device, "dispatch", "查一下状态")
                 assertEquals(replies, k.orchestrationStore.dialogue.page(0, 100).items.filter { it.role == "assistant" })
             } finally { release.complete(Unit) }
@@ -134,6 +242,33 @@ class NativeDialogueReliabilityTest {
                     while (k.orchestrationStore.dialogue.page(0, 100).items.none { it.topicId == next.topicId && it.text == "15" }) delay(10)
                 }
             } finally { releaseFirst.complete(Unit) }
+        }
+    }
+
+    @Test fun native_stop_prevents_late_feedback_and_empty_sanitized_text_never_becomes_a_bubble() = runBlocking {
+        fixture { k, device ->
+            val now = java.util.concurrent.atomic.AtomicLong(0)
+            k.nativeDialogue.clockMs = now::get
+            k.router.brain = RouterBrain {
+                RouterDecision(reply = "<think>private reasoning</think>", dispatch = listOf(
+                    WorkItemSubmissionSpec("check", "检查", "检查", ExecutionTargetNode.CloudSubagent(rolePrompt = "worker"))))
+            }
+            k.nativeDialogue.submit(device, "cancel-me", "检查")
+            withTimeout(2_000) {
+                while (k.nativeDialogue.receipt(device, "cancel-me")!!.state != "consumed") delay(10)
+            }
+            k.router.awaitIdle()
+            val work = k.orchestrationStore.listWorkItems().single()
+            val stopped = k.nativeDialogue.submit(device, "stop", "", "stop", work.workItemId)
+            assertEquals("consumed", stopped.state)
+            assertTrue(k.nativeDialogue.submit(device, "stop", "", "stop", work.workItemId).replayed)
+            val page = k.orchestrationStore.dialogue.page(0, 100).items
+            assertEquals("cancelled", page.single { it.kind == "task_result" }.outcome)
+            assertTrue(page.filter { it.role == "assistant" }.all { it.text.isNotBlank() && !it.text.contains("private reasoning") })
+            now.set(180_000); k.nativeDialogue.evaluateFeedback()
+            k.nativeDialogue.commentary(work, "迟到的进度")
+            k.nativeDialogue.recover()
+            assertEquals(page, k.orchestrationStore.dialogue.page(0, 100).items)
         }
     }
 

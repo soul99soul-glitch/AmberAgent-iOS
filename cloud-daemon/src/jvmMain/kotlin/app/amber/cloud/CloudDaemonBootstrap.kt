@@ -46,5 +46,6 @@ internal fun loadConfiguredDaemon(
         configurationManager = manager, vaultOverride = vault,
         ownerBinding = ownerBinding, proactiveEngine = proactive,
         searchSources = config.searchSources.split(',').map { it.trim() }.filter { it.isNotEmpty() }, searchMode = config.searchMode,
+        workerApprovals = config.workerApprovals,
     ))
 }

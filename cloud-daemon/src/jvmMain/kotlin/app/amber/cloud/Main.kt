@@ -1,5 +1,7 @@
 package app.amber.cloud
 
+import app.amber.cloud.channel.ChannelConnector
+import app.amber.cloud.runtime.CloudAgentKernel
 import app.amber.cloud.channels.RedactingChannelLogger
 import app.amber.cloud.config.CloudConfigLoader
 import app.amber.cloud.gateway.TlsIdentityManager
@@ -56,22 +58,14 @@ fun main(args: Array<String>) {
     )
 
     runBlocking {
-        kernel.recoverColdStartConversations()
-        telegramChannel?.let {
-            kernel.registerConnector(it)
-            it.start()
-        }
-        feishuChannel?.let {
-            kernel.registerConnector(it)
-            it.start()
-        }
-        kernel.startProactiveLoop()
+        startDaemonChannels(kernel, listOfNotNull(telegramChannel, feishuChannel))
     }
 
     Runtime.getRuntime().addShutdownHook(
         Thread {
             runBlocking {
                 kernel.stopProactiveLoop()
+                kernel.nativeDialogue.closeAndJoin()
                 kernel.conversationTagger.closeAndJoin()
                 telegramChannel?.stop()
                 feishuChannel?.stop()
@@ -83,6 +77,16 @@ fun main(args: Array<String>) {
     embeddedServer(CIO, port = port, host = host) {
         configureCloudGateway(kernel.gatewayState, feishuChannel, AgentCentricApi(kernel))
     }.start(wait = true)
+}
+
+internal suspend fun startDaemonChannels(
+    kernel: CloudAgentKernel,
+    channels: List<ChannelConnector>,
+) {
+    channels.forEach(kernel::registerConnector)
+    kernel.recoverColdStartConversations()
+    channels.forEach { it.start() }
+    kernel.startProactiveLoop()
 }
 
 internal fun parseOption(args: Array<String>, flag: String): String? {

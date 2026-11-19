@@ -1,12 +1,16 @@
 package app.amber.cloud.orchestration
 
 import app.amber.ai.ui.UIMessage
+import app.amber.cloud.channel.ChannelKind
 import app.amber.cloud.channel.ConversationScope
 import app.amber.cloud.channel.InboundMessage
 import app.amber.cloud.channel.PRIMARY_CONVERSATION_ID
 import app.amber.cloud.channel.SenderRole
 import app.amber.cloud.security.CredentialRedactor
+import java.util.UUID
+import kotlinx.serialization.encodeToString
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.uuid.Uuid
 
 /**
  * 负责多对多 Thread 订阅直通快路径（Fast Path）、Router 繁忙期积压事件合并批处理（Slow Path），
@@ -37,6 +41,8 @@ internal class OrchestrationRouterBridge(
         nowEpochMs: Long,
     ): DefaultCloudOrchestrationKernel.InboundRoutingDecision {
         val threadKey = deriveThreadKey(message)
+        val isIm = message.channel != ChannelKind.APP
+        val sourceId = if (isIm) imMessageIdentity(message.channel, message.chatId, message.messageId) else message.messageId
         val origin = when {
             message.metadata["origin"] == "agent" -> MessageProvenanceOrigin.AGENT
             message.metadata["origin"] == "automation" -> MessageProvenanceOrigin.AUTOMATION
@@ -44,93 +50,137 @@ internal class OrchestrationRouterBridge(
             message.senderRole == SenderRole.COLLABORATOR -> MessageProvenanceOrigin.COLLABORATOR_HUMAN
             else -> MessageProvenanceOrigin.GUEST_HUMAN
         }
-        val provenance = SourceMessageProvenance(
-            sessionId = sessionId,
-            messageId = message.messageId,
-            senderId = message.senderId,
-            channelId = message.channel.wireName,
-            senderRole = message.senderRole,
-            origin = origin,
-            rawTextHash = OrchestrationHash.sha256Hex(message.text),
-            createdAtEpochMs = nowEpochMs,
-        )
-        kernel.store.recordSourceMessage(provenance, message.text, threadKey)
-
+        val subscribers = if (threadKey != null && !message.text.contains('@')) {
+            kernel.store.listActiveSubscribersForThread(threadKey).filter {
+                it.workerSessionId != null && !it.state.isTerminal && !kernel.workerEvents.isStopping(it.workItemId)
+            }
+        } else emptyList()
+        val address = if (isIm) ImAddress(message.channel, message.chatId, message.threadId) else null
+        if (!isIm || kernel.store.getSourceMessage(sourceId) == null) {
+            kernel.store.recordSourceMessage(SourceMessageProvenance(
+                sessionId = sessionId, messageId = sourceId, senderId = message.senderId,
+                channelId = message.channel.wireName, senderRole = message.senderRole, origin = origin,
+                rawTextHash = OrchestrationHash.sha256Hex(message.text), createdAtEpochMs = nowEpochMs,
+            ), message.text, threadKey)
+        }
+        val input = if (isIm) {
+            val fingerprint = OrchestrationHash.sha256Hex(kotlinx.serialization.json.Json.encodeToString(
+                listOf(sessionId, message.threadId.orEmpty(), message.senderId, message.senderRole.name, origin.name, message.text)))
+            kernel.store.dialogue.acceptSilent(
+                DialogueInput(
+                    id = UUID.nameUUIDFromBytes(sourceId.toByteArray()).toString(),
+                    deviceId = "im:${message.channel.wireName}:${message.chatId}", requestId = message.messageId,
+                    kind = "im_message", text = CredentialRedactor.redact(message.text), topicId = sessionId,
+                    replyAddress = address, sourceMessageId = sourceId, senderId = message.senderId,
+                    threadId = threadKey ?: message.threadId, createdAtMs = nowEpochMs,
+                    directWorkItemIds = subscribers.map { it.workItemId }.takeIf { it.isNotEmpty() },
+                ), fingerprint,
+            ).first
+        } else null
         val triggerEvent = RouterTriggerEvent(
-            eventId = "trig:${message.messageId}",
-            kind = "user_message",
-            conversationId = sessionId,
-            channelId = message.channel.wireName,
-            chatId = message.chatId,
-            threadId = threadKey ?: message.threadId,
-            senderId = message.senderId,
-            summaryText = CredentialRedactor.redact(message.text),
-            createdAtMs = nowEpochMs,
-            sourceMessageId = message.messageId,
+            eventId = "trig:$sourceId", kind = "user_message", conversationId = sessionId,
+            channelId = message.channel.wireName, chatId = message.chatId,
+            threadId = threadKey ?: message.threadId, senderId = message.senderId,
+            summaryText = CredentialRedactor.redact(message.text), createdAtMs = nowEpochMs,
+            sourceMessageId = sourceId, replyAddress = address, dialogueInputId = input?.id,
         )
+        if (input != null && kernel.store.dialogue.isConsumed(input.id)) {
+            return DefaultCloudOrchestrationKernel.InboundRoutingDecision.QueuedForRouterBatch(
+                triggerEvent, synchronized(pendingRouterBatchQueue) { pendingRouterBatchQueue.size })
+        }
         observableEvents.add(triggerEvent)
 
-        // An explicit agent mention starts a fresh Router decision rather than leaking to old subscribers.
-        if (threadKey != null && !message.text.contains('@')) {
-            val subscribers = kernel.store.listActiveSubscribersForThread(threadKey)
-            if (subscribers.isNotEmpty()) {
-                kernel.directPassThroughCount.incrementAndGet()
-                val targetWorkItemIds = mutableListOf<String>()
-                val targetSessionIds = mutableListOf<String>()
-
-                for (sub in subscribers) {
-                    val wSessionId = sub.workerSessionId ?: continue
-                    targetWorkItemIds.add(sub.workItemId)
-                    targetSessionIds.add(wSessionId)
-
-                    kernel.appendMessageToSessionInternal(
-                        sessionId = wSessionId,
-                        message = UIMessage.user(
-                            "【Thread 直通事件 · $threadKey】\n${CredentialRedactor.redact(message.text)}"
-                        ),
-                        nowEpochMs = nowEpochMs,
-                    )
-                    kernel.store.upsertWorkItem(
-                        sub.copy(
-                            lastActivityAtMs = nowEpochMs,
-                            updatedAtMs = nowEpochMs,
-                        )
-                    )
-                    kernel.store.appendDiagnosticEvent(
-                        sessionId = wSessionId,
-                        workItemId = sub.workItemId,
-                        kind = "thread_pass_through",
-                        messageId = message.messageId,
-                        detail = "直通投递话题事件 $threadKey -> ${sub.workItemId}",
-                        nowMs = nowEpochMs,
-                    )
-                }
-                return DefaultCloudOrchestrationKernel.InboundRoutingDecision.DirectPassThroughToWorkers(
-                    threadKey = threadKey,
-                    workerItemIds = targetWorkItemIds,
-                    workerSessionIds = targetSessionIds,
-                )
-            }
+        if (input?.directWorkItemIds != null) return deliverDirectInput(input, nowEpochMs)
+        if (!isIm && subscribers.isNotEmpty()) {
+            // Preserve the APP fast path; native HTTP dialogue has its own durable admission.
+            return deliverDirectInput(DialogueInput(
+                UUID.randomUUID().toString(), "native:${message.chatId}", message.messageId, "message",
+                CredentialRedactor.redact(message.text), sessionId, threadId = threadKey,
+                directWorkItemIds = subscribers.map { it.workItemId },
+            ), nowEpochMs, persistCompletion = false)
         }
+        return synchronized(pendingRouterBatchQueue) {
+            if (pendingRouterBatchQueue.none { it.eventId == triggerEvent.eventId }) pendingRouterBatchQueue.addLast(triggerEvent)
+            if (kernel.isRouterTurnBusy) DefaultCloudOrchestrationKernel.InboundRoutingDecision.QueuedForRouterBatch(triggerEvent, pendingRouterBatchQueue.size)
+            else DefaultCloudOrchestrationKernel.InboundRoutingDecision.RouteToCoordinatorNow(pendingRouterBatchQueue.toList())
+        }
+    }
 
-        synchronized(pendingRouterBatchQueue) {
-            pendingRouterBatchQueue.addLast(triggerEvent)
-            if (kernel.isRouterTurnBusy) {
-                return DefaultCloudOrchestrationKernel.InboundRoutingDecision.QueuedForRouterBatch(
-                    event = triggerEvent,
-                    currentBatchSize = pendingRouterBatchQueue.size,
-                )
-            }
-            return DefaultCloudOrchestrationKernel.InboundRoutingDecision.RouteToCoordinatorNow(
-                batchedEvents = pendingRouterBatchQueue.toList()
+    private suspend fun deliverDirectInput(
+        input: DialogueInput, nowEpochMs: Long, persistCompletion: Boolean = true,
+    ): DefaultCloudOrchestrationKernel.InboundRoutingDecision.DirectPassThroughToWorkers {
+        val targets = mutableListOf<CloudWorkItemRecord>()
+        val followupText = "【Thread 直通事件 · ${input.threadId}】\n${input.text}"
+        for (id in input.directWorkItemIds.orEmpty()) {
+            val item = kernel.store.getWorkItem(id) ?: continue
+            if (item.state.isTerminal || kernel.workerEvents.isStopping(id) || item.workerSessionId == null) continue
+            val deviceId = if (persistCompletion) "im:followup:${input.id}" else input.deviceId
+            val requestId = if (persistCompletion) id else "${input.requestId}:$id"
+            kernel.acceptFollowupAndSignalInternal(
+                deviceId, requestId, id, followupText, nowEpochMs,
+                silentDialogueEvent = persistCompletion, appendBrief = false,
             )
+            targets += item
+            if (!kernel.autoExecuteWorkersInBackground || kernel.workerTurnRunner == null) {
+                val stored = kernel.store.dialogue.find(deviceId, requestId)!!
+                kernel.appendMessageToSessionInternal(item.workerSessionId,
+                    UIMessage.user(followupText).copy(id = Uuid.parse(stored.id)), nowEpochMs)
+            }
+            kernel.store.appendDiagnosticEvent(item.workerSessionId, id, "thread_pass_through",
+                messageId = input.sourceMessageId, detail = "直通投递话题事件 ${input.threadId} -> $id", nowMs = nowEpochMs)
         }
+        // Persist the original target set before delivery; partial fan-out replays only those targets.
+        if (persistCompletion) kernel.store.dialogue.consume(listOf(input))
+        kernel.directPassThroughCount.incrementAndGet()
+        return DefaultCloudOrchestrationKernel.InboundRoutingDecision.DirectPassThroughToWorkers(
+            input.threadId.orEmpty(), targets.map { it.workItemId }, targets.mapNotNull { it.workerSessionId })
+    }
+
+    suspend fun recoverPendingImTriggers(nowEpochMs: Long) {
+        val pendingIm = kernel.store.dialogue.pending(kind = "im_message")
+        if (pendingIm.isEmpty()) return
+        for (input in pendingIm) {
+            if (input.directWorkItemIds != null) {
+                deliverDirectInput(input, nowEpochMs)
+                continue
+            }
+            val parts = input.deviceId.removePrefix("im:").split(':', limit = 2)
+            val channelId = input.replyAddress?.channel?.wireName ?: parts.getOrNull(0) ?: "internal"
+            val chatId = input.replyAddress?.chatId ?: parts.getOrNull(1) ?: "unknown"
+            val srcId = input.sourceMessageId ?: input.requestId
+            val event = RouterTriggerEvent(
+                eventId = "trig:$srcId",
+                kind = "user_message",
+                conversationId = input.topicId,
+                channelId = channelId,
+                chatId = chatId,
+                threadId = input.threadId ?: input.replyAddress?.threadId,
+                senderId = input.senderId ?: "owner",
+                summaryText = input.text,
+                createdAtMs = input.createdAtMs ?: nowEpochMs,
+                sourceMessageId = srcId,
+                replyAddress = input.replyAddress,
+                dialogueInputId = input.id,
+            )
+            synchronized(pendingRouterBatchQueue) {
+                if (pendingRouterBatchQueue.none { it.dialogueInputId == input.id || it.eventId == event.eventId }) {
+                    pendingRouterBatchQueue.addLast(event)
+                }
+            }
+        }
+        kernel.routerWakeListener?.invoke()
     }
 
     fun enqueueRouterTriggerWhileBusy(event: RouterTriggerEvent) {
         observableEvents.add(event)
         synchronized(pendingRouterBatchQueue) {
-            pendingRouterBatchQueue.addLast(event)
+            val duplicate = pendingRouterBatchQueue.any { existing ->
+                existing.eventId == event.eventId ||
+                    (event.kind == "batch_rollup" && event.batchId != null && existing.kind == "batch_rollup" && existing.batchId == event.batchId)
+            }
+            if (!duplicate) {
+                pendingRouterBatchQueue.addLast(event)
+            }
         }
         kernel.routerWakeListener?.invoke()
     }

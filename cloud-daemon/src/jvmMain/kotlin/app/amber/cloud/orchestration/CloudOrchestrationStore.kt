@@ -179,6 +179,28 @@ class CloudOrchestrationStore(
             )
             """.trimIndent()
         )
+        connection.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS worker_approvals (
+                id TEXT PRIMARY KEY,
+                work_item_id TEXT NOT NULL,
+                tool_call_id TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                args_digest TEXT NOT NULL,
+                redacted_args TEXT NOT NULL,
+                state TEXT NOT NULL,
+                created_ms INTEGER NOT NULL,
+                decided_ms INTEGER,
+                actor TEXT
+            )
+            """.trimIndent()
+        )
+        connection.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_worker_approvals_work_item_state ON worker_approvals (work_item_id, state)"
+        )
+        connection.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_worker_approvals_tool_call ON worker_approvals (tool_call_id)"
+        )
     }
 
     // ========================================================================
@@ -531,12 +553,14 @@ class CloudOrchestrationStore(
         rollupMarkdown: String,
         nowMs: Long,
         ttlMs: Long,
+        replyAddress: ImAddress? = null,
+        ignoreClaimTtl: Boolean = false,
     ): BatchRollupRecord? {
         connection.execSQL("BEGIN IMMEDIATE")
         try {
             val existing = getBatchRollupInternal(batchId)
             if (existing != null) {
-                if (existing.deliveredToRouter || (nowMs - existing.claimedAtMs) < ttlMs) {
+                if (existing.deliveredToRouter || (!ignoreClaimTtl && (nowMs - existing.claimedAtMs) < ttlMs)) {
                     connection.execSQL("COMMIT")
                     return null
                 }
@@ -548,13 +572,14 @@ class CloudOrchestrationStore(
                 rollupMarkdown = safeMarkdown,
                 wakeClaimId = claimId,
                 claimedAtMs = nowMs,
-                deliveredToRouter = true,
+                deliveredToRouter = false,
+                replyAddress = replyAddress ?: existing?.replyAddress,
             )
             connection.prepare(
                 """
                 INSERT OR REPLACE INTO batch_rollups (
                     batch_id, wake_claim_id, claimed_at_ms, delivered_to_router, rollup_json
-                ) VALUES (?, ?, ?, 1, ?)
+                ) VALUES (?, ?, ?, 0, ?)
                 """.trimIndent()
             ).use { stmt ->
                 stmt.bindText(1, batchId)
@@ -569,6 +594,52 @@ class CloudOrchestrationStore(
             runCatching { connection.execSQL("ROLLBACK") }
             throw t
         }
+    }
+
+    @Synchronized
+    fun markBatchRollupDelivered(batchId: String) {
+        connection.execSQL("BEGIN IMMEDIATE")
+        try {
+            val existing = getBatchRollupInternal(batchId)
+            if (existing != null && !existing.deliveredToRouter) {
+                val updated = existing.copy(deliveredToRouter = true)
+                connection.prepare(
+                    "UPDATE batch_rollups SET delivered_to_router = 1, rollup_json = ? WHERE batch_id = ?"
+                ).use { stmt ->
+                    stmt.bindText(1, json.encodeToString(updated))
+                    stmt.bindText(2, batchId)
+                    stmt.step()
+                }
+            }
+            connection.execSQL("COMMIT")
+        } catch (t: Throwable) {
+            runCatching { connection.execSQL("ROLLBACK") }
+            throw t
+        }
+    }
+
+    @Synchronized
+    fun listTerminalBatchesPendingRollup(): List<String> {
+        val out = mutableListOf<String>()
+        connection.prepare(
+            """
+            SELECT DISTINCT w.batch_id
+            FROM work_items w
+            LEFT JOIN batch_rollups r ON w.batch_id = r.batch_id
+            WHERE (r.batch_id IS NULL OR r.delivered_to_router = 0)
+              AND NOT EXISTS (
+                  SELECT 1 FROM work_items w2
+                  WHERE w2.batch_id = w.batch_id
+                    AND w2.state NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+              )
+            ORDER BY w.batch_id ASC
+            """.trimIndent()
+        ).use { stmt ->
+            while (stmt.step()) {
+                out.add(stmt.getText(0))
+            }
+        }
+        return out
     }
 
     @Synchronized
@@ -971,8 +1042,164 @@ class CloudOrchestrationStore(
         return out
     }
 
+    // ========================================================================
+    // 9. Worker 高危工具审批状态机 (`worker_approvals`)
+    // ========================================================================
+
+    @Synchronized
+    fun insertWorkerApproval(record: WorkerApprovalRecord): WorkerApprovalRecord {
+        val safeRedactedArgs = CredentialRedactor.redact(record.redactedArgs)
+        val sanitized = record.copy(redactedArgs = safeRedactedArgs)
+        connection.prepare(
+            """
+            INSERT INTO worker_approvals (
+                id, work_item_id, tool_call_id, tool_name, args_digest, redacted_args, state, created_ms, decided_ms, actor
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """.trimIndent()
+        ).use { stmt ->
+            stmt.bindText(1, sanitized.id)
+            stmt.bindText(2, sanitized.workItemId)
+            stmt.bindText(3, sanitized.toolCallId)
+            stmt.bindText(4, sanitized.toolName)
+            stmt.bindText(5, sanitized.argsDigest)
+            stmt.bindText(6, sanitized.redactedArgs)
+            stmt.bindText(7, sanitized.state)
+            stmt.bindLong(8, sanitized.createdMs)
+            if (sanitized.decidedMs != null) stmt.bindLong(9, sanitized.decidedMs) else stmt.bindNull(9)
+            if (sanitized.actor != null) stmt.bindText(10, sanitized.actor) else stmt.bindNull(10)
+            stmt.step()
+        }
+        return sanitized
+    }
+
+    @Synchronized
+    fun getWorkerApproval(id: String): WorkerApprovalRecord? {
+        connection.prepare(
+            """
+            SELECT id, work_item_id, tool_call_id, tool_name, args_digest, redacted_args, state, created_ms, decided_ms, actor
+            FROM worker_approvals
+            WHERE id = ?
+            """.trimIndent()
+        ).use { stmt ->
+            stmt.bindText(1, id)
+            return if (stmt.step()) readWorkerApproval(stmt) else null
+        }
+    }
+
+    @Synchronized
+    fun listWorkerApprovals(workItemId: String): List<WorkerApprovalRecord> {
+        val out = mutableListOf<WorkerApprovalRecord>()
+        connection.prepare(
+            """
+            SELECT id, work_item_id, tool_call_id, tool_name, args_digest, redacted_args, state, created_ms, decided_ms, actor
+            FROM worker_approvals
+            WHERE work_item_id = ?
+            ORDER BY created_ms ASC, id ASC
+            """.trimIndent()
+        ).use { stmt ->
+            stmt.bindText(1, workItemId)
+            while (stmt.step()) {
+                out.add(readWorkerApproval(stmt))
+            }
+        }
+        return out
+    }
+
+    @Synchronized
+    fun findPendingApprovalByToolCall(toolCallId: String): WorkerApprovalRecord? {
+        connection.prepare(
+            """
+            SELECT id, work_item_id, tool_call_id, tool_name, args_digest, redacted_args, state, created_ms, decided_ms, actor
+            FROM worker_approvals
+            WHERE tool_call_id = ? AND state = 'pending'
+            ORDER BY created_ms DESC
+            LIMIT 1
+            """.trimIndent()
+        ).use { stmt ->
+            stmt.bindText(1, toolCallId)
+            return if (stmt.step()) readWorkerApproval(stmt) else null
+        }
+    }
+
+    @Synchronized
+    fun findApprovalByWorkItemAndToolCall(workItemId: String, toolCallId: String): WorkerApprovalRecord? {
+        connection.prepare(
+            """
+            SELECT id, work_item_id, tool_call_id, tool_name, args_digest, redacted_args, state, created_ms, decided_ms, actor
+            FROM worker_approvals
+            WHERE work_item_id = ? AND tool_call_id = ?
+            ORDER BY created_ms DESC
+            LIMIT 1
+            """.trimIndent()
+        ).use { stmt ->
+            stmt.bindText(1, workItemId)
+            stmt.bindText(2, toolCallId)
+            return if (stmt.step()) readWorkerApproval(stmt) else null
+        }
+    }
+
+    /**
+     * 原子 CAS 更新 `worker_approvals.state`；仅当当前状态位于 [expectedStates] 时迁移成功并返回新记录，否则返回 null。
+     */
+    @Synchronized
+    fun transitionWorkerApprovalState(
+        id: String,
+        expectedStates: Set<String>,
+        newState: String,
+        decidedMs: Long? = null,
+        actor: String? = null,
+    ): WorkerApprovalRecord? {
+        if (expectedStates.isEmpty()) return null
+        val current = getWorkerApproval(id) ?: return null
+        if (current.state !in expectedStates) return null
+        val placeholders = expectedStates.joinToString(", ") { "?" }
+        val setDecided = decidedMs != null
+        val setActor = actor != null
+        val sql = buildString {
+            append("UPDATE worker_approvals SET state = ?")
+            if (setDecided) append(", decided_ms = ?")
+            if (setActor) append(", actor = ?")
+            append(" WHERE id = ? AND state IN (").append(placeholders).append(')')
+        }
+        connection.prepare(sql).use { stmt ->
+            var idx = 1
+            stmt.bindText(idx++, newState)
+            if (decidedMs != null) stmt.bindLong(idx++, decidedMs)
+            if (actor != null) stmt.bindText(idx++, actor)
+            stmt.bindText(idx++, id)
+            for (expected in expectedStates) {
+                stmt.bindText(idx++, expected)
+            }
+            stmt.step()
+        }
+        val changed = connection.prepare("SELECT changes()").use { stmt ->
+            if (stmt.step()) stmt.getLong(0) else 0L
+        }
+        if (changed <= 0L) return null
+        return getWorkerApproval(id)
+    }
+
+    private fun readWorkerApproval(stmt: androidx.sqlite.SQLiteStatement): WorkerApprovalRecord =
+        WorkerApprovalRecord(
+            id = stmt.getText(0),
+            workItemId = stmt.getText(1),
+            toolCallId = stmt.getText(2),
+            toolName = stmt.getText(3),
+            argsDigest = stmt.getText(4),
+            redactedArgs = stmt.getText(5),
+            state = stmt.getText(6),
+            createdMs = stmt.getLong(7),
+            decidedMs = if (stmt.isNull(8)) null else stmt.getLong(8),
+            actor = if (stmt.isNull(9)) null else stmt.getText(9),
+        )
+
+    @Volatile
+    var isClosed: Boolean = false
+        private set
+
     @Synchronized
     override fun close() {
+        isClosed = true
         runCatching { connection.close() }
     }
 }

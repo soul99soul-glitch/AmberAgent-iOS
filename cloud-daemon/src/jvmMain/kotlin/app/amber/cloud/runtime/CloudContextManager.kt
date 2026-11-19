@@ -332,11 +332,18 @@ class CloudContextManager(
         val needles = mutableListOf<String>()
         val needleRegex = Regex("""(?i)(error|exception|exit\s*code|/[A-Za-z0-9._\-/]+|[0-9a-f]{7,40})""")
         for (msg in messages) {
-            val text = msg.toText()
-            for (line in text.lines()) {
-                val trimmed = line.trim()
-                if (trimmed.isNotEmpty() && needleRegex.containsMatchIn(trimmed)) {
-                    needles.add(CredentialRedactor.redact(trimmed.take(200)))
+            val texts = buildList {
+                add(msg.toText())
+                msg.getTools().forEach { tool ->
+                    tool.output.filterIsInstance<UIMessagePart.Text>().forEach { add(it.text) }
+                }
+            }
+            for (text in texts) {
+                for (line in text.lines()) {
+                    val trimmed = line.trim()
+                    if (trimmed.isNotEmpty() && needleRegex.containsMatchIn(trimmed)) {
+                        needles.add(CredentialRedactor.redact(trimmed.take(200)))
+                    }
                 }
             }
         }

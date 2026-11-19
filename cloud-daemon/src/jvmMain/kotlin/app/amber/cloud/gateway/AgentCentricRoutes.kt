@@ -10,10 +10,13 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.header
+import io.ktor.server.request.receive
 import io.ktor.server.request.receiveText
 import io.ktor.server.response.respondText
+import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
+import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -112,6 +115,72 @@ internal fun Application.configureAgentCentricRoutes(state: CloudGatewayState, a
             } catch (_: AgentRevisionConflict) { call.error(409, "提议已过期或已确认") }
             catch (_: IllegalArgumentException) { call.error(400, "需要独立主人确认消息") }
             catch (_: SecurityException) { call.error(403, "主人溯源校验失败") }
+        }
+        put("/v2/device-context/snapshot") {
+            val device = call.authenticate() ?: return@put
+            val rawBytes = runCatching { call.receive<ByteArray>() }.getOrDefault(ByteArray(0))
+            when (val res = state.deviceContextStore.putRawJson(device, rawBytes)) {
+                is DeviceContextSnapshotStore.PutResult.Error -> call.error(res.status, res.message)
+                is DeviceContextSnapshotStore.PutResult.Stored -> {
+                    state.recordAudit("device-context-put", mapOf("device" to device.id))
+                    val s = res.snapshot
+                    val body = buildJsonObject {
+                        put("status", "active")
+                        put("deviceId", s.deviceId)
+                        put("capturedAtEpochMs", s.capturedAtEpochMs)
+                        put("ttlSeconds", s.ttlSeconds)
+                        put("expiresAtEpochMs", s.expiresAtEpochMs)
+                        put("domains", kotlinx.serialization.json.JsonArray(s.domains.presentDomainNames().map { kotlinx.serialization.json.JsonPrimitive(it) }))
+                    }
+                    call.respondText(json.encodeToString(body), ContentType.Application.Json)
+                }
+            }
+        }
+        get("/v2/device-context/snapshot") {
+            val device = call.authenticate() ?: return@get
+            if (device.platform != "ios") {
+                return@get call.error(403, "仅限已配对 iOS 设备访问")
+            }
+            when (val res = state.deviceContextStore.read(device.id)) {
+                is DeviceContextSnapshotStore.ReadResult.Missing -> {
+                    val body = buildJsonObject {
+                        put("status", "not_shared")
+                        put("domains", kotlinx.serialization.json.JsonArray(emptyList()))
+                    }
+                    call.respondText(json.encodeToString(body), ContentType.Application.Json)
+                }
+                is DeviceContextSnapshotStore.ReadResult.Expired -> {
+                    state.recordAudit("device-context-get", mapOf("device" to device.id, "status" to "expired"))
+                    val body = buildJsonObject {
+                        put("status", "expired")
+                        put("capturedAtEpochMs", res.capturedAtEpochMs)
+                        put("domains", kotlinx.serialization.json.JsonArray(emptyList()))
+                    }
+                    call.respondText(json.encodeToString(body), ContentType.Application.Json)
+                }
+                is DeviceContextSnapshotStore.ReadResult.Active -> {
+                    state.recordAudit("device-context-get", mapOf("device" to device.id, "status" to "active"))
+                    val s = res.snapshot
+                    val body = buildJsonObject {
+                        put("status", "active")
+                        put("deviceId", s.deviceId)
+                        put("capturedAtEpochMs", s.capturedAtEpochMs)
+                        put("ttlSeconds", s.ttlSeconds)
+                        put("expiresAtEpochMs", s.expiresAtEpochMs)
+                        put("domains", kotlinx.serialization.json.JsonArray(s.domains.presentDomainNames().map { kotlinx.serialization.json.JsonPrimitive(it) }))
+                    }
+                    call.respondText(json.encodeToString(body), ContentType.Application.Json)
+                }
+            }
+        }
+        delete("/v2/device-context/snapshot") {
+            val device = call.authenticate() ?: return@delete
+            if (device.platform != "ios") {
+                return@delete call.error(403, "仅限已配对 iOS 设备删除")
+            }
+            val deleted = state.deviceContextStore.delete(device.id)
+            state.recordAudit("device-context-delete", mapOf("device" to device.id, "deleted" to deleted.toString()))
+            call.respondText(json.encodeToString(buildJsonObject { put("deleted", deleted) }), ContentType.Application.Json)
         }
     }
 }

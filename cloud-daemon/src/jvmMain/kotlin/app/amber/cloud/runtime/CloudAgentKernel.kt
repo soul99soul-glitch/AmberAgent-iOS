@@ -23,6 +23,7 @@ import app.amber.cloud.gateway.PendingApprovalDto
 import app.amber.cloud.gateway.SessionDto
 import app.amber.cloud.orchestration.AutomationTurnOutput
 import app.amber.cloud.orchestration.CloudOrchestrationStore
+import app.amber.cloud.orchestration.CloudPrincipal
 import app.amber.cloud.orchestration.CloudRouter
 import app.amber.cloud.orchestration.ConnectorImStatusSink
 import app.amber.cloud.orchestration.DefaultCloudOrchestrationKernel
@@ -86,6 +87,12 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
+data class StreamActivity(
+    val kind: String,
+    val deltaTextChars: Int = 0,
+    val toolName: String? = null,
+)
+
 /**
  * Abstraction over KMP model providers (`:ai-provider-claude`, `:ai-provider-openai`)
  * and deterministic test providers.
@@ -95,6 +102,16 @@ fun interface CloudModelClient {
         messages: List<UIMessage>,
         tools: List<Tool>,
     ): UIMessage
+
+    suspend fun streamReply(
+        messages: List<UIMessage>,
+        tools: List<Tool>,
+        onActivity: (StreamActivity) -> Unit,
+    ): UIMessage {
+        val reply = generateReply(messages, tools)
+        onActivity(StreamActivity(kind = "complete"))
+        return reply
+    }
 }
 
 /**
@@ -133,6 +150,8 @@ class CloudAgentKernel(
             budgetConfig = InterruptionBudgetConfig(),
         ),
     ),
+    val workerApprovals: Boolean = false,
+    val workerApprovalTtlMs: Long = 30 * 60_000L,
 ) : ChannelIngress {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -161,6 +180,7 @@ class CloudAgentKernel(
     val taskToolchain = app.amber.cloud.tasks.TaskToolchain(publicHttp,taskProcesses,taskWorkspace)
     val search = app.amber.cloud.tasks.CloudSearch(publicHttp, vault, searchSources, searchMode, workspace = taskWorkspace)
     val gatewayState = CloudGatewayState(dataDir, soulRevisionProvider = { soulStore.currentRevision() })
+    private val approvalHelper = ToolApprovalHelper(vault, gatewayState, conversationStorage)
     val orchestrationStore = CloudOrchestrationStore(dataDir)
     val agentRegistry = AgentRegistry(dataDir, orchestrationStore,
         ownerGrantedTools = {
@@ -182,7 +202,10 @@ class CloudAgentKernel(
         orchestrationStore.appendDiagnosticEvent(sessionId = "supertags", workItemId = null, kind = kind, detail = "模板同义整理未完成", nowMs = System.currentTimeMillis())
     }
     val orchestrationKernel = DefaultCloudOrchestrationKernel(
-        config = OrchestrationConfig(),
+        config = OrchestrationConfig(
+            workerApprovals = workerApprovals,
+            workerApprovalTtlMs = workerApprovalTtlMs,
+        ),
         store = orchestrationStore,
         conversationStorage = conversationStorage,
         toolRegistry = toolRegistry,
@@ -190,6 +213,8 @@ class CloudAgentKernel(
         autoExecuteWorkersInBackground = true,
         agentRegistry = agentRegistry,
         conversationHub = supertagStore::conversationHub,
+        vault = vault,
+        gatewayState = gatewayState,
     )
     val workerTurnRunner = ModelWorkerTurnRunner(
         kernel = orchestrationKernel,
@@ -198,12 +223,15 @@ class CloudAgentKernel(
         memoryStore = memoryStore,
         modelClients = modelClients,
         soulStore = soulStore,
+        contextManager = contextManager,
+        contextWindowTokens = contextWindowTokens,
     )
     val router: CloudRouter
     private val routerIngress by lazy { CloudRouterIngress(this) }
     val nativeDialogue by lazy { NativeDialogueService(this,{routerIngress.handleInbound(it)}) {id,text->
         routerIngress.recordReply(PRIMARY_CONVERSATION_ID.toString(),text,Uuid.parse(java.util.UUID.nameUUIDFromBytes(id.toByteArray()).toString()))
     } }
+    val scheduleRunner by lazy { app.amber.cloud.gateway.CloudScheduleRunner(this) }
 
     private val connectors = ConcurrentHashMap<ChannelKind, ChannelConnector>()
     private val pendingRunsBySessionKey = ConcurrentHashMap<String, PendingRunRecord>()
@@ -230,14 +258,23 @@ class CloudAgentKernel(
         }
         taskToolchain.register(toolRegistry)
         orchestrationKernel.stopTaskProcesses = {taskProcesses.cancelTask(it)}
+        orchestrationKernel.stopTaskProcessesNonClosing = {taskProcesses.stopTask(it)}
         orchestrationKernel.hasBackgroundProcesses = taskProcesses::active
-        orchestrationKernel.settlementListener = {item,report->nativeDialogue.settlement(item,report)}
+        orchestrationKernel.settlementListener = { item, report ->
+            nativeDialogue.settlement(item, report)
+            scheduleRunner.onWorkItemSettled(item, report)
+        }
+        orchestrationKernel.workerCommentary = { item, text -> nativeDialogue.commentary(item, text) }
         taskProcesses.inputPending = {orchestrationKernel.workerEvents.pending(it).isNotEmpty()}
-        taskProcesses.onBackgroundStarted = {owner,id,pid,started->orchestrationStore.dialogue.processStarted(id,owner,pid,started)}
+        taskProcesses.onBackgroundStarted = {owner,id,pid,started->
+            orchestrationStore.dialogue.processStarted(id,owner,pid,started)
+            orchestrationKernel.touchWorkItemActivity(owner)
+        }
         taskProcesses.onBackgroundFinished = {owner,result->
             val item=orchestrationStore.getWorkItem(owner)
             orchestrationStore.dialogue.processFinished(result.id,owner,item?.let(nativeDialogue::topic)?:owner,kotlinx.serialization.json.Json.encodeToString(result))
             if(item?.state?.isTerminal==true)orchestrationStore.dialogue.abandonPending(owner)
+            else orchestrationKernel.touchWorkItemActivity(owner)
             orchestrationKernel.signalWorker(owner)
         }
         orchestrationKernel.workerTurnRunner = { item, principal ->
@@ -273,9 +310,37 @@ class CloudAgentKernel(
                 )
             }
         }
+        orchestrationKernel.onWorkerApprovalRequested = { item, card ->
+            for ((kind, connector) in connectors) {
+                val ownerChatId = ownerBinding.getOwnerDirectChatId(kind.wireName) ?: continue
+                connector.sendWithReceipt(
+                    OutboundMessage(
+                        channel = kind,
+                        chatId = ownerChatId,
+                        text = "任务「${item.title}」正在等待你在原生 App 前台核对批准高危工具 `${card.toolName}`（当前通道仅可拒绝）。",
+                        conversationId = PRIMARY_CONVERSATION_ID.toString(),
+                        approvalCard = card,
+                        idempotencyKey = "wi-approval:${card.sessionKey}:${kind.wireName}",
+                    )
+                )
+            }
+        }
         router = CloudRouter(
             kernel = orchestrationKernel,
-            sink = ConnectorImStatusSink { kind -> connectors[kind] },
+            sink = ConnectorImStatusSink(
+                connectorLookup = { kind -> connectors[kind] },
+                onPostFailed = { address, detail ->
+                    if (address.channel != ChannelKind.APP) {
+                        orchestrationStore.appendDiagnosticEvent(
+                            sessionId = PRIMARY_CONVERSATION_ID.toString(),
+                            workItemId = null,
+                            kind = "im_post_failed",
+                            detail = "channel=${address.channel.wireName}, chatId=${address.chatId}, threadId=${address.threadId}, error=$detail",
+                            nowMs = System.currentTimeMillis(),
+                        )
+                    }
+                },
+            ),
             brain = RouterBrain { RouterDecision() },
             executionToolNames = toolRegistry.availableDefinitions(ExecutionScope.MAIN_AGENT).map { it.name }.toSet(),
             onReply = { conversationId, text -> routerIngress.recordReply(conversationId, text) },
@@ -303,7 +368,14 @@ class CloudAgentKernel(
                 contextMessages = { input -> routerIngress.contextMessages(input) },
             )
         }
-        // Wire gateway decision callback into the kernel
+        // Wire gateway decision callbacks into the kernel (V2 Worker approvals must precede V1)
+        gatewayState.registerDecisionListener { sessionKey, toolCallId, allow ->
+            if (sessionKey.startsWith("amber:wi:")) {
+                orchestrationKernel.handleV2GatewayDecision(sessionKey, toolCallId, allow)
+            } else {
+                false
+            }
+        }
         gatewayState.registerDecisionListener { sessionKey, toolCallId, allow ->
             onGatewayDecision(sessionKey, toolCallId, allow)
         }
@@ -357,6 +429,7 @@ class CloudAgentKernel(
         }
         nativeDialogue.recover()
         orchestrationKernel.recoverAfterRestart()
+        scheduleRunner.recoverAfterRestart()
         conversationTagger.resumePending()
     }
 
@@ -386,7 +459,8 @@ class CloudAgentKernel(
     }
 
     fun stopProactiveLoop() {
-        orchestrationKernel.stopHealthLoop()
+        orchestrationKernel.shutdownForRestart()
+        router.shutdown()
         proactiveJob?.cancel()
         proactiveJob = null
     }
@@ -401,6 +475,7 @@ class CloudAgentKernel(
     suspend fun runProactiveCycle(nowOverrideMs: Long? = null): List<ProactiveRunResult> {
         val nowMs = nowOverrideMs ?: System.currentTimeMillis()
         supertagMaintenance.runDue(nowMs)
+        scheduleRunner.runDue(nowMs)
         if (orchestrationStore.listAutomations().isNotEmpty()) {
             orchestrationKernel.runDueAutomations(nowMs) { envelope, _, sessionId ->
                 val convUuid = runCatching { Uuid.parse(sessionId) }.getOrNull()
@@ -569,7 +644,12 @@ class CloudAgentKernel(
         } else {
             ExecutionScope.SUBAGENT
         }
-        val availableTools = toolRegistry.declaredTools(executionScope).filter { profile == null || it.name in agentRegistry.effectiveTools(profile) }
+        val turnPrincipal: CloudPrincipal = if (message.senderRole == SenderRole.OWNER) {
+            CloudPrincipal.OwnerUser(message.senderId, message.channel.wireName)
+        } else {
+            CloudPrincipal.ExternalCaller(message.channel.wireName, message.senderId)
+        }
+        val availableTools = toolRegistry.declaredTools(executionScope, turnPrincipal).filter { profile == null || it.name in agentRegistry.effectiveTools(profile) }
         val assistantReply = modelClient.generateReply(preparedMessages, availableTools)
 
         val toolCalls = assistantReply.getTools()
@@ -603,7 +683,7 @@ class CloudAgentKernel(
         val requiresApproval = highRisk || (!autoApproveOrdinaryTools && isWriteTool(toolCall.toolName))
         if (requiresApproval) {
             // Defect #2 & #4: Stash raw args in encrypted ephemeral memory, persist only redacted args!
-            val redactedArgsJson = vault.stashPendingToolArgs(toolCall.toolCallId, parsedArgs)
+            val redactedArgsJson = approvalHelper.stashPendingToolArgs(toolCall.toolCallId, parsedArgs)
             val pendingToolPart = toolCall.copy(
                 input = redactedArgsJson,
                 approvalState = ToolApprovalState.Pending,
@@ -633,24 +713,18 @@ class CloudAgentKernel(
                 highRisk = highRisk,
                 status = AgentRunStatus.AWAITING_PERMISSION,
             )
-            gatewayState.upsertSession(
-                SessionDto(
-                    key = sessionKey,
-                    agent = "amber",
-                    subject = afterUserSave.title.ifBlank { "主时间线" },
-                    summary = redactedUserText.take(80),
-                    origin = "interactive",
-                    state = "waiting",
-                    waitReason = "permission",
-                    updatedAt = nowSec,
-                    conversationId = convId.toString(),
-                    pendingApproval = PendingApprovalDto(
-                        toolCallId = toolCall.toolCallId,
-                        tool = toolCall.toolName,
-                        detail = redactedArgsJson,
-                        highRisk = highRisk,
-                    ),
-                )
+            approvalHelper.upsertPendingApprovalSession(
+                sessionKey = sessionKey,
+                agent = "amber",
+                subject = afterUserSave.title.ifBlank { "主时间线" },
+                summary = redactedUserText.take(80),
+                origin = "interactive",
+                conversationId = convId.toString(),
+                toolCallId = toolCall.toolCallId,
+                toolName = toolCall.toolName,
+                redactedArgsJson = redactedArgsJson,
+                highRisk = highRisk,
+                nowSec = nowSec,
             )
             val card = ChannelApprovalCard(
                 sessionKey = sessionKey,
@@ -678,7 +752,7 @@ class CloudAgentKernel(
 
         // Auto-executable read-only tool
         val outputElement = try {
-            toolRegistry.executeGate(toolCall.toolName, parsedArgs, executionScope)
+            toolRegistry.executeGate(toolCall.toolName, parsedArgs, executionScope, principal = turnPrincipal)
         } finally {
             vault.wipePendingToolArgs(toolCall.toolCallId)
         }
@@ -717,7 +791,10 @@ class CloudAgentKernel(
         allow: Boolean,
     ): ChannelDecisionOutcome {
         val resolvedSessionKey = sessionKey.trim().ifEmpty {
-            pendingRunsBySessionKey.values.firstOrNull { it.toolCallId == toolCallId }?.sessionKey.orEmpty()
+            pendingRunsBySessionKey.values.firstOrNull { it.toolCallId == toolCallId }?.sessionKey
+                ?: orchestrationStore.findPendingApprovalByToolCall(toolCallId)?.let {
+                    orchestrationKernel.v2ApprovalSessionKey(it.workItemId, it.id)
+                }.orEmpty()
         }
         val result = gatewayState.processDecision(
             sessionKey = resolvedSessionKey,
@@ -750,8 +827,8 @@ class CloudAgentKernel(
     ): Boolean {
         val pending = pendingRunsBySessionKey.remove(sessionKey) ?: return false
         // Always wipe ephemeral secret on terminal/interruption transition (Defect #2)
-        vault.wipePendingToolArgs(pending.toolCallId)
-        updateStoredToolOutcome(
+        approvalHelper.wipePendingToolArgs(pending.toolCallId)
+        approvalHelper.updateStoredToolOutcome(
             conversationId = pending.conversationId,
             toolCallId = pending.toolCallId,
             approvalState = ToolApprovalState.Denied(reason),
@@ -761,17 +838,11 @@ class CloudAgentKernel(
                 put("reason", reason)
             }.toString(),
         )
-        gatewayState.getSession(sessionKey)?.let { existing ->
-            gatewayState.upsertSession(
-                existing.copy(
-                    state = "stopped",
-                    waitReason = null,
-                    abnormal = targetStatus != AgentRunStatus.COMPLETED,
-                    pendingApproval = null,
-                    updatedAt = CloudGatewayState.nowEpochSeconds(),
-                )
-            )
-        }
+        approvalHelper.clearApprovalSession(
+            sessionKey = sessionKey,
+            nextState = "stopped",
+            abnormal = targetStatus != AgentRunStatus.COMPLETED,
+        )
         return true
     }
 
@@ -789,37 +860,28 @@ class CloudAgentKernel(
     ): Boolean {
         val pending = pendingRunsBySessionKey.remove(sessionKey) ?: return false
         if (pending.toolCallId != toolCallId) {
-            vault.wipePendingToolArgs(pending.toolCallId)
+            approvalHelper.wipePendingToolArgs(pending.toolCallId)
             return false
         }
         return try {
             if (allow) {
-                val rawArgs = vault.consumePendingToolArgs(toolCallId) ?: JsonObject(emptyMap())
+                val rawArgs = approvalHelper.consumePendingToolArgs(toolCallId) ?: JsonObject(emptyMap())
                 val outputElement = toolRegistry.executeGate(
                     toolName = pending.toolName,
                     args = rawArgs,
                     scope = ExecutionScope.MAIN_AGENT,
                 )
                 val redactedOutput = CredentialRedactor.redact(outputElement.toString())
-                updateStoredToolOutcome(
+                approvalHelper.updateStoredToolOutcome(
                     conversationId = pending.conversationId,
                     toolCallId = toolCallId,
                     approvalState = ToolApprovalState.Approved,
                     outputJson = redactedOutput,
                 )
-                gatewayState.getSession(sessionKey)?.let { existing ->
-                    gatewayState.upsertSession(
-                        existing.copy(
-                            state = "completed",
-                            waitReason = null,
-                            pendingApproval = null,
-                            updatedAt = CloudGatewayState.nowEpochSeconds(),
-                        )
-                    )
-                }
+                approvalHelper.clearApprovalSession(sessionKey = sessionKey, nextState = "completed")
             } else {
-                vault.wipePendingToolArgs(toolCallId)
-                updateStoredToolOutcome(
+                approvalHelper.wipePendingToolArgs(toolCallId)
+                approvalHelper.updateStoredToolOutcome(
                     conversationId = pending.conversationId,
                     toolCallId = toolCallId,
                     approvalState = ToolApprovalState.Denied("denied_by_user"),
@@ -828,58 +890,13 @@ class CloudAgentKernel(
                         put("status", "denied")
                     }.toString(),
                 )
-                gatewayState.getSession(sessionKey)?.let { existing ->
-                    gatewayState.upsertSession(
-                        existing.copy(
-                            state = "completed",
-                            waitReason = null,
-                            pendingApproval = null,
-                            updatedAt = CloudGatewayState.nowEpochSeconds(),
-                        )
-                    )
-                }
+                approvalHelper.clearApprovalSession(sessionKey = sessionKey, nextState = "completed")
             }
             true
         } finally {
             // Guarantee credential wipe on both approve and deny paths (Defect #2)
-            vault.wipePendingToolArgs(toolCallId)
+            approvalHelper.wipePendingToolArgs(toolCallId)
         }
-    }
-
-    private suspend fun updateStoredToolOutcome(
-        conversationId: Uuid,
-        toolCallId: String,
-        approvalState: ToolApprovalState,
-        outputJson: String,
-    ) {
-        val conv = conversationStorage.loadConversation(conversationId) ?: return
-        val safeOutput = CredentialRedactor.redact(outputJson)
-        val updatedNodes = conv.messageNodes.map { node ->
-            val msg = node.currentMessage
-            val updatedParts = msg.parts.map { part ->
-                if (part is UIMessagePart.Tool && part.toolCallId == toolCallId) {
-                    part.copy(
-                        input = CredentialRedactor.redact(part.input),
-                        approvalState = approvalState,
-                        output = listOf(UIMessagePart.Text(safeOutput)),
-                    )
-                } else {
-                    part
-                }
-            }
-            if (updatedParts != msg.parts) {
-                node.copy(
-                    messages = node.messages.toMutableList().also {
-                        it[node.selectIndex] = msg.copy(parts = updatedParts)
-                    }
-                )
-            } else {
-                node
-            }
-        }
-        conversationStorage.saveConversation(
-            conv.copy(messageNodes = updatedNodes, updateAt = Clock.System.now())
-        )
     }
 
     /**
@@ -934,6 +951,8 @@ class CloudAgentKernel(
             memoryStore = memoryStore,
             vault = vault,
             workspaceDir = workspaceDir,
+            deviceContextStore = gatewayState.deviceContextStore,
+            pairedIosDevicesProvider = { gatewayState.loadDevicesStrict() },
         )
     }
 }

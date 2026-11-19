@@ -82,22 +82,107 @@ internal class OrchestrationWorkQueueCoordinator(
         val all = kernel.store.listWorkItems()
         val toRelaunch = mutableListOf<CloudWorkItemRecord>()
         for (item in all) {
-            if (item.state == WorkItemState.STARTING || item.state == WorkItemState.WORKING) {
-                kernel.store.appendDiagnosticEvent(
-                    sessionId = item.workerSessionId ?: item.workItemId,
-                    workItemId = item.workItemId,
-                    kind = "daemon_restart_recovered",
-                    detail = "守护进程重启，恢复未完结任务 ${item.workItemId} (原状态=${item.state})",
-                    nowMs = nowEpochMs,
-                )
-                val refreshed = item.copy(lastActivityAtMs = nowEpochMs, updatedAtMs = nowEpochMs)
-                kernel.store.upsertWorkItem(refreshed)
-                toRelaunch.add(refreshed)
+            if (item.state == WorkItemState.STARTING || item.state == WorkItemState.WORKING || item.state == WorkItemState.WAITING) {
+                val affectedApprovals = mutableListOf<Pair<WorkerApprovalRecord, String>>()
+                val refreshed = synchronized(kernel.store) {
+                    val current = kernel.store.getWorkItem(item.workItemId) ?: return@synchronized null
+                    if (current.state != WorkItemState.STARTING && current.state != WorkItemState.WORKING && current.state != WorkItemState.WAITING) {
+                        return@synchronized null
+                    }
+                    for (approval in kernel.store.listWorkerApprovals(current.workItemId)) {
+                        when (approval.state) {
+                            "pending", "approved" -> {
+                                kernel.store.transitionWorkerApprovalState(
+                                    approval.id,
+                                    setOf("pending", "approved"),
+                                    "expired",
+                                    approval.decidedMs ?: nowEpochMs,
+                                    approval.actor ?: "system:restart",
+                                )?.let { affectedApprovals.add(it to "expired") }
+                            }
+                            "executing" -> {
+                                kernel.store.transitionWorkerApprovalState(
+                                    approval.id,
+                                    setOf("executing"),
+                                    "outcome_unknown",
+                                )?.let { affectedApprovals.add(it to "outcome_unknown") }
+                            }
+                        }
+                    }
+                    if (affectedApprovals.isNotEmpty()) {
+                        val topic = current.subscribedThreadKeys.firstOrNull { it.startsWith("native:") }?.removePrefix("native:")
+                            ?: current.workItemId
+                        val notice = buildString {
+                            append("进程重启恢复通知：以下工具审批处于未完成/执行中状态，严禁自动重放：\n")
+                            for ((rec, outcomeState) in affectedApprovals) {
+                                append("- ${rec.toolName} (${rec.toolCallId}): $outcomeState\n")
+                            }
+                        }.trim()
+                        val inputId = UUID.nameUUIDFromBytes(
+                            "restart-approval:${current.workItemId}:$nowEpochMs:${affectedApprovals.joinToString(",") { it.first.id }}".toByteArray()
+                        ).toString()
+                        kernel.store.dialogue.acceptSilent(
+                            DialogueInput(
+                                id = inputId,
+                                deviceId = "system:restart",
+                                requestId = inputId,
+                                kind = "followup",
+                                text = notice,
+                                topicId = topic,
+                                workItemId = current.workItemId,
+                            ),
+                            inputId,
+                        )
+                    }
+                    kernel.store.appendDiagnosticEvent(
+                        sessionId = current.workerSessionId ?: current.workItemId,
+                        workItemId = current.workItemId,
+                        kind = "daemon_restart_recovered",
+                        detail = "守护进程重启，恢复未完结任务 ${current.workItemId} (原状态=${current.state})",
+                        nowMs = nowEpochMs,
+                    )
+                    val targetState = if (current.state == WorkItemState.WAITING) WorkItemState.WORKING else current.state
+                    current.copy(
+                        state = targetState,
+                        slotHeld = targetState.holdsConcurrencySlot,
+                        waitingStartedAtMs = if (targetState == WorkItemState.WAITING) current.waitingStartedAtMs else null,
+                        lastActivityAtMs = nowEpochMs,
+                        updatedAtMs = nowEpochMs,
+                    ).also {
+                        kernel.store.upsertWorkItem(it)
+                    }
+                }
+                val sessionUuid = refreshed?.workerSessionId?.let { runCatching { kotlin.uuid.Uuid.parse(it) }.getOrNull() }
+                for ((approval, reason) in affectedApprovals) {
+                    kernel.approvalHelper.wipePendingToolArgs(approval.toolCallId)
+                    kernel.approvalHelper.clearApprovalSession(
+                        sessionKey = kernel.v2ApprovalSessionKey(item.workItemId, approval.id),
+                        nextState = "running",
+                        nowSec = nowEpochMs / 1000.0,
+                    )
+                    if (sessionUuid != null) {
+                        kernel.approvalHelper.updateStoredToolOutcome(
+                            sessionUuid,
+                            approval.toolCallId,
+                            app.amber.ai.ui.ToolApprovalState.Denied("restart_$reason"),
+                            """{"status":"$reason","tool":"${approval.toolName}","message":"云端重启，未重放该调用"}""",
+                        )
+                    }
+                }
+                if (refreshed != null) toRelaunch.add(refreshed)
             }
         }
         pumpWorkQueue(nowEpochMs)
         if (kernel.autoExecuteWorkersInBackground) {
             toRelaunch.forEach { kernel.launchWorkerRunnerInternal(it) }
+        }
+        kernel.recoverPendingImTriggersInternal(nowEpochMs)
+        for (batchId in kernel.store.listTerminalBatchesPendingRollup()) {
+            val batchItems = kernel.store.listWorkItemsByBatch(batchId)
+            if (batchItems.isNotEmpty() && batchItems.all { item -> item.subscribedThreadKeys.any { it.startsWith("native:") } }) {
+                continue
+            }
+            kernel.maybeTriggerBatchRollupInternal(batchId, nowEpochMs, ignoreClaimTtl = true)
         }
         return kernel.store.listWorkItems()
     }
@@ -254,6 +339,7 @@ internal class OrchestrationWorkQueueCoordinator(
                 createdAtMs = nowEpochMs,
                 updatedAtMs = nowEpochMs,
                 agentId = spec.agentId,
+                replyAddress = spec.replyAddress,
             )
             kernel.store.upsertWorkItem(record)
 
@@ -393,26 +479,65 @@ internal class OrchestrationWorkQueueCoordinator(
         workItemId: String,
         followupInstruction: String,
         nowEpochMs: Long,
+        silentDialogueEvent: Boolean = false,
     ): CloudWorkItemRecord {
-        val coordinator=requireCoordinatorAuthority(principal, "steerWorker")
-        require(followupInstruction.isNotBlank())
-        val admitted=synchronized(kernel.store) {
-            val snapshot=kernel.store.getWorkItem(workItemId)?:error("找不到 WorkItem")
-            require(!snapshot.state.isTerminal&&!kernel.workerEvents.isStopping(workItemId)) {"终态或停止中的任务不能追加指令"}
-            val key=OrchestrationHash.sha256Hex("${coordinator.activeTurnId}|$workItemId|$followupInstruction")
-            val id=UUID.nameUUIDFromBytes(key.toByteArray()).toString()
-            val topic=snapshot.subscribedThreadKeys.firstOrNull {it.startsWith("native:")}?.removePrefix("native:")?:workItemId
-            val (_,replayed)=kernel.store.dialogue.accept(DialogueInput(id,coordinator.principalId,key,"followup",
-                CredentialRedactor.redact(followupInstruction),topic,workItemId),key) {}
-            if(replayed)snapshot else snapshot.copy(
-                state=if(snapshot.slotHeld)snapshot.state else WorkItemState.QUEUED,
-                brief="${snapshot.brief}\n[Follow-up]: ${CredentialRedactor.redact(followupInstruction)}",
-                lastActivityAtMs=nowEpochMs,updatedAtMs=nowEpochMs,
-            ).also {kernel.store.upsertWorkItem(it)}
+        val coordinator = requireCoordinatorAuthority(principal, "steerWorker")
+        val requestId = OrchestrationHash.sha256Hex("${coordinator.activeTurnId}|$workItemId|$followupInstruction")
+        return acceptFollowupAndSignal(
+            deviceId = if (silentDialogueEvent) "im:steer:${coordinator.principalId}" else coordinator.principalId,
+            requestId = requestId,
+            workItemId = workItemId,
+            followupText = followupInstruction,
+            nowEpochMs = nowEpochMs,
+            silentDialogueEvent = silentDialogueEvent,
+            appendBrief = true,
+        )
+    }
+
+    internal suspend fun acceptFollowupAndSignal(
+        deviceId: String,
+        requestId: String,
+        workItemId: String,
+        followupText: String,
+        nowEpochMs: Long,
+        silentDialogueEvent: Boolean = false,
+        appendBrief: Boolean = true,
+        touchActivity: Boolean = true,
+    ): CloudWorkItemRecord {
+        require(followupText.isNotBlank())
+        val safeText = CredentialRedactor.redact(followupText)
+        val admitted = synchronized(kernel.store) {
+            val snapshot = kernel.store.getWorkItem(workItemId) ?: error("找不到 WorkItem")
+            require(!snapshot.state.isTerminal && !kernel.workerEvents.isStopping(workItemId)) { "终态或停止中的任务不能追加指令" }
+            val key = OrchestrationHash.sha256Hex("$deviceId|$requestId|$workItemId|$followupText")
+            val id = UUID.nameUUIDFromBytes(key.toByteArray()).toString()
+            val topic = snapshot.subscribedThreadKeys.firstOrNull { it.startsWith("native:") }?.removePrefix("native:") ?: workItemId
+            val (_, replayed) = if (silentDialogueEvent) {
+                kernel.store.dialogue.acceptSilent(
+                    DialogueInput(id, deviceId, requestId, "followup", safeText, topic, workItemId),
+                    key,
+                )
+            } else {
+                kernel.store.dialogue.accept(
+                    DialogueInput(id, deviceId, requestId, "followup", safeText, topic, workItemId),
+                    key,
+                ) {}
+            }
+            if (replayed || (!touchActivity && !appendBrief && snapshot.slotHeld)) {
+                snapshot
+            } else {
+                val updatedBrief = if (appendBrief) "${snapshot.brief}\n[Follow-up]: $safeText" else snapshot.brief
+                snapshot.copy(
+                    state = if (snapshot.slotHeld) snapshot.state else WorkItemState.QUEUED,
+                    brief = updatedBrief,
+                    lastActivityAtMs = if (touchActivity) nowEpochMs else snapshot.lastActivityAtMs,
+                    updatedAtMs = if (touchActivity) nowEpochMs else snapshot.updatedAtMs,
+                ).also { kernel.store.upsertWorkItem(it) }
+            }
         }
         kernel.signalWorker(workItemId)
         pumpWorkQueue(nowEpochMs)
-        if(kernel.autoExecuteWorkersInBackground&&admitted.slotHeld)kernel.launchWorkerRunnerInternal(admitted)
+        if (kernel.autoExecuteWorkersInBackground && admitted.slotHeld) kernel.launchWorkerRunnerInternal(admitted)
         return kernel.store.getWorkItem(workItemId)!!
     }
 

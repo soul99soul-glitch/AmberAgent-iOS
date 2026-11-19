@@ -106,12 +106,19 @@ class CloudOrchestrationInteractionAndInspectionTest {
             assertFalse("workspace_file_write" in subagentTools)
             assertTrue("history_search" in subagentTools)
 
-            val blockedExec = h.kernel.executeWorkerTool(
-                principal = workerPrincipal,
+            assertFailsWith<PrincipalPermissionException> {
+                h.kernel.executeWorkerTool(
+                    principal = workerPrincipal,
+                    toolName = "terminal_exec",
+                    args = buildJsonObject { put("command", "rm -rf /") },
+                )
+            }
+            val gateBlocked = h.toolRegistry.executeGate(
                 toolName = "terminal_exec",
                 args = buildJsonObject { put("command", "rm -rf /") },
+                scope = ExecutionScope.SUBAGENT,
             ).jsonObject
-            assertEquals(false, blockedExec["ok"]?.jsonPrimitive?.booleanOrNull)
+            assertEquals(false, gateBlocked["ok"]?.jsonPrimitive?.booleanOrNull)
         }
     }
 
@@ -230,6 +237,10 @@ class CloudOrchestrationInteractionAndInspectionTest {
                 )
                 workerProgressReady.complete(Unit)
                 workerContinueGate.await()
+                val pending = h.kernel.workerEvents.prepare(item)
+                if (pending.isNotEmpty()) {
+                    h.store.dialogue.consume(pending)
+                }
                 WorkerSettlementReport(
                     workItemId = item.workItemId,
                     outcome = "completed",
