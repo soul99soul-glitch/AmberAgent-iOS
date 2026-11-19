@@ -401,9 +401,6 @@ struct AmberInlineCloudMainDialogueView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
-                    Color.clear
-                        .frame(height: max(8, topInset))
-
                     cloudHostHeaderBanner
 
                     if store.cloudDialogueVisibleEvents.isEmpty
@@ -442,6 +439,7 @@ struct AmberInlineCloudMainDialogueView: View {
                         .id("cloud-dialogue-bottom-anchor")
                 }
                 .padding(.horizontal, ChatLayout.timelineHorizontalInset)
+                .padding(.top, 14 + max(8, topInset))
                 .background {
                     NativeTimelineScrollViewResolver(
                         onResolve: { scrollView in
@@ -460,6 +458,7 @@ struct AmberInlineCloudMainDialogueView: View {
                     enabled: scrollCoordinator.isPinnedToBottom
                 )
             )
+            .scrollEdgeEffectStyle(.soft, for: .top)
             .scrollDismissesKeyboard(.interactively)
             .contentShape(Rectangle())
             .simultaneousGesture(

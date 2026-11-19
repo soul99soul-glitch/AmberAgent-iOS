@@ -277,6 +277,23 @@ final class ChatTopBarLayoutTests: XCTestCase {
         XCTAssertGreaterThan(compactNotices.panelHeight, 100)
         XCTAssertLessThan(compactNotices.panelHeight, 300, "两条提醒应按内容收高")
 
+        let panelPoint = CGPoint(x: compactNotices.tapRegions.panel.midX, y: compactNotices.tapRegions.panel.midY)
+        func timelineContainsHit(at point: CGPoint) -> Bool {
+            var hit = window.hitTest(point, with: nil)
+            while let view = hit {
+                if let scroll = view as? UIScrollView, scroll.convert(scroll.bounds, to: window).minY <= 1 {
+                    return true
+                }
+                hit = view.superview
+            }
+            return false
+        }
+        XCTAssertNotNil(window.hitTest(panelPoint, with: nil))
+        XCTAssertFalse(timelineContainsHit(at: panelPoint), "展开面板应接住正文区命中")
+        showTopBarPreview(fixture: compactNotices)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertTrue(timelineContainsHit(at: panelPoint), "收起面板后同一位置应命中正文滚动区")
+
         let manyNotices = (0...100).map { index in
             notice("badge-\(index)", title: "提醒 \(index)", kind: .completed)
         }
@@ -413,43 +430,42 @@ private struct ChatTopBarLayoutPreview: View {
     let shelfHeight: CGFloat
 
     var body: some View {
-        ZStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("当前对话")
-                        .font(.title2.weight(.semibold))
-                    Text("已经整理好讨论中的要点，接下来可以逐项确认。")
-                        .font(.body)
-                        .foregroundStyle(AmberTheme.muted)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(20)
-            }
-            .background(AmberTheme.background.ignoresSafeArea())
-            .safeAreaBar(edge: .top, spacing: 0) {
-                Color.clear
-                    .frame(height: ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension)
-                    .allowsHitTesting(false)
-            }
-            ChatTopBarView(
-                presentation: .idle(.conversationTitle("当前对话")),
-                conversationID: "topbar-layout-preview-current",
-                hasMessages: true,
-                isGenerating: false,
-                notices: fixture.notices,
-                shelfHeight: shelfHeight,
-                onBack: {},
-                onIslandTap: { _ in },
-                onCancel: {},
-                onOpenConversation: { _ in true },
-                onDismiss: { id in fixture.notices.removeAll { $0.conversationId == id } },
-                onNewConversation: {},
-                loadPreview: { _ in nil },
-                previewRevision: { _ in nil },
-                tapRegions: fixture.tapRegions,
-                panel: panel
-            )
-        }
+        ChatTopBarView(
+            presentation: .idle(.conversationTitle("当前对话")),
+            conversationID: "topbar-layout-preview-current",
+            hasMessages: true,
+            isGenerating: false,
+            notices: fixture.notices,
+            shelfHeight: shelfHeight,
+            onBack: {},
+            onIslandTap: { _ in },
+            onCancel: {},
+            onOpenConversation: { _ in true },
+            onDismiss: { id in fixture.notices.removeAll { $0.conversationId == id } },
+            onNewConversation: {},
+            loadPreview: { _ in nil },
+            previewRevision: { _ in nil },
+            tapRegions: fixture.tapRegions,
+            dialogue: AnyView(timeline),
+            panel: panel
+        )
         .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private var timeline: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("当前对话")
+                    .font(.title2.weight(.semibold))
+                Text("已经整理好讨论中的要点，接下来可以逐项确认。")
+                    .font(.body)
+                    .foregroundStyle(AmberTheme.muted)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+            .padding(.top, ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension - ChatTopBarLayout.toolbarHeight)
+        }
+        .background(AmberTheme.background.ignoresSafeArea())
+        .scrollEdgeEffectStyle(.soft, for: .top)
     }
 }

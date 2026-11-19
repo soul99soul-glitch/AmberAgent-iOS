@@ -304,7 +304,13 @@ final class ChatMessagePresentationTests: ChatMessageProjectionTestCase {
         }
         let scroll = try XCTUnwrap(scrolls(host.view).max { $0.bounds.height < $1.bounds.height })
         let frame = scroll.convert(scroll.bounds, to: host.view)
-        XCTAssertGreaterThanOrEqual(frame.minY, host.view.safeAreaInsets.top + ChatTopBarLayout.controlsHeight)
+        XCTAssertLessThanOrEqual(frame.minY, 1, "Timeline scroll viewport must extend full-bleed to top edge for native progressive blur")
+        XCTAssertEqual(
+            scroll.adjustedContentInset.top - host.view.safeAreaInsets.top,
+            ChatTopBarLayout.toolbarHeight,
+            accuracy: 1,
+            "Only the one-line toolbar extends the native top edge effect"
+        )
         let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
             XCTAssertTrue(window.drawHierarchy(in: window.bounds, afterScreenUpdates: true))
         }
