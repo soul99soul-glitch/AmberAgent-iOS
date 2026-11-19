@@ -35,10 +35,18 @@ enum AmberHubMemoryPolicy: String, Codable, CaseIterable, Identifiable, Sendable
 enum AmberHubTemplate: String, Codable, CaseIterable, Identifiable, Sendable {
     case general = "GENERAL"
     case coding = "CODING"
-    case novel = "NOVEL"
     case research = "RESEARCH"
 
     var id: String { rawValue }
+
+    init(from decoder: Decoder) throws {
+        let rawValue = try decoder.singleValueContainer().decode(String.self)
+        if rawValue == "NOVEL" {
+            self = .general
+            return
+        }
+        self = Self(rawValue: rawValue) ?? .general
+    }
 }
 
 struct AmberHubItem: Codable, Equatable, Identifiable, Sendable {
@@ -488,7 +496,7 @@ final class AmberHubStore {
             return nil
         }
         smartCollections.removeAll { $0.id == collectionId }
-        let resolvedPolicy = memoryPolicy ?? (collection.template == .novel ? .hubIsolated : .sharedWithGlobal)
+        let resolvedPolicy = memoryPolicy ?? .sharedWithGlobal
         let hub = AmberHubItem(
             title: collection.title,
             thesis: collection.digest,
@@ -562,7 +570,7 @@ final class AmberHubStore {
             title: collection.title,
             thesis: collection.digest,
             template: collection.template,
-            memoryPolicy: collection.template == .novel ? .hubIsolated : .sharedWithGlobal,
+            memoryPolicy: .sharedWithGlobal,
             pinnedSupertags: [collection.primaryTag],
             conversationIds: collection.conversationIds,
             memoryCountHint: max(collection.memoryCount, collection.itemCount)
@@ -699,9 +707,6 @@ final class AmberHubStore {
         }
         if lower.contains("模型") || lower.contains("训练") || lower.contains("视频") || lower.contains("检测") {
             return ("机房视觉检测", "#dev/vision")
-        }
-        if lower.contains("小说") || lower.contains("章节") || lower.contains("设定") {
-            return ("小说创作", "#creative/novel")
         }
         return nil
     }
@@ -922,9 +927,9 @@ enum AmberUnifiedTaskBuilder {
                 dialogueTitle = "云端对话任务"
             }
 
-            let latestResultText = directEvents
-                .last(where: { $0.kind == .taskResult || ($0.kind == .assistantReply && !$0.isUpfrontAcknowledgement) })?
-                .text
+            let latestResultEvent = directEvents
+                .last(where: { $0.kind == .taskResult || ($0.kind == .assistantReply && !$0.isUpfrontAcknowledgement) })
+            let latestResultText = latestResultEvent.map { gateway.cloudDialogueDisplayText(for: $0) }
             let sanitizedResult = latestResultText.map {
                 IOSContextCompactionFidelity.redactCredentials(
                     IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope($0)
@@ -981,7 +986,7 @@ enum AmberUnifiedTaskBuilder {
                 phase = .cancelled
                 statusText = "已取消"
                 subtitle = "云端对话 · 已停止"
-            case nil:
+            case .unknown, nil:
                 if progress.isStopRequested {
                     phase = .running
                     statusText = "停止请求中"
@@ -998,6 +1003,12 @@ enum AmberUnifiedTaskBuilder {
                     statusText = "运行中"
                     subtitle = sanitizedStatus.isEmpty ? "云端对话 · 执行中" : "云端对话 · \(sanitizedStatus)"
                 }
+            }
+
+            if progress.outcome != nil, phase == .needsAttention {
+                let title = progress.outcome == .failed ? "填写重试说明" : "填写后续说明"
+                actionTitle = title
+                quickActions = [AmberTaskQuickDecision(title: title, kind: .adjustDirection)]
             }
 
             let updatedAt = directEvents

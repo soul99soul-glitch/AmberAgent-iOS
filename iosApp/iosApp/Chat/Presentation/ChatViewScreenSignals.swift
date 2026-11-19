@@ -366,7 +366,8 @@ extension ChatView {
             )
         }
 
-        if chatListSummary.awaitingFirstAssistantChunk {
+        if chatListSummary.awaitingFirstAssistantChunk ||
+            (viewModel.isLoading && viewModel.pendingDeferredGenerationAnchorId != nil) {
             return ChatActivityIslandState.activity(
                 kind: .thinking,
                 title: IOSAppLocalization.string("正在思考", defaultValue: "正在思考"),
@@ -412,7 +413,10 @@ extension ChatView {
             )
         }
         let task = viewModel.focusedActiveTask
-        let assistant = task?.generatedMessages.last(where: { $0.role == .assistant })
+        let assistant = task?.generatedMessages.last(where: { candidate in
+            candidate.role == .assistant &&
+                chatListSummary.messageIDs.contains(ChatMessageProjector.messageId(for: candidate))
+        })
         guard let rawAnchor = (showsTaskFailure && task == nil ? failureMessageID : nil)
             ?? assistant.map(ChatMessageProjector.messageId(for:))
             ?? task?.anchorUserMessageId ?? chatListSummary.lastMessageID else { return nil }

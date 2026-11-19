@@ -3,39 +3,6 @@ import Foundation
 
 @MainActor
 extension ChatToolRuntime {
-    func novelDiscussionToolExecutors(
-        projectContext: NovelProjectToolRunContext? = nil
-    ) -> [String: any IOSToolExecutor] {
-        var executors: [String: any IOSToolExecutor] = [
-            "ask_user": IOSClosureToolExecutor { _, _, _ in
-                .needsApproval("等待用户回答")
-            }
-        ]
-        if let projectContext {
-            let projectExecutor = IOSNovelProjectToolExecutor(
-                projectContext: projectContext,
-                creation: novelProjectCreation
-            )
-            for name in IOSNovelProjectToolExecutor.supportedToolNames {
-                executors[name] = projectExecutor
-            }
-        }
-        guard effectiveWebSearchEnabled else { return executors }
-        for name in IOSSearchExecutor.supportedToolNames {
-            executors[name] = IOSClosureToolExecutor { [weak self] toolName, arguments, isUserInitiated in
-                guard let self else { return .failed("Chat runtime is unavailable.") }
-                switch self.searchToolPermission(isUserInitiated: isUserInitiated) {
-                case .denied(let reason): return .denied(reason)
-                case .needsApproval(let reason): return .needsApproval(reason)
-                case .allow: break
-                }
-                let call = self.toolCall(name: toolName, input: arguments)
-                return .filled(await self.dispatchSearchToolCall(call, isUserInitiated: isUserInitiated))
-            }
-        }
-        return executors
-    }
-
     func backgroundToolExecutors(
         providerSetting: ProviderSetting,
         params: TextGenerationParams,
@@ -324,6 +291,11 @@ extension ChatToolRuntime {
             }
         }
 
+        if availableToolNames.contains(IOSPhoneControlToolCatalog.preflightToolName) {
+            executors[IOSPhoneControlToolCatalog.preflightToolName] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { _, _, _ in
+                .filled(IOSPhoneControlToolExecutor.preflightJSON(controller: .shared))
+            }
+        }
         if availableToolNames.contains(IOSWeatherToolCatalog.toolName) {
             executors[IOSWeatherToolCatalog.toolName] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { _, arguments, _ in
                 guard !IOSWeatherToolExecutor.requestsCurrentLocation(input: arguments) else {
@@ -703,6 +675,7 @@ extension ChatToolRuntime {
             "mcp_call", "subagent_dispatch", "model_council_run",
             IOSSoulToolCatalog.toolName,
             "phone_add_app",
+            IOSPhoneControlToolCatalog.preflightToolName,
             "spawn_agent", "list_agents", "interrupt_agent",
             "send_message", "followup_task", "wait_agent",
         ])

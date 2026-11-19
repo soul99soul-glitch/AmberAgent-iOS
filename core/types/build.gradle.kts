@@ -24,7 +24,6 @@ kotlin {
             api(project(":feature:modelcouncil:api"))
             api(project(":feature:terminal:api"))
             api(project(":feature:office:api"))
-            api(project(":feature:board:api"))
             api(project(":feature:subagent:api"))
             api(libs.kotlinx.serialization.json)
             api(libs.kotlinx.datetime)

@@ -52,9 +52,7 @@ struct SettingsHomeView: View {
             .init(title: "WebMount", systemImage: "globe", route: .webMount),
             .init(title: "子代理", systemImage: "person.2", route: .subagents),
             .init(title: "模型议会", systemImage: "bubble.left.and.bubble.right", route: .council),
-            .init(title: "小应用", systemImage: "square.grid.2x2", route: .miniApps),
-            .init(title: "小说创作", systemImage: "text.book.closed", route: .novelCreation),
-            .init(title: "深度阅读", systemImage: "book.pages", route: .board)
+            .init(title: "小应用", systemImage: "square.grid.2x2", route: .miniApps)
         ]
     }
 

@@ -909,7 +909,10 @@ enum IOSToolEffectClassMapping {
         if toolName == "runtime_status" {
             return .pure
         }
-        if toolName == "phone_status" || toolName == "phone_observe" || toolName == "phone_apps" {
+        if toolName == "phone_status"
+            || toolName == IOSPhoneControlToolCatalog.preflightToolName
+            || toolName == "phone_observe"
+            || toolName == "phone_apps" {
             return .pure
         }
         if toolName == IOSWeatherToolCatalog.toolName
@@ -1354,19 +1357,49 @@ enum IOSToolCallRecoveryApplier {
         didApply: Bool,
         to messages: [UIMessage]
     ) -> [UIMessage] {
+        applyOutcomeUnknownReconciliation(
+            toolCallId: toolCallId,
+            resolution: didApply ? .applied : .notApplied,
+            to: messages
+        )
+    }
+
+    static func applyOutcomeUnknownReconciliation(
+        toolCallId: String,
+        resolution: IOSOutcomeUnknownResolution,
+        to messages: [UIMessage]
+    ) -> [UIMessage] {
         guard let toolName = messages
             .flatMap(\.parts)
             .compactMap({ $0 as? UIMessagePart.Tool })
             .first(where: { $0.toolCallId == toolCallId })?.toolName else {
             return messages
         }
-        let reason = didApply
-            ? "用户确认：该操作已经生效。为避免重复执行，不会再次运行此工具。"
-            : "用户确认：该操作没有生效。本次调用已结束；如仍需要，请重新发起。"
-        let output = [UIMessagePart.Text(
-            text: failureJSON(toolName: toolName, reason: reason),
-            metadata: nil
-        )]
+        let reason: String
+        switch resolution {
+        case .applied:
+            reason = "用户确认：该操作已经生效。为避免重复执行，不会再次运行此工具。"
+        case .notApplied:
+            reason = "用户确认：该操作没有生效。本次调用已结束；如仍需要，请重新发起。"
+        case .recheckRequested:
+            reason = "结果未知：用户要求先只读核查目标现状。禁止重放此调用；如核查后仍需修改，必须重新发起并重新审批。"
+        }
+        let payload: [String: Any] = [
+            "ok": false,
+            "tool": toolName,
+            "reason": reason,
+            "outcome": resolution.ledgerOutcome,
+            "reconciled": true,
+            "replay_prohibited": true
+        ]
+        let text: String
+        if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+           let encoded = String(data: data, encoding: .utf8) {
+            text = encoded
+        } else {
+            text = failureJSON(toolName: toolName, reason: reason)
+        }
+        let output = [UIMessagePart.Text(text: text, metadata: nil)]
         return replacingToolOutput(toolCallId: toolCallId, output: output, in: messages)
     }
 

@@ -31,6 +31,7 @@ struct ChatComposerLocalState {
     var handoffFollowupTask: AmberUnifiedTaskItem?
     var isSubmittingCloudDialogue = false
     var cloudDialogueErrorMessage: String?
+    var cloudDialogueTaskNotice: String?
     var activeCloudDialogueRequestId = UUID().uuidString.lowercased()
     var lastCloudDialogueFingerprint: String?
     var cloudDialogueSubmitGeneration = 0
@@ -85,7 +86,13 @@ struct ChatComposerLocalState {
                 targetWorkItemId: selectedWorkItemId
             )
             if generation == cloudDialogueSubmitGeneration && currentFingerprint == submittedFingerprint {
-                cloudDialogueErrorMessage = error.localizedDescription
+                if case MacGatewayError.conflict("task_terminal") = error {
+                    cloudDialogueErrorMessage = "补充未被接收：原任务已结束。"
+                    cloudDialogueTaskNotice = "草稿已保留；再次发送将作为新的云端请求。"
+                    selectedWorkItemId = nil
+                } else {
+                    cloudDialogueErrorMessage = error.localizedDescription
+                }
             }
         }
     }

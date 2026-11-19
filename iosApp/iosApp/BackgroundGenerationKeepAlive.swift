@@ -67,6 +67,8 @@ final class BackgroundGenerationKeepAlive {
         var onSystemTaskExpiration: (() -> Void)?
         /// UIKit 短窗已到期，租约只剩音频腿。
         var heldByAudio: Bool
+        /// 是否允许拉起静默音频/位置伴随保活腿（仅本地非远端恢复长任务及手机操控心跳）。
+        var audioLegEligible: Bool
         /// 最近一次调用方报告真实工作（`updateProgress`/`advanceProgress`）的时间。
         var lastWorkAt: Date
         /// 是否打开了存活心跳；`transfer` 失败恢复租约时一并恢复。
@@ -117,6 +119,7 @@ final class BackgroundGenerationKeepAlive {
     private let audioKeepAlive: BackgroundAudioKeepAliveControlling
     private let locationKeepAlive: BackgroundLocationKeepAliveControlling
     private let isAudioKeepAliveEnabled: () -> Bool
+    private let idleReleaseGraceNanoseconds: UInt64
     private let now: () -> Date
     private let livenessHeartbeatIntervalNanoseconds: UInt64
     /// 心跳只替仍在报告真实工作的租约撑过两次报告之间的空档；超过这段时间
@@ -148,6 +151,7 @@ final class BackgroundGenerationKeepAlive {
         isAudioKeepAliveEnabled: @escaping () -> Bool = {
             BackgroundGenerationKeepAlive.isAudioKeepAlivePreferenceEnabled()
         },
+        idleReleaseGraceNanoseconds: UInt64 = 60_000_000_000,
         now: @escaping () -> Date = Date.init,
         livenessHeartbeatIntervalNanoseconds: UInt64 = 10_000_000_000,
         livenessHeartbeatMaxIdle: TimeInterval = 180
@@ -162,6 +166,7 @@ final class BackgroundGenerationKeepAlive {
         self.audioKeepAlive = audioKeepAlive
         self.locationKeepAlive = locationKeepAlive
         self.isAudioKeepAliveEnabled = isAudioKeepAliveEnabled
+        self.idleReleaseGraceNanoseconds = idleReleaseGraceNanoseconds
         self.now = now
         self.livenessHeartbeatIntervalNanoseconds = livenessHeartbeatIntervalNanoseconds
         self.livenessHeartbeatMaxIdle = livenessHeartbeatMaxIdle
@@ -249,7 +254,8 @@ final class BackgroundGenerationKeepAlive {
         subtitle: String,
         onExpire: (() -> Void)? = nil,
         onSystemTaskExpiration: (() -> Void)? = nil,
-        submitSystemTask: Bool = true
+        submitSystemTask: Bool = true,
+        allowsAudioLeg: Bool = false
     ) {
         guard leases[leaseId] == nil else { return }
         installForegroundObserverIfNeeded()
@@ -273,6 +279,7 @@ final class BackgroundGenerationKeepAlive {
             onExpire: onExpire,
             onSystemTaskExpiration: onSystemTaskExpiration,
             heldByAudio: false,
+            audioLegEligible: allowsAudioLeg,
             lastWorkAt: now()
         )
 
@@ -447,8 +454,13 @@ final class BackgroundGenerationKeepAlive {
     /// `livenessHeartbeatMaxIdle` 内仍有真实报告时才推进；空闲超限只暂停推进，
     /// 有新的真实报告就恢复。租约结束时自动停。幂等。
     func enableLivenessHeartbeat(_ leaseId: String) {
-        guard leases[leaseId] != nil, livenessHeartbeatTasks[leaseId] == nil else { return }
+        guard leases[leaseId] != nil else { return }
         leases[leaseId]?.livenessHeartbeat = true
+        if leases[leaseId]?.audioLegEligible == false {
+            leases[leaseId]?.audioLegEligible = true
+            syncAudioKeepAlive()
+        }
+        guard livenessHeartbeatTasks[leaseId] == nil else { return }
         let interval = livenessHeartbeatIntervalNanoseconds
         livenessHeartbeatTasks[leaseId] = Task { @MainActor [weak self] in
             while true {
@@ -523,7 +535,8 @@ final class BackgroundGenerationKeepAlive {
             bridgeLeaseId,
             title: previousLease.title,
             subtitle: previousLease.subtitle,
-            submitSystemTask: false
+            submitSystemTask: false,
+            allowsAudioLeg: previousLease.audioLegEligible
         )
         end(leaseId)
         let didStart = start()
@@ -538,7 +551,8 @@ final class BackgroundGenerationKeepAlive {
             subtitle: previousLease.subtitle,
             onExpire: previousLease.onExpire,
             onSystemTaskExpiration: previousLease.onSystemTaskExpiration,
-            submitSystemTask: previousLease.submitSystemTask
+            submitSystemTask: previousLease.submitSystemTask,
+            allowsAudioLeg: previousLease.audioLegEligible
         )
         if previousLease.progressTotalUnitCount != nil || previousLease.progressCompletedUnitCount > 0 {
             updateProgress(
@@ -745,7 +759,7 @@ final class BackgroundGenerationKeepAlive {
             )
             return
         }
-        if isAudioKeepAliveEnabled(), !audioKeepAlive.isStartingOrActive {
+        if lease.audioLegEligible, isAudioKeepAliveEnabled(), !audioKeepAlive.isStartingOrActive {
             audioKeepAlive.start()
         }
         // `start()` no longer blocks until the engine is confirmed running, so
@@ -756,7 +770,7 @@ final class BackgroundGenerationKeepAlive {
         // notification drives `resubmitSystemTasksAfterForeground()` to submit
         // the system task this lease still owes (see the notification observer
         // below).
-        if audioKeepAlive.isStartingOrActive || locationKeepAlive.isActive {
+        if lease.audioLegEligible, audioKeepAlive.isStartingOrActive || locationKeepAlive.isActive {
             if lease.uiTaskId != .invalid {
                 endBackgroundTask(lease.uiTaskId)
                 lease.uiTaskId = .invalid
@@ -787,7 +801,7 @@ final class BackgroundGenerationKeepAlive {
     /// 只由 `expirationHandler` 调用，`setTaskCompleted` 已经在那里同步报过了。
     private func handleSystemExpiration(_ leaseId: String, task: BGContinuedProcessingTask) {
         guard leases[leaseId]?.systemTask === task else { return }
-        if audioKeepAlive.isActive, var lease = leases[leaseId] {
+        if var lease = leases[leaseId], lease.audioLegEligible, audioKeepAlive.isActive {
             // 音频腿还在：只摘系统任务，这一轮继续跑。不再重投系统卡——
             // 它刚被用户或系统收走。
             lease.waiter?.resume()
@@ -831,8 +845,12 @@ final class BackgroundGenerationKeepAlive {
         leases[leaseId]?.uiTaskId = .invalid
     }
 
+    private var hasEligibleAudioLease: Bool {
+        leases.values.contains { $0.audioLegEligible }
+    }
+
     private func syncAudioKeepAlive() {
-        if !leases.isEmpty {
+        if hasEligibleAudioLease {
             idleReleaseTask?.cancel()
             idleReleaseTask = nil
             locationKeepAlive.setNeeded(true)
@@ -853,9 +871,10 @@ final class BackgroundGenerationKeepAlive {
         // finished. Keep one bounded gap instead of cycling the audio session
         // while already backgrounded. Repeated empty updates do not reset it.
         guard idleReleaseTask == nil else { return }
+        let graceNanoseconds = idleReleaseGraceNanoseconds
         idleReleaseTask = Task { @MainActor [weak self] in
-            do { try await Task.sleep(for: .seconds(60)) } catch { return }
-            guard let self, self.leases.isEmpty else { return }
+            do { try await Task.sleep(nanoseconds: graceNanoseconds) } catch { return }
+            guard let self, !self.hasEligibleAudioLease else { return }
             self.idleReleaseTask = nil
             self.audioKeepAlive.stop()
             self.locationKeepAlive.setNeeded(false)
@@ -866,7 +885,7 @@ final class BackgroundGenerationKeepAlive {
     private func expireAudioOnlyLeases() {
         guard !locationKeepAlive.isActive else { return }
         let audioOnlyIds = leases.compactMap { leaseId, lease -> String? in
-            lease.heldByAudio && lease.systemTask == nil && !lease.didSubmitSystemTask
+            lease.audioLegEligible && lease.heldByAudio && lease.systemTask == nil && !lease.didSubmitSystemTask
                 ? leaseId
                 : nil
         }
@@ -886,7 +905,8 @@ final class BackgroundGenerationKeepAlive {
     /// 撤掉：音频会被其他 App 打断，两条腿并存才不会在后台断档。
     private func markAudioHeldLeases() {
         guard audioKeepAlive.isActive else { return }
-        for leaseId in Array(leases.keys) where leases[leaseId]?.uiTaskId == .invalid {
+        for leaseId in Array(leases.keys)
+        where leases[leaseId]?.audioLegEligible == true && leases[leaseId]?.uiTaskId == .invalid {
             leases[leaseId]?.heldByAudio = true
         }
     }

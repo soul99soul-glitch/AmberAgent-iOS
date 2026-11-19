@@ -13,7 +13,6 @@ enum IOSCapabilityGate: String, CaseIterable, Identifiable, Codable {
     case remoteSync
     case standaloneSearch
     case workspace
-    case todayBoard
 
     var id: String { rawValue }
 
@@ -29,7 +28,6 @@ enum IOSCapabilityGate: String, CaseIterable, Identifiable, Codable {
         case .remoteSync: "远端同步"
         case .standaloneSearch: "全局搜索"
         case .workspace: "工作区"
-        case .todayBoard: "深度阅读"
         }
     }
 
@@ -55,8 +53,6 @@ enum IOSCapabilityGate: String, CaseIterable, Identifiable, Codable {
             "需要开启全局搜索后才会显示独立搜索页。"
         case .workspace:
             "需要开启工作区后才会显示工作区和助手入口。"
-        case .todayBoard:
-            "深度阅读是正式高级能力，入口默认可用。"
         }
     }
 }
@@ -72,7 +68,6 @@ struct IOSCapabilityGateSettings: Codable, Equatable {
     var remoteSync = false
     var standaloneSearch = false
     var workspace = false
-    var todayBoard = false
 
     init() {}
 
@@ -88,7 +83,6 @@ struct IOSCapabilityGateSettings: Codable, Equatable {
         self.remoteSync = try container.decodeIfPresent(Bool.self, forKey: .remoteSync) ?? false
         self.standaloneSearch = try container.decodeIfPresent(Bool.self, forKey: .standaloneSearch) ?? false
         self.workspace = try container.decodeIfPresent(Bool.self, forKey: .workspace) ?? false
-        self.todayBoard = try container.decodeIfPresent(Bool.self, forKey: .todayBoard) ?? false
     }
 
     func isEnabled(_ gate: IOSCapabilityGate) -> Bool {
@@ -1022,31 +1016,6 @@ final class IOSSharedSettingsStore {
     }
 
     /// Resolve the configured model and provider for a board Deep Read run.
-    /// `boardModelId` is the per-board model override (a hex-dash UUID); when it
-    /// is empty or not found, falls back to the current chat model. Resolves from
-    /// the canonical shared snapshot (mirrors chat), so a provider+model the user
-    /// configured in Settings is honored — not the legacy key-LESS
-    /// ProviderRegistryStore. Returns nil when no usable model/provider/key is
-    /// configured, so the caller can surface the missing configuration.
-    func resolveBoardDeepReadModel(boardModelId: String?) -> (model: Model, provider: ProviderSetting)? {
-        let model: Model?
-        if let id = boardModelId?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty {
-            model = snapshot.providers
-                .flatMap { $0.models }
-                .first { $0.type == ModelType.chat && $0.id.toHexDashString().caseInsensitiveCompare(id) == .orderedSame }
-                ?? snapshot.getCurrentChatModel()
-        } else {
-            model = snapshot.getCurrentChatModel()
-        }
-        guard let model,
-              let provider = model.findProvider(providers: snapshot.providers, checkOverwrite: true),
-              ChatProviderConfiguration.hasUsableCredential(provider),
-              !model.modelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        return (model, provider)
-    }
-
     /// A chat model offered for selection in pickers, resolved from the shared
     /// snapshot across ALL configured providers — the canonical source the formal
     /// Provider UI writes. Replaces ProviderRegistryStore.selectedProvider.models

@@ -152,7 +152,7 @@ struct MiniAppPermissionGrantsSection: View {
         case .externalImages: key = "允许加载外链图片。"
         case .search: key = "允许使用网页搜索。"
         case .clipboardCopy: key = "只写剪贴板，不读取。"
-        case .hostUpdateBoardSummary: key = "允许更新这个小应用的深度阅读摘要。"
+        case .hostUpdateBoardSummary: key = "允许更新这个小应用的小应用摘要。"
         case .hostContext: key = "允许读取必要的宿主上下文。"
         case .hostSendToConversation: key = "允许生成聊天草稿，不会自动发送。"
         case .hostCreateArtifact: key = "允许创建内容卡片。"

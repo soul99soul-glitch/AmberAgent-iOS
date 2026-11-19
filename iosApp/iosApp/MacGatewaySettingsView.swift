@@ -23,6 +23,7 @@ struct MacGatewaySettingsView: View {
                             macSection(connection)
                             if let health = store.status?.health { healthSection(health) }
                             cloudConfigSection
+                            deviceContextSharingSection
                             boardSection
                             unpairSection
                         } else {
@@ -197,6 +198,94 @@ struct MacGatewaySettingsView: View {
                 }
             }
         }
+    }
+
+    private var deviceContextSharingSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "本机只读摘要共享")
+            AmberFormGroup {
+                sharingToggleRow(
+                    title: "共享未来 48 小时日程摘要",
+                    subtitle: "仅上传标题与起止时间，不含地点、参会人或备注",
+                    isOn: Binding(
+                        get: { store.shareCalendarUpcomingEnabled },
+                        set: { store.setShareCalendarUpcoming($0) }
+                    )
+                )
+                MacGatewayRowDivider()
+                sharingToggleRow(
+                    title: "共享待办提醒摘要",
+                    subtitle: "仅上传未完成待办标题、到期时间与优先级",
+                    isOn: Binding(
+                        get: { store.shareRemindersDueEnabled },
+                        set: { store.setShareRemindersDue($0) }
+                    )
+                )
+                MacGatewayRowDivider()
+                sharingToggleRow(
+                    title: "共享近期 Workspace 产出目录",
+                    subtitle: "仅上传最近 10 条产出的标题、类型与 60 字摘要",
+                    isOn: Binding(
+                        get: { store.shareWorkspaceArtifactsEnabled },
+                        set: { store.setShareWorkspaceArtifacts($0) }
+                    )
+                )
+                if store.anyDeviceContextSharingEnabled {
+                    MacGatewayRowDivider()
+                    MacGatewayRow(
+                        icon: "arrow.triangle.2.circlepath",
+                        title: L("立即刷新快照"),
+                        detail: deviceContextStatusText
+                    ) {
+                        if store.isSyncingDeviceContext {
+                            ProgressView().frame(width: 44, height: 44)
+                        } else {
+                            MacGatewayCapsuleButton(title: L("刷新")) {
+                                Task { _ = await store.syncDeviceContextIfNeeded(trigger: .manual) }
+                            }
+                        }
+                    }
+                }
+            }
+            noticeFooter(fallback: deviceContextFooterText)
+        }
+    }
+
+    private func sharingToggleRow(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: L(title))
+                    .font(.body)
+                    .foregroundStyle(AmberTheme.foreground)
+                Text(verbatim: L(subtitle))
+                    .font(.footnote)
+                    .foregroundStyle(AmberTheme.muted)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    private var deviceContextStatusText: String {
+        if let expiresMs = store.deviceContextMetadata?.expiresAtEpochMs,
+           store.deviceContextMetadata?.status == "active" {
+            let expiresDate = Date(timeIntervalSince1970: TimeInterval(expiresMs) / 1_000)
+            return L("云端副本将于 ") + expiresDate.formatted(date: .omitted, time: .shortened) + L(" 过期")
+        }
+        if store.deviceContextMetadata?.status == "expired" {
+            return L("云端副本已过期并清理")
+        }
+        return L("仅在前台且开启上方开关时推送")
+    }
+
+    private var deviceContextFooterText: String {
+        if store.pendingDeviceContextRemoteDelete {
+            return L("已关闭本机共享；待连接恢复后将自动清空云端缓存。")
+        }
+        if store.anyDeviceContextSharingEnabled {
+            return deviceContextStatusText + L(" · 全部关闭开关将立即删除云端快照。")
+        }
+        return L("所有共享开关默认关闭，不会上传任何本机摘要。")
     }
 
     private var boardSection: some View {

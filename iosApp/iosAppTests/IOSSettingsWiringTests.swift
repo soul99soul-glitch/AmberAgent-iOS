@@ -19,8 +19,7 @@ final class IOSSettingsWiringTests: XCTestCase {
 
         let settings = try source("iosApp/DisplayFontSettingsView.swift")
         let bubble = try source("iosApp/Chat/Message/MessageBubbleView.swift")
-        let novel = try source("iosApp/NovelCreation/NovelSessionBubble.swift")
-        for text in [settings, bubble, novel] {
+        for text in [settings, bubble] {
             XCTAssertTrue(text.contains("@AppStorage(IOSDisplayPreferenceKeys.autoExpandThinking) private var autoExpandThinking = true"))
         }
         let section = try XCTUnwrap(settings.range(of: "private var messageSection"))
@@ -28,7 +27,6 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(settings[section.lowerBound..<nextSection.lowerBound].contains("自动展开思考内容"))
         XCTAssertTrue(settings.contains("autoExpandThinking.toggle()"))
         XCTAssertEqual(bubble.components(separatedBy: "autoExpandThinking: autoExpandThinking").count - 1, 2)
-        XCTAssertTrue(novel.contains("autoExpandThinking: autoExpandThinking"))
     }
 
     @MainActor
@@ -164,31 +162,15 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(host.contains("dependencies.settingsStore.chatMaxToolResumeCount"))
     }
 
-    func testAudioKeepAliveCoversNovelCouncilDeepReadAndChatBackground() throws {
-        let novelRunBridge = try source("iosApp/NovelCreation/NovelRunBridgeViewModel.swift")
-        let novelStateSync = try source("iosApp/NovelCreation/NovelStateSyncViewModel.swift")
-        let novelContinuity = try source("iosApp/NovelCreation/NovelContinuityViewModel.swift")
-        let sessionGhostwrite = try source("iosApp/NovelCreation/Session/NovelSessionGhostwriteRecovery.swift")
-        let novelGenerationStream = try source("iosApp/NovelCreation/NovelGenerationStream.swift")
+    func testAudioKeepAliveCoversCouncilAndChatBackground() throws {
         let council = try source("iosApp/Council/CouncilChatViewModel.swift")
-        let deepRead = try source("iosApp/DeepReadCreateView.swift")
         let chatBackground = try source("iosApp/IOSChatBackgroundGenerationCoordinator.swift")
         let chatHost = try source("iosApp/Chat/Generation/Kernel/ChatRunProgressPresentation.swift")
         let miniApp = try source("iosApp/MiniAppRunnerView.swift")
         let keepAlive = try source("iosApp/BackgroundGenerationKeepAlive.swift")
 
-        XCTAssertTrue(novelRunBridge.contains("beginBackgroundGeneration(for: request)"))
-        XCTAssertTrue(novelRunBridge.contains("BackgroundGenerationKeepAlive.shared.begin("))
-        XCTAssertTrue(novelStateSync.contains("beginStateSyncBackgroundLease("))
-        XCTAssertTrue(novelStateSync.contains("BackgroundGenerationKeepAlive.shared.begin("))
-        XCTAssertTrue(novelContinuity.contains("beginContinuityBackgroundLease("))
-        XCTAssertTrue(novelContinuity.contains("BackgroundGenerationKeepAlive.shared.begin("))
-        XCTAssertTrue(sessionGhostwrite.contains("beginGhostwriteBackgroundLease("))
-        XCTAssertTrue(sessionGhostwrite.contains("BackgroundGenerationKeepAlive.shared.begin("))
-        XCTAssertTrue(novelGenerationStream.contains("BackgroundGenerationKeepAlive.shared.begin("))
         XCTAssertTrue(council.contains("beginBackgroundKeepAlive(for: discussionID)"))
         XCTAssertTrue(council.contains("beginMaterialsKeepAlive()"))
-        XCTAssertTrue(deepRead.contains("BackgroundGenerationKeepAlive.shared.begin("))
         XCTAssertTrue(chatHost.contains("backgroundExecution.begin("))
         XCTAssertTrue(chatBackground.contains("beginChatBackgroundKeepAlive("))
         XCTAssertTrue(chatBackground.contains("submitSystemFallback: true"))
@@ -296,8 +278,6 @@ final class IOSSettingsWiringTests: XCTestCase {
         let chatAux = try source("iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift")
         let completionFeedback = try source("iosApp/Chat/Generation/ChatCompletionFeedback.swift")
         let topBar = try source("iosApp/ChatTopBarView.swift")
-        let novelSeal = try source("iosApp/NovelCreation/NovelInkSeal.swift")
-        let deepRead = try source("iosApp/IOSDeepReadNewsroomView.swift")
         let storageDeclaration =
             "@AppStorage(IOSDisplayPreferenceKeys.completionHaptic)" +
             " private var completionHaptic = true"
@@ -314,9 +294,6 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(topBar.contains("AmberHaptics.triggerCompletion(.lightImpact)"))
         XCTAssertFalse(topBar.contains("else if notice.kind == .completed {\n                UIImpactFeedbackGenerator"))
         XCTAssertTrue(topBar.contains("if notice.kind == .awaitingUser {\n                UINotificationFeedbackGenerator().notificationOccurred(.warning)"))
-        XCTAssertTrue(novelSeal.contains("AmberHaptics.triggerCompletion(.rigidImpact)"))
-        XCTAssertTrue(deepRead.contains(storageDeclaration))
-        XCTAssertTrue(deepRead.contains(".sensoryFeedback(.impact(weight: .heavy), trigger: fire) { _, _ in completionHaptic }"))
 
         let standard = UserDefaults.standard
         let key = IOSDisplayPreferenceKeys.completionHaptic
@@ -858,7 +835,7 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(runtime.contains("IOSCouncilModelConnectivityTester"))
     }
 
-    func testGrokWebPayloadDefaultsToChatAndSupportsIsolatedNovelRequests() {
+    func testGrokWebPayloadDefaultsToChat() {
         let wireModel = IOSGrokWebWireModel(
             modelName: "grok-420",
             modelMode: "MODEL_MODE_FAST"
@@ -870,16 +847,8 @@ final class IOSSettingsWiringTests: XCTestCase {
         )
         XCTAssertEqual(chatPayload["disableSearch"] as? Bool, false)
         XCTAssertEqual(chatPayload["disableMemory"] as? Bool, false)
-
-        let novelPayload = IOSGrokWebPayloadBuilder.makePayload(
-            prompt: "novel prompt",
-            wireModel: wireModel,
-            options: .novel
-        )
-        XCTAssertEqual(novelPayload["disableSearch"] as? Bool, true)
-        XCTAssertEqual(novelPayload["disableMemory"] as? Bool, true)
-        XCTAssertEqual(novelPayload["message"] as? String, "novel prompt")
-        XCTAssertEqual(novelPayload["modelName"] as? String, "grok-420")
+        XCTAssertEqual(chatPayload["message"] as? String, "chat prompt")
+        XCTAssertEqual(chatPayload["modelName"] as? String, "grok-420")
     }
 
     func testProviderEndpointPolicyAllowsHTTPOnlyForIPAddressHosts() {

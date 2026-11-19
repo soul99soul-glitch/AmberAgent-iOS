@@ -207,18 +207,23 @@ struct MacGatewayCloudTaskComposeSheet: View {
 struct MacGatewayCloudTaskDetailSheet: View {
     let store: MacGatewayStore
     let requestId: String
+    var workItemId: String? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var copiedResult = false
     @State private var resubmittedRequestId: String?
     @State private var isResubmitting = false
+    @State private var isLoadingBackfill = false
 
     private var effectiveRequestId: String {
         resubmittedRequestId ?? requestId
     }
 
     private var record: MacGatewayCloudTaskRecord? {
-        store.cloudTasks.first(where: { $0.requestId == effectiveRequestId })
+        store.cloudTasks.first(where: {
+            (!effectiveRequestId.isEmpty && $0.requestId == effectiveRequestId) ||
+            (workItemId != nil && $0.workItemId == workItemId)
+        })
     }
 
     var body: some View {
@@ -243,6 +248,14 @@ struct MacGatewayCloudTaskDetailSheet: View {
                         }
                     }
                     resultSection(record)
+                } else if isLoadingBackfill {
+                    Section {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text(verbatim: macGatewayL("正在加载云端任务详情…"))
+                                .foregroundStyle(AmberTheme.muted)
+                        }
+                    }
                 } else {
                     Section {
                         Text(verbatim: macGatewayL("任务记录不存在"))
@@ -257,11 +270,13 @@ struct MacGatewayCloudTaskDetailSheet: View {
                     Button(macGatewayL("完成")) { dismiss() }
                 }
             }
-            .task(id: record?.workItemId) {
-                guard let workItemId = record?.workItemId else { return }
-                await store.refreshCloudTask(workItemId: workItemId)
+            .task(id: record?.workItemId ?? workItemId) {
+                guard let resolvedWorkItemId = record?.workItemId ?? workItemId else { return }
+                isLoadingBackfill = (record == nil)
+                _ = await store.ensureCloudTaskLoaded(workItemId: resolvedWorkItemId)
+                isLoadingBackfill = false
                 while !Task.isCancelled {
-                    guard let current = store.cloudTasks.first(where: { $0.requestId == effectiveRequestId }),
+                    guard let current = record,
                           let id = current.workItemId,
                           !current.isTerminal else {
                         break

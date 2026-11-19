@@ -8,6 +8,11 @@ struct MacTasksBoardView: View {
     @Environment(RouterPath.self) private var router
     @State private var creatingSchedule = false
     @State private var showsDone = false
+    @State private var deepLinkedCloudTask: DeepLinkedCloudTask?
+
+    private struct DeepLinkedCloudTask: Identifiable, Equatable {
+        let id: String
+    }
 
     private let store = MacGatewayStore.shared
     private static let refreshInterval: Duration = .seconds(10)
@@ -42,6 +47,19 @@ struct MacTasksBoardView: View {
             }
         }
         .sheet(isPresented: $creatingSchedule) { MacGatewayScheduleSheet(store: store) }
+        .sheet(item: $deepLinkedCloudTask) { target in
+            MacGatewayCloudTaskDetailSheet(store: store, requestId: target.id, workItemId: target.id)
+        }
+        .onAppear { consumePendingCloudTaskDeepLink() }
+        .onChange(of: store.pendingCloudTaskWorkItemId) { _, _ in
+            consumePendingCloudTaskDeepLink()
+        }
+    }
+
+    private func consumePendingCloudTaskDeepLink() {
+        guard let workItemId = store.pendingCloudTaskWorkItemId, !workItemId.isEmpty else { return }
+        store.pendingCloudTaskWorkItemId = nil
+        deepLinkedCloudTask = DeepLinkedCloudTask(id: workItemId)
     }
 
     private var header: some View {

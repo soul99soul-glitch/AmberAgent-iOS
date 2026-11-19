@@ -313,7 +313,7 @@ struct IOSPhoneControlSavedTaskRunInput: View {
 enum IOSPhoneControlSavedTaskLaunch {
     static func prepare(id: String, input: String?, store: IOSSharedSettingsStore, inbox: IOSDeepLinkInbox) throws -> URL {
         let prompt = try store.resolvedQuickActionPrompt(id: id, input: input)
-        guard let destination = inbox.preparePromptHandoff(prompt), let url = IOSAppDeepLink.url(for: destination) else {
+        guard let destination = inbox.preparePromptHandoff(prompt, phoneAutomationID: id), let url = IOSAppDeepLink.url(for: destination) else {
             throw NSError(domain: "IOSPhoneControlSavedTaskLaunch", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "无法运行任务，请检查任务内容后重试。"])
         }
@@ -337,7 +337,7 @@ private func savedTaskPage<Content: View>(@ViewBuilder content: () -> Content) -
 
 /// 推入页用 chevron.left 返回；sheet 弹层传 "xmark" 关闭（xmark 视觉更重，按 15pt 画）。
 @MainActor
-private func savedTaskHeader(_ title: String, backLabel: String, systemImage: String = "chevron.left",
+func savedTaskHeader(_ title: String, backLabel: String, systemImage: String = "chevron.left",
                              action: @escaping () -> Void) -> some View {
     HStack(spacing: 8) {
         AmberGlassCircleButton(systemImage: systemImage, accessibilityLabel: backLabel,

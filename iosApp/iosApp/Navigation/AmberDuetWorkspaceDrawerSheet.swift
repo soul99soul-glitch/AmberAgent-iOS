@@ -29,7 +29,9 @@ struct AmberDuetWorkspaceDrawerSheet: View {
     }
 
     private var recentSummaries: [ConversationSummary] {
-        Array(conversationStore.summaries.prefix(5))
+        Array(conversationStore.summaries.filter {
+            !IOSPhoneAutomationLines.shared.isDedicated(conversationID: $0.id.toHexDashString())
+        }.prefix(5))
     }
 
     func handleTopBarSettingsTap(performNavigateImmediately: Bool = false) {
@@ -171,9 +173,7 @@ struct AmberDuetWorkspaceDrawerSheet: View {
                 .padding(.horizontal, 4)
 
             VStack(spacing: 0) {
-                spaceListRow(title: "小说创作", subtitle: "章节与角色设定", icon: "book.pages", destination: .novelCreation)
-                Divider().padding(.leading, 48)
-                spaceListRow(title: "长文深读", subtitle: "资料精读与批注", icon: "doc.text.magnifyingglass", destination: .board)
+                spaceListRow(title: "手机自动化", subtitle: "连续任务与运行记录", icon: "iphone.gen3", destination: .phoneAutomations)
                 Divider().padding(.leading, 48)
                 spaceListRow(title: "任务看板", subtitle: "后台与云端任务", icon: "checklist", destination: .macTasks)
                 Divider().padding(.leading, 48)

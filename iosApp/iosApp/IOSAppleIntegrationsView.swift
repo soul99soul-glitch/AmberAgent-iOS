@@ -367,9 +367,78 @@ enum IOSAppleAgentToolCatalog {
     ]
 }
 
+struct IOSEventKitSnapshotRecord: Equatable {
+    let identifier: String
+    let title: String
+    let startAt: String?
+    let endAt: String?
+    let dueAt: String?
+    let location: String?
+    let notes: String?
+    let calendarTitle: String?
+}
+
+@MainActor
+final class IOSEventKitTurnCreationTracker {
+    enum Kind: String, Equatable {
+        case event
+        case reminder
+    }
+
+    struct CreatedItem: Equatable {
+        let kind: Kind
+        let identifier: String
+        let title: String
+        let createdAt: Date
+    }
+
+    static let shared = IOSEventKitTurnCreationTracker()
+    private var createdByRunID: [String: [CreatedItem]] = [:]
+
+    func recordCreated(runId: String?, kind: Kind, identifier: String, title: String, now: Date = Date()) {
+        guard let runId = runId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !runId.isEmpty,
+              !identifier.isEmpty else {
+            return
+        }
+        var items = createdByRunID[runId] ?? []
+        guard !items.contains(where: { $0.kind == kind && $0.identifier == identifier }) else {
+            return
+        }
+        items.append(CreatedItem(kind: kind, identifier: identifier, title: title, createdAt: now))
+        createdByRunID[runId] = items
+    }
+
+    func createdItems(forRunId runId: String) -> [CreatedItem] {
+        createdByRunID[runId] ?? []
+    }
+
+    func canRollback(identifier: String, inRunId runId: String) -> Bool {
+        (createdByRunID[runId] ?? []).contains(where: { $0.identifier == identifier })
+    }
+
+    func removeRecordedItem(runId: String, kind: Kind, identifier: String) {
+        guard var items = createdByRunID[runId] else { return }
+        items.removeAll { $0.kind == kind && $0.identifier == identifier }
+        if items.isEmpty {
+            createdByRunID.removeValue(forKey: runId)
+        } else {
+            createdByRunID[runId] = items
+        }
+    }
+
+    func clear(runId: String) {
+        createdByRunID.removeValue(forKey: runId)
+    }
+
+    func reset() {
+        createdByRunID.removeAll()
+    }
+}
+
 @MainActor
 enum IOSEventKitAgentToolExecutor {
-    static func execute(toolName: String, input: String) async -> String {
+    static func execute(toolName: String, input: String, runId: String? = nil) async -> String {
         #if canImport(EventKit)
         // 先区分未知工具与坏 JSON：两者都在创建 EKEventStore 之前收口，
         // 但错误原因不能混在一起。
@@ -390,7 +459,7 @@ enum IOSEventKitAgentToolExecutor {
             case IOSAppleAgentToolCatalog.calendarEventCreate:
                 try await ensureEventCreateAccess(store)
                 try Task.checkCancellation()
-                return try createEvent(store, arguments: arguments)
+                return try createEvent(store, arguments: arguments, runId: runId)
             case IOSAppleAgentToolCatalog.calendarEventUpdate:
                 try await ensureEventAccess(store)
                 try Task.checkCancellation()
@@ -406,7 +475,7 @@ enum IOSEventKitAgentToolExecutor {
             case IOSAppleAgentToolCatalog.reminderCreate:
                 try await ensureReminderAccess(store)
                 try Task.checkCancellation()
-                return try createReminder(store, arguments: arguments)
+                return try createReminder(store, arguments: arguments, runId: runId)
             case IOSAppleAgentToolCatalog.reminderUpdate:
                 try await ensureReminderAccess(store)
                 try Task.checkCancellation()
@@ -507,7 +576,7 @@ enum IOSEventKitAgentToolExecutor {
         return json(["ok": true, "tool": IOSAppleAgentToolCatalog.calendarEventsList, "events": Array(events)])
     }
 
-    private static func createEvent(_ store: EKEventStore, arguments: [String: Any]) throws -> String {
+    private static func createEvent(_ store: EKEventStore, arguments: [String: Any], runId: String? = nil) throws -> String {
         guard Set(arguments.keys).isSubset(of: [
             "title", "start_at", "end_at", "location", "notes", "calendar_id",
             "recurrence", "recurrence_interval", "recurrence_end_at"
@@ -530,7 +599,17 @@ enum IOSEventKitAgentToolExecutor {
         event.calendar = calendar
         event.recurrenceRules = try recurrenceRules(arguments, start: start)
         try store.save(event, span: .thisEvent, commit: true)
-        return json(withConflicts(eventPayload(event, tool: IOSAppleAgentToolCatalog.calendarEventCreate), event: event, store: store))
+        if let identifier = event.eventIdentifier, !identifier.isEmpty {
+            IOSEventKitTurnCreationTracker.shared.recordCreated(
+                runId: runId,
+                kind: .event,
+                identifier: identifier,
+                title: event.title ?? ""
+            )
+        }
+        var payload = withConflicts(eventPayload(event, tool: IOSAppleAgentToolCatalog.calendarEventCreate), event: event, store: store)
+        payload["created_run_id"] = runId
+        return json(payload)
     }
 
     private static func updateEvent(_ store: EKEventStore, arguments: [String: Any]) throws -> String {
@@ -660,7 +739,7 @@ enum IOSEventKitAgentToolExecutor {
         return json(["ok": true, "tool": IOSAppleAgentToolCatalog.remindersList, "reminders": Array(values)])
     }
 
-    private static func createReminder(_ store: EKEventStore, arguments: [String: Any]) throws -> String {
+    private static func createReminder(_ store: EKEventStore, arguments: [String: Any], runId: String? = nil) throws -> String {
         guard Set(arguments.keys).isSubset(of: ["title", "due_at", "notes", "priority", "list_id"]),
               let title = nonBlank(arguments["title"] as? String) else {
             throw IOSAppleAgentToolError.invalidArguments
@@ -681,7 +760,15 @@ enum IOSEventKitAgentToolExecutor {
             reminder.dueDateComponents = components
         }
         try store.save(reminder, commit: true)
-        return json(reminderPayload(reminder, tool: IOSAppleAgentToolCatalog.reminderCreate))
+        IOSEventKitTurnCreationTracker.shared.recordCreated(
+            runId: runId,
+            kind: .reminder,
+            identifier: reminder.calendarItemIdentifier,
+            title: reminder.title ?? ""
+        )
+        var payload = reminderPayload(reminder, tool: IOSAppleAgentToolCatalog.reminderCreate)
+        payload["created_run_id"] = runId
+        return json(payload)
     }
 
     private static func updateReminder(_ store: EKEventStore, arguments: [String: Any]) throws -> String {
@@ -874,6 +961,216 @@ enum IOSEventKitAgentToolExecutor {
 
     private static func failure(_ toolName: String, _ reason: String) -> String {
         json(["ok": false, "tool": toolName, "reason": reason])
+    }
+
+    static func approvalComparisonPreview(
+        toolName: String,
+        arguments: [String: Any],
+        eventLookup: ((String) -> IOSEventKitSnapshotRecord?)? = nil,
+        reminderLookup: ((String) -> IOSEventKitSnapshotRecord?)? = nil
+    ) -> String? {
+        let resolveEvent: (String) -> IOSEventKitSnapshotRecord? = eventLookup ?? { identifier in
+            #if canImport(EventKit)
+            let status = EKEventStore.authorizationStatus(for: .event)
+            guard status == .fullAccess || status == .authorized else { return nil }
+            let store = EKEventStore()
+            guard let event = store.event(withIdentifier: identifier) else { return nil }
+            return IOSEventKitSnapshotRecord(
+                identifier: identifier,
+                title: event.title ?? "",
+                startAt: formatter.string(from: event.startDate),
+                endAt: formatter.string(from: event.endDate),
+                dueAt: nil,
+                location: event.location,
+                notes: event.notes,
+                calendarTitle: event.calendar?.title
+            )
+            #else
+            return nil
+            #endif
+        }
+        let resolveReminder: (String) -> IOSEventKitSnapshotRecord? = reminderLookup ?? { identifier in
+            #if canImport(EventKit)
+            let status = EKEventStore.authorizationStatus(for: .reminder)
+            guard status == .fullAccess || status == .authorized else { return nil }
+            let store = EKEventStore()
+            guard let reminder = store.calendarItem(withIdentifier: identifier) as? EKReminder else { return nil }
+            return IOSEventKitSnapshotRecord(
+                identifier: identifier,
+                title: reminder.title ?? "",
+                startAt: nil,
+                endAt: nil,
+                dueAt: reminder.dueDateComponents?.date.map { formatter.string(from: $0) },
+                location: nil,
+                notes: reminder.notes,
+                calendarTitle: reminder.calendar?.title
+            )
+            #else
+            return nil
+            #endif
+        }
+
+        switch toolName {
+        case IOSAppleAgentToolCatalog.calendarEventUpdate:
+            guard let id = nonBlank(arguments["event_id"] as? String),
+                  let existing = resolveEvent(id) else {
+                return nil
+            }
+            var lines = ["对比变更（事件 \(existing.title)）："]
+            appendComparisonLine(&lines, label: "标题", old: existing.title, new: arguments["title"] as? String)
+            appendComparisonLine(&lines, label: "开始", old: existing.startAt, new: arguments["start_at"] as? String)
+            appendComparisonLine(&lines, label: "结束", old: existing.endAt, new: arguments["end_at"] as? String)
+            appendComparisonLine(&lines, label: "地点", old: existing.location, new: arguments["location"] as? String)
+            appendComparisonLine(&lines, label: "备注", old: existing.notes, new: arguments["notes"] as? String)
+            if lines.count == 1 {
+                lines.append("无字段变化（仅校验目标）")
+            }
+            return lines.joined(separator: "\n")
+
+        case IOSAppleAgentToolCatalog.calendarEventDelete:
+            guard let id = nonBlank(arguments["event_id"] as? String),
+                  let existing = resolveEvent(id) else {
+                return nil
+            }
+            var lines = ["将删除日历事件：", "标题：\(existing.title)"]
+            if let start = existing.startAt, let end = existing.endAt {
+                lines.append("时间：\(start) → \(end)")
+            }
+            if let cal = existing.calendarTitle, !cal.isEmpty {
+                lines.append("日历：\(cal)")
+            }
+            return lines.joined(separator: "\n")
+
+        case IOSAppleAgentToolCatalog.reminderUpdate:
+            guard let id = nonBlank(arguments["reminder_id"] as? String),
+                  let existing = resolveReminder(id) else {
+                return nil
+            }
+            var lines = ["对比变更（提醒 \(existing.title)）："]
+            appendComparisonLine(&lines, label: "标题", old: existing.title, new: arguments["title"] as? String)
+            if (arguments["remove_due_date"] as? Bool) == true {
+                lines.append("到期：\(existing.dueAt ?? "无") → 清除")
+            } else {
+                appendComparisonLine(&lines, label: "到期", old: existing.dueAt, new: arguments["due_at"] as? String)
+            }
+            appendComparisonLine(&lines, label: "备注", old: existing.notes, new: arguments["notes"] as? String)
+            return lines.joined(separator: "\n")
+
+        case IOSAppleAgentToolCatalog.reminderDelete:
+            guard let id = nonBlank(arguments["reminder_id"] as? String),
+                  let existing = resolveReminder(id) else {
+                return nil
+            }
+            var lines = ["将删除提醒事项：", "标题：\(existing.title)"]
+            if let due = existing.dueAt {
+                lines.append("到期：\(due)")
+            }
+            if let list = existing.calendarTitle, !list.isEmpty {
+                lines.append("清单：\(list)")
+            }
+            return lines.joined(separator: "\n")
+
+        case IOSAppleAgentToolCatalog.reminderComplete:
+            guard let id = nonBlank(arguments["reminder_id"] as? String),
+                  let existing = resolveReminder(id) else {
+                return nil
+            }
+            return "将标记完成：\n标题：\(existing.title)\n状态：未完成 → 已完成"
+
+        default:
+            return nil
+        }
+    }
+
+    private static func appendComparisonLine(_ lines: inout [String], label: String, old: String?, new: String?) {
+        guard let new = new?.trimmingCharacters(in: .whitespacesAndNewlines), !new.isEmpty else {
+            return
+        }
+        let previous = old?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if previous != new {
+            lines.append("\(label)：\(previous.isEmpty ? "无" : String(previous.prefix(80))) → \(String(new.prefix(80)))")
+        }
+    }
+
+    /// Rolls back ONLY EventKit items created and approved in the specified `runId`.
+    /// Historical items or items from other runs are never modified or deleted.
+    @discardableResult
+    static func rollbackCurrentTurnCreatedItems(
+        runId: String,
+        eventRemover: ((String) throws -> Void)? = nil,
+        reminderRemover: ((String) throws -> Void)? = nil
+    ) -> [String: Any] {
+        let items = IOSEventKitTurnCreationTracker.shared.createdItems(forRunId: runId)
+        guard !items.isEmpty else {
+            return [
+                "ok": false,
+                "run_id": runId,
+                "rolled_back_count": 0,
+                "error": "No current-turn created EventKit items recorded for rollback."
+            ]
+        }
+        let removeEvent: (String) throws -> Void = eventRemover ?? { identifier in
+            #if canImport(EventKit)
+            let status = EKEventStore.authorizationStatus(for: .event)
+            guard status == .fullAccess || status == .authorized else {
+                throw IOSAppleAgentToolError.permissionDenied("日历")
+            }
+            let store = EKEventStore()
+            guard let event = store.event(withIdentifier: identifier) else {
+                throw IOSAppleAgentToolError.itemNotFound("日历事件")
+            }
+            try store.remove(event, span: .thisEvent, commit: true)
+            #else
+            throw IOSAppleAgentToolError.permissionDenied("EventKit")
+            #endif
+        }
+        let removeReminder: (String) throws -> Void = reminderRemover ?? { identifier in
+            #if canImport(EventKit)
+            let status = EKEventStore.authorizationStatus(for: .reminder)
+            guard status == .fullAccess || status == .authorized else {
+                throw IOSAppleAgentToolError.permissionDenied("提醒事项")
+            }
+            let store = EKEventStore()
+            guard let reminder = store.calendarItem(withIdentifier: identifier) as? EKReminder else {
+                throw IOSAppleAgentToolError.reminderNotFound
+            }
+            try store.remove(reminder, commit: true)
+            #else
+            throw IOSAppleAgentToolError.permissionDenied("EventKit")
+            #endif
+        }
+
+        var rolledBackIDs: [String] = []
+        var failed: [[String: String]] = []
+        for item in items.reversed() {
+            do {
+                switch item.kind {
+                case .event:
+                    try removeEvent(item.identifier)
+                case .reminder:
+                    try removeReminder(item.identifier)
+                }
+                IOSEventKitTurnCreationTracker.shared.removeRecordedItem(
+                    runId: runId,
+                    kind: item.kind,
+                    identifier: item.identifier
+                )
+                rolledBackIDs.append(item.identifier)
+            } catch {
+                failed.append([
+                    "id": item.identifier,
+                    "kind": item.kind.rawValue,
+                    "error": (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                ])
+            }
+        }
+        return [
+            "ok": failed.isEmpty,
+            "run_id": runId,
+            "rolled_back_count": rolledBackIDs.count,
+            "rolled_back_ids": rolledBackIDs,
+            "failed": failed
+        ]
     }
 
     private static func json(_ payload: [String: Any]) -> String {

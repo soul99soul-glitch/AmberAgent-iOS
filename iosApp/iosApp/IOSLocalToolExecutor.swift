@@ -95,6 +95,21 @@ struct IOSWorkspaceToolApprovalPreview: Equatable {
     let action: String
     let target: String
     let isWrite: Bool
+    let diffPreview: String?
+
+    init(
+        toolName: String,
+        action: String,
+        target: String,
+        isWrite: Bool,
+        diffPreview: String? = nil
+    ) {
+        self.toolName = toolName
+        self.action = action
+        self.target = target
+        self.isWrite = isWrite
+        self.diffPreview = diffPreview
+    }
 }
 
 struct IOSPermissionsStatusSnapshot: Equatable {
@@ -1068,11 +1083,13 @@ final class IOSLocalToolExecutor {
         default:
             action = toolName
         }
+        let diffPreview = workspaceStore.approvalDiffPreview(toolName: toolName, args: object)
         return IOSWorkspaceToolApprovalPreview(
             toolName: toolName,
             action: action,
             target: target.isEmpty ? "Workspace" : target,
-            isWrite: IOSWorkspaceToolCatalog.writeToolNames.contains(toolName)
+            isWrite: IOSWorkspaceToolCatalog.writeToolNames.contains(toolName),
+            diffPreview: diffPreview
         )
     }
 

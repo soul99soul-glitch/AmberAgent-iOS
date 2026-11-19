@@ -181,7 +181,7 @@ struct NativeChatTimelineView: View {
                         ).equatable()
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, ChatLayout.timelineHorizontalInset)
                 .padding(.top, 12)
                 // 底部留白收窄：原先 28 与底锚点 bottomRestGap(26) 叠加达到 54pt，
                 // 气泡悬在半空。这里与锚点合计约 22pt，贴近输入框上方但有呼吸感。
@@ -1067,10 +1067,7 @@ struct NativeChatTimelineView: View {
         if let message = entry.message, ChatMessageProjector.isSubAgentResult(message) {
             return reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8))
         }
-        guard !reduceMotion,
-              entry.canAnimateInsertion,
-              entry.role == MessageRole.user else { return .identity }
-        return .chatUserMessageSend
+        return .identity
     }
 
     private func resetConversationCachesIfNeeded(event: ChatEvent, revision: Int) {

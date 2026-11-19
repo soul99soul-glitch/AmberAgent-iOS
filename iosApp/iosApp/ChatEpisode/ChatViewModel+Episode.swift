@@ -13,6 +13,7 @@ extension ChatViewModel {
     func startNewEpisode(
         nowMillis: Int64 = Int64(Date().timeIntervalSince1970 * 1_000.0)
     ) -> Bool {
+        IOSPhoneAutomationLines.shared.cancelPendingContinuation()
         guard !currentConversationIsOrchestratedChild else { return false }
         guard let conversationId = currentConversationId else { return false }
         let conversationKey = conversationId.toHexDashString()
@@ -64,13 +65,17 @@ extension ChatViewModel {
     /// Episode into an archived window and triggers silent distillation before the new message enters.
     @discardableResult
     func sealActiveEpisodeForIdleGapIfNeeded(
-        incomingTimestampMillis: Int64 = Int64(Date().timeIntervalSince1970 * 1_000.0)
+        incomingTimestampMillis: Int64 = Int64(Date().timeIntervalSince1970 * 1_000.0),
+        automationLines: IOSPhoneAutomationLines = .shared
     ) -> ChatEpisodeRecord? {
         guard !currentConversationIsOrchestratedChild,
               let conversationId = currentConversationId else {
             return nil
         }
         let conversationKey = conversationId.toHexDashString()
+        // Dedicated automation lines retain their active context across scheduled/manual runs.
+        // Explicit New Topic still owns manual episode boundaries.
+        guard !automationLines.keepsContextForNextRequest(conversationID: conversationKey) else { return nil }
         let episodeSlice = ChatEpisodeStore.shared.unsealedNonSystemMessages(
             for: conversationKey,
             in: messages

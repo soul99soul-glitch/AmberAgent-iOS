@@ -8,6 +8,50 @@ import Shared
 @MainActor
 final class ChatNativeTimelineReplayCompletionTests: ChatNativeTimelineReplayTestCase {
 
+    func testNativeTimelineSuccessfulCompletionHonorsPreferenceAndDoesNotReplay() {
+        let defaults = UserDefaults.standard
+        let key = IOSDisplayPreferenceKeys.completionHaptic
+        let previous = defaults.object(forKey: key)
+        var events: [AmberHapticEvent] = []
+        var phases: [Double] = []
+        ChatReplyCompletionAnimation.onPhaseForTesting = { phases.append($0) }
+        AmberHaptics.onTriggerForTesting = { events.append($0) }
+        defer {
+            AmberHaptics.onTriggerForTesting = nil
+            ChatReplyCompletionAnimation.onPhaseForTesting = nil
+            if let previous { defaults.set(previous, forKey: key) } else { defaults.removeObject(forKey: key) }
+        }
+        let fixture = makeFixture()
+        defer { fixture.tearDown() }
+        let feedback = ChatCompletionFeedback()
+        feedback.setForegroundVisible(true)
+        fixture.model.completionFeedback = feedback
+        for (run, enabled) in [("off", false), ("first", true), ("second", true)] {
+            defaults.set(enabled, forKey: key)
+            feedback.begin(runID: run)
+            let reply = makeAssistantMessage(text: "合成回复正文", finished: false)
+            fixture.model.isGenerationActive = true
+            fixture.model.messages = [makeUserMessage("合成问题"), reply]
+            fixture.model.send(.userAppend)
+            pump(seconds: 0.4)
+            XCTAssertEqual(events.count, run == "second" ? 1 : 0, "Streaming must not trigger completion")
+            fixture.model.isGenerationActive = false
+            fixture.model.messages[1] = makeAssistantMessage(id: reply.id, text: "合成回复正文", finished: true)
+            fixture.model.send(.generationCompleted)
+            feedback.complete(runID: run, messageID: reply.id.toHexDashString(), textParts: [0: "合成回复正文"])
+            let expected = run == "off" ? 0 : (run == "first" ? 1 : 2)
+            XCTAssertTrue(pumpUntil(timeout: 2) { events.count == expected }, "Actual native timeline must deliver every successful reply exactly once")
+            pump(seconds: 0.35)
+            let replyCount = run == "off" ? 1 : (run == "first" ? 2 : 3)
+            XCTAssertEqual(phases, Array(repeating: [0.72, 1.0], count: replyCount).flatMap { $0 },
+                "Completion fades once, independently of the haptic setting")
+            fixture.model.send(.initialLoad)
+            pump(seconds: 0.1)
+            XCTAssertEqual(events.count, expected, "History reload must not replay feedback")
+            XCTAssertEqual(phases.count, replyCount * 2, "History and reassembly must not replay the fade")
+        }
+    }
+
     func testCompletionKeepsAlreadyRenderedFinalResponseGeometryStable() {
         let fixture = makeFixture()
         defer { fixture.tearDown() }

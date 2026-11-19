@@ -7,11 +7,165 @@ struct IOSPendingApprovalRecoveryDescriptor: Equatable, Sendable {
     let toolCallId: String
 }
 
+enum IOSOutcomeUnknownResolution: String, Equatable, Sendable {
+    case applied
+    case notApplied
+    case recheckRequested
+
+    var ledgerOutcome: String {
+        switch self {
+        case .applied:
+            return "user_confirmed_applied"
+        case .notApplied:
+            return "user_confirmed_not_applied"
+        case .recheckRequested:
+            return "user_requested_recheck"
+        }
+    }
+}
+
+struct IOSOutcomeUnknownFollowup: Equatable, Sendable {
+    let conversationId: String
+    let runId: String
+    let toolCallId: String
+    let toolName: String
+    let localizedToolTitle: String
+    let resolution: IOSOutcomeUnknownResolution
+    let suggestedPrompt: String
+    let buttonTitle: String
+}
+
 struct IOSToolOutcomeUnknownDescriptor: Equatable, Sendable {
     let runId: String
     let conversationId: String
     let toolCallId: String
     let toolName: String
+    let targetSummary: String?
+
+    init(
+        runId: String,
+        conversationId: String,
+        toolCallId: String,
+        toolName: String,
+        targetSummary: String? = nil
+    ) {
+        self.runId = runId
+        self.conversationId = conversationId
+        self.toolCallId = toolCallId
+        self.toolName = toolName
+        self.targetSummary = Self.sanitizedTargetSummary(targetSummary)
+    }
+
+    var localizedToolTitle: String {
+        Self.localizedTitle(for: toolName)
+    }
+
+    var redactedTargetSummary: String? {
+        targetSummary
+    }
+
+    var sideEffectExplanation: String {
+        Self.localizedSideEffectExplanation(for: toolName)
+    }
+
+    static func localizedTitle(for toolName: String) -> String {
+        switch toolName {
+        case "workspace_file_write":
+            return IOSAppLocalization.string("写入 Workspace 文件", defaultValue: "写入 Workspace 文件")
+        case "workspace_file_edit":
+            return IOSAppLocalization.string("编辑 Workspace 文件", defaultValue: "编辑 Workspace 文件")
+        case "workspace_file_move":
+            return IOSAppLocalization.string("移动 Workspace 文件", defaultValue: "移动 Workspace 文件")
+        case "workspace_artifact_delete":
+            return IOSAppLocalization.string("删除 Workspace 文件", defaultValue: "删除 Workspace 文件")
+        case "memory_tool":
+            return IOSAppLocalization.string("更新长期记忆", defaultValue: "更新长期记忆")
+        case "calendar_event_create":
+            return IOSAppLocalization.string("新建日历日程", defaultValue: "新建日历日程")
+        case "calendar_event_update":
+            return IOSAppLocalization.string("修改日历日程", defaultValue: "修改日历日程")
+        case "calendar_event_delete":
+            return IOSAppLocalization.string("删除日历日程", defaultValue: "删除日历日程")
+        case "reminder_create":
+            return IOSAppLocalization.string("新建提醒事项", defaultValue: "新建提醒事项")
+        case "reminder_update":
+            return IOSAppLocalization.string("修改提醒事项", defaultValue: "修改提醒事项")
+        case "reminder_delete":
+            return IOSAppLocalization.string("删除提醒事项", defaultValue: "删除提醒事项")
+        case "reminder_complete":
+            return IOSAppLocalization.string("完成提醒事项", defaultValue: "完成提醒事项")
+        case "notification_schedule":
+            return IOSAppLocalization.string("安排本地通知", defaultValue: "安排本地通知")
+        case "notification_cancel":
+            return IOSAppLocalization.string("取消本地通知", defaultValue: "取消本地通知")
+        case "alarm_schedule", "alarm_cancel":
+            return IOSAppLocalization.string("修改闹钟与计时器", defaultValue: "修改闹钟与计时器")
+        case "mcp_call":
+            return IOSAppLocalization.string("调用外部 MCP 工具", defaultValue: "调用外部 MCP 工具")
+        default:
+            if toolName.hasPrefix("mcp__") {
+                return IOSAppLocalization.string("调用外部 MCP 工具", defaultValue: "调用外部 MCP 工具")
+            }
+            if toolName.hasPrefix("wm_") {
+                return IOSAppLocalization.string("执行网页站内操作", defaultValue: "执行网页站内操作")
+            }
+            if toolName.hasPrefix("phone_") {
+                return IOSAppLocalization.string("执行手机操作", defaultValue: "执行手机操作")
+            }
+            if toolName.hasPrefix("ish_") || toolName.hasPrefix("terminal_") {
+                return IOSAppLocalization.string("执行终端命令", defaultValue: "执行终端命令")
+            }
+            return IOSAppLocalization.string("执行本地操作", defaultValue: "执行本地操作")
+        }
+    }
+
+    static func localizedSideEffectExplanation(for toolName: String) -> String {
+        if toolName.hasPrefix("workspace_") {
+            return IOSAppLocalization.string("App 在工作区写入或修改过程中中断，文件内容可能已部分或全部落盘。", defaultValue: "App 在工作区写入或修改过程中中断，文件内容可能已部分或全部落盘。")
+        }
+        if toolName == "memory_tool" {
+            return IOSAppLocalization.string("记忆写入过程中应用中断，笔记或记忆条目可能已写入。", defaultValue: "记忆写入过程中应用中断，笔记或记忆条目可能已写入。")
+        }
+        if toolName.hasPrefix("calendar_") || toolName.hasPrefix("reminder_") || toolName.hasPrefix("alarm_") || toolName.hasPrefix("notification_") {
+            return IOSAppLocalization.string("系统日程或提醒修改过程中应用中断，系统数据可能已更新。", defaultValue: "系统日程或提醒修改过程中应用中断，系统数据可能已更新。")
+        }
+        return IOSAppLocalization.string("工具执行期间应用中途中断，目标状态可能已变化；系统已禁止自动重放。", defaultValue: "工具执行期间应用中途中断，目标状态可能已变化；系统已禁止自动重放。")
+    }
+
+    static func extractRedactedTargetSummary(from rawInput: String) -> String? {
+        let trimmed = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let data = trimmed.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return sanitizedTargetSummary(trimmed)
+        }
+        let candidateKeys = ["path", "to_path", "target", "title", "url", "server", "tool", "app", "query", "id"]
+        for key in candidateKeys {
+            if let value = json[key] as? String,
+               let safe = sanitizedTargetSummary(value) {
+                return safe
+            }
+        }
+        return nil
+    }
+
+    private static func sanitizedTargetSummary(_ raw: String?) -> String? {
+        guard var value = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        let redactionPatterns = [
+            #"(?i)(bearer\s+)[A-Za-z0-9\-._~+/]+=*"#,
+            #"(?i)(sk-|ghp_|xoxb-|xoxp-)[A-Za-z0-9\-_]{8,}"#,
+            #"(?i)(token|secret|password|api_key)\s*[:=]\s*[^\s,;\"'}]+"#,
+        ]
+        for pattern in redactionPatterns {
+            value = value.replacingOccurrences(of: pattern, with: "[REDACTED]", options: .regularExpression)
+        }
+        if value.count > 100 {
+            value = String(value.prefix(97)) + "..."
+        }
+        return value
+    }
 }
 
 struct IOSToolCallRecoverySweepResult: Equatable, Sendable {
@@ -354,7 +508,23 @@ enum IOSRunRecovery {
         dao: AgentRuntimeDao = IosDatabaseFactory.shared.createDatabase().agentRuntimeDao(),
         runStore: IOSDurableRunStore = IOSDurableRunStore()
     ) async -> Bool {
-        let outcome = didApply ? "user_confirmed_applied" : "user_confirmed_not_applied"
+        await reconcileOutcomeUnknown(
+            runId: runId,
+            toolCallId: toolCallId,
+            resolution: didApply ? .applied : .notApplied,
+            dao: dao,
+            runStore: runStore
+        )
+    }
+
+    static func reconcileOutcomeUnknown(
+        runId: String,
+        toolCallId: String,
+        resolution: IOSOutcomeUnknownResolution,
+        dao: AgentRuntimeDao = IosDatabaseFactory.shared.createDatabase().agentRuntimeDao(),
+        runStore: IOSDurableRunStore = IOSDurableRunStore()
+    ) async -> Bool {
+        let outcome = resolution.ledgerOutcome
         let ledger = IOSAgentRunLedger(dao: dao)
         let didRecord = await ledger.recordToolCallRecoveryTransition(
             runId: runId,

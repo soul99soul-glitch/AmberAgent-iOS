@@ -484,6 +484,7 @@ final class IOSDeepLinkInbox {
     private var durablePendingURLs: Set<String> = []
     private var handler: ((URL) -> Void)?
     private var promptHandoffs: [String: String] = [:]
+    private var phoneAutomationHandoffs: [String: String] = [:]
     private let defaults: UserDefaults
     private let persistenceEnabled: Bool
     private let pendingURLsKey = "app.amber.ios.deepLinkInbox.pendingURLs.v1"
@@ -508,15 +509,21 @@ final class IOSDeepLinkInbox {
         durablePendingURLs = Set(pending.map(\.absoluteString))
     }
 
-    func preparePromptHandoff(_ prompt: String) -> IOSAppDeepLink.Destination? {
+    func preparePromptHandoff(_ prompt: String, phoneAutomationID: String? = nil) -> IOSAppDeepLink.Destination? {
         guard let prompt = IOSAppDeepLink.normalizedPrompt(prompt) else { return nil }
         let id = UUID().uuidString.lowercased()
         promptHandoffs[id] = prompt
+        phoneAutomationHandoffs[id] = phoneAutomationID
         return .agentPrompt(handoffID: id)
     }
 
+    func phoneAutomationID(forPromptHandoff id: String) -> String? {
+        phoneAutomationHandoffs[id.lowercased()]
+    }
+
     func consumePromptHandoff(id: String) -> String? {
-        promptHandoffs.removeValue(forKey: id.lowercased())
+        phoneAutomationHandoffs.removeValue(forKey: id.lowercased())
+        return promptHandoffs.removeValue(forKey: id.lowercased())
     }
 
     func submit(_ url: URL, persistUntilHandled: Bool = false) {
@@ -658,6 +665,17 @@ enum MacGatewayApprovalNotification {
               let call = userInfo["toolCallId"] as? String, !call.isEmpty else { return nil }
         return Decision(sessionKey: key, toolCallId: call, allow: allow)
     }
+
+    static func highRiskOpenAppURL(actionIdentifier: String, userInfo: [AnyHashable: Any]) -> URL? {
+        guard actionIdentifier == approveAction || actionIdentifier == UNNotificationDefaultActionIdentifier,
+              (userInfo["highRisk"] as? Bool) == true else { return nil }
+        if let value = userInfo["deepLink"] as? String,
+           let url = URL(string: value),
+           IOSAppDeepLink.parse(url) != nil {
+            return url
+        }
+        return URL(string: "amber://tasks")
+    }
 }
 
 @MainActor
@@ -718,13 +736,26 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
         }
         if let decision = MacGatewayApprovalNotification.decision(actionIdentifier: response.actionIdentifier,
                                                                     userInfo: response.notification.request.content.userInfo) {
-            let delivered = await MacGatewayStore.shared.decide(sessionKey: decision.sessionKey, toolCallId: decision.toolCallId,
-                                                                allow: decision.allow)
+            let delivered = await MacGatewayStore.shared.decide(
+                sessionKey: decision.sessionKey,
+                toolCallId: decision.toolCallId,
+                allow: decision.allow,
+                source: .notification
+            )
             if !delivered, let message = MacGatewayStore.shared.notice.flatMap({ $0.isError ? $0.text : nil }) {
                 let content = UNMutableNotificationContent()
                 content.title = IOSAppLocalization.string("操作未完成", defaultValue: "操作未完成")
                 content.body = message
                 try? await center.add(UNNotificationRequest(identifier: "amber.gateway-decision-result", content: content, trigger: nil))
+            }
+            return
+        }
+        if let openURL = MacGatewayApprovalNotification.highRiskOpenAppURL(
+            actionIdentifier: response.actionIdentifier,
+            userInfo: response.notification.request.content.userInfo
+        ) {
+            await MainActor.run {
+                IOSDeepLinkInbox.shared.submit(openURL)
             }
             return
         }

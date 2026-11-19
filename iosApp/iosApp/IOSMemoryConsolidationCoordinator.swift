@@ -281,7 +281,7 @@ final class IOSMemoryConsolidationCoordinator {
                 prompt: try Self.profilePrompt(sources: wantsProfile ? sources : [], pairs: pairs)
             )
             let text = try await Self.generate(request, timeoutMillis: worker.timeoutMs)
-            guard let json = IOSDeepReadDraftGenerator.extractJSONObject(text),
+            guard let json = IOSJSONObjectExtractor.extractJSONObject(text),
                   let output = try? JSONDecoder().decode(ProfileOutput.self, from: Data(json.utf8)) else {
                 throw Failure("画像整理模型没有返回有效结果。")
             }
@@ -714,7 +714,7 @@ final class IOSMemoryConsolidationCoordinator {
     }
 
     private static func decodeTopics(_ text: String) throws -> DreamOutput {
-        guard let json = IOSDeepReadDraftGenerator.extractJSONObject(text),
+        guard let json = IOSJSONObjectExtractor.extractJSONObject(text),
               let result = try? JSONDecoder().decode(DreamOutput.self, from: Data(json.utf8)) else {
             throw Failure("主题整理模型没有返回有效结果。")
         }

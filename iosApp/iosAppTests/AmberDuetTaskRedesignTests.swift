@@ -423,14 +423,14 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
                 statusSummaryOverride: "3 份资料 · 1 项云端运行中"
             ),
             AmberHubItem(
-                id: "hub-novel-ash-city",
-                title: "小说 · 雾港手记",
-                thesis: "世界观设定与章节大纲",
-                template: .novel,
+                id: "hub-research-ash-city",
+                title: "研究 · 雾港手记",
+                thesis: "田野设定与章节大纲",
+                template: .research,
                 memoryPolicy: .hubIsolated,
-                pinnedSupertags: ["#小说", "#设定"],
+                pinnedSupertags: ["#研究", "#设定"],
                 documentCountHint: 4,
-                statusSummaryOverride: "独立记忆 · 第 4 章草稿"
+                statusSummaryOverride: "独立记忆 · 第 4 节草稿"
             )
         ]
         let previewCollections: [AmberSmartCollectionItem] = [
@@ -1860,14 +1860,14 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             conversationIds: [convKyoto],
             makeActive: false
         )
-        let hubNovel = hubStore.createHub(
-            title: "雾港长篇小说",
-            template: .novel,
+        let hubIsolated = hubStore.createHub(
+            title: "雾港深度研究",
+            template: .research,
             memoryPolicy: .hubIsolated,
             conversationIds: [],
             makeActive: true
         )
-        XCTAssertEqual(hubStore.activeHubId, hubNovel.id)
+        XCTAssertEqual(hubStore.activeHubId, hubIsolated.id)
 
         let wakeStore = IOSWakeTaskStore(fileURL: directory.appendingPathComponent("wake-hub.json"))
         _ = try wakeStore.schedule(
@@ -1910,19 +1910,19 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
         XCTAssertEqual(kyotoGroups.scheduled.map(\.title), ["查岚山小火车余票"])
         XCTAssertTrue(kyotoGroups.running.isEmpty)
 
-        // 5. 按「雾港长篇小说」（.hubIsolated）筛选时，不得混入全局 Mac 定时或云端未绑定任务
-        let novelGroups = AmberUnifiedTaskBuilder.buildTasks(
+        // 5. 按「雾港深度研究」（.hubIsolated）筛选时，不得混入全局 Mac 定时或云端未绑定任务
+        let isolatedGroups = AmberUnifiedTaskBuilder.buildTasks(
             gateway: gateway,
             subAgentStore: subAgentStore,
             taskStore: tasksStore,
             wakeStore: wakeStore,
             hubStore: hubStore,
-            filterHubId: hubNovel.id
+            filterHubId: hubIsolated.id
         )
-        XCTAssertTrue(novelGroups.isEmpty, "未绑定到当前 Hub 的本地/Mac/云对话任务不得因 activeHubId 被硬编码归入隔离 Hub")
+        XCTAssertTrue(isolatedGroups.isEmpty, "未绑定到当前 Hub 的本地/Mac/云对话任务不得因 activeHubId 被硬编码归入隔离 Hub")
         let activeTasks = allGroups.needsAttention + allGroups.running
         XCTAssertFalse(
-            hubStore.subtitle(for: hubNovel, activeTasks: activeTasks).contains("项任务"),
+            hubStore.subtitle(for: hubIsolated, activeTasks: activeTasks).contains("项任务"),
             "独立记忆 Hub 的副标题不得被全局未绑定任务污染"
         )
     }

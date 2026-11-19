@@ -7,9 +7,35 @@ struct MemoryToolApprovalRequest: Identifiable, Equatable {
     let scope: String?
     let kind: String?
     let contentPreview: String?
+    let oldContentPreview: String?
+    let diffPreview: String?
     let targetId: Int?
     let expectedUpdatedAt: Int64?
     let reason: String
+
+    init(
+        id: String,
+        action: String,
+        scope: String?,
+        kind: String?,
+        contentPreview: String?,
+        oldContentPreview: String? = nil,
+        diffPreview: String? = nil,
+        targetId: Int?,
+        expectedUpdatedAt: Int64?,
+        reason: String
+    ) {
+        self.id = id
+        self.action = action
+        self.scope = scope
+        self.kind = kind
+        self.contentPreview = contentPreview
+        self.oldContentPreview = oldContentPreview
+        self.diffPreview = diffPreview
+        self.targetId = targetId
+        self.expectedUpdatedAt = expectedUpdatedAt
+        self.reason = reason
+    }
 
     var title: String {
         switch action {
@@ -18,7 +44,7 @@ struct MemoryToolApprovalRequest: Identifiable, Equatable {
         case "edit", "update":
             "更新记忆"
         case "delete", "remove":
-            "删除记忆"
+            "归档记忆"
         default:
             "修改记忆"
         }
@@ -68,6 +94,25 @@ struct WorkspaceToolApprovalRequest: Identifiable, Equatable {
     let target: String
     let isWrite: Bool
     let reason: String
+    let diffPreview: String?
+
+    init(
+        id: String,
+        toolName: String,
+        action: String,
+        target: String,
+        isWrite: Bool,
+        reason: String,
+        diffPreview: String? = nil
+    ) {
+        self.id = id
+        self.toolName = toolName
+        self.action = action
+        self.target = target
+        self.isWrite = isWrite
+        self.reason = reason
+        self.diffPreview = diffPreview
+    }
 
     var title: String {
         isWrite ? "修改 Workspace" : "读取 Workspace"

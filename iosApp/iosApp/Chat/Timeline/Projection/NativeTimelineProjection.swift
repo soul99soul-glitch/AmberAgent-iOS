@@ -244,6 +244,7 @@ struct NativeTimelineEntry: Identifiable, Equatable {
     @MainActor
     var isAwaitingSegmentedFirstBlock: Bool {
         guard role == MessageRole.assistant,
+              !isGlobalStatusOnly,
               isGenerating && isLastMessage,
               liveMarkdownRenderingEnabled,
               IOSChatRenderPreferences.shared.isSegmentedReplyDelivery,

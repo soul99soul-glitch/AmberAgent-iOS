@@ -67,8 +67,10 @@ struct ChatTimelineChunkView<EntryContent: View>: View, @MainActor Equatable {
                 }
                 if entry.kind == .bottomAnchor, let activity, !hasActivityAnchor {
                     ChatTimelineActivityRowView(activity: activity, showAgentName: true, onAction: { callbacks.action($0) })
-                        .padding(.top, ChatLayout.assistantPartSpacing)
+                        .padding(.top, entry.id == firstEntryID ? 0 : 14)
                 }
+                let suppressesEntryTopSpacing = hasHistoryBoundaryAnchor ||
+                    (!statusReplacesEntry && awaitingSegmentedFirstBlock)
                 Group {
                     if let activity, statusReplacesEntry {
                         ChatTimelineActivityRowView(activity: activity, showAgentName: !entry.isAssistantContinuation, onAction: { callbacks.action($0) })
@@ -77,14 +79,16 @@ struct ChatTimelineChunkView<EntryContent: View>: View, @MainActor Equatable {
                         entryView(entry)
                     }
                 }
-                .padding(.top, (hasHistoryBoundaryAnchor || awaitingSegmentedFirstBlock) ? 0 : topSpacing)
+                .padding(.top, suppressesEntryTopSpacing ? 0 : topSpacing)
                 if let activity, activityHere, !statusReplacesEntry, activity.shouldDisplayBelow(entry) {
                     // 仅当当前轮气泡正在吐正文时收起进度行（防流式结束 28pt 下坠）；工具执行与次轮思考仍展示在首轮气泡下方。
                     let isAfterUserMessage = entry.role == MessageRole.user
                     let showHeaderOnActivity = isAfterUserMessage || (awaitingSegmentedFirstBlock && !entry.isAssistantContinuation)
                     let activityTopSpacing: CGFloat = isAfterUserMessage
                         ? 14
-                        : (awaitingSegmentedFirstBlock ? topSpacing : ChatLayout.assistantPartSpacing)
+                        : (awaitingSegmentedFirstBlock
+                            ? (hasHistoryBoundaryAnchor ? 0 : topSpacing)
+                            : ChatLayout.assistantPartSpacing)
                     ChatTimelineActivityRowView(activity: activity, showAgentName: showHeaderOnActivity, onAction: { callbacks.action($0) })
                         .padding(.top, activityTopSpacing)
                 }

@@ -1,6 +1,11 @@
 import CoreGraphics
 
 enum ChatTopBarLayout {
+    #if DEBUG
+    @MainActor static var onCapsuleFrameForTesting: ((CGRect, String) -> Void)?
+    @MainActor static var onAvatarFrameForTesting: ((CGRect) -> Void)?
+    @MainActor static var onPanelFrameForTesting: ((CGRect) -> Void)?
+    #endif
     static let avatarDiameter: CGFloat = 76
     static let islandTopOffset: CGFloat = 8
     static let avatarCapsuleOverlap: CGFloat = 8

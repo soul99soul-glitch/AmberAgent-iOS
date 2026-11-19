@@ -335,10 +335,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         switch descriptorID {
         case IOSDurableRunStore.Descriptor.chat, "chat_turn":
             return AgentActivityKind.response.rawValue
-        case IOSDurableRunStore.Descriptor.deepRead:
-            return AgentActivityKind.research.rawValue
-        case IOSDurableRunStore.Descriptor.novelGeneration,
-             IOSDurableRunStore.Descriptor.miniAppAI,
+        case IOSDurableRunStore.Descriptor.miniAppAI,
              IOSDurableRunStore.Descriptor.council:
             return AgentActivityKind.workflow.rawValue
         default:
@@ -579,7 +576,23 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         conversationId: String,
         toolCallId: String,
         hasRemainingUnknown: Bool,
-        didApply _: Bool
+        didApply: Bool
+    ) -> Bool {
+        publishOutcomeUnknownReconciled(
+            runId: runId,
+            conversationId: conversationId,
+            toolCallId: toolCallId,
+            hasRemainingUnknown: hasRemainingUnknown,
+            resolution: didApply ? .applied : .notApplied
+        )
+    }
+
+    func publishOutcomeUnknownReconciled(
+        runId: String,
+        conversationId: String,
+        toolCallId: String,
+        hasRemainingUnknown: Bool,
+        resolution _: IOSOutcomeUnknownResolution
     ) -> Bool {
         let normalizedRunId = runId.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedConversationId = conversationId.trimmingCharacters(in: .whitespacesAndNewlines)

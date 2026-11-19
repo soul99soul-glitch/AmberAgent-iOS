@@ -141,26 +141,6 @@ final class DocumentAccessStore {
         return newGrant
     }
 
-    func readSelectedDocumentForDeepRead(now: Date = Date()) async -> Result<IOSDeepReadSource, DocumentAccessError> {
-        let request = requestForCurrentGrant(isUserInitiated: true)
-        let result = await consumeSelectedFileRead(request: request, now: now)
-        switch result {
-        case .success(let read):
-            do {
-                return .success(try IOSDeepReadSourceNormalizer.fileSource(
-                    read,
-                    now: Int64(now.timeIntervalSince1970 * 1_000)
-                ))
-            } catch let error as IOSDeepReadSourceNormalizationError {
-                return .failure(.unsupportedFileType(error.localizedDescription))
-            } catch {
-                return .failure(.readFailed(error.localizedDescription))
-            }
-        case .failure(let error):
-            return .failure(error)
-        }
-    }
-
     func recordSelectionError(_ message: String) {
         grant = nil
         lastRead = nil
@@ -932,34 +912,6 @@ enum DocumentAccessError: Error, Equatable {
     case unsupportedFileType(String)
     case noReadableText(String)
     case readFailed(String)
-}
-
-extension DocumentAccessError {
-    /// 深度阅读专用中文提示（不复用通用英文 `userMessage`）。
-    var userMessageForDeepRead: String {
-        switch self {
-        case .missingGrant:
-            "请先选择文件。"
-        case .grantMismatch:
-            "所选文件授权不匹配，请重新选择文件。"
-        case .expiredGrant:
-            "文件授权已失效，请重新选择文件。"
-        case .fileMissing:
-            "文件已不存在，请从文件 App 重新选择。"
-        case .fileTooLarge:
-            "文件过大，超出导入限制。"
-        case .unknownFileSize:
-            "无法确认文件大小，请选择普通文件后重试。"
-        case .alreadyReading:
-            "正在读取该文件，请稍候。"
-        case .unsupportedFileType(let message):
-            IOSDeepReadUserFacingText.sanitize(message)
-        case .noReadableText(let message):
-            IOSDeepReadUserFacingText.sanitize(message)
-        case .readFailed(let message):
-            "读取文件失败：\(IOSDeepReadUserFacingText.sanitize(message))"
-        }
-    }
 }
 
 struct IOSToolInvocationRequest: Equatable {

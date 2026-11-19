@@ -19,10 +19,6 @@ struct AppShell: View {
     @State private var conversationActivityCenter: ConversationActivityCenter
     @State private var councilChatViewModel: CouncilChatViewModel
     @State private var storeCoordinator = IOSStoreCoordinator()
-    @State private var novelCreationViewModel: NovelCreationViewModel?
-    @State private var novelSessionViewModel: NovelSessionViewModel?
-    @State private var novelLifecycleCoordinator: NovelWorkspaceLifecycleCoordinator
-    @State private var novelCreationErrorMessage: String?
     @State private var rootRouter = RouterPath()
     @State private var pendingAgentActivityTarget: AgentActivityDeepLink.Target?
     @State private var pendingAgentActivityURL: URL?
@@ -87,22 +83,6 @@ struct AppShell: View {
             permissionStore: permissionStore,
             durableRunStore: chatViewModel.runStore
         )
-        let novelCreationViewModel: NovelCreationViewModel?
-        let novelSessionViewModel: NovelSessionViewModel?
-        let novelCreationErrorMessage: String?
-        do {
-            let workspace = try NovelCreationComposition.makeViewModel(
-                sharedSettings: sharedSettingsStore,
-                toolRuntime: backgroundToolRuntime
-            )
-            novelCreationViewModel = workspace
-            novelSessionViewModel = NovelSessionViewModel(workspace: workspace)
-            novelCreationErrorMessage = nil
-        } catch {
-            novelCreationViewModel = nil
-            novelSessionViewModel = nil
-            novelCreationErrorMessage = error.localizedDescription
-        }
         self.settingsStore = effectiveSettingsStore
         self._permissionStore = State(initialValue: permissionStore)
         self._documentAccessStore = State(initialValue: documentAccessStore)
@@ -121,13 +101,6 @@ struct AppShell: View {
         )
         self._chatViewModel = State(initialValue: chatViewModel)
         self._councilChatViewModel = State(initialValue: councilChatViewModel)
-        self._novelCreationViewModel = State(initialValue: novelCreationViewModel)
-        self._novelSessionViewModel = State(initialValue: novelSessionViewModel)
-        self._novelLifecycleCoordinator = State(
-            initialValue: NovelWorkspaceLifecycleCoordinator()
-        )
-        self._novelCreationErrorMessage = State(initialValue: novelCreationErrorMessage)
-        IOSDeepReadBackgroundCoordinator.shared.configure(sharedSettings: sharedSettingsStore)
         IOSChatBackgroundGenerationCoordinator.shared.configure(
             conversationStore: conversationStore,
             toolRuntime: backgroundToolRuntime,
@@ -139,7 +112,6 @@ struct AppShell: View {
                 )
             }
         )
-        IOSDeepReadRecoveryOnce.run()
         // Load before ChatViewModel can prepare its first provider request.
         // AppShell is MainActor-isolated, so this synchronous file read cannot
         // race the first view render or an early memory mutation.
@@ -232,6 +204,7 @@ struct AppShell: View {
                 }
                 IOSMemoryExtractionCoordinator.shared.resume()
                 IOSMemoryConsolidationCoordinator.shared.resume()
+                Task { await MacGatewayStore.shared.handleForegroundBecameActive() }
             }
         }
         .onChange(of: sharedSettings.revision) { _, _ in
@@ -355,13 +328,6 @@ struct AppShell: View {
                     .resumeRecoverableJobsIfNeeded()
             }
             finalizeStaleBackgroundJobsIfNeeded()
-            if scenePhase == .active {
-                if let novelCreationViewModel {
-                    await novelCreationViewModel.resumeDetachedBackgroundGeneration()
-                    _ = await novelSessionViewModel?
-                        .resumeGhostwriteAfterBackgroundInterruptionIfNeeded()
-                }
-            }
         } else {
             await conversationStore.bootstrap()
             didBootstrapConversations = true
@@ -451,8 +417,7 @@ struct AppShell: View {
         ConversationsView(
             sharedSettings: sharedSettings,
             chatViewModel: chatViewModel,
-            councilChatViewModel: councilChatViewModel,
-            novelCreationViewModel: novelCreationViewModel
+            councilChatViewModel: councilChatViewModel
         )
     }
 
@@ -470,9 +435,6 @@ struct AppShell: View {
             localToolExecutor: localToolExecutor,
             chatViewModel: chatViewModel,
             councilChatViewModel: councilChatViewModel,
-            novelCreationViewModel: novelCreationViewModel,
-            novelSessionViewModel: novelSessionViewModel,
-            novelCreationErrorMessage: novelCreationErrorMessage,
             storeCoordinator: storeCoordinator,
             router: rootRouter
         )
@@ -536,24 +498,7 @@ struct AppShell: View {
             councilChatViewModel.runtimeWillEnterBackground()
             // 握着后台执行权就别交接，让正在跑的流自己跑完。
             _ = chatViewModel.handoffGenerationToBackgroundIfNeeded(honorKeepAliveLease: true)
-            guard let novelCreationViewModel else { return }
-            novelLifecycleCoordinator.enterBackground(
-                waitForCompletion: {
-                    await novelCreationViewModel.waitForBackgroundGeneration()
-                },
-                interrupt: { deadline in
-                    await novelCreationViewModel.interruptSessionForBackground(deadline: deadline)
-                }
-            )
         case .active:
-            novelLifecycleCoordinator.enterForeground()
-            if let novelCreationViewModel {
-                Task {
-                    await novelCreationViewModel.resumeDetachedBackgroundGeneration()
-                    _ = await novelSessionViewModel?
-                        .resumeGhostwriteAfterBackgroundInterruptionIfNeeded()
-                }
-            }
             _ = chatViewModel.reconcileForegroundRunsAfterSystemSuspensionIfNeeded(
                 hasValidKeepAliveLease: !BackgroundGenerationKeepAlive.shared.activeLeaseIds.isEmpty
             )
@@ -687,9 +632,19 @@ struct AppShell: View {
             rootRouter.path = [.chat]
 
         case .agentPrompt(let handoffID):
-            guard await chatViewModel.startNewConversation(
-                commitIf: { pendingAppDeepLinkDestination == destination }
-            ) else { return }
+            if let actionID = IOSDeepLinkInbox.shared.phoneAutomationID(forPromptHandoff: handoffID) {
+                let title = sharedSettings.savedQuickActions().first { $0.id == actionID }?.title ?? "手机自动化"
+                guard await chatViewModel.preparePhoneAutomationConversation(
+                    actionID: actionID, title: title,
+                    commitIf: { pendingAppDeepLinkDestination == destination }
+                ) else { return }
+                MacGatewayStore.shared.setCloudMainDialogueSelected(false)
+                rootRouter.phoneAutomationChatPresentationRevision &+= 1
+            } else {
+                guard await chatViewModel.startNewConversation(
+                    commitIf: { pendingAppDeepLinkDestination == destination }
+                ) else { return }
+            }
             guard pendingAppDeepLinkDestination == destination else { return }
             guard let prompt = IOSDeepLinkInbox.shared.consumePromptHandoff(id: handoffID) else {
                 conversationStore.publishUserVisibleError(IOSUserVisibleError(
@@ -733,6 +688,8 @@ struct AppShell: View {
             rootRouter.path = [.settings, .weather]
         case .appleIntegrations:
             rootRouter.path = [.settings, .appleIntegrations]
+        case .phoneControl:
+            rootRouter.path = [.settings, .phoneControl]
         case .wakeTasks:
             rootRouter.path = [.settings, .appleIntegrations]
         case .wakeDueTasks:
@@ -765,8 +722,12 @@ struct AppShell: View {
             rootRouter.path = [.settings, .macGateway]
         case .macTasks:
             rootRouter.path = [.macTasks]
-        case .deepReadTask(let id):
-            rootRouter.path = [.board, .deepReadTask(id: id)]
+        case .cloudTask(let workItemId):
+            MacGatewayStore.shared.pendingCloudTaskWorkItemId = workItemId
+            rootRouter.path = [.macTasks]
+            Task { @MainActor in
+                _ = await MacGatewayStore.shared.ensureCloudTaskLoaded(workItemId: workItemId)
+            }
         case .agentActivity(let target):
             pendingAgentActivityTarget = target
             pendingAgentActivityURL = nil
@@ -867,9 +828,6 @@ struct AppDestinationDependencies {
     let localToolExecutor: IOSLocalToolExecutor
     let chatViewModel: ChatViewModel
     let councilChatViewModel: CouncilChatViewModel
-    let novelCreationViewModel: NovelCreationViewModel?
-    let novelSessionViewModel: NovelSessionViewModel?
-    let novelCreationErrorMessage: String?
     let storeCoordinator: IOSStoreCoordinator
     let router: RouterPath
 }
@@ -889,9 +847,6 @@ private extension View {
             localToolExecutor: deps.localToolExecutor,
             chatViewModel: deps.chatViewModel,
             councilChatViewModel: deps.councilChatViewModel,
-            novelCreationViewModel: deps.novelCreationViewModel,
-            novelSessionViewModel: deps.novelSessionViewModel,
-            novelCreationErrorMessage: deps.novelCreationErrorMessage,
             storeCoordinator: deps.storeCoordinator,
             router: deps.router
         )
@@ -910,9 +865,6 @@ private extension View {
         localToolExecutor: IOSLocalToolExecutor,
         chatViewModel: ChatViewModel,
         councilChatViewModel: CouncilChatViewModel,
-        novelCreationViewModel: NovelCreationViewModel?,
-        novelSessionViewModel: NovelSessionViewModel?,
-        novelCreationErrorMessage: String?,
         storeCoordinator: IOSStoreCoordinator,
         router: RouterPath
     ) -> some View {
@@ -922,8 +874,7 @@ private extension View {
                 ConversationsView(
                     sharedSettings: sharedSettings,
                     chatViewModel: chatViewModel,
-                    councilChatViewModel: councilChatViewModel,
-                    novelCreationViewModel: novelCreationViewModel
+                    councilChatViewModel: councilChatViewModel
                 )
             case .chat:
                 ChatView(
@@ -988,6 +939,8 @@ private extension View {
                 MacTasksBoardView()
             case .phoneControl:
                 IOSPhoneControlSettingsView()
+            case .phoneAutomations:
+                IOSPhoneAutomationLinesView(conversationStore: conversationStore)
             case .phoneSavedTasks:
                 IOSPhoneControlSavedTasksView(sharedSettings: sharedSettings)
             case .subscription:
@@ -1091,21 +1044,6 @@ private extension View {
                 CloudConfigSettingsView(sharedSettings: sharedSettings)
             case .ttsSettings:
                 TTSSettingsView(sharedSettings: sharedSettings)
-            case .board:
-                BoardView(settingsStore: settingsStore, sharedSettings: sharedSettings, providerRegistry: providerRegistry)
-            case .boardSettings:
-                BoardSettingsView(
-                    settingsStore: settingsStore,
-                    sharedSettings: sharedSettings,
-                    providerRegistry: providerRegistry
-                )
-            case .deepReadTask(let id):
-                IOSDeepReadTaskDetailView(
-                    taskId: id,
-                    settingsStore: settingsStore,
-                    sharedSettings: sharedSettings,
-                    providerRegistry: providerRegistry
-                )
             case .miniApps:
                 MiniAppListView()
             case .miniAppSettings:
@@ -1117,57 +1055,6 @@ private extension View {
                     sharedSettings: sharedSettings,
                     chatViewModel: chatViewModel
                 )
-            case .novelCreation:
-                if let novelCreationViewModel {
-                    NovelProjectListView(
-                        viewModel: novelCreationViewModel,
-                        onOpen: { projectID in
-                            router.navigate(to: .novelProject(id: projectID))
-                        },
-                        onOpenSettings: {
-                            router.navigate(to: .novelCreationSettings)
-                        }
-                    )
-                    .novelCreationErrorAlert(viewModel: novelCreationViewModel)
-                } else {
-                    ContentUnavailableView(
-                        "小说创作暂不可用",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(novelCreationErrorMessage ?? "无法打开项目存储。")
-                    )
-                }
-            case .novelCreationSettings:
-                if let novelCreationViewModel {
-                    NovelCreationSettingsView(
-                        sharedSettings: sharedSettings,
-                        viewModel: novelCreationViewModel
-                    )
-                    .novelCreationErrorAlert(viewModel: novelCreationViewModel)
-                } else {
-                    NovelCreationSettingsView(
-                        sharedSettings: sharedSettings,
-                        viewModel: nil
-                    )
-                }
-            case .novelProject(let projectID):
-                if let novelCreationViewModel, let novelSessionViewModel {
-                    NovelProjectWorkspaceView(
-                        viewModel: novelCreationViewModel,
-                        sessionViewModel: novelSessionViewModel,
-                        sharedSettings: sharedSettings,
-                        projectID: projectID,
-                        onOpenSettings: {
-                            router.navigate(to: .novelCreationSettings)
-                        }
-                    )
-                    .novelCreationErrorAlert(viewModel: novelCreationViewModel)
-                } else {
-                    ContentUnavailableView(
-                        "小说创作暂不可用",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(novelCreationErrorMessage ?? "无法打开项目存储。")
-                    )
-                }
             case .webMount:
                 WebMountView()
             case .webMountSite(let site):

@@ -661,13 +661,12 @@ final class AmberThemePackTests: XCTestCase {
         XCTAssertEqual(d.string(forKey: fontKey), IOSChatFont.serif.rawValue)
     }
 
-    func testHomeShortcutEntriesCoverFiveRoutes() {
-        XCTAssertEqual(HomeShortcutEntry.allCases.count, 5)
+    func testHomeShortcutEntriesCoverFourRoutes() {
+        XCTAssertEqual(HomeShortcutEntry.allCases.count, 4)
         let phosphors = Set(HomeShortcutEntry.allCases.map(\.phosphor))
-        XCTAssertEqual(phosphors.count, 5, "five distinct phosphor glyphs")
-        XCTAssertFalse(HomeShortcutEntry.deepRead.title.isEmpty)
-        // 小说创作的首页入口让位给「任务」（Mac 任务看板）；顺序即首页从左到右。
-        XCTAssertEqual(HomeShortcutEntry.allCases, [.deepRead, .tasks, .council, .miniApps, .webMount])
+        XCTAssertEqual(phosphors.count, 4, "four distinct phosphor glyphs")
+        // 首页入口顺序即从左到右：任务、模型议会、小应用、WebMount。
+        XCTAssertEqual(HomeShortcutEntry.allCases, [.tasks, .council, .miniApps, .webMount])
         XCTAssertEqual(HomeShortcutEntry.tasks.title, "任务")
         XCTAssertEqual(HomeShortcutEntry.tasks.phosphor, .listChecks)
     }
@@ -932,10 +931,6 @@ final class AmberThemePackTests: XCTestCase {
     /// imported `appWide` pack can still paint; builtins (sit / Pi) stay shell-quiet on `.app`.
     func testAppWideWorkSurfacesUsePageBackground() throws {
         let surfaces: [(path: String, needle: String)] = [
-            ("iosApp/NovelCreation/NovelSessionView.swift", "AmberThemePageBackground(surface: .app)"),
-            ("iosApp/NovelCreation/NovelProjectListView.swift", "AmberThemePageBackground(surface: .app)"),
-            ("iosApp/NovelCreation/NovelProjectWorkspaceView.swift", "AmberThemePageBackground(surface: .app)"),
-            ("iosApp/NovelCreation/NovelChapterReaderView.swift", "AmberThemePageBackground(surface: .app)"),
             ("iosApp/CouncilView.swift", "AmberThemePageBackground(surface: .app)"),
             ("iosApp/CouncilChatRuntimeView.swift", "AmberThemePageBackground(surface: .app)"),
             ("iosApp/WebMount/Presentation/WebMountView.swift", "AmberThemePageBackground(surface: .app)"),
@@ -949,13 +944,6 @@ final class AmberThemePackTests: XCTestCase {
                 "\(surface.path) must use \(surface.needle) for optional appWide canvas texture"
             )
         }
-
-        let workspace = try source("iosApp/NovelCreation/NovelProjectWorkspaceView.swift")
-        // Tab content must not paint an opaque full-bleed paper over the page canvas.
-        XCTAssertFalse(
-            workspace.contains("return ZStack {\n            AmberTheme.background\n            if let mounted"),
-            "Novel workspace content ZStack must not cover PageBackground with AmberTheme.background"
-        )
 
         // Builtin character packs: texture on home/shell only — chat stays flat paper color.
         runtime.apply(AmberThemePack.builtins.first { $0.id == "sit-terracotta" }!)

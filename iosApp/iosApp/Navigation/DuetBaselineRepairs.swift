@@ -14,8 +14,6 @@ extension IOSSubAgentActivity {
 
 enum RouterDestination: Hashable {
     case search
-    case novelCreation
-    case board
     case council
     case miniApps
     case webMount
@@ -27,10 +25,6 @@ enum RouterDestination: Hashable {
         switch self {
         case .search:
             return .search(initialQuery: "")
-        case .novelCreation:
-            return .novelCreation
-        case .board:
-            return .board
         case .council:
             return .council
         case .miniApps:

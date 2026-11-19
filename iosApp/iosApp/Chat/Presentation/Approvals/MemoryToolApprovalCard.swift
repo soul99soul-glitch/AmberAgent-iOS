@@ -54,6 +54,15 @@ struct MemoryToolApprovalCard: View {
                 }
             }
 
+            if let diffPreview = request.diffPreview, !diffPreview.isEmpty {
+                ApprovalDiffPreviewBox(diff: diffPreview)
+            } else if let oldContentPreview = request.oldContentPreview, !oldContentPreview.isEmpty {
+                Text("原内容：\(oldContentPreview)")
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+                    .lineLimit(3)
+            }
+
             HStack(spacing: 8) {
                 Spacer()
 
@@ -93,9 +102,9 @@ struct MemoryToolApprovalCard: View {
     private var bodyPreview: String {
         if isDestructive {
             if let targetId = request.targetId {
-                return "将永久删除 ID 为 \(targetId) 的已保存记忆。\n\(request.contentPreview ?? "此操作不可撤销。")"
+                return "将归档 ID 为 \(targetId) 的已保存记忆。\n\(request.contentPreview ?? "可在记忆库恢复。")"
             }
-            return "将永久删除这条已保存记忆。\n\(request.contentPreview ?? "此操作不可撤销。")"
+            return "将归档这条已保存记忆。\n\(request.contentPreview ?? "可在记忆库恢复。")"
         }
         if let contentPreview = request.contentPreview {
             return contentPreview

@@ -28,10 +28,6 @@ final class ChatToolRuntime {
     /// P1-c: 线程编排工具执行体（spawn_agent/list_agents/interrupt_agent）。
     /// 可选：未注入时三工具返回结构化「不可用」错误而不是静默缺失。
     let orchestrationToolService: IOSThreadOrchestrationToolService?
-    /// 小说讨论写工具的领域入口（weak：AppShell 先构造本 runtime 再构造
-    /// DefaultNovelCreation，由 NovelCreationComposition 回填；weak 保证
-    /// runtime ↔ creation 不形成引用环）。nil 时讨论引擎不注册小说写工具。
-    weak var novelProjectCreation: DefaultNovelCreation?
     /// 跨会话读取工具（session_search/session_read）的会话存储源。可选：
     /// 未注入时两工具返回结构化「不可用」错误（照 orchestrationToolService 先例；
     /// 测试注入隔离 store）。
@@ -382,11 +378,6 @@ final class ChatToolRuntime {
         pluginExecution.isPluginOutcomeUnknown(in: messages, toolCallId: toolCallId)
     }
 
-    /// Tool set for the novel discussion agent. Ask User is always available;
-    /// search continues to respect the global Web Search consent switch. The
-    /// novel project write tools are registered only when a per-run project
-    /// context is provided (discussion runs started by the novel lifecycle),
-    /// regardless of the web-search switch.
     func nextPendingToolCall(
         in messages: [UIMessage],
         availableToolNames: Set<String>
@@ -1068,7 +1059,7 @@ final class ChatToolRuntime {
         switch toolName {
         case "mcp_list", "mcp_describe_tool", "mcp_import_from_skill":
             true
-        case "phone_add_app":
+        case "phone_add_app", IOSPhoneControlToolCatalog.preflightToolName:
             true
         case let name where IOSWakeToolCatalog.toolNames.contains(name):
             true

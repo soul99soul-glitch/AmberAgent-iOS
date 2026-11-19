@@ -428,6 +428,7 @@ struct ChatToolStepModel: Identifiable {
         "shortcut_compose": "编写快捷指令流程",
         "phone_system": "查看系统界面",
         "phone_status": "查看手机状态",
+        "phone_control_preflight": "检查手机控制就绪度",
         "phone_apps": "查看手机应用",
         "phone_add_app": "添加控制应用",
         "phone_observe": "观察手机界面",

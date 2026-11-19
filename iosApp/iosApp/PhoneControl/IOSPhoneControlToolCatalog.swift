@@ -3,6 +3,17 @@ import Foundation
 
 /// Native iPhone tools are exposed for user-started runs while the persistent switch is enabled.
 enum IOSPhoneControlToolCatalog {
+    static let preflightToolName = "phone_control_preflight"
+
+    static var preflightDeclaration: Tool {
+        declaration(
+            name: preflightToolName,
+            description: "只读检查 iPhone 手机控制准备度（总开关、配对文件、VPN连接、授权App数、占用状态）与阻塞原因，并返回直达设置深链；不启动控制连接、不占用租约、免审批。",
+            schema: #"{"type":"object","properties":{},"required":[],"additionalProperties":false}"#,
+            effect: "pure"
+        )
+    }
+
     static let toolNames: Set<String> = [
         "phone_status", "phone_apps", "phone_add_app", "phone_observe", "phone_act", "phone_run_goal", "phone_run_flow", "phone_scroll_until", "phone_collect_list", "phone_return_to_amber", "phone_clipboard", "phone_system", "phone_stop",
     ]

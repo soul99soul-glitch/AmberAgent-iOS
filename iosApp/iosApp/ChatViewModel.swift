@@ -63,7 +63,7 @@ final class ChatViewModel {
     }
 
     /// 用户消息入场弹簧；生成启动也以它的视觉时长为界，二者不会脱节。
-    static let userMessageSendSpring = Spring(response: 0.34, dampingRatio: 0.8)
+    static let userMessageSendSpring = Spring(response: 0.30, dampingRatio: 0.84)
 
     /// 生成启动（参数与工具目录组装、Kernel、后台保活、记忆召回）在主线程上要
     /// 同步跑上百毫秒；与发送放在同一事件里会挡住用户气泡上屏并打断入场动画。
@@ -276,7 +276,9 @@ final class ChatViewModel {
             state.jevApprovalTriage = triage
         }
     }
+    @ObservationIgnored var isReconcilingToolOutcome = false
     var toolOutcomeUnknownDescriptors: [IOSToolOutcomeUnknownDescriptor] = []
+    var outcomeUnknownFollowup: IOSOutcomeUnknownFollowup?
 
     var pendingToolOutcomeUnknown: IOSToolOutcomeUnknownDescriptor? {
         guard let conversationId = currentConversationId?.toHexDashString() else { return nil }

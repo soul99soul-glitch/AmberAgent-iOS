@@ -384,6 +384,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
     @State private var isActivelyPacing: Bool
     /// 锁定本 pacer 所属的 runID，防止同会话并发新任务覆盖当前回复的完成反馈归属。
     @State private var latchedCompletionRunID: String?
+    @State private var completionAnimation = ChatReplyCompletionAnimation()
     /// 内容自然高度（不含裁剪）。
     @State private var contentHeight: CGFloat = 0
     /// 当前实际占位高度：朝 `contentHeight` 平滑逼近。
@@ -543,6 +544,7 @@ struct ChatStreamingRevealPacer<Content: View>: View {
             .environment(\.chatStreamingTailCoordinator, activePacing && liveRenderingEnabled && !bypassPacingForTable ? pacerBox.tailCoordinator : nil)
             .modifier(ChatStreamingRevealProgressModifier(progress: .init(
                 isMounted: true, hasPendingReveal: hasPendingReveal)))
+            .opacity(completionAnimation.opacity)
             .onPreferenceChange(ChatStreamingRevealProgressKey.self) { progress in
                 guard progress.isMounted, !progress.hasPendingReveal,
                       let messageID else { return }
@@ -552,7 +554,8 @@ struct ChatStreamingRevealPacer<Content: View>: View {
                     ?? completionFeedback?.untrackedCurrentRunID()
                 guard let resolvedRunID else { return }
                 completionFeedback?.didDrain(
-                    runID: resolvedRunID, messageID: messageID, partIndex: textPartIndex, text: text
+                    runID: resolvedRunID, messageID: messageID, partIndex: textPartIndex, text: text,
+                    onCompletion: { completionAnimation.play(reduceMotion: reduceMotion) }
                 )
             }
             .onAppear {

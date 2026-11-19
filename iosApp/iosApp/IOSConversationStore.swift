@@ -1541,5 +1541,3 @@ final class IOSConversationStore {
         deletedConversationIds.contains(String(describing: id))
     }
 }
-
-extension IOSConversationStore: IOSBoardConversationSignalSource {}

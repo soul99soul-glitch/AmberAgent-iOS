@@ -1,6 +1,37 @@
 import Foundation
+#if canImport(LocalAuthentication)
+import LocalAuthentication
+#endif
 import Observation
 import UIKit
+
+enum MacGatewayDecisionSource: Equatable, Sendable {
+    case foregroundApp
+    case notification
+}
+
+protocol MacGatewayBiometricAuthenticating: Sendable {
+    func verifyForegroundApproval(reason: String) async -> Bool
+}
+
+struct MacGatewayLocalBiometricAuthenticator: MacGatewayBiometricAuthenticating {
+    func verifyForegroundApproval(reason: String) async -> Bool {
+        #if canImport(LocalAuthentication)
+        let context = LAContext()
+        var error: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
+            return false
+        }
+        do {
+            return try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)
+        } catch {
+            return false
+        }
+        #else
+        return false
+        #endif
+    }
+}
 
 final class MacGatewayPersistenceCoordinator: @unchecked Sendable {
     private let lock = NSLock()
@@ -47,6 +78,11 @@ final class MacGatewayStore {
 
     private nonisolated static let connectionKey = "macGateway.connection.v1"
     private nonisolated static let tokenKey = "macGateway.deviceToken"
+    nonisolated static let shareCalendarUpcomingKey = "macGateway.deviceContext.shareCalendar"
+    nonisolated static let shareRemindersDueKey = "macGateway.deviceContext.shareReminders"
+    nonisolated static let shareWorkspaceArtifactsKey = "macGateway.deviceContext.shareArtifacts"
+    nonisolated static let pendingDeviceContextDeleteKey = "macGateway.deviceContext.pendingDelete"
+    nonisolated static let cloudDialogueLastViewedSeqKey = "macGateway.cloudDialogue.lastViewedSeq"
 
     /// Debug builds are signed with `aps-environment = development` (project.yml), Release with production.
     static var apnsEnvironment: String {
@@ -84,10 +120,24 @@ final class MacGatewayStore {
     var cloudAgentActivities: [String: MacGatewayCloudAgentActivity] = [:]
     var cloudTasks: [MacGatewayCloudTaskRecord] = []
     var busyCloudTaskIds: Set<String> = []
+    /// Deep-linked cloud task workItemId waiting for board sheet presentation (`amber://cloud-task/{id}`).
+    var pendingCloudTaskWorkItemId: String? = nil
+    /// Foreground device-context sharing toggles (B1 / X3: ALL default false).
+    var shareCalendarUpcomingEnabled: Bool = false
+    var shareRemindersDueEnabled: Bool = false
+    var shareWorkspaceArtifactsEnabled: Bool = false
+    @ObservationIgnored var deviceContextMutationTask: Task<Void, Never>?
+    var deviceContextMetadata: IOSDeviceContextSnapshotMetadata? = nil
+    var isSyncingDeviceContext: Bool = false
+    var pendingDeviceContextRemoteDelete: Bool = false
+    @ObservationIgnored var lastDeviceContextPushAt: Date? = nil
+    var cloudDialogueEncodedBytes: Int = 0
+    var cloudDialogueLastViewedSeq: Int64 = 0
     /// Explicit Paired Cloud Main Dialogue (/v2/dialogue/* & /v2/work-items/{id}/inputs|stop) state.
     var isCloudMainDialogueSelected = false
     var cloudDialogueCursor: Int64 = 0
     var cloudDialogueEvents: [MacGatewayCloudDialogueEvent] = []
+    var cloudDialogueEntranceEventIds: Set<String> = []
     /// Low-frequency composer trigger; process/progress events do not change it.
     var cloudSuggestionReplyID: String?
     @ObservationIgnored var cloudSuggestionSequence: Int64 = 0
@@ -96,6 +146,7 @@ final class MacGatewayStore {
     var cloudDialogueProgressByWorkItem: [String: MacGatewayCloudDialogueWorkItemProgress] = [:]
     var cloudDialogueSubmissions: [MacGatewayCloudDialoguePersistedSubmission] = []
     var cloudDialogueFirstSeenAtByEventId: [String: Date] = [:]
+    @ObservationIgnored let cloudCompletionFeedback = ChatCompletionFeedback()
     var selectedCloudDialogueWorkItemId: String?
     var busyCloudDialogueRequestIds: Set<String> = []
     var cloudDialogueLastError: String?
@@ -129,9 +180,22 @@ final class MacGatewayStore {
     @ObservationIgnored weak var boundSoulStore: AgentSoulStore?
     @ObservationIgnored let persistenceCoordinator = MacGatewayPersistenceCoordinator()
     @ObservationIgnored let defaults: UserDefaults
+    @ObservationIgnored private let biometricAuthenticator: any MacGatewayBiometricAuthenticating
+    @ObservationIgnored private let isApplicationForeground: @MainActor () -> Bool
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        biometricAuthenticator: any MacGatewayBiometricAuthenticating = MacGatewayLocalBiometricAuthenticator(),
+        isApplicationForeground: @escaping @MainActor () -> Bool = { UIApplication.shared.applicationState == .active }
+    ) {
         self.defaults = defaults
+        self.biometricAuthenticator = biometricAuthenticator
+        self.isApplicationForeground = isApplicationForeground
+        self.shareCalendarUpcomingEnabled = defaults.bool(forKey: Self.shareCalendarUpcomingKey)
+        self.shareRemindersDueEnabled = defaults.bool(forKey: Self.shareRemindersDueKey)
+        self.shareWorkspaceArtifactsEnabled = defaults.bool(forKey: Self.shareWorkspaceArtifactsKey)
+        self.pendingDeviceContextRemoteDelete = defaults.bool(forKey: Self.pendingDeviceContextDeleteKey)
+        self.cloudDialogueLastViewedSeq = Int64(defaults.integer(forKey: Self.cloudDialogueLastViewedSeqKey))
         bindCloudSoulStoreIfNeeded()
         if let data = defaults.data(forKey: Self.connectionKey),
            let saved = try? JSONDecoder().decode(MacGatewayConnection.self, from: data),
@@ -370,6 +434,7 @@ final class MacGatewayStore {
             startCloudDialoguePollingIfNeeded()
             await refreshSchedules()
             await refreshBoard()
+            await syncDeviceContextOnRefresh()
             if latest.device.pushRegistered {
                 pushError = nil
             } else if let apnsToken {
@@ -409,11 +474,18 @@ final class MacGatewayStore {
         }
     }
 
-    /// Phone-side answer to an Amber scheduled run's tool call. The Mac re-checks the call and the risk class.
+    /// Phone-side answer to an Amber run's tool call.
+    /// Foreground in-app approval runs LocalAuthentication biometric verification before sending trusted headers;
+    /// notification decisions never carry trusted headers and high-risk notification approvals open the App instead.
     @discardableResult
-    func decide(sessionKey: String, toolCallId: String, allow: Bool) async -> Bool {
-        if allow, isKnownHighRiskApproval(sessionKey: sessionKey, toolCallId: toolCallId) {
-            notice = Notice(text: localized("高风险操作，请在 Mac 上核对后批准"), isError: true)
+    func decide(
+        sessionKey: String,
+        toolCallId: String,
+        allow: Bool,
+        source: MacGatewayDecisionSource = .foregroundApp
+    ) async -> Bool {
+        if allow, source == .notification, isKnownHighRiskApproval(sessionKey: sessionKey, toolCallId: toolCallId) {
+            notice = Notice(text: localized("高风险操作，请在 App 前台核对后批准"), isError: true)
             return false
         }
         guard let client else {
@@ -422,10 +494,42 @@ final class MacGatewayStore {
         }
         guard decidingCalls.insert(toolCallId).inserted else { return false }
         defer { decidingCalls.remove(toolCallId) }
+
+        let trustContext: MacGatewayDecisionTrustContext
+        switch source {
+        case .notification:
+            trustContext = .untrustedNotification
+        case .foregroundApp:
+            if allow {
+                guard isApplicationForeground() else {
+                    notice = Notice(text: localized("请在 App 前台核对后批准"), isError: true)
+                    return false
+                }
+                let reason = localized("验证身份以批准远程工具调用")
+                guard await biometricAuthenticator.verifyForegroundApproval(reason: reason) else {
+                    notice = Notice(text: localized("未通过生物识别验证，已取消批准"), isError: true)
+                    return false
+                }
+                // Authentication suspends: the App or pairing can change while the prompt is open.
+                guard isApplicationForeground(), self.client === client, !Task.isCancelled else {
+                    notice = Notice(text: localized("前台或配对状态已变化，请重新核对批准"), isError: true)
+                    return false
+                }
+                trustContext = .verifiedForegroundApp()
+            } else {
+                trustContext = .unverifiedForegroundApp
+            }
+        }
+
         do {
-            try await client.decide(sessionKey: sessionKey, toolCallId: toolCallId, allow: allow)
+            try await client.decide(
+                sessionKey: sessionKey,
+                toolCallId: toolCallId,
+                allow: allow,
+                trustContext: trustContext
+            )
             guard self.client === client else { return false }
-            notice = Notice(text: localized(allow ? "已批准，Mac 上的任务继续运行" : "已拒绝这次调用"), isError: false)
+            notice = Notice(text: localized(allow ? "已批准，任务继续运行" : "已拒绝这次调用"), isError: false)
             await refresh()
             return true
         } catch {
@@ -666,6 +770,19 @@ final class MacGatewayStore {
         cloudDialogueTransportState = .unknown
         hasCheckedCloudSoulOnConnect = false
         (boundSoulStore ?? .shared).handleGatewayUnpaired()
+        shareCalendarUpcomingEnabled = false
+        shareRemindersDueEnabled = false
+        shareWorkspaceArtifactsEnabled = false
+        pendingDeviceContextRemoteDelete = false
+        deviceContextMetadata = nil
+        lastDeviceContextPushAt = nil
+        cloudDialogueEncodedBytes = 0
+        targetDefaults.removeObject(forKey: Self.shareCalendarUpcomingKey)
+        targetDefaults.removeObject(forKey: Self.shareRemindersDueKey)
+        targetDefaults.removeObject(forKey: Self.shareWorkspaceArtifactsKey)
+        targetDefaults.removeObject(forKey: Self.pendingDeviceContextDeleteKey)
+        targetDefaults.removeObject(forKey: Self.cloudDialogueLastViewedSeqKey)
+        cloudDialogueLastViewedSeq = 0
         isReachable = nil
         pushError = nil
     }

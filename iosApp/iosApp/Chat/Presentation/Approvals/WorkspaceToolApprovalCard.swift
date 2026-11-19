@@ -54,6 +54,10 @@ struct WorkspaceToolApprovalCard: View {
                 Spacer(minLength: 0)
             }
 
+            if let diffPreview = request.diffPreview, !diffPreview.isEmpty {
+                ApprovalDiffPreviewBox(diff: diffPreview)
+            }
+
             HStack(spacing: 8) {
                 Spacer()
 
@@ -88,5 +92,45 @@ struct WorkspaceToolApprovalCard: View {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke((request.isWrite ? AmberTheme.accentRed : AmberTheme.accentIndigo).opacity(0.34), lineWidth: 0.7)
         }
+    }
+}
+
+struct ApprovalDiffPreviewBox: View {
+    let diff: String
+
+    private var previewLines: [String] {
+        diff.components(separatedBy: "\n").prefix(14).map { $0 }
+    }
+
+    var body: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(previewLines.enumerated()), id: \.offset) { _, line in
+                    Text(line.isEmpty ? " " : line)
+                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundStyle(lineColor(for: line))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(8)
+        }
+        .frame(maxHeight: 150)
+        .background(
+            AmberTheme.surface.opacity(0.75),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+    }
+
+    private func lineColor(for line: String) -> Color {
+        if line.hasPrefix("+++") || line.hasPrefix("---") || line.hasPrefix("@@") {
+            return AmberTheme.muted
+        }
+        if line.hasPrefix("+") {
+            return AmberTheme.accentGreen
+        }
+        if line.hasPrefix("-") {
+            return AmberTheme.accentRed
+        }
+        return AmberTheme.foreground2
     }
 }

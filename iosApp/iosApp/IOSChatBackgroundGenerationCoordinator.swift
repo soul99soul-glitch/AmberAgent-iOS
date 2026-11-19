@@ -440,7 +440,10 @@ final class IOSChatBackgroundGenerationCoordinator {
         )
         activeBackgroundTasks[requestId] = execution
         beginChatBackgroundKeepAlive(
-            requestId: requestId, subtitle: subtitle, submitSystemFallback: true,
+            requestId: requestId,
+            subtitle: subtitle,
+            submitSystemFallback: true,
+            allowsAudioLeg: activeJobs[requestId].map { Self.allowsAudioLeg(for: $0) } ?? true,
             onExpire: { [weak self, weak execution] in
                 guard let self, let execution,
                       self.activeBackgroundTasks[requestId] === execution else { return }
@@ -1477,6 +1480,17 @@ final class IOSChatBackgroundGenerationCoordinator {
         "chat-bg-\(requestId)"
     }
 
+    /// Local non-OpenAI-remote-resume tasks may hold the audio leg; OpenAI
+    /// detached response resume does not hold local audio keep-alive.
+    static func allowsAudioLeg(for job: IOSChatBackgroundRuntimeJob) -> Bool {
+        if job.mode == .resumeResponse,
+           job.providerSetting is ProviderSetting.OpenAI,
+           job.responseId != nil {
+            return false
+        }
+        return job.mode != .resumeResponse
+    }
+
     /// New local runs and detached responses use the shared assertion owner.
     /// Legacy .chat handlers already have a system assertion and only borrow
     /// the UIKit/audio lease while persisting their terminal state.
@@ -1484,6 +1498,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         requestId: String,
         subtitle: String,
         submitSystemFallback: Bool = false,
+        allowsAudioLeg: Bool = false,
         onExpire: (() -> Void)? = nil
     ) {
         keepAlive.begin(
@@ -1494,7 +1509,8 @@ final class IOSChatBackgroundGenerationCoordinator {
             ),
             subtitle: subtitle,
             onExpire: onExpire,
-            submitSystemTask: submitSystemFallback
+            submitSystemTask: submitSystemFallback,
+            allowsAudioLeg: allowsAudioLeg
         )
     }
 

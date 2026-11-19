@@ -81,27 +81,6 @@ final class IOSSearchExecutorTests: XCTestCase {
         XCTAssertTrue(hosts.isSuperset(of: ["www.bing.com", "html.duckduckgo.com", "search.brave.com", "www.so.com", "quark.sm.cn", "en.wikipedia.org", "hn.algolia.com"]))
     }
 
-    func testSearchResultsCanBecomeDeepReadSources() async throws {
-        let transport = MockSearchTransport(responses: [], hostResponses: [
-            "html.duckduckgo.com": .html(Self.duckDuckGoHTML(url: "https://example.com/deep", title: "Deep Result")),
-        ])
-
-        let execution = try await IOSSearchExecutor.searchResults(
-            toolInput: #"{"query":"deep read source","max_results":1}"#,
-            transport: transport
-        )
-        let sources = try IOSDeepReadSourceNormalizer.searchSources(
-            query: execution.request.query,
-            results: execution.results,
-            now: 1_800_000_000_000
-        )
-
-        XCTAssertEqual(sources.count, 1)
-        XCTAssertEqual(sources.first?.kind, .searchResult)
-        XCTAssertEqual(sources.first?.metadata["query"], "deep read source")
-        XCTAssertEqual(sources.first?.url, "https://example.com/deep")
-    }
-
     func testSelectedBingLocalServiceRoutesToFreeAggregate() async throws {
         let store = makeIsolatedStore()
         store.setSearchGoogleWebViewFallbackEnabled(false)
@@ -1021,64 +1000,6 @@ final class ChatViewModelSearchToolDeclarationTests: XCTestCase {
         let disabledNames = Set(disabledViewModel.currentToolDeclarationNames())
         XCTAssertFalse(disabledNames.contains("search_web"))
         XCTAssertFalse(disabledNames.contains("scrape_web"))
-    }
-
-    func testNovelDiscussionSearchExecutorsReuseTheConfiguredChatTransport() async throws {
-        let store = makeSharedSettings(enableWebSearch: true)
-        let selectedService = store.snapshot.searchServices[Int(store.snapshot.searchServiceSelected)]
-        store.restoreSnapshot(
-            IosSettingsMutations.shared.setSearchServiceEnabled(
-                settings: store.snapshot,
-                id: selectedService.id.description(),
-                enabled: false
-            )
-        )
-        store.setSearchGoogleWebViewFallbackEnabled(false)
-        let transport = MockSearchTransport(responses: [], hostResponses: [
-            "www.bing.com": .html(IOSSearchExecutorTests.bingHTML(url: "https://example.com/history", title: "History")),
-        ])
-        let runtime = ChatToolRuntime(
-            settingsStore: SettingsStore(),
-            sharedSettings: store,
-            localToolExecutor: nil,
-            searchTransport: transport,
-            mcpManager: IOSMcpManager(serverProvider: { [] })
-        )
-
-        let permission = IOSExecutionPolicySnapshot(
-            capabilityPolicies: [IOSSearchToolPermission.capabilityId: IOSAgentPermissionPolicy.autoApprove.rawValue],
-            globalAutoApproveEnabled: false, highRiskAutoApproveEnabled: false,
-            execJavaScriptEnabled: false, webSearchEnabled: true
-        )
-        let executors = IOSExecutionPolicyContext.$snapshot.withValue(permission) {
-            runtime.novelDiscussionToolExecutors()
-        }
-        XCTAssertEqual(Set(executors.keys), IOSSearchExecutor.supportedToolNames.union(["ask_user"]))
-        let executor = UncheckedToolExecutorBox(try XCTUnwrap(executors["search_web"]))
-        let outcome = await executor.execute(
-            name: "search_web",
-            arguments: #"{"query":"唐代史料","max_results":1}"#,
-            isUserInitiated: false
-        )
-
-        guard case .filled(let output) = outcome else {
-            return XCTFail("Expected a filled search result.")
-        }
-        XCTAssertTrue(output.contains("History"))
-        XCTAssertTrue(transport.requests.contains { $0.url?.host == "www.bing.com" })
-    }
-
-    func testNovelDiscussionSearchExecutorsFollowTheGlobalSearchSwitch() {
-        let store = makeSharedSettings(enableWebSearch: false)
-        let runtime = ChatToolRuntime(
-            settingsStore: SettingsStore(),
-            sharedSettings: store,
-            localToolExecutor: nil,
-            searchTransport: MockSearchTransport(responses: []),
-            mcpManager: IOSMcpManager(serverProvider: { [] })
-        )
-
-        XCTAssertEqual(Set(runtime.novelDiscussionToolExecutors().keys), ["ask_user"])
     }
 
     private func makeSharedSettings(enableWebSearch: Bool) -> IOSSharedSettingsStore {

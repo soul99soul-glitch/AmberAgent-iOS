@@ -366,6 +366,15 @@ struct ChatActivityIslandView: View {
                 .fixedSize(horizontal: true, vertical: false)
                 .background { glowUnderlay }
                 .modifier(ChatActivityIslandGlass())
+                .background {
+                    #if DEBUG
+                    if ChatTopBarLayout.onCapsuleFrameForTesting != nil {
+                        Color.clear.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                            ChatTopBarLayout.onCapsuleFrameForTesting?($0, state.title)
+                        }
+                    }
+                    #endif
+                }
                 .scaleEffect(x: reduceMotion ? 1 : capsuleScale, y: 1)
                 .animation(
                     reduceMotion ? nil : .easeInOut(duration: 0.22),
@@ -378,6 +387,15 @@ struct ChatActivityIslandView: View {
             // Layer 1 (Foreground): Fixed Top Avatar Anchor — rendered in front of the status capsule with
             // an 8pt bottom intrusion, locked to top-center of `maxWidth` so it never shifts on width changes.
             avatarMedallionView
+                .background {
+                    #if DEBUG
+                    if ChatTopBarLayout.onAvatarFrameForTesting != nil {
+                        Color.clear.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                            ChatTopBarLayout.onAvatarFrameForTesting?($0)
+                        }
+                    }
+                    #endif
+                }
                 .frame(width: ChatTopBarLayout.avatarDiameter, height: ChatTopBarLayout.avatarDiameter)
                 .shadow(color: .black.opacity(0.10), radius: 3.5, x: 0, y: 1.5)
                 .background {

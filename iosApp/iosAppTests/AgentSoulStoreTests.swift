@@ -254,10 +254,10 @@ final class AgentSoulStoreTests: XCTestCase {
 
         let isolatedConvUuid = KotlinUuid.companion.random()
         let isolatedHub = AmberHubItem(
-            id: "hub-isolated-novel-test",
-            title: "长篇小说",
+            id: "hub-isolated-research-test",
+            title: "深度研究",
             thesis: "独立世界观",
-            template: .novel,
+            template: .research,
             memoryPolicy: .hubIsolated,
             conversationIds: [isolatedConvUuid.toHexDashString()]
         )

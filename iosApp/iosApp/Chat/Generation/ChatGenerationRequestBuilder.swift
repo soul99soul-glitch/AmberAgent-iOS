@@ -481,12 +481,14 @@ extension ChatViewModel {
             names: Array(IOSPluginToolCatalog.toolNames).sorted()
         ))
         // Apple device capabilities are default-deferred. They enter the full
-        // bridge catalog so tool_search can expose them only when relevant.
+        // bridge catalog so tool_search can expose them only when relevant,
+        // excluding capabilities disabled by policy or missing required entitlements.
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
-            names: Array(IOSAppleAgentToolCatalog.toolNames).sorted()
+            names: enabledModelToolNames(IOSAppleAgentToolCatalog.toolNames)
         ))
         toolDeclarations.append(contentsOf: IOSWakeToolCatalog.declarations)
         toolDeclarations.append(contentsOf: IOSShortcutAuthoringToolCatalog.declarations)
+        toolDeclarations.append(IOSPhoneControlToolCatalog.preflightDeclaration)
         if includesPhoneTools {
             toolDeclarations.append(contentsOf: IOSPhoneControlToolCatalog.declarations)
         }
@@ -594,6 +596,14 @@ extension ChatViewModel {
         if includesPhoneTools {
             exposureBridge.exposeToolNames(names: Array(IOSPhoneControlToolCatalog.toolNames).sorted())
         }
+        let availableToolNames = Set(toolDeclarations.map(\.name))
+        let passthroughNames = Self.firstRoundPassthroughToolNames(
+            for: messages,
+            availableToolNames: availableToolNames
+        )
+        if !passthroughNames.isEmpty {
+            exposureBridge.exposeToolNames(names: passthroughNames)
+        }
         exposureBridge.restoreExecutedTools(tools: recentToolsForExposure(in: messages))
         if let provider = makeProviderSetting(),
            PromptTranscriptCapabilities.companion.resolve(setting: provider, model: model).toolAdditions {
@@ -620,6 +630,71 @@ extension ChatViewModel {
 
     func currentToolDeclarationNames() -> [String] {
         makeTextGenerationParams().tools.map(\.name)
+    }
+
+    static let maxFirstRoundPassthroughTools = 6
+
+    /// Picks up to 6 intent-matched tools from the already capability- and
+    /// entitlement-filtered declaration catalog so Round 0 avoids unnecessary
+    /// `tool_search` hops while keeping approvals untouched.
+    static func firstRoundPassthroughToolNames(
+        for messages: [UIMessage],
+        availableToolNames: Set<String>
+    ) -> [String] {
+        let rawPrompt = messages
+            .last(where: { $0.role == MessageRole.user })?
+            .toText()
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !rawPrompt.isEmpty else { return [] }
+        let lower = rawPrompt.lowercased()
+
+        let intentBuckets: [(keywords: [String], tools: [String])] = [
+            (["日程", "日历", "会议", "约会", "安排", "calendar", "schedule", "meeting", "event"],
+             [IOSAppleAgentToolCatalog.calendarEventsList,
+              IOSAppleAgentToolCatalog.calendarEventCreate,
+              IOSAppleAgentToolCatalog.calendarEventUpdate]),
+            (["提醒", "待办", "reminder", "todo", "task"],
+             [IOSAppleAgentToolCatalog.remindersList,
+              IOSAppleAgentToolCatalog.reminderCreate,
+              IOSAppleAgentToolCatalog.reminderComplete]),
+            (["天气", "温度", "降雨", "预报", "weather", "forecast"],
+             [IOSWeatherToolCatalog.toolName]),
+            (["健康", "步数", "心率", "睡眠", "运动", "锻炼", "health", "steps", "sleep", "workout"],
+             [IOSHealthAgentToolCatalog.toolName,
+              IOSAppleAgentToolCatalog.workoutPlanPreview]),
+            (["通知", "闹钟", "notification", "alarm"],
+             [IOSAppleAgentToolCatalog.notificationSchedule,
+              IOSAppleAgentToolCatalog.alarmSchedule,
+              IOSAppleAgentToolCatalog.alarmsList]),
+            (["手机控制", "点手机", "操作手机", "自动点击", "phone control", "phone automation"],
+             [IOSPhoneControlToolCatalog.preflightToolName]),
+            (["工作区", "文件", "保存文档", "workspace", "artifact"],
+             ["workspace_list", "workspace_read", "workspace_search"]),
+            (["快捷指令", "shortcut"],
+             [IOSShortcutAuthoringToolCatalog.compose]),
+        ]
+
+        let matchedBuckets = intentBuckets
+            .filter { bucket in bucket.keywords.contains { lower.contains($0) } }
+            .map { $0.tools.filter { availableToolNames.contains($0) } }
+            .filter { !$0.isEmpty }
+        guard !matchedBuckets.isEmpty else { return [] }
+
+        var selected: [String] = []
+        var seen: Set<String> = []
+        let maxDepth = matchedBuckets.map(\.count).max() ?? 0
+        for depth in 0..<maxDepth {
+            for bucketTools in matchedBuckets where depth < bucketTools.count {
+                let toolName = bucketTools[depth]
+                if seen.insert(toolName).inserted {
+                    selected.append(toolName)
+                    if selected.count >= maxFirstRoundPassthroughTools {
+                        return selected
+                    }
+                }
+            }
+        }
+        return selected
     }
 
     private func workspaceToolNamesForCurrentTurn() -> [String] {
@@ -802,12 +877,22 @@ extension ChatViewModel {
         return localToolExecutor.permissionPolicy(capabilityId: capabilityId) != .disabled
     }
 
-    private func enabledModelToolNames(_ names: Set<String>) -> [String] {
-        guard let localToolExecutor else { return Array(names).sorted() }
-        return names.filter { toolName in
-            guard let capability = IOSCapabilityRegistry.capabilities.first(where: { $0.modelToolNames.contains(toolName) }) else {
+    func enabledModelToolNames(
+        _ names: Set<String>,
+        bundleIdentifier: String? = Bundle.main.bundleIdentifier,
+        infoDictionary: [String: Any]? = Bundle.main.infoDictionary
+    ) -> [String] {
+        names.filter { toolName in
+            guard let capability = IOSCapabilityRegistry.capabilities.first(where: { $0.modelToolNames.contains(toolName) }),
+                  capability.status != .unsupported,
+                  IOSSystemPermissionCoordinator.missingEntitlements(
+                      for: capability,
+                      bundleIdentifier: bundleIdentifier,
+                      infoDictionary: infoDictionary
+                  ).isEmpty else {
                 return false
             }
+            guard let localToolExecutor else { return true }
             return localToolExecutor.permissionPolicy(capabilityId: capability.id) != .disabled
         }
         .sorted()

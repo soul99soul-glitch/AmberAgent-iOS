@@ -81,10 +81,12 @@ enum ChatToolApprovalRequestBuilder {
             action: preview.action,
             target: preview.target,
             isWrite: preview.isWrite,
-            reason: reason
+            reason: reason,
+            diffPreview: preview.diffPreview
         )
     }
 
+    @MainActor
     static func memory(
         for toolCall: UIMessagePart.Tool,
         reason: String
@@ -98,6 +100,8 @@ enum ChatToolApprovalRequestBuilder {
             scope: preview.scope,
             kind: preview.kind,
             contentPreview: preview.contentPreview,
+            oldContentPreview: preview.oldContentPreview,
+            diffPreview: preview.diffPreview,
             targetId: preview.targetId,
             expectedUpdatedAt: preview.expectedUpdatedAt,
             reason: reason
@@ -277,6 +281,7 @@ enum ChatToolApprovalRequestBuilder {
         )
     }
 
+    @MainActor
     static func appleCapability(
         for toolCall: UIMessagePart.Tool,
         reason: String
@@ -313,7 +318,14 @@ enum ChatToolApprovalRequestBuilder {
         )
     }
 
+    @MainActor
     private static func appleArgumentsPreview(toolName: String, arguments: [String: Any]) -> String {
+        if let comparison = IOSEventKitAgentToolExecutor.approvalComparisonPreview(
+            toolName: toolName,
+            arguments: arguments
+        ) {
+            return comparison
+        }
         if IOSAppleAgentToolCatalog.workoutToolNames.contains(toolName) {
             return IOSWorkoutAgentToolExecutor.approvalPreview(arguments: arguments)
         }

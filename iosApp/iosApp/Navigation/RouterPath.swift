@@ -4,6 +4,8 @@ import SwiftUI
 @Observable
 final class RouterPath {
     private var storedPath: [Route] = []
+    /// An explicit automation record open must reveal the conversation, even from Tasks / Hubs.
+    var phoneAutomationChatPresentationRevision = 0
     /// 宽屏（iPhone Duo 展开 / iPad）双栏时，会话侧栏是否显示。
     var showsSidebar = true
 
@@ -118,6 +120,7 @@ enum Route: Hashable {
     case pluginDetail(id: String)
     case execution
     case phoneControl
+    case phoneAutomations
     case phoneSavedTasks
     case executionTask(id: String)
     case providers
@@ -127,15 +130,9 @@ enum Route: Hashable {
     case searchServices
     case searchProvider
     case ttsSettings
-    case board
-    case boardSettings
-    case deepReadTask(id: String)
     case miniApps
     case miniAppSettings
     case miniAppRunner(appId: String)
-    case novelCreation
-    case novelCreationSettings
-    case novelProject(id: NovelProjectID)
     case webMount
     case webMountSite(site: WebMountSiteRoute)
     case workspace

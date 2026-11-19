@@ -22,6 +22,7 @@ struct ChatView: View {
     @State private var personalContextPhotoItems: [PhotosPickerItem] = []
     @State private var personalContextPhotoLoadID: UUID?
     @State private var artifactPinHandler = ChatArtifactPinHandler()
+    @State private var toolUndoHandler = ChatToolUndoHandler()
     @Environment(RouterPath.self)  var router
     private var followGeneration: Bool { IOSChatRenderPreferences.shared.followGeneration }
     @State var viewportState = ChatViewportState()
@@ -457,7 +458,9 @@ struct ChatView: View {
 
     var body: some View {
         let _ = ChatRenderProbe.record("chat-view-body")
+        let _ = { toolUndoHandler.viewModel = viewModel }()
         chatContent
+            .environment(\.chatToolUndoHandler, toolUndoHandler)
             .environment(\.amberIsUnderlyingSheetPresented, isAnyFloatingSheetPresented)
         // Measure the parent's proposal, before the bottom inset can grow to its ideal height.
         .onGeometryChange(for: ChatGeometrySample.self) { proxy in
@@ -518,6 +521,9 @@ struct ChatView: View {
         // 不受同会话落盘（生成中 tool start/result/complete）影响。
         // 这样落盘不再触发重灌历史 + 重建 ScrollView，消除抖动和「上滑看历史被甩回锚点」。
         // 消息内容同步由 generation 链路的 setMessages 负责，不靠这里。
+        .onChange(of: router.phoneAutomationChatPresentationRevision) { _, _ in
+            composerState.activeDuetTab = .chat
+        }
         .onChange(of: conversationStore.conversationSwitchedRevision) { _, _ in
             handleConversationSwitch()
         }
@@ -557,6 +563,10 @@ struct ChatView: View {
             handleSharedSettingsRevisionChange()
         }
         .onChange(of: viewModel.isGenerationActive) { _, _ in
+            refreshChatListSummary()
+            syncIslandPresentation()
+        }
+        .onChange(of: viewModel.isLoading) { _, _ in
             refreshChatListSummary()
             syncIslandPresentation()
         }

@@ -1,9 +1,41 @@
+import Shared
 import SwiftUI
 import XCTest
 @testable import iosApp
 
 @MainActor
 final class IOSPhoneControlSavedTasksVisualTests: XCTestCase {
+    func testAutomationLinesAtNormalAndAccessibilitySizes() async throws {
+        let fixture = try SavedTasksStoreFixture()
+        defer { fixture.tearDown() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = IOSConversationStore(baseDirectory: root)
+        await store.bootstrap()
+        let id = try XCTUnwrap(store.currentConversation?.id.toHexDashString())
+        let index = IOSPhoneAutomationLines(defaults: fixture.defaults)
+        XCTAssertTrue(index.bindSavedTask(actionID: "visual", title: "合成手机任务 · 连续运行与结果记录", conversationID: id))
+        for round in 1...2 { index.recordRun(conversationID: id, runID: "visual-\(round)", now: Date(timeIntervalSince1970: Double(1_790_000_000 + round * 86400))) }
+        for (suffix, width, type, style) in [
+            ("normal-dark", 393.0, DynamicTypeSize.large, UIUserInterfaceStyle.dark),
+            ("accessibility-light", 320.0, .accessibility3, .light)
+        ] {
+            let inbox = IOSDeepLinkInbox()
+            let router = RouterPath()
+            var submitted: [URL] = []
+            inbox.installHandler { submitted.append($0) }
+            try await render(NavigationStack { IOSPhoneAutomationLinesView(conversationStore: store, lines: index, inbox: inbox) }
+                .environment(router), name: "phone-automation-lines-\(suffix)", width: width,
+                type: type, style: style, interaction: { host in
+                    try await host.waitForElement(label: "运行记录 · 2 次")
+                    try await host.activate(label: "运行记录 · 2 次")
+                    try await host.activate(label: "进入对话继续")
+                    XCTAssertEqual(submitted.compactMap { IOSAppDeepLink.parse($0) }, [.conversation(id: id)])
+                    XCTAssertEqual(router.phoneAutomationChatPresentationRevision, 1)
+                })
+        }
+    }
+
     func testValidationErrorsAreVisibleWhenActionsAreActivatedFromBottomOfAccessibilityForm() async throws {
         let fixture = try SavedTasksStoreFixture()
         defer { fixture.tearDown() }

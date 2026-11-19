@@ -24,6 +24,9 @@ extension ChatViewModel {
         )
         state.steerQueue.append(entry)
         persistSteerQueue()
+        if consumesComposer {
+            ChatUserSendEntranceGate.arm("local-user:\(entry.messageId)")
+        }
         projectQueuedEntry(entry, receipt: "queued", state: state, reason: .userAppend)
         Task { @MainActor [weak self] in
             guard state.pendingAssistantRegeneration == nil else { return }

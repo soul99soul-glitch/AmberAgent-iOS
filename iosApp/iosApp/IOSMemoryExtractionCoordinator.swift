@@ -3,12 +3,57 @@ import Observation
 import UIKit
 @preconcurrency import Shared
 
+enum IOSExplicitMemoryIntentDetector {
+    private static let chineseDirectives = [
+        "记住", "请记住", "别忘了", "不要忘了",
+        "以后不要", "以后都用", "以后请", "不要再",
+        "更正一下", "忘掉刚才", "记下来", "帮我记"
+    ]
+
+    private static let englishDirectives = [
+        "remember that", "please remember", "from now on",
+        "don't ever", "do not ever", "never forget", "don't forget"
+    ]
+
+    static func containsExplicitDirective(_ rawText: String) -> Bool {
+        let sanitized = sanitizedForIntentDetection(rawText)
+        guard !sanitized.isEmpty else { return false }
+        if chineseDirectives.contains(where: { sanitized.contains($0) }) {
+            return true
+        }
+        let lowercased = sanitized.lowercased()
+        return englishDirectives.contains(where: { lowercased.contains($0) })
+    }
+
+    static func sanitizedForIntentDetection(_ rawText: String) -> String {
+        var text = rawText
+        let patterns = [
+            #"(?s)```.*?```"#,
+            #"(?s)~~~.*?~~~"#,
+            #"`[^`\n]+`"#,
+            #"(?m)^\s*>.*$"#,
+            #""[^"\n]*""#,
+            #"“[^”\n]*”"#,
+            #"「[^」\n]*」"#,
+            #"『[^』\n]*』"#
+        ]
+        for pattern in patterns {
+            if let regex = try? NSRegularExpression(pattern: pattern) {
+                let range = NSRange(text.startIndex..., in: text)
+                text = regex.stringByReplacingMatches(in: text, range: range, withTemplate: " ")
+            }
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 /// Automatic extraction owns a small pending list of source IDs; conversation text
 /// stays in the conversation store and memories use the existing atomic writer.
 @Observable
 @MainActor
 final class IOSMemoryExtractionCoordinator {
     static let shared = IOSMemoryExtractionCoordinator()
+    static let maxExplicitDailyRuns = 10
 
     private(set) var isRunning = false
     private(set) var statusMessage: String
@@ -21,6 +66,7 @@ final class IOSMemoryExtractionCoordinator {
     private let environment: () -> (foreground: Bool, idle: Bool, charging: Bool)
     private let now: () -> Date
     private var pending: [String: [String]]
+    private var explicitPending: [String: [String]]
     /// Facts and experiences use separate atomic files. Keep only the sanitized
     /// unfinished experience write so retry never replays committed fact actions.
     private struct ExperienceWrite: Codable {
@@ -36,8 +82,10 @@ final class IOSMemoryExtractionCoordinator {
     private weak var conversations: IOSConversationStore?
     private var writesEnabled: () -> Bool = { false }
     private static let pendingKey = "app.amber.ios.memoryExtraction.pending.v1"
+    private static let explicitPendingKey = "app.amber.ios.memoryExtraction.explicitPending.v1"
     private static let statusKey = "app.amber.ios.memoryExtraction.status.v1"
     private static let budgetKey = "app.amber.ios.memoryExtraction.dailyRuns.v1"
+    private static let explicitBudgetKey = "app.amber.ios.memoryExtraction.explicitDailyRuns.v1"
 
     init(
         defaults: UserDefaults = .standard,
@@ -60,6 +108,7 @@ final class IOSMemoryExtractionCoordinator {
         experienceWrites = defaults.data(forKey: Self.experienceWritesKey)
             .flatMap { try? JSONDecoder().decode([String: ExperienceWrite].self, from: $0) } ?? [:]
         pending = defaults.dictionary(forKey: Self.pendingKey) as? [String: [String]] ?? [:]
+        explicitPending = defaults.dictionary(forKey: Self.explicitPendingKey) as? [String: [String]] ?? [:]
         statusMessage = defaults.string(forKey: Self.statusKey) ?? "聊天结束后自动提炼值得保留的信息。"
     }
 
@@ -73,10 +122,18 @@ final class IOSMemoryExtractionCoordinator {
         self.writesEnabled = writesEnabled
     }
 
-    func enqueue(conversationId: KotlinUuid, baseline: [UIMessage], completed: [UIMessage]) {
+    func enqueue(
+        conversationId: KotlinUuid,
+        baseline: [UIMessage],
+        completed: [UIMessage],
+        hadDirectMemoryToolMutation: Bool = false
+    ) {
         guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId.toHexDashString()),
               let worker = settings?.agentRuntime.memoryWorker,
               worker.enabled, worker.extractionEnabled else { return }
+        if hadDirectMemoryToolMutation || Self.hasSuccessfulDirectMemoryToolMutation(baseline: baseline, completed: completed) {
+            return
+        }
         // Include the initial user turn and user steer messages added during it,
         // without re-extracting the entire older conversation on every completion.
         let baselineIds = Set(baseline.map { $0.id.toHexDashString() })
@@ -84,14 +141,65 @@ final class IOSMemoryExtractionCoordinator {
         let added = completed.filter { $0.role == .user && !baselineIds.contains($0.id.toHexDashString()) }
         let key = conversationId.toHexDashString()
         var ids = pending[key] ?? []
+        var explicitIds = explicitPending[key] ?? []
+        var addedAny = false
         for message in sources + added {
+            let text = Self.userText(message)
+            guard !text.isEmpty else { continue }
             let id = message.id.toHexDashString()
-            if !Self.userText(message).isEmpty, !ids.contains(id) { ids.append(id) }
+            if !ids.contains(id) {
+                ids.append(id)
+                addedAny = true
+            }
+            if IOSExplicitMemoryIntentDetector.containsExplicitDirective(text), !explicitIds.contains(id) {
+                explicitIds.append(id)
+                addedAny = true
+            }
         }
-        guard !ids.isEmpty else { return }
+        guard addedAny, !ids.isEmpty else { return }
         pending[key] = ids
         defaults.set(pending, forKey: Self.pendingKey)
+        if explicitIds.isEmpty {
+            explicitPending.removeValue(forKey: key)
+        } else {
+            explicitPending[key] = explicitIds
+        }
+        defaults.set(explicitPending, forKey: Self.explicitPendingKey)
         resume()
+    }
+
+    static func hasSuccessfulDirectMemoryToolMutation(baseline: [UIMessage], completed: [UIMessage]) -> Bool {
+        let baselineCompletedToolCallIds = Set(
+            baseline.flatMap(\.parts).compactMap { part -> String? in
+                guard let tool = part as? UIMessagePart.Tool,
+                      tool.toolName == "memory_tool",
+                      !tool.output.isEmpty else { return nil }
+                return tool.toolCallId
+            }
+        )
+        for message in completed where message.role == .assistant {
+            for part in message.parts {
+                guard let tool = part as? UIMessagePart.Tool,
+                      tool.toolName == "memory_tool",
+                      !baselineCompletedToolCallIds.contains(tool.toolCallId),
+                      IOSMemoryToolExecutor.requiresWriteApproval(input: tool.input),
+                      isSuccessfulMemoryToolOutput(tool.output) else { continue }
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func isSuccessfulMemoryToolOutput(_ parts: [UIMessagePart]) -> Bool {
+        let text = parts.compactMap { ($0 as? UIMessagePart.Text)?.text }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty,
+              let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
+        }
+        return object["ok"] as? Bool == true
     }
 
     func resume() {
@@ -103,6 +211,78 @@ final class IOSMemoryExtractionCoordinator {
         resume()
     }
 
+    private struct PendingSelection {
+        let conversationKey: String
+        let sourceIds: [String]
+        let isFastTrack: Bool
+    }
+
+    private func dailyRunCount(forKey key: String, day: TimeInterval) -> Int {
+        let budget = defaults.dictionary(forKey: key) ?? [:]
+        return (budget["day"] as? Double) == day ? (budget["count"] as? Int ?? 0) : 0
+    }
+
+    private func nextWorkSelection(
+        runOnlyOnIdle: Bool,
+        runOnlyOnCharging: Bool,
+        maxDailyRuns: Int,
+        state: (foreground: Bool, idle: Bool, charging: Bool),
+        runs: Int,
+        explicitRuns: Int,
+        failedThisPass: Set<String>
+    ) -> PendingSelection? {
+        if explicitRuns < Self.maxExplicitDailyRuns {
+            for conversationKey in pending.keys.sorted() where !failedThisPass.contains(conversationKey) {
+                guard experienceWrites[conversationKey] == nil,
+                      let queuedIds = pending[conversationKey],
+                      let explicitIds = explicitPending[conversationKey],
+                      !explicitIds.isEmpty else { continue }
+                let explicitSet = Set(explicitIds)
+                let matchingExplicit = queuedIds.filter { explicitSet.contains($0) }
+                if !matchingExplicit.isEmpty {
+                    return PendingSelection(
+                        conversationKey: conversationKey,
+                        sourceIds: Array(matchingExplicit.prefix(6)),
+                        isFastTrack: true
+                    )
+                }
+            }
+        }
+
+        let eligibleKeys = pending.keys.sorted().filter { !failedThisPass.contains($0) }
+        guard !eligibleKeys.isEmpty else { return nil }
+
+        guard !runOnlyOnIdle || state.idle else {
+            report("等待当前任务结束后提炼记忆。")
+            return nil
+        }
+        guard !runOnlyOnCharging || state.charging else {
+            report("等待充电后提炼记忆。")
+            return nil
+        }
+        if let unfinishedKey = eligibleKeys.first(where: { experienceWrites[$0] != nil }),
+           let queuedIds = pending[unfinishedKey] {
+            return PendingSelection(
+                conversationKey: unfinishedKey,
+                sourceIds: Array(queuedIds.prefix(6)),
+                isFastTrack: false
+            )
+        }
+        guard runs < maxDailyRuns else {
+            report("已达到今日自动提炼次数，明天继续。")
+            return nil
+        }
+        guard let nextKey = eligibleKeys.first,
+              let queuedIds = pending[nextKey] else {
+            return nil
+        }
+        return PendingSelection(
+            conversationKey: nextKey,
+            sourceIds: Array(queuedIds.prefix(6)),
+            isFastTrack: false
+        )
+    }
+
     func processPending() async {
         guard !isRunning, !waitingForRetry, let settings, let conversations else { return }
         isRunning = true
@@ -111,7 +291,7 @@ final class IOSMemoryExtractionCoordinator {
         // A deterministically-failing conversation keeps its ids for an
         // explicit retry but must not block the rest of the queue this pass.
         var failedThisPass: Set<String> = []
-        while let (conversationKey, queuedIds) = pending.first(where: { !failedThisPass.contains($0.key) }) {
+        while !pending.isEmpty {
             let snapshot = settings.snapshot
             let worker = snapshot.agentRuntime.memoryWorker
             guard worker.enabled, worker.extractionEnabled else { report("自动积累记忆已关闭。"); return }
@@ -121,14 +301,23 @@ final class IOSMemoryExtractionCoordinator {
             }
             let state = environment()
             guard state.foreground else { report("等待回到 App 后提炼记忆。"); return }
-            guard !worker.runOnlyOnIdle || state.idle else { report("等待当前任务结束后提炼记忆。"); return }
-            guard !worker.runOnlyOnCharging || state.charging else { report("等待充电后提炼记忆。"); return }
             let day = Calendar.current.startOfDay(for: now()).timeIntervalSince1970
-            let budget = defaults.dictionary(forKey: Self.budgetKey) ?? [:]
-            let runs = (budget["day"] as? Double) == day ? (budget["count"] as? Int ?? 0) : 0
-            guard experienceWrites[conversationKey] != nil || runs < Int(worker.maxDailyRuns) else { report("已达到今日自动提炼次数，明天继续。"); return }
+            let runs = dailyRunCount(forKey: Self.budgetKey, day: day)
+            let explicitRuns = dailyRunCount(forKey: Self.explicitBudgetKey, day: day)
+            guard let selection = nextWorkSelection(
+                runOnlyOnIdle: worker.runOnlyOnIdle,
+                runOnlyOnCharging: worker.runOnlyOnCharging,
+                maxDailyRuns: Int(worker.maxDailyRuns),
+                state: state,
+                runs: runs,
+                explicitRuns: explicitRuns,
+                failedThisPass: failedThisPass
+            ) else {
+                return
+            }
 
-            let sourceIds = Array(queuedIds.prefix(6))
+            let conversationKey = selection.conversationKey
+            let sourceIds = selection.sourceIds
             guard UUID(uuidString: conversationKey) != nil else {
                 removePending(conversationKey, ids: sourceIds)
                 continue
@@ -172,7 +361,11 @@ final class IOSMemoryExtractionCoordinator {
                     assistantContext: assistantContext,
                     related: related, conversationId: conversationKey, taskEvidence: taskEvidence
                 )
-                defaults.set(["day": day, "count": runs + 1], forKey: Self.budgetKey)
+                if selection.isFastTrack {
+                    defaults.set(["day": day, "count": explicitRuns + 1], forKey: Self.explicitBudgetKey)
+                } else {
+                    defaults.set(["day": day, "count": runs + 1], forKey: Self.budgetKey)
+                }
                 let text = try await Self.generate(request, timeoutMillis: worker.timeoutMs)
                 let output = try Self.decode(text)
 
@@ -187,6 +380,10 @@ final class IOSMemoryExtractionCoordinator {
                     return
                 }
                 let runtime = settings.agentRuntime
+                guard environment().foreground else {
+                    report("等待回到 App 后写入记忆。")
+                    return
+                }
                 guard runtime.memoryWorker.enabled, runtime.memoryWorker.extractionEnabled, writesEnabled() else {
                     report("自动记忆或写入权限已关闭，本次未写入。")
                     return
@@ -236,9 +433,13 @@ final class IOSMemoryExtractionCoordinator {
             // replay an already completed experience write after a restart.
             defaults.set(try? JSONEncoder().encode(experienceWrites), forKey: Self.experienceWritesKey)
         }
-        let remaining = (pending[key] ?? []).filter { !ids.contains($0) }
+        let idSet = Set(ids)
+        let remaining = (pending[key] ?? []).filter { !idSet.contains($0) }
         pending[key] = remaining.isEmpty ? nil : remaining
         defaults.set(pending, forKey: Self.pendingKey)
+        let remainingExplicit = (explicitPending[key] ?? []).filter { !idSet.contains($0) }
+        explicitPending[key] = remainingExplicit.isEmpty ? nil : remainingExplicit
+        defaults.set(explicitPending, forKey: Self.explicitPendingKey)
     }
 
     private func report(_ message: String) {
@@ -328,7 +529,7 @@ final class IOSMemoryExtractionCoordinator {
     }
 
     private static func decode(_ text: String) throws -> Output {
-        guard let json = IOSDeepReadDraftGenerator.extractJSONObject(text),
+        guard let json = IOSJSONObjectExtractor.extractJSONObject(text),
               let result = try? JSONDecoder().decode(Output.self, from: Data(json.utf8)),
               result.memories.count <= 3 else {
             throw Failure("模型没有返回有效的记忆提炼结果。")

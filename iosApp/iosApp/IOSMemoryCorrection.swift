@@ -78,7 +78,7 @@ enum IOSMemoryCorrection {
 
     static func proposals(from text: String) -> [IOSMemoryCorrectionProposal] {
         struct Output: Decodable { let corrections: [IOSMemoryCorrectionProposal] }
-        guard let json = IOSDeepReadDraftGenerator.extractJSONObject(text),
+        guard let json = IOSJSONObjectExtractor.extractJSONObject(text),
               let output = try? JSONDecoder().decode(Output.self, from: Data(json.utf8)) else { return [] }
         return Array(output.corrections.prefix(8))
     }

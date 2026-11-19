@@ -812,50 +812,6 @@ extension IOSParityRedLightTests {
         XCTAssertEqual(reloadedProvider?.apiKey, secret)
     }
 
-    func test_releaseSensitiveLogsAreDebugGuarded() throws {
-        let testDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        let appDirectory = testDirectory.deletingLastPathComponent().appendingPathComponent("iosApp")
-        let sourcesAndMarkers: [(String, [String])] = [
-            ("HotlistCore/IOSHotListTitleTranslator.swift", [
-                "[AmberTranslate] translate()",
-                "[AmberTranslate] generateText threw:",
-                "[AmberTranslate] llm chars="
-            ]),
-            ("HotlistCore/IOSHotListDashboardStore.swift", [
-                "[AmberTranslate] apply pending="
-            ]),
-            ("DeepReadCore/IOSDeepReadDraftGenerator.swift", [
-                "[AmberDeepRead] sources="
-            ])
-        ]
-        let deepRead = try String(
-            contentsOf: appDirectory.appendingPathComponent("DeepReadCore/DeepReadSourceCollector.swift"),
-            encoding: .utf8
-        )
-
-        for (path, markers) in sourcesAndMarkers {
-            let content = try String(
-                contentsOf: appDirectory.appendingPathComponent(path),
-                encoding: .utf8
-            )
-            for marker in markers {
-                XCTAssertTrue(
-                    Self.source(content, hasDebugGuardAround: marker),
-                    "\(marker) must be wrapped in #if DEBUG before release builds."
-                )
-            }
-        }
-        for marker in [
-            "[AmberDeepRead] topic-search angle failed",
-            "[AmberDeepRead] topic-search angles="
-        ] {
-            XCTAssertTrue(
-                Self.source(deepRead, hasDebugGuardAround: marker),
-                "\(marker) must be wrapped in #if DEBUG before release builds."
-            )
-        }
-    }
-
     func test_iPadMultipleScenesDisabledUntilMultiWindowCoordinatorExists() throws {
         let testDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let appDirectory = testDirectory.deletingLastPathComponent().appendingPathComponent("iosApp")

@@ -341,7 +341,7 @@ enum IOSConversationExporter {
             if entry.imageCount > 0 {
                 body += "<p class=\"meta\">[\(entry.imageCount) 张图片]</p>"
             }
-            body += IOSDeepReadEditorialRenderer.markdownToHTML(entry.text)
+            body += IOSExportMarkdownHTMLRenderer.markdownToHTML(entry.text)
             body += "</div></section>"
         }
         return IOSHTMLPDFRenderer.document(body: body)
@@ -493,5 +493,228 @@ private struct IOSMessageShareCard: View {
         .frame(width: Self.width, alignment: .leading)
         .background(AmberTheme.background)
         .environment(\.colorScheme, .light)
+    }
+}
+
+private enum IOSExportMarkdownHTMLRenderer {
+    nonisolated static func markdownToHTML(_ md: String) -> String {
+        let source = md.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !source.isEmpty else { return "" }
+        guard let data = MarkdownBridge.parse(source),
+              let reader = PackedAstReader(data: data),
+              let root = reader.root() else {
+            return source
+                .components(separatedBy: "\n\n")
+                .map { "<p>" + esc($0.trimmingCharacters(in: .whitespacesAndNewlines)) + "</p>" }
+                .joined()
+        }
+        return root.children.map { blockHTML($0, source: source) }.joined()
+    }
+
+    private static func blockHTML(_ node: PackedAstNode, source: String) -> String {
+        switch node.type {
+        case .paragraph:
+            return "<p>" + inlineHTML(node.children, source: source) + "</p>"
+        case .heading:
+            let level = min(max(node.headingLevel() ?? 2, 1), 6)
+            return "<h\(level)>" + inlineHTML(node.children, source: source) + "</h\(level)>"
+        case .blockquote:
+            return "<blockquote>" + node.children.map { blockHTML($0, source: source) }.joined() + "</blockquote>"
+        case .listUnordered:
+            return "<ul>" + node.children.map { "<li>" + listItemHTML($0, source: source) + "</li>" }.joined() + "</ul>"
+        case .listOrdered:
+            return "<ol>" + node.children.map { "<li>" + listItemHTML($0, source: source) + "</li>" }.joined() + "</ol>"
+        case .listItem:
+            return "<li>" + listItemHTML(node, source: source) + "</li>"
+        case .codeBlock:
+            return "<pre><code>" + esc(codeBlockBody(node, source: source)) + "</code></pre>"
+        case .horizontalRule:
+            return "<hr/>"
+        case .table:
+            return tableHTML(node, source: source)
+        default:
+            if !node.children.isEmpty {
+                return inlineHTML(node.children, source: source)
+            }
+            let raw = sliceSource(source, start: node.startOffset, end: node.endOffset)
+            return raw.isEmpty ? "" : "<p>" + esc(resolveBackslashEscapes(raw)) + "</p>"
+        }
+    }
+
+    private static func listItemHTML(_ node: PackedAstNode, source: String) -> String {
+        let children = node.children.filter { $0.type != .taskListMarker }
+        if !children.isEmpty, children.allSatisfy({ $0.type == .paragraph }) {
+            return children.map { inlineHTML($0.children, source: source) }.joined(separator: "<br/>")
+        }
+        var out = ""
+        var inlineRun: [PackedAstNode] = []
+        func flush() {
+            if !inlineRun.isEmpty { out += inlineHTML(inlineRun, source: source); inlineRun.removeAll() }
+        }
+        for child in children {
+            if child.type.isExportBlockLevelForHTML {
+                flush()
+                out += blockHTML(child, source: source)
+            } else {
+                inlineRun.append(child)
+            }
+        }
+        flush()
+        return out
+    }
+
+    private static func tableHTML(_ node: PackedAstNode, source: String) -> String {
+        var head = ""
+        var body = ""
+        for child in node.children {
+            switch child.type {
+            case .tableHead:
+                let cells = child.children.flatMap { $0.type == .tableRow ? $0.children : [$0] }
+                head += "<tr>" + cells.map { "<th>" + inlineHTML($0.children, source: source) + "</th>" }.joined() + "</tr>"
+            case .tableRow:
+                body += "<tr>" + child.children.map { "<td>" + inlineHTML($0.children, source: source) + "</td>" }.joined() + "</tr>"
+            default:
+                break
+            }
+        }
+        var t = "<table>"
+        if !head.isEmpty { t += "<thead>" + head + "</thead>" }
+        if !body.isEmpty { t += "<tbody>" + body + "</tbody>" }
+        return t + "</table>"
+    }
+
+    private static func inlineHTML(_ nodes: [PackedAstNode], source: String) -> String {
+        var out = ""
+        for node in nodes {
+            switch node.type {
+            case .softBreak:
+                if let last = out.last, !last.isWhitespace, !isCJK(last) { out += " " }
+            case .hardBreak:
+                out += "<br/>"
+            case .text:
+                out += esc(resolveBackslashEscapes(sliceSource(source, start: node.startOffset, end: node.endOffset)))
+            case .emphasis:
+                out += "<em>" + inlineHTML(node.children, source: source) + "</em>"
+            case .strong:
+                out += "<strong>" + inlineHTML(node.children, source: source) + "</strong>"
+            case .strikethrough:
+                out += "<s>" + inlineHTML(node.children, source: source) + "</s>"
+            case .inlineCode:
+                out += "<code>" + esc(stripInlineCodeFence(sliceSource(source, start: node.startOffset, end: node.endOffset))) + "</code>"
+            case .link:
+                let inner = inlineHTML(node.children, source: source)
+                if let href = node.linkHref(), href.hasPrefix("http") {
+                    out += #"<a href=""# + esc(href) + #"">"# + inner + "</a>"
+                } else {
+                    out += inner
+                }
+            case .image:
+                break
+            default:
+                if !node.children.isEmpty {
+                    out += inlineHTML(node.children, source: source)
+                } else {
+                    out += esc(sliceSource(source, start: node.startOffset, end: node.endOffset))
+                }
+            }
+        }
+        return out
+    }
+
+    private static func esc(_ s: String) -> String {
+        var r = ""
+        r.reserveCapacity(s.count)
+        for c in s.unicodeScalars {
+            switch c {
+            case "&": r += "&amp;"
+            case "<": r += "&lt;"
+            case ">": r += "&gt;"
+            case "\"": r += "&quot;"
+            case "'": r += "&#39;"
+            default: r.unicodeScalars.append(c)
+            }
+        }
+        return r
+    }
+
+    private static func stripInlineCodeFence(_ s: String) -> String {
+        var t = Substring(s)
+        while t.first == "`" { t = t.dropFirst() }
+        while t.last == "`" { t = t.dropLast() }
+        if t.count >= 2, t.first == " ", t.last == " ", t.contains(where: { $0 != " " }) {
+            t = t.dropFirst().dropLast()
+        }
+        return String(t)
+    }
+
+    private static func codeBlockBody(_ node: PackedAstNode, source: String) -> String {
+        let body = node.children
+            .map { sliceSource(source, start: $0.startOffset, end: $0.endOffset) }
+            .joined()
+        return body.isEmpty ? sliceSource(source, start: node.startOffset, end: node.endOffset) : body
+    }
+
+    private static func resolveBackslashEscapes(_ s: String) -> String {
+        guard s.contains("\\") else { return s }
+        var out = ""
+        out.reserveCapacity(s.count)
+        let chars = Array(s)
+        var i = 0
+        while i < chars.count {
+            if chars[i] == "\\", i + 1 < chars.count, chars[i + 1].isExportASCIIPunctuation {
+                out.append(chars[i + 1])
+                i += 2
+            } else {
+                out.append(chars[i])
+                i += 1
+            }
+        }
+        return out
+    }
+
+    private static func sliceSource(_ source: String, start: Int, end: Int) -> String {
+        guard start < end else { return "" }
+        guard let s = source.utf8.index(source.utf8.startIndex, offsetBy: start, limitedBy: source.utf8.endIndex),
+              let e = source.utf8.index(source.utf8.startIndex, offsetBy: end, limitedBy: source.utf8.endIndex) else {
+            return ""
+        }
+        return String(source[s..<e])
+    }
+
+    private static func isCJK(_ c: Character) -> Bool {
+        for scalar in c.unicodeScalars {
+            switch scalar.value {
+            case 0x3000...0x303F, 0x3040...0x30FF, 0x3400...0x4DBF,
+                 0x4E00...0x9FFF, 0xF900...0xFAFF, 0xFF00...0xFFEF:
+                return true
+            default:
+                continue
+            }
+        }
+        return false
+    }
+}
+
+private extension Character {
+    var isExportASCIIPunctuation: Bool {
+        guard let a = asciiValue else { return false }
+        switch a {
+        case 0x21...0x2F, 0x3A...0x40, 0x5B...0x60, 0x7B...0x7E: return true
+        default: return false
+        }
+    }
+}
+
+private extension NodeType {
+    var isExportBlockLevelForHTML: Bool {
+        switch self {
+        case .paragraph, .heading, .blockquote, .codeBlock,
+             .listOrdered, .listUnordered, .listItem,
+             .table, .tableHead, .tableRow, .tableCell,
+             .horizontalRule, .htmlBlock, .mathBlock:
+            return true
+        default:
+            return false
+        }
     }
 }

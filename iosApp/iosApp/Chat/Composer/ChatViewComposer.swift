@@ -55,7 +55,17 @@ extension ChatView {
         )
     }
 
+    private var inlineDuetPanelMaximumHeight: CGFloat? {
+        guard collapsesComposerForDuetPanel, composerState.approvalContainerHeight > 0 else { return nil }
+        let topChrome = ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight
+        return max(0, composerState.approvalContainerHeight - topChrome - composerState.subAgentActivityBarHeight)
+    }
+
     var inputBar: some View {
+        ChatComposerContent { inputBarContent }
+    }
+
+    private var inputBarContent: some View {
         let _ = ChatRenderProbe.record("composer-body")
         return VStack(alignment: .leading, spacing: 6) {
             Group {
@@ -258,10 +268,24 @@ extension ChatView {
                             }
                             .padding(.bottom, 64)
                             .frame(maxWidth: .infinity)
-                            .frame(height: panelHeight, alignment: .top)
+                            .frame(maxHeight: panelHeight, alignment: .top)
+                            .background {
+                                #if DEBUG
+                                if ChatTopBarLayout.onPanelFrameForTesting != nil {
+                                    Color.clear.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                                        ChatTopBarLayout.onPanelFrameForTesting?($0)
+                                    }
+                                }
+                                #endif
+                            }
                             .clipShape(panelShape)
                             .background(AmberTheme.background, in: panelShape)
-                            .overlay(panelShape.stroke(AmberTheme.border, lineWidth: 0.8))
+                            .overlay {
+                                // The dock continues into the safe area; its lower edge is open.
+                                panelShape.stroke(AmberTheme.border, lineWidth: 0.8)
+                                    .mask { Rectangle().padding(.bottom, 0.8) }
+                                    .allowsHitTesting(false)
+                            }
                             .modifier(
                                 AmberInlinePanelDragCallbacksHost(
                                     onChanged: handlePanelDragTranslationChanged,
@@ -275,13 +299,13 @@ extension ChatView {
 
                         VStack(spacing: 6) {
                             if isCloudMainDialogueActive,
-                               let targetWorkItemId = MacGatewayStore.shared.selectedCloudDialogueWorkItemId,
+                               MacGatewayStore.shared.selectedCloudDialogueWorkItemId != nil,
                                !collapsesComposerForDuetPanel {
                                 HStack(spacing: 6) {
                                     Image(systemName: "arrow.turn.down.right")
                                         .font(.caption.weight(.bold))
                                         .foregroundStyle(AmberTheme.accent)
-                                    Text("补充云端任务：\(targetWorkItemId)")
+                                    Text(composerState.isSubmittingCloudDialogue ? "正在发送补充…" : "待补充 · 输入后点发送（尚未发送）")
                                         .font(.caption.weight(.semibold))
                                         .foregroundStyle(AmberTheme.foreground)
                                         .lineLimit(1)
@@ -297,6 +321,15 @@ extension ChatView {
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 7)
                                 .background(AmberTheme.surface, in: Capsule(style: .continuous))
+                            }
+
+                            if isCloudMainDialogueActive,
+                               MacGatewayStore.shared.selectedCloudDialogueWorkItemId == nil,
+                               let notice = composerState.cloudDialogueTaskNotice,
+                               !collapsesComposerForDuetPanel {
+                                Text(verbatim: notice)
+                                    .font(.caption)
+                                    .foregroundStyle(AmberTheme.muted)
                             }
 
                             if isCloudMainDialogueActive,
@@ -457,21 +490,22 @@ extension ChatView {
         .padding(.horizontal, collapsesComposerForDuetPanel ? 0 : ChatLayout.contentHorizontalInset)
         .padding(.top, collapsesComposerForDuetPanel ? 0 : (composerState.isSubAgentBarVisible ? 4 : 8))
         .padding(.bottom, collapsesComposerForDuetPanel ? 0 : 16)
+        // Budget the panel and its mode bar together so the bottom inset cannot squeeze the top chrome.
+        .frame(maxHeight: inlineDuetPanelMaximumHeight, alignment: .bottom)
         .background(alignment: .bottom) {
-            if !collapsesComposerForDuetPanel {
-                LinearGradient(
-                    colors: [
-                        AmberTheme.background.opacity(0),
-                        AmberTheme.background.opacity(0.95),
-                        AmberTheme.background
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .padding(.top, -18)
-                .ignoresSafeArea(edges: .bottom)
-                .allowsHitTesting(false)
-            }
+            // Keep the same backdrop through the Home Indicator inset for every tab.
+            LinearGradient(
+                colors: [
+                    AmberTheme.background.opacity(0),
+                    AmberTheme.background.opacity(0.95),
+                    AmberTheme.background
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .padding(.top, -18)
+            .ignoresSafeArea(edges: .bottom)
+            .allowsHitTesting(false)
         }
         // 完成瞬间建议条插入会让 composer 长高一截：旧实现里转场动画只管建议条
         // 自己，时间轴可用高度一帧被吃掉 → 底部锚定内容跳一下。给建议条显隐加
@@ -574,16 +608,29 @@ extension ChatView {
                 _ = await openSubAgentSourceConversation(conversationId)
             }
         case .cloudDialogueWorkItem(let workItemId):
+            if let committed = composerInputController.committedText(), committed != viewModel.inputText {
+                viewModel.inputText = committed
+            }
             if MacGatewayStore.shared.connection != nil {
-                MacGatewayStore.shared.selectedCloudDialogueWorkItemId = workItemId
+                let acceptsInput = MacGatewayStore.shared.prepareCloudDialogueTaskInput(workItemId: workItemId)
                 MacGatewayStore.shared.setCloudMainDialogueSelected(true)
+                composerState.activeDuetTab = .chat
+                composerState.isInputFocused = true
+                composerState.cloudDialogueTaskNotice = acceptsInput ? nil : "原任务已结束；填写说明后发送，将新建云端请求（尚未发送）"
+                if !acceptsInput, viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    viewModel.inputText = "请重新处理「\(task.title)」。"
+                }
             }
             router.navigate(to: .chat)
         case .executionRecord(let recordId):
             router.navigate(to: .executionTask(id: recordId))
         case .macBoard:
             router.navigate(to: .macTasks)
-        case .cloudTaskDetail, .none:
+        case .cloudTaskDetail(let requestId):
+            let resolvedId = MacGatewayStore.shared.cloudTasks.first(where: { $0.requestId == requestId })?.workItemId ?? requestId
+            MacGatewayStore.shared.pendingCloudTaskWorkItemId = resolvedId
+            router.navigate(to: .macTasks)
+        case .none:
             break
         }
     }
@@ -622,6 +669,7 @@ extension ChatView {
             text: text,
             targetWorkItemId: targetWorkItemId
         )
+        ChatUserSendEntranceGate.arm("cloud-user:\(submission.requestId)")
         viewModel.suggestionDraftChanged(text)
 
         Task { @MainActor in
@@ -656,6 +704,7 @@ extension ChatView {
                 store.selectedCloudDialogueWorkItemId = selectedWorkItemId
             }
             if case .success = result {
+                composerState.cloudDialogueTaskNotice = nil
                 viewModel.suggestionMessageSubmitted(text)
                 _ = await store.pollCloudDialogueEvents()
                 viewModel.refreshCloudSuggestions(gateway: store)
@@ -905,6 +954,14 @@ extension ChatView {
         }
         composerState.isInputFocused = true
     }
+}
+
+// Evaluate the composer after the parent page has returned its body. Building both
+// trees on the same call stack exhausts the physical device's main stack in Debug.
+private struct ChatComposerContent<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View { content() }
 }
 
 private struct ChatComposerInputDockRow: View {

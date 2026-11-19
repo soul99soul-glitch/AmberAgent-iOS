@@ -4,8 +4,176 @@ import Testing
 import UIKit
 @testable import iosApp
 
-@Suite("Mac Gateway Cloud Dialogue v1")
+@Suite("Mac Gateway Cloud Dialogue v1", .serialized)
 struct MacGatewayCloudDialogueTests {
+
+    @Test @MainActor func newCloudAcknowledgmentActuallyClaimsEntranceButHistoryDoesNot() async throws {
+        let defaults = try #require(UserDefaults(suiteName: "CloudEntrance-\(UUID().uuidString)"))
+        let store = MacGatewayStore(defaults: defaults)
+        store.isCloudMainDialogueSelected = true
+        let host = UIHostingController(rootView: AmberInlineCloudMainDialogueView(store: store, topInset: 0, onOpenPairingSettings: {})
+            .environment(\.scenePhase, .active))
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene); window.rootViewController = host; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        try await Task.sleep(for: .milliseconds(150))
+        let identifier = UUID().uuidString
+        let history = MacGatewayCloudDialogueEvent(seq: 1, id: "history-\(identifier)", kind: .assistantReply, role: "assistant",
+            text: "合成历史", topicId: "synthetic-topic", workItemId: nil, outcome: nil, soulRevision: nil)
+        store.ingestCloudDialogueEventsPage(.init(items: [history], nextCursor: 1, soulRevision: nil), requestedAfter: 0)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(!ChatLiveEntranceRegistry.hasRevealed("cloud-entry:\(history.id)"))
+        let ack = MacGatewayCloudDialogueEvent(seq: 2, id: "ack:\(identifier)", kind: .assistantReply, role: "assistant",
+            text: "合成承接：我去核对资料。", topicId: "synthetic-topic", workItemId: nil, outcome: nil, soulRevision: nil)
+        store.ingestCloudDialogueEventsPage(.init(items: [ack], nextCursor: 2, soulRevision: nil), requestedAfter: 1)
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(ChatLiveEntranceRegistry.hasRevealed("cloud-entry:\(ack.id)"), "Actual acknowledgment row must enter the shared fade, independently of completion")
+        #expect(store.cloudDialogueEntranceEventIds.isEmpty, "Mounted entrances are consumed once")
+        store.ingestCloudDialogueEventsPage(.init(items: [ack], nextCursor: 2, soulRevision: nil), requestedAfter: 1)
+        #expect(store.cloudDialogueEntranceEventIds.isEmpty)
+    }
+
+    @Test @MainActor func assistantNamesOnlyStartANewVisibleTurn() throws {
+        let defaults = try #require(UserDefaults(suiteName: "CloudNames-\(UUID().uuidString)"))
+        let store = MacGatewayStore(defaults: defaults)
+        func event(_ seq: Int64, _ id: String, _ kind: MacGatewayCloudDialogueEventKind, _ role: String, topic: String = "turn") -> MacGatewayCloudDialogueEvent {
+            .init(seq: seq, id: id, kind: kind, role: role, text: "合成正文 \(id)", topicId: topic,
+                workItemId: nil, outcome: nil, soulRevision: nil)
+        }
+        let events = [event(1, "user", .userMessage, "user"), event(2, "ack", .assistantReply, "assistant"),
+            event(3, "progress", .processEvent, "system"), event(4, "detail", .assistantReply, "assistant"),
+            event(5, "result", .taskResult, "assistant"), event(6, "next-user", .userMessage, "user"),
+            event(7, "next-reply", .assistantReply, "assistant"), event(8, "other-topic", .assistantReply, "assistant", topic: "different")]
+        store.ingestCloudDialogueEventsPage(.init(items: events, nextCursor: 8, soulRevision: nil), requestedAfter: 0)
+        #expect(store.cloudDialogueContinuationEventIds == ["detail", "result"])
+        store.ingestCloudDialogueEventsPage(.init(items: events, nextCursor: 8, soulRevision: nil), requestedAfter: 0)
+        #expect(store.cloudDialogueContinuationEventIds == ["detail", "result"], "History/repeated pages preserve turn boundaries")
+    }
+
+    @Test @MainActor func terminalTaskPreparationAndFollowupDeliveryAreTruthful() async throws {
+        let defaults = try #require(UserDefaults(suiteName: "CloudTaskRecovery-\(UUID().uuidString)"))
+        let store = MacGatewayStore(defaults: defaults)
+        store.cloudDialogueProgressByWorkItem["synthetic-failed"] = .init(workItemId: "synthetic-failed", topicId: "synthetic-topic",
+            statusLine: "超过最大步数仍未完成: 合成承接", processEventCount: 20, lastEventSeq: 4, outcome: .failed)
+        #expect(!store.prepareCloudDialogueTaskInput(workItemId: "synthetic-failed"), "Terminal work cannot accept followups")
+        #expect(store.selectedCloudDialogueWorkItemId == nil)
+        let groups = AmberUnifiedTaskBuilder.buildTasks(gateway: store, subAgentStore: IOSSubAgentActivityStore.shared,
+            hubStore: AmberHubStore(defaults: defaults))
+        let failedItem = try #require(groups.needsAttention.first { $0.id == "cloud-dialogue:synthetic-failed" })
+        #expect(failedItem.actionTitle == "填写重试说明")
+        let action = try #require(failedItem.quickActions.first)
+        #expect(action.kind == .adjustDirection)
+        var opened: [String] = []
+        let panel = AmberDuetTaskCenterCard(gateway: store, onOpenFullTaskBoard: {}, onOpenTask: { opened.append($0.id) })
+        await panel.handleQuickDecision(action, for: failedItem)
+        #expect(opened == [failedItem.id], "Recovery action opens an explicit draft instead of silently sending")
+        #expect(store.cloudDialogueFollowups.isEmpty)
+        #expect(store.cloudDialogueSubmissions.isEmpty)
+        store.cloudDialogueProgressByWorkItem["synthetic-live"] = .init(workItemId: "synthetic-live", topicId: "synthetic-topic",
+            statusLine: "合成搜索中", processEventCount: 1, lastEventSeq: 3, outcome: nil)
+        #expect(store.prepareCloudDialogueTaskInput(workItemId: "synthetic-live"))
+        #expect(store.selectedCloudDialogueWorkItemId == "synthetic-live")
+        var record = MacGatewayCloudDialogueFollowupRecord(requestId: "synthetic-input", eventId: nil, workItemId: "synthetic-live",
+            topicId: nil, text: "合成补充", state: .received, lastError: nil)
+        #expect(record.deliveryStatus(isSending: true) == "发送中…")
+        #expect(record.deliveryStatus(isSending: false) == "发送未确认")
+        record.lastError = "合成网络中断"
+        #expect(record.deliveryStatus(isSending: false).hasPrefix("发送未确认"))
+        record.lastError = nil; record.eventId = "synthetic-receipt"
+        #expect(record.deliveryStatus(isSending: false) == record.state.displayBadgeText)
+        record.state = .consumed
+        #expect(record.isShownAsExecuted)
+    }
+
+    @Test @MainActor func terminalInputRejectionPreservesDraftAndRequiresAnotherExplicitSend() {
+        var composer = ChatComposerLocalState()
+        var draft = "合成补充说明"
+        var target: String? = "synthetic-finished"
+        let attempt = composer.beginCloudDialogueSubmit(text: draft, targetWorkItemId: target)
+        composer.finishCloudDialogueSubmit(generation: attempt.generation, submittedText: draft,
+            submittedTargetWorkItemId: target, submittedFingerprint: attempt.fingerprint,
+            currentInputText: &draft, selectedWorkItemId: &target, result: .failure(MacGatewayError.conflict("task_terminal")))
+        #expect(draft == "合成补充说明")
+        #expect(target == nil)
+        #expect(!composer.isSubmittingCloudDialogue)
+        #expect(composer.cloudDialogueErrorMessage?.contains("未被接收") == true)
+        #expect(composer.cloudDialogueTaskNotice?.contains("再次发送") == true)
+    }
+
+    @Test @MainActor func stepLimitResultDoesNotRepeatAnEarlierExactAcknowledgment() throws {
+        let defaults = try #require(UserDefaults(suiteName: "CloudStepLimit-\(UUID().uuidString)"))
+        let store = MacGatewayStore(defaults: defaults)
+        let ack = MacGatewayCloudDialogueEvent(seq: 1, id: "synthetic-ack", kind: .assistantReply, role: "assistant",
+            text: "合成承接：我去查官方资料。", topicId: "synthetic-topic", workItemId: "synthetic-work", outcome: nil, soulRevision: nil)
+        let failed = MacGatewayCloudDialogueEvent(seq: 2, id: "synthetic-failure", kind: .taskResult, role: "assistant",
+            text: "超过最大步数仍未完成: \(ack.text)", topicId: ack.topicId, workItemId: ack.workItemId, outcome: .failed, soulRevision: nil)
+        store.ingestCloudDialogueEventsPage(.init(items: [ack, failed], nextCursor: 2, soulRevision: nil), requestedAfter: 0)
+        #expect(!store.cloudDialogueDisplayText(for: failed).contains(ack.text))
+        #expect(store.cloudDialogueDisplayText(for: failed).contains("步数上限"))
+        #expect(store.cloudDialogueEvents.first(where: { $0.id == failed.id })?.text == failed.text, "Raw receipt is preserved")
+        var other = failed; other.id = "synthetic-other"; other.workItemId = "different-work"
+        #expect(store.cloudDialogueDisplayText(for: other) == other.text, "Never suppress another task's content")
+    }
+
+    @Test @MainActor func foregroundCloudReplyCompletionHonorsToggleAndDoesNotReplayHistory() async throws {
+        let suite = "CloudCompletion-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let standard = UserDefaults.standard
+        let key = IOSDisplayPreferenceKeys.completionHaptic
+        let previous = standard.object(forKey: key)
+        var events: [AmberHapticEvent] = []
+        var phases: [Double] = []
+        ChatReplyCompletionAnimation.onPhaseForTesting = { phases.append($0) }
+        AmberHaptics.onTriggerForTesting = { events.append($0) }
+        defer {
+            AmberHaptics.onTriggerForTesting = nil
+            ChatReplyCompletionAnimation.onPhaseForTesting = nil
+            if let previous { standard.set(previous, forKey: key) } else { standard.removeObject(forKey: key) }
+        }
+        let store = MacGatewayStore(defaults: defaults)
+        store.isCloudMainDialogueSelected = true
+        let host = UIHostingController(rootView: AmberInlineCloudMainDialogueView(
+            store: store, topInset: 0, onOpenPairingSettings: {})
+            .environment(\.scenePhase, .active))
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previousWindow?.makeKey() }
+        try await Task.sleep(for: .milliseconds(100))
+        standard.set(true, forKey: key)
+        let history = MacGatewayCloudDialogueEvent(seq: 1, id: "history", kind: .taskResult,
+            role: "assistant", text: "合成历史", topicId: "topic", workItemId: "old", outcome: .completed, soulRevision: nil)
+        store.ingestCloudDialogueEventsPage(.init(items: [history], nextCursor: 1, soulRevision: nil), requestedAfter: 0)
+        try await Task.sleep(for: .milliseconds(350))
+        #expect(events.isEmpty && phases.isEmpty, "Initial history never vibrates or fades")
+        for (seq, enabled) in [(Int64(2), false), (Int64(3), true), (Int64(4), true)] {
+            standard.set(enabled, forKey: key)
+            let event = MacGatewayCloudDialogueEvent(seq: seq, id: "reply-\(seq)", kind: .taskResult,
+                role: "assistant", text: "合成完成回复", topicId: "topic", workItemId: "work-\(seq)",
+                outcome: .completed, soulRevision: nil)
+            let page = MacGatewayCloudDialogueEventsPage(items: [event], nextCursor: seq, soulRevision: nil)
+            store.ingestCloudDialogueEventsPage(page, requestedAfter: seq - 1)
+            try await Task.sleep(for: .milliseconds(450))
+            #expect(events.count == (enabled ? Int(seq) - 2 : 0))
+            store.ingestCloudDialogueEventsPage(page, requestedAfter: seq - 1)
+            try await Task.sleep(for: .milliseconds(50))
+            #expect(events.count == (enabled ? Int(seq) - 2 : 0), "Overlapping event pages must not replay feedback")
+            #expect(phases.count == (Int(seq) - 1) * 2, "Only newly completed reply text fades")
+        }
+        for (offset, outcome) in [MacGatewayCloudDialogueOutcome.failed, .cancelled, .blocked].enumerated() {
+            let seq = Int64(5 + offset)
+            let event = MacGatewayCloudDialogueEvent(seq: seq, id: "negative-\(seq)", kind: .taskResult,
+                role: "assistant", text: "合成非成功结果", topicId: "topic", workItemId: "negative", outcome: outcome, soulRevision: nil)
+            store.ingestCloudDialogueEventsPage(.init(items: [event], nextCursor: seq, soulRevision: nil), requestedAfter: seq - 1)
+        }
+        try await Task.sleep(for: .milliseconds(350))
+        #expect(events.count == 2 && phases.count == 6, "Failure, cancellation and blocking are not successful completion")
+    }
 
     @Test @MainActor func standaloneResultNormalizesEveryDisplayConsumerAndPersistence() throws {
         let suite = "SyntheticCloudDisplay.Ingest.\(UUID().uuidString)"
@@ -1400,5 +1568,270 @@ struct MacGatewayCloudDialogueTests {
             contentBottomInWindow <= suggestionFrameInWindow.minY - 4.0,
             "Last cloud message bubble bottom (\(contentBottomInWindow)) must stay above ChatSuggestionStrip top (\(suggestionFrameInWindow.minY))"
         )
+    }
+
+    @Test @MainActor func cloudStatusRowAndOptimisticUserBubblePreserveVerticalStabilityAndSingleSendEntrance() async throws {
+        ChatUserSendEntranceGate.resetForTesting()
+        defer { ChatUserSendEntranceGate.resetForTesting() }
+
+        // 1. Cloud single-line status row stays locked at 30pt with and without action pills across Dynamic Type sizes.
+        for dynamicSize in [DynamicTypeSize.large, .accessibility5] {
+            let thinkingHost = UIHostingController(
+                rootView: AmberCloudTaskProgressRowView(
+                    headline: "正在思考",
+                    isLive: true,
+                    showsActions: false,
+                    animationTimeOverride: 0.2
+                )
+                .environment(\.dynamicTypeSize, dynamicSize)
+                .frame(width: 361, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
+            )
+            let actionHost = UIHostingController(
+                rootView: AmberCloudTaskProgressRowView(
+                    headline: "正在搜索网页 (12s)",
+                    isLive: true,
+                    showsActions: true,
+                    onSupplement: {},
+                    onStop: {},
+                    animationTimeOverride: 0.8
+                )
+                .environment(\.dynamicTypeSize, dynamicSize)
+                .frame(width: 361, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
+            )
+            let settledHost = UIHostingController(
+                rootView: AmberCloudTaskProgressRowView(
+                    headline: "已完成",
+                    isLive: false,
+                    outcome: .completed,
+                    showsActions: false
+                )
+                .environment(\.dynamicTypeSize, dynamicSize)
+                .frame(width: 361, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
+            )
+
+            let h1 = thinkingHost.sizeThatFits(in: CGSize(width: 361, height: 200)).height
+            let h2 = actionHost.sizeThatFits(in: CGSize(width: 361, height: 200)).height
+            let h3 = settledHost.sizeThatFits(in: CGSize(width: 361, height: 200)).height
+            #expect(abs(h1 - 30) <= 0.1)
+            #expect(abs(h2 - 30) <= 0.1)
+            #expect(abs(h3 - 30) <= 0.1)
+        }
+
+        // 2. Optimistic main submission -> received -> merged user_message + live progress keeps identical content height
+        //    and plays entrance motion once via shared requestId key.
+        let suite = "CloudMotionStability-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let store = MacGatewayStore(defaults: defaults)
+        let connection = MacGatewayConnection(
+            gatewayId: "gw-motion",
+            name: "Amber Cloud",
+            addrs: ["cloud.example"],
+            port: 443,
+            fingerprint: "fp-motion",
+            deviceId: "device-motion"
+        )
+        let client = MacGatewayClient(
+            addrs: ["cloud.example"],
+            port: 443,
+            fingerprint: "fp-motion",
+            token: "token-motion",
+            transport: { request, _ in
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+                if request.url?.path.contains("configuration") == true {
+                    return (
+                        Data(#"{"model":{"provider":"openai","modelId":"gpt-test","keyConfigured":true},"soulRevision":1}"#.utf8),
+                        response
+                    )
+                }
+                return (Data(#"{"items":[],"nextCursor":3}"#.utf8), response)
+            }
+        )
+        store.configureForTesting(connection: connection, client: client)
+        store.isCloudMainDialogueSelected = true
+        store.cloudDialogueTransportState = .healthy
+        store.isReachable = true
+
+        let host = UIHostingController(
+            rootView: AmberInlineCloudMainDialogueView(
+                store: store,
+                topInset: 0,
+                onOpenPairingSettings: {}
+            )
+            .environment(\.scenePhase, .active)
+        )
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            store.stopCloudDialoguePolling()
+            window.isHidden = true
+            window.rootViewController = nil
+            previousWindow?.makeKey()
+        }
+
+        func findMainScrollView(in view: UIView) -> UIScrollView? {
+            if let sv = view as? UIScrollView { return sv }
+            for sub in view.subviews {
+                if let found = findMainScrollView(in: sub) { return found }
+            }
+            return nil
+        }
+
+        // Historical replay before any foreground send does NOT arm or claim user entrance.
+        let historyUser = MacGatewayCloudDialogueEvent(
+            seq: 1,
+            id: "evt-history-user",
+            kind: .userMessage,
+            role: "user",
+            text: "历史消息不应重播上屏动效",
+            topicId: "topic-1",
+            workItemId: nil,
+            outcome: nil,
+            soulRevision: 1
+        )
+        store.ingestCloudDialogueEventsPage(.init(items: [historyUser], nextCursor: 1, soulRevision: 1), requestedAfter: 0)
+        try await Task.sleep(for: .milliseconds(120))
+        host.view.layoutIfNeeded()
+        #expect(store.cloudUserSendEntranceKey(for: historyUser) == nil)
+
+        // Foreground send arms "cloud-user:req-send-1" and inserts optimistic main submission + busy state ("正在思考").
+        let requestId = "req-send-1"
+        ChatUserSendEntranceGate.arm("cloud-user:\(requestId)")
+        store.busyCloudDialogueRequestIds.insert(requestId)
+        store.cloudDialogueSubmissions = [
+            MacGatewayCloudDialoguePersistedSubmission(
+                gatewayId: "gw-motion",
+                deviceId: "device-motion",
+                kind: .mainMessage,
+                requestId: requestId,
+                workItemId: nil,
+                text: "测试云端发送与合并高度零跳变",
+                receipt: nil,
+                lastError: nil,
+                updatedAt: Date(),
+                isConfirmedNotExecuted: false
+            )
+        ]
+        try await Task.sleep(for: .milliseconds(400))
+        host.view.layoutIfNeeded()
+        let scrollView = try #require(findMainScrollView(in: host.view))
+        let optimisticContentHeight = scrollView.contentSize.height
+        #expect(ChatUserSendEntranceGate.hasStarted("cloud-user:\(requestId)"))
+
+        // Receipt arrives (.received) + merged user_message event + delegated workItem status with actions.
+        let receipt = MacGatewayCloudDialogueReceipt(
+            eventId: "evt-user-live-2",
+            requestId: requestId,
+            topicId: "topic-2",
+            workItemIds: ["work-live-2"],
+            state: .received,
+            replayed: false,
+            soulRevision: 1
+        )
+        store.busyCloudDialogueRequestIds.remove(requestId)
+        store.cloudDialogueReceipts[requestId] = receipt
+        store.cloudDialogueSubmissions[0].receipt = receipt
+
+        let mergedUser = MacGatewayCloudDialogueEvent(
+            seq: 2,
+            id: "evt-user-live-2",
+            kind: .userMessage,
+            role: "user",
+            text: "测试云端发送与合并高度零跳变",
+            topicId: "topic-2",
+            workItemId: "work-live-2",
+            outcome: nil,
+            soulRevision: 1
+        )
+        let processEvt = MacGatewayCloudDialogueEvent(
+            seq: 3,
+            id: "evt-proc-3",
+            kind: .processEvent,
+            role: "system",
+            text: "正在检索相关文档",
+            topicId: "topic-2",
+            workItemId: "work-live-2",
+            outcome: nil,
+            soulRevision: 1
+        )
+        store.ingestCloudDialogueEventsPage(
+            .init(items: [mergedUser, processEvt], nextCursor: 3, soulRevision: 1),
+            requestedAfter: 1
+        )
+        #expect(store.cloudUserSendEntranceKey(for: mergedUser) == "cloud-user:\(requestId)")
+
+        try await Task.sleep(for: .milliseconds(400))
+        host.view.layoutIfNeeded()
+        let mergedContentHeight = scrollView.contentSize.height
+        #expect(
+            abs(mergedContentHeight - optimisticContentHeight) <= 1.0,
+            "Cloud optimistic -> merged user_message + live progress height drifted (\(optimisticContentHeight) -> \(mergedContentHeight))"
+        )
+        #expect(ChatUserSendEntranceGate.claimOrResume("cloud-user:\(requestId)") == nil, "Settled cloud send entrance must not replay")
+    }
+
+    @Test @MainActor func f2UnknownEventKindAndOutcomeDecodeSafelyAndAdvanceCursor() throws {
+        let json = """
+        {
+          "items": [
+            {
+              "seq": 10,
+              "id": "evt-known-user",
+              "kind": "user_message",
+              "role": "user",
+              "text": "开始检查",
+              "topicId": "topic-f2"
+            },
+            {
+              "seq": 11,
+              "id": "evt-future-kind",
+              "kind": "future_approval_card",
+              "role": "system",
+              "text": "未来服务端事件",
+              "topicId": "topic-f2",
+              "workItemId": "work-f2",
+              "outcome": "waiting_human"
+            },
+            {
+              "seq": 12,
+              "id": "evt-known-process-unknown-outcome",
+              "kind": "process_event",
+              "role": "system",
+              "text": "正在等待人工确认",
+              "topicId": "topic-f2",
+              "workItemId": "work-f2",
+              "outcome": "waiting_human"
+            }
+          ],
+          "nextCursor": 12,
+          "soulRevision": 3
+        }
+        """
+        let page = try JSONDecoder().decode(MacGatewayCloudDialogueEventsPage.self, from: Data(json.utf8))
+        #expect(page.items.count == 3)
+        #expect(page.items[1].kind == .unknown)
+        #expect(page.items[1].outcome == .unknown)
+        #expect(page.items[2].kind == .processEvent)
+        #expect(page.items[2].outcome == .unknown)
+        #expect(MacGatewayCloudDialogueOutcome.unknown.isTerminal == false)
+
+        let suite = "CloudDialogueF2.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = MacGatewayStore(defaults: defaults)
+        store.ingestCloudDialogueEventsPage(page, requestedAfter: 0)
+
+        #expect(store.cloudDialogueCursor == 12)
+        #expect(store.cloudDialogueEvents.map(\.id) == ["evt-known-user", "evt-known-process-unknown-outcome"])
+        #expect(store.cloudDialogueVisibleEvents.map(\.id) == ["evt-known-user"])
+        #expect(store.cloudDialogueProgressByWorkItem["work-f2"]?.isLive == true)
     }
 }

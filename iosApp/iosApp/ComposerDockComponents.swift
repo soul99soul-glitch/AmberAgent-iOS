@@ -536,16 +536,13 @@ struct ContextRingButton: View {
 
 struct ComposerContextPanel: View {
     let snapshot: ChatContextSnapshot
-    let novelInjection: NovelInjectionPanelModel?
     let jevRunSummary: IOSJevRunSummary?
 
     init(
         snapshot: ChatContextSnapshot,
-        novelInjection: NovelInjectionPanelModel? = nil,
         jevRunSummary: IOSJevRunSummary? = nil
     ) {
         self.snapshot = snapshot
-        self.novelInjection = novelInjection
         self.jevRunSummary = jevRunSummary
     }
 
@@ -575,12 +572,6 @@ struct ComposerContextPanel: View {
                             label: "总消息数",
                             value: "\(snapshot.messageCount)"
                         )
-                        if let novelInjection, novelInjection.hasReceipt {
-                            ComposerContextCompactStatRow(
-                                label: "本次注入",
-                                value: "\(ChatContextSnapshot.formatTokenCount(novelInjection.estimatedInputTokens)) / \(ChatContextSnapshot.formatTokenCount(novelInjection.maxEstimatedInputTokens))"
-                            )
-                        }
                         ComposerContextCompactStatRow(
                             label: "上下文",
                             value: snapshot.occupancyText
@@ -589,11 +580,6 @@ struct ComposerContextPanel: View {
                         ComposerContextCompactStatRow(label: "缓存命中率", value: snapshot.cacheHitRateText)
                     }
                     .frame(maxWidth: .infinity)
-                }
-
-                if let novelInjection {
-                    Divider()
-                    NovelInjectionPanelDetails(model: novelInjection)
                 }
 
                 if let jevRunSummary, jevRunSummary.decisions > 0 {
@@ -607,7 +593,7 @@ struct ComposerContextPanel: View {
     }
 
     private var popoverWidth: CGFloat {
-        novelInjection != nil || (jevRunSummary?.decisions ?? 0) > 0 ? 300 : 248
+        (jevRunSummary?.decisions ?? 0) > 0 ? 300 : 248
     }
 }
 
@@ -658,78 +644,6 @@ private struct ComposerJevRunSummaryDetails: View {
     private func formattedCount(_ count: Int, unit: String) -> String {
         let number = NumberFormatter.localizedString(from: NSNumber(value: count), number: .decimal)
         return "\(number) \(IOSAppLocalization.string(unit, defaultValue: unit))"
-    }
-}
-
-private struct NovelInjectionPanelDetails: View {
-    let model: NovelInjectionPanelModel
-
-    var body: some View {
-        if model.hasReceipt {
-            VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("设定条目")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AmberTheme.foreground)
-
-                    if model.materials.isEmpty {
-                        Text("本次未注入设定条目")
-                            .font(.caption)
-                            .foregroundStyle(AmberTheme.muted)
-                    } else {
-                        ForEach(model.materials) { material in
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Image(systemName: "book.closed")
-                                    .font(.caption2)
-                                    .foregroundStyle(AmberTheme.accent)
-                                Text(material.title)
-                                    .font(.caption)
-                                    .foregroundStyle(AmberTheme.foreground)
-                                    .lineLimit(2)
-                                Spacer(minLength: 8)
-                                Text(material.kindTitle)
-                                    .font(.caption2)
-                                    .foregroundStyle(AmberTheme.muted)
-                                    .lineLimit(1)
-                            }
-                        }
-                    }
-                }
-
-                VStack(spacing: 8) {
-                    ComposerContextCompactStatRow(
-                        label: "剧情状态",
-                        value: IOSAppLocalization.string(
-                            model.includesPlotState ? "已携带" : "未携带",
-                            defaultValue: model.includesPlotState ? "已携带" : "未携带"
-                        )
-                    )
-                    ComposerContextCompactStatRow(
-                        label: "会话窗口",
-                        value: IOSAppLocalization.formatted(
-                            "%lld 轮",
-                            defaultValue: "%lld 轮",
-                            arguments: [Int64(model.recentMessageRoundCount)]
-                        )
-                    )
-                    if model.budgetExcludedItemCount > 0 {
-                        ComposerContextCompactStatRow(
-                            label: "预算未纳入",
-                            value: IOSAppLocalization.formatted(
-                                "%lld 项",
-                                defaultValue: "%lld 项",
-                                arguments: [Int64(model.budgetExcludedItemCount)]
-                            )
-                        )
-                    }
-                }
-            }
-        } else {
-            Text("尚无生成上下文记录")
-                .font(.caption)
-                .foregroundStyle(AmberTheme.muted)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
     }
 }
 

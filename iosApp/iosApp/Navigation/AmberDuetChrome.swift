@@ -489,8 +489,14 @@ struct DuetBottomCapsuleGlass: ViewModifier {
 /// turn that happens to call several tools keeps its single progress line inside
 /// the conversation and never appears here.
 private struct AmberCloudTaskSelection: Identifiable, Equatable {
-    let requestId: String
-    var id: String { requestId }
+    let requestId: String?
+    let workItemId: String?
+    var id: String { requestId ?? workItemId ?? "" }
+
+    init(requestId: String? = nil, workItemId: String? = nil) {
+        self.requestId = requestId
+        self.workItemId = workItemId
+    }
 }
 
 struct AmberDuetTaskCenterCard: View {
@@ -575,7 +581,11 @@ struct AmberDuetTaskCenterCard: View {
         }
         .accessibilityIdentifier("chat.duet.tasksPanel")
         .sheet(item: $selectedCloudTask) { selection in
-            MacGatewayCloudTaskDetailSheet(store: gateway, requestId: selection.requestId)
+            MacGatewayCloudTaskDetailSheet(
+                store: gateway,
+                requestId: selection.requestId ?? "",
+                workItemId: selection.workItemId
+            )
         }
         .sheet(item: $selectedDeliverableTask) { deliverable in
             AmberTaskDeliverablePreviewSheet(
@@ -1001,6 +1011,10 @@ struct AmberDuetTaskCenterCard: View {
                 }
                 return
             case .cloudDialogueWorkItem(let workItemId):
+                guard gateway.cloudDialogueProgressByWorkItem[workItemId]?.outcome == nil else {
+                    openDestinationDirectly(item)
+                    return
+                }
                 let text = decision.followupInstruction ?? decision.title
                 _ = await gateway.sendCloudWorkItemInput(workItemId: workItemId, text: text)
                 return

@@ -184,7 +184,6 @@ enum AmberPageSurface: Hashable {
 
 /// Semantic home shortcut entry — layout/identity fixed; glyph skin is style-swappable.
 enum HomeShortcutEntry: String, CaseIterable, Identifiable {
-    case deepRead
     case tasks
     case council
     case miniApps
@@ -194,7 +193,6 @@ enum HomeShortcutEntry: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .deepRead: "深度阅读"
         case .tasks: "任务"
         case .council: "模型议会"
         case .miniApps: "小应用"
@@ -205,7 +203,6 @@ enum HomeShortcutEntry: String, CaseIterable, Identifiable {
     /// Phosphor glyph used by `.phosphorFill`.
     var phosphor: HomePhosphor {
         switch self {
-        case .deepRead: .bookOpen
         case .tasks: .listChecks
         case .council: .chatCircleDots
         case .miniApps: .squaresFour
@@ -1315,7 +1312,6 @@ struct HomeShortcutIconView: View {
 
     private var outlineSymbol: String {
         switch entry {
-        case .deepRead: "book"
         case .tasks: "checklist"
         case .council: "bubble.left.and.bubble.right"
         case .miniApps: "square.grid.2x2"
@@ -1367,7 +1363,6 @@ enum HomePixelSitGlyph {
     /// Returns 16 rows of UInt16 bitmasks.
     static func bits(for entry: HomeShortcutEntry) -> [UInt16] {
         switch entry {
-        case .deepRead: book
         case .tasks: checklist
         case .council: chat
         case .miniApps: grid

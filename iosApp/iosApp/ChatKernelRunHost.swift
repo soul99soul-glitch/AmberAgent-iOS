@@ -210,6 +210,9 @@ final class ChatKernelRunHost {
 
         let startedAt = Int64(Date().timeIntervalSince1970 * 1000)
         currentRunId = runId
+        if phoneControlUserInitiated {
+            phoneControl.beginAutomationUserRequest(runID: runId, conversationID: conversationId?.toHexDashString())
+        }
         self.externallyManagedBackgroundExecution = externallyManagedBackgroundExecution
         currentStartedAt = startedAt
         WatchTaskCoordinator.shared.registerRun(runId: runId, startedAt: startedAt)

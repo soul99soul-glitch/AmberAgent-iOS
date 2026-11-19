@@ -9,7 +9,7 @@ final class ChatCompletionFeedback: Equatable {
     }
     private(set) var runID: String?
     private(set) var hasActiveOrDrainingRun = false
-    @ObservationIgnored private var isForegroundVisible = false
+    @ObservationIgnored private(set) var isForegroundVisible = false
     @ObservationIgnored private var runs: [String: RunState] = [:]
     @ObservationIgnored private var messageRunIDs: [String: String] = [:]
     @ObservationIgnored private let trigger: () -> Void
@@ -28,6 +28,7 @@ final class ChatCompletionFeedback: Equatable {
         var terminalReceived = false
         var pending: Pending?
         var drainedParts: [Part: String] = [:]
+        var completionAnimations: [Part: () -> Void] = [:]
     }
 
     init(trigger: @escaping () -> Void = { AmberHaptics.triggerCompletion(.rigidImpact) }) {
@@ -68,6 +69,7 @@ final class ChatCompletionFeedback: Equatable {
         if !visible {
             for key in runs.keys {
                 runs[key]?.pending = nil
+                runs[key]?.completionAnimations.removeAll()
             }
             syncActiveOrDrainingState()
         }
@@ -78,6 +80,7 @@ final class ChatCompletionFeedback: Equatable {
         state.terminalReceived = true
         messageRunIDs[messageID] = runID
         guard isForegroundVisible, !textParts.isEmpty else {
+            state.completionAnimations.removeAll()
             runs[runID] = state
             syncActiveOrDrainingState()
             return
@@ -92,13 +95,19 @@ final class ChatCompletionFeedback: Equatable {
         guard var state = runs[runID] else { return }
         state.terminalReceived = true
         state.pending = nil
+        state.completionAnimations.removeAll()
         runs[runID] = state
         syncActiveOrDrainingState()
     }
 
-    func didDrain(runID: String, messageID: String, partIndex: Int, text: String) {
+    func didDrain(runID: String, messageID: String, partIndex: Int, text: String,
+                  onCompletion: (() -> Void)? = nil) {
         guard var state = runs[runID] else { return }
-        state.drainedParts[Part(messageID: messageID, index: partIndex)] = text
+        let part = Part(messageID: messageID, index: partIndex)
+        state.drainedParts[part] = text
+        if !state.terminalReceived || state.pending != nil {
+            state.completionAnimations[part] = onCompletion
+        }
         runs[runID] = state
         deliverIfDrained(for: runID)
     }
@@ -110,9 +119,14 @@ final class ChatCompletionFeedback: Equatable {
               pending.textParts.allSatisfy({ index, text in
                   state.drainedParts[Part(messageID: pending.messageID, index: index)] == text
               }) else { return }
+        let animations = pending.textParts.keys.compactMap {
+            state.completionAnimations[Part(messageID: pending.messageID, index: $0)]
+        }
         state.pending = nil
+        state.completionAnimations.removeAll()
         runs[runID] = state
         syncActiveOrDrainingState()
+        animations.forEach { $0() }
         // Read the preference at delivery, including changes made while the tail drained.
         trigger()
     }
@@ -138,5 +152,29 @@ struct ChatCompletionFeedbackVisibility: ViewModifier {
             .onAppear { owner.setForegroundVisible(isVisible) }
             .onChange(of: isVisible) { _, visible in owner.setForegroundVisible(visible) }
             .onDisappear { owner.setForegroundVisible(false) }
+    }
+}
+
+/// A completion pulse changes only the reply's compositing opacity, never its measured size.
+@MainActor @Observable
+final class ChatReplyCompletionAnimation {
+    private(set) var opacity = 1.0
+    #if DEBUG
+    static var onPhaseForTesting: ((Double) -> Void)?
+    #endif
+
+    func play(reduceMotion: Bool) {
+        guard !reduceMotion else { return }
+        withAnimation(.easeOut(duration: 0.10)) { opacity = 0.72 }
+        #if DEBUG
+        Self.onPhaseForTesting?(opacity)
+        #endif
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(100))
+            withAnimation(.easeIn(duration: 0.18)) { opacity = 1 }
+            #if DEBUG
+            Self.onPhaseForTesting?(opacity)
+            #endif
+        }
     }
 }

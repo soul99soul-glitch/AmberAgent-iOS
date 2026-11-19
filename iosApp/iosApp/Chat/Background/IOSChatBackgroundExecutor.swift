@@ -82,7 +82,8 @@ extension IOSChatBackgroundGenerationCoordinator {
         )
         beginChatBackgroundKeepAlive(
             requestId: backgroundTask.identifier,
-            subtitle: job.params.model.displayName
+            subtitle: job.params.model.displayName,
+            allowsAudioLeg: Self.allowsAudioLeg(for: job)
         )
         let assistantTextSnapshot = IOSChatBackgroundAssistantTextSnapshot()
         let progress = backgroundTask.progress

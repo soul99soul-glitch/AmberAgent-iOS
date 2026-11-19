@@ -351,6 +351,7 @@ struct ChatRuntimeContextBuilder {
     let miniAppRepository: IOSMiniAppRepository
     let miniAppRuntimeEnabled: Bool
     var skillFileStore = IOSSkillFileStore()
+    var workspaceStore: IOSWorkspaceStore? = nil
     var soulStore: AgentSoulStore? = nil
     var conversationId: String? = nil
     var isOrchestratedChild: Bool = false
@@ -366,11 +367,34 @@ struct ChatRuntimeContextBuilder {
         prepared = messagesByInjectingMiniAppInstruction(prepared)
         prepared = messagesByInjectingMcpContext(prepared)
         prepared = messagesByInjectingMemoryContext(prepared, memoryRecallOverride: memoryRecallOverride)
+        prepared = messagesByInjectingPairedCloudDigest(prepared)
         prepared = messagesByInjectingRecentEpisodesContext(prepared)
         prepared = messagesByInjectingSkillContext(prepared)
         prepared = messagesByInjectingWorkspaceToolPolicy(prepared)
         prepared = messagesByInjectingSystemPrompt(prepared)
         return coalesceSystemMessages ? Self.coalescingSystemMessages(prepared) : prepared
+    }
+
+    @MainActor
+    private func messagesByInjectingPairedCloudDigest(_ messages: [UIMessage]) -> [UIMessage] {
+        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else { return messages }
+        let gateway = MacGatewayStore.shared
+        guard gateway.connection != nil,
+              let digest = MacGatewayStore.buildPairedCloudRecentDigest(
+                  cloudTasks: gateway.cloudTasks,
+                  progressByWorkItem: gateway.cloudDialogueProgressByWorkItem,
+                  maxChars: 400
+              ),
+              !digest.isEmpty else {
+            return messages
+        }
+        var prepared = messages
+        let insertionIndex = prepared.firstIndex { $0.role != MessageRole.system } ?? prepared.endIndex
+        prepared.insert(
+            PromptTranscript.shared.sectionMessage(name: "pairedCloudDigest", text: digest),
+            at: insertionIndex
+        )
+        return prepared
     }
 
     @MainActor
@@ -459,13 +483,19 @@ struct ChatRuntimeContextBuilder {
         return [Self.systemMessageWithMemoryMetadata(systemText, ids: memoryIds)] + nonSystem
     }
 
+    @MainActor
     private func messagesByInjectingWorkspaceToolPolicy(_ messages: [UIMessage]) -> [UIMessage] {
         guard sharedSettings.isCapabilityGateEnabled(.workspace) else { return messages }
-        let prompt = """
+        var prompt = """
         Workspace tools are optional. For ordinary writing, drafting, translation, Markdown examples, or formatted answers, reply directly in chat.
         Use Workspace write, edit, move, or delete tools only when the current task explicitly authorizes the corresponding file operation. Progress questions, clarifications, and context compaction do not by themselves revoke that authorization; respect any explicit cancellation or change of scope.
         Use Workspace read, list, or search tools when the current task concerns existing Workspace files or artifacts, or needs inspection to complete an authorized file operation. The host enforces required permissions and approvals.
         """
+        if AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId),
+           let artifactIndex = (workspaceStore ?? .shared).recentArtifactsPromptIndex(limit: 5, maxChars: 600),
+           !artifactIndex.isEmpty {
+            prompt += "\n\nRecent workspace artifacts index:\n\(artifactIndex)"
+        }
         return [PromptTranscript.shared.sectionMessage(name: "workspace", text: prompt)] + messages
     }
 

@@ -583,10 +583,7 @@ extension MacGatewayStore {
         do {
             let detail = try await client.workItem(id: workItemId)
             guard self.client === client else { return }
-            if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }),
-               mergeCloudTaskSnapshot(at: index, workItem: detail.workItem, detail: detail) {
-                persistCloudTasks()
-            }
+            upsertBackfilledCloudTask(detail)
         } catch is CancellationError {
         } catch {
             guard self.client === client else { return }
@@ -598,6 +595,50 @@ extension MacGatewayStore {
                 persistCloudTasks()
             }
         }
+    }
+
+    /// Backfills a cloud task record fetched from `GET /v2/work-items/{id}` (e.g. a schedule run
+    /// triggered on the cloud daemon rather than originated on this device).
+    @discardableResult
+    func upsertBackfilledCloudTask(_ detail: MacGatewayCloudWorkDetail) -> MacGatewayCloudTaskRecord {
+        if let index = cloudTasks.firstIndex(where: { $0.workItemId == detail.workItem.id || $0.requestId == detail.workItem.id }) {
+            if mergeCloudTaskSnapshot(at: index, workItem: detail.workItem, detail: detail) {
+                persistCloudTasks()
+            }
+            return cloudTasks[index]
+        }
+        let syntheticRequestId = detail.workItem.id
+        let record = MacGatewayCloudTaskRecord(
+            gatewayId: connection?.gatewayId ?? "",
+            deviceId: connection?.deviceId ?? "",
+            request: MacGatewayCloudTaskRequest(
+                requestId: syntheticRequestId,
+                text: detail.brief.isEmpty ? detail.workItem.title : detail.brief,
+                agentId: detail.workItem.agentId,
+                title: detail.workItem.title
+            ),
+            workItemId: detail.workItem.id,
+            workItem: detail.workItem,
+            detail: detail,
+            replayed: false,
+            lastError: nil,
+            createdAt: detail.workItem.updatedAtDate,
+            updatedAt: detail.workItem.updatedAtDate
+        )
+        cloudTasks.insert(record, at: 0)
+        persistCloudTasks()
+        return record
+    }
+
+    @discardableResult
+    func ensureCloudTaskLoaded(workItemId: String) async -> MacGatewayCloudTaskRecord? {
+        await refreshCloudTask(workItemId: workItemId)
+        return cloudTasks.first(where: { $0.workItemId == workItemId || $0.requestId == workItemId })
+    }
+
+    func openCloudTaskFromDeepLink(workItemId: String) async {
+        pendingCloudTaskWorkItemId = workItemId
+        _ = await ensureCloudTaskLoaded(workItemId: workItemId)
     }
 
     func refreshActiveCloudTasks() async {

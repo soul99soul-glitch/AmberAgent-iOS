@@ -457,7 +457,6 @@ internal fun Tool.category(): String = when {
     name.startsWith("memory_") -> "memory"
     name == "agent_prompt_config" -> "prompt_config"
     name.startsWith("conversation_") || name.startsWith("session_") -> "context"
-    name.startsWith("deep_read_") -> "deep_read"
     name.startsWith("cron_task_") -> "cron"
     name.startsWith("agent_task_") || name == "agent_runtime_status" -> "task"
     name in setOf("tool_policy_explain", "tool_search", "tools_list", "runtime_status") -> "utility"
@@ -474,7 +473,6 @@ internal fun Tool.category(): String = when {
 private fun Tool.mutatesState(): Boolean {
     if (name == "memory_tool") return true
     if (name == "plugin_test") return true // Candidate execution can perform the declared side effects.
-    if (name == "deep_read_open") return true
     if (name == "run_plan_update") return false
     if (name == "ios_shell_execute") return true
     if (name == "workout_schedule" || name == "workout_scheduled_remove") return true
@@ -491,7 +489,6 @@ private fun Tool.mutatesState(): Boolean {
         name in setOf("agent_task_cancel", "agent_task_retry", "agent_task_cleanup") ||
         name.startsWith("memory_") && name != "memory_list" ||
         name == "conversation_compact" ||
-        name == "deep_read_finish" ||
         name in setOf("subagent_start", "subagent_cancel") ||
         name in setOf("wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll", "wm_select") ||
         (name.startsWith("phone_") && name !in setOf("phone_status", "phone_apps", "phone_observe")) ||

@@ -605,29 +605,26 @@ private struct MessageBubbleStatefulContent: View {
                 )
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if isUser {
-                HStack(spacing: 0) {
-                    Spacer(minLength: 56)
-
-                    VStack(alignment: .trailing, spacing: 4) {
-                        if let sender = IosMailboxMessageBridge.shared.sender(message: message) {
-                            Label(mailboxSourceTitle(sender), systemImage: "arrow.turn.down.right")
-                                .font(.caption)
-                                .foregroundStyle(AmberTheme.muted)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .accessibilityIdentifier("chat.mailbox.source")
-                        }
-                        variantSwitcher
-                        messagePartsWithAnchorHighlight
-                        if let part = message.parts.compactMap({ $0 as? UIMessagePart.Text }).first,
-                           let receipt = IosToolOutputJsonBridge.shared.metadataString(part: part, key: "chat_followup_state") {
-                            Text(receipt == "queued" ? "已收到 · 待当前步骤结束后生效" :
-                                 receipt == "applied" ? "已采纳" : "未生效")
-                                .font(.caption2)
-                                .foregroundStyle(AmberTheme.muted)
-                        }
+                let mailboxSender = IosMailboxMessageBridge.shared.sender(message: message)
+                ChatUserMessageRow {
+                    if let sender = mailboxSender {
+                        Label(mailboxSourceTitle(sender), systemImage: "arrow.turn.down.right")
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("chat.mailbox.source")
                     }
-                    .frame(maxWidth: ChatLayout.userMaxWidth, alignment: .trailing)
+                    variantSwitcher
+                    messagePartsWithAnchorHighlight
+                    if let part = message.parts.compactMap({ $0 as? UIMessagePart.Text }).first,
+                       let receipt = IosToolOutputJsonBridge.shared.metadataString(part: part, key: "chat_followup_state") {
+                        Text(receipt == "queued" ? "已收到 · 待当前步骤结束后生效" :
+                             receipt == "applied" ? "已采纳" : "未生效")
+                            .font(.caption2)
+                            .foregroundStyle(AmberTheme.muted)
+                    }
                 }
+                .chatUserSendEntrance(key: mailboxSender == nil ? "local-user:\(messageHexID)" : nil)
             } else {
                 let animateSegmentedHeader = IOSChatRenderPreferences.shared.isSegmentedReplyDelivery
                     && isGenerating && isLastMessage && !reduceMotion

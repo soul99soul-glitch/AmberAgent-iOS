@@ -4,6 +4,7 @@ import Shared
 enum ChatLayout {
     static let assistantPartSpacing: CGFloat = 9
     static let contentHorizontalInset: CGFloat = 18
+    static let timelineHorizontalInset: CGFloat = 16
     static let userMaxWidth: CGFloat = 319
     static let userMessageRowVerticalPadding: CGFloat = 7
     static let followBottomGap: CGFloat = 96
@@ -55,6 +56,21 @@ struct ChatAgentName: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(AmberTheme.muted)
                 .padding(.leading, 4)
+        }
+    }
+}
+
+/// The same trailing alignment and width budget for local and cloud user messages.
+struct ChatUserMessageRow<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Spacer(minLength: 56)
+            VStack(alignment: .trailing, spacing: 4) { content }
+                .frame(maxWidth: ChatLayout.userMaxWidth, alignment: .trailing)
         }
     }
 }
@@ -178,6 +194,7 @@ enum ChatLiveEntranceRegistry {
 private struct ChatLiveEntranceModifier: ViewModifier {
     let key: String
     let isLive: Bool
+    var onStart: (() -> Void)? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase: Phase = .pending
@@ -198,6 +215,7 @@ private struct ChatLiveEntranceModifier: ViewModifier {
                     return
                 }
                 phase = .hidden
+                onStart?()
                 withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .smooth(duration: 0.38)) {
                     phase = .shown
                 }
@@ -206,8 +224,162 @@ private struct ChatLiveEntranceModifier: ViewModifier {
 }
 
 extension View {
-    func chatLiveEntrance(key: String, isLive: Bool) -> some View {
-        modifier(ChatLiveEntranceModifier(key: key, isLive: isLive))
+    func chatLiveEntrance(key: String, isLive: Bool, onStart: (() -> Void)? = nil) -> some View {
+        modifier(ChatLiveEntranceModifier(key: key, isLive: isLive, onStart: onStart))
+    }
+
+    func chatUserSendEntrance(key: String?) -> some View {
+        modifier(ChatUserSendEntranceModifier(key: key))
+    }
+}
+
+/// Explicit opt-in gate for foreground user-sent bubbles (Local & Cloud Main Dialogue).
+/// Only keys armed at the moment of an active user send animate once within `freshnessWindow`;
+/// history loads, scroll reuse, host/tab switches, background/Watch sends, and Cloud event replays
+/// never arm this gate and always render immediately in their settled state.
+@MainActor
+enum ChatUserSendEntranceGate {
+    static let freshnessWindow: TimeInterval = 1.5
+    static let settleDuration: TimeInterval = 0.32
+    private static let historyCapacity = 512
+
+    private struct Entry {
+        let armedAt: TimeInterval
+        var startedAt: TimeInterval?
+    }
+
+    private static var entries: [String: Entry] = [:]
+    private static var insertionOrder: [String] = []
+
+    static func arm(_ key: String, at now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        guard !key.isEmpty else { return }
+        if entries[key] == nil {
+            insertionOrder.append(key)
+            if insertionOrder.count > historyCapacity {
+                let evicted = insertionOrder.removeFirst()
+                entries.removeValue(forKey: evicted)
+            }
+        }
+        entries[key] = Entry(armedAt: now, startedAt: nil)
+    }
+
+    static func initialProgress(
+        for key: String?,
+        at now: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) -> CGFloat {
+        guard let key, let entry = entries[key] else { return 1 }
+        if let startedAt = entry.startedAt {
+            let elapsed = max(0, now - startedAt)
+            guard elapsed < settleDuration else { return 1 }
+            let t = elapsed / settleDuration
+            return CGFloat(1 - pow(1 - t, 3))
+        }
+        return (now - entry.armedAt) <= freshnessWindow ? 0 : 1
+    }
+
+    static func claimOrResume(
+        _ key: String?,
+        at now: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) -> (startProgress: CGFloat, remainingFraction: Double)? {
+        guard let key, var entry = entries[key] else { return nil }
+        if let startedAt = entry.startedAt {
+            let elapsed = max(0, now - startedAt)
+            guard elapsed < settleDuration else { return nil }
+            let t = elapsed / settleDuration
+            let startProgress = CGFloat(1 - pow(1 - t, 3))
+            return (startProgress, max(0.18, 1 - t))
+        }
+        guard (now - entry.armedAt) <= freshnessWindow else {
+            entry.startedAt = now - settleDuration
+            entries[key] = entry
+            return nil
+        }
+        entry.startedAt = now
+        entries[key] = entry
+        return (0, 1.0)
+    }
+
+    static func hasStarted(_ key: String) -> Bool {
+        entries[key]?.startedAt != nil
+    }
+
+    static func isArmed(_ key: String, at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard let entry = entries[key], entry.startedAt == nil else { return false }
+        return (now - entry.armedAt) <= freshnessWindow
+    }
+
+    static func resetForTesting() {
+        entries.removeAll()
+        insertionOrder.removeAll()
+    }
+}
+
+/// iMessage-style trailing user bubble entrance (`opacity: 0 → 1`, `scale: 0.94 → 1.0` anchored at
+/// `.bottomTrailing`, `offsetY: 12 → 0`). Uses render-only effects so row measurement, bottom
+/// pinning, and composer spacing remain untouched, and degrades to a short opacity fade on Reduce Motion.
+struct ChatUserSendEntranceModifier: ViewModifier {
+    let key: String?
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var trackedKey: String?
+    @State private var animatedProgress: CGFloat?
+
+    static func metrics(
+        progress: CGFloat,
+        reduceMotion: Bool
+    ) -> (opacity: Double, scale: CGFloat, offsetY: CGFloat) {
+        let clamped = min(max(progress, 0), 1)
+        let opacity = Double(clamped)
+        guard !reduceMotion else {
+            return (opacity: opacity, scale: 1.0, offsetY: 0)
+        }
+        let scale = 0.94 + 0.06 * clamped
+        let offsetY = 12 * (1 - clamped)
+        return (opacity: opacity, scale: scale, offsetY: offsetY)
+    }
+
+    func body(content: Content) -> some View {
+        let effectiveProgress: CGFloat = {
+            if trackedKey == key, let animatedProgress {
+                return animatedProgress
+            }
+            return ChatUserSendEntranceGate.initialProgress(for: key)
+        }()
+        let current = Self.metrics(progress: effectiveProgress, reduceMotion: reduceMotion)
+        content
+            .opacity(current.opacity)
+            .scaleEffect(current.scale, anchor: .bottomTrailing)
+            .offset(y: current.offsetY)
+            .onAppear {
+                activateIfNeeded(for: key)
+            }
+            .onChange(of: key) { _, newKey in
+                activateIfNeeded(for: newKey)
+            }
+    }
+
+    private func activateIfNeeded(for targetKey: String?) {
+        guard trackedKey != targetKey || animatedProgress == nil else { return }
+        trackedKey = targetKey
+        guard let claim = ChatUserSendEntranceGate.claimOrResume(targetKey) else {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                animatedProgress = 1
+            }
+            return
+        }
+        var initialTransaction = Transaction()
+        initialTransaction.disablesAnimations = true
+        withTransaction(initialTransaction) {
+            animatedProgress = claim.startProgress
+        }
+        let animation: Animation = reduceMotion
+            ? .easeOut(duration: 0.16 * claim.remainingFraction)
+            : .spring(response: 0.30 * claim.remainingFraction, dampingFraction: 0.84)
+        withAnimation(animation) {
+            animatedProgress = 1
+        }
     }
 }
 

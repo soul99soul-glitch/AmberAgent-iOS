@@ -761,4 +761,126 @@ struct MacGatewayTests {
         let savedDialogue = try JSONDecoder().decode(MacGatewayCloudDialoguePersistedEnvelope.self, from: savedDialogueData)
         #expect(savedDialogue.gatewayId == "gw-b" && savedDialogue.deviceId == "device-b")
     }
+
+    @Test @MainActor func f1DecideHeadersHonorBiometricVerificationAndIsolateNotifications() async throws {
+        final class FakeBiometricAuthenticator: MacGatewayBiometricAuthenticating, @unchecked Sendable {
+            var shouldSucceed: Bool
+            private(set) var callCount = 0
+            var onVerify: (@MainActor () -> Void)?
+
+            init(shouldSucceed: Bool) {
+                self.shouldSucceed = shouldSucceed
+            }
+
+            func verifyForegroundApproval(reason: String) async -> Bool {
+                callCount += 1
+                await onVerify?()
+                return shouldSucceed
+            }
+        }
+
+        actor DecisionRecorder {
+            var requests: [(headers: [String: String], bodyData: Data?)] = []
+
+            func record(_ request: URLRequest) -> (Data, URLResponse) {
+                let url = request.url!
+                if url.path == "/v1/amber/decision" {
+                    let headers = request.allHTTPHeaderFields ?? [:]
+                    requests.append((headers: headers, bodyData: request.httpBody))
+                    return (Data("{}".utf8), HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+                }
+                let empty = url.path == "/v1/status"
+                    ? #"{"gateway":{"id":"gw","name":"Cloud"},"device":{"id":"d","name":"iPhone","pushRegistered":true},"serverTime":1800000000,"sessions":[]}"#
+                    : (url.path == "/v1/amber/board" ? #"{"board":[]}"# : #"{"schedules":[]}"#)
+                return (Data(empty.utf8), HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+        }
+
+        let suite = "F1TrustHeaders.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let connection = MacGatewayConnection(
+            gatewayId: "gw", name: "Cloud", addrs: ["cloud.example"],
+            port: 443, fingerprint: "fp", deviceId: "d"
+        )
+
+        // 1) Biometric failure on foregroundApp aborts and sends no decision request or trusted headers.
+        let failRecorder = DecisionRecorder()
+        let failAuth = FakeBiometricAuthenticator(shouldSucceed: false)
+        let failStore = MacGatewayStore(defaults: defaults, biometricAuthenticator: failAuth, isApplicationForeground: { true })
+        failStore.configureForTesting(
+            connection: connection,
+            client: MacGatewayClient(addrs: ["cloud.example"], port: 443, fingerprint: "fp", token: "tok", transport: { req, _ in
+                await failRecorder.record(req)
+            })
+        )
+        let rejected = await failStore.decide(sessionKey: "amber:wi:1", toolCallId: "tc-1", allow: true, source: .foregroundApp)
+        #expect(!rejected)
+        #expect(failAuth.callCount == 1)
+        #expect(await failRecorder.requests.isEmpty)
+
+        // 2) Biometric success on foregroundApp sends all three trusted headers + X-Amber-Surface=app.
+        let okRecorder = DecisionRecorder()
+        let okAuth = FakeBiometricAuthenticator(shouldSucceed: true)
+        var isForeground = true
+        let okStore = MacGatewayStore(defaults: defaults, biometricAuthenticator: okAuth, isApplicationForeground: { isForeground })
+        okStore.configureForTesting(
+            connection: connection,
+            client: MacGatewayClient(addrs: ["cloud.example"], port: 443, fingerprint: "fp", token: "tok", transport: { req, _ in
+                await okRecorder.record(req)
+            })
+        )
+        let approved = await okStore.decide(sessionKey: "amber:wi:1", toolCallId: "tc-2", allow: true, source: .foregroundApp)
+        #expect(approved)
+        #expect(okAuth.callCount == 1)
+        let appReq = try #require(await okRecorder.requests.first)
+        #expect(appReq.headers["X-Amber-Surface"] == "app")
+        #expect(appReq.headers["X-Amber-Trusted-Foreground"] == "true")
+        #expect(appReq.headers["X-Amber-Biometric-Verified"] == "true")
+
+        // 3) Foreground deny sends X-Amber-Surface=app without biometrics or trusted/biometric-verified headers.
+        let deniedInApp = await okStore.decide(sessionKey: "amber:wi:1", toolCallId: "tc-3", allow: false, source: .foregroundApp)
+        #expect(deniedInApp)
+        #expect(okAuth.callCount == 1)
+        let denyReq = try #require(await okRecorder.requests.last)
+        #expect(denyReq.headers["X-Amber-Surface"] == "app")
+        #expect(denyReq.headers["X-Amber-Trusted-Foreground"] == nil)
+        #expect(denyReq.headers["X-Amber-Biometric-Verified"] == nil)
+
+        // 4) Notification path never touches biometrics and never attaches trusted headers.
+        let notifApproved = await okStore.decide(sessionKey: "amber:wi:1", toolCallId: "tc-4", allow: true, source: .notification)
+        #expect(notifApproved)
+        #expect(okAuth.callCount == 1)
+        let notifReq = try #require(await okRecorder.requests.last)
+        #expect(notifReq.headers["X-Amber-Surface"] == "notification")
+        #expect(notifReq.headers["X-Amber-Trusted-Foreground"] == nil)
+        #expect(notifReq.headers["X-Amber-Biometric-Verified"] == nil)
+
+        // A foreground source label alone cannot authorize a background decision.
+        let requestCount = await okRecorder.requests.count
+        isForeground = false
+        #expect(await !okStore.decide(sessionKey: "amber:wi:1", toolCallId: "tc-inactive", allow: true))
+        #expect(okAuth.callCount == 1)
+        #expect(await okRecorder.requests.count == requestCount)
+
+        // Authentication can finish after the user leaves the App.
+        isForeground = true
+        okAuth.onVerify = { isForeground = false }
+        #expect(await !okStore.decide(sessionKey: "amber:wi:1", toolCallId: "tc-left-app", allow: true))
+        #expect(await okRecorder.requests.count == requestCount)
+
+        // Pairing can also be removed while the biometric prompt is suspended.
+        isForeground = true
+        okAuth.onVerify = { okStore.client = nil }
+        #expect(await !okStore.decide(sessionKey: "amber:wi:1", toolCallId: "tc-unpaired", allow: true))
+        #expect(await okRecorder.requests.count == requestCount)
+
+        // 5) High-risk notification approve resolves to opening the App rather than sending a decision.
+        let openURL = MacGatewayApprovalNotification.highRiskOpenAppURL(
+            actionIdentifier: MacGatewayApprovalNotification.approveAction,
+            userInfo: ["sessionKey": "amber:wi:1", "toolCallId": "tc-5", "highRisk": true]
+        )
+        #expect(openURL?.absoluteString == "amber://tasks")
+    }
 }

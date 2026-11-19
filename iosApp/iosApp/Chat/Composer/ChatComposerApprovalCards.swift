@@ -21,10 +21,24 @@ struct ChatComposerApprovalCards: View {
                 ToolOutcomeUnknownCard(
                     descriptor: descriptor,
                     onDidApply: {
-                        Task { await viewModel.reconcilePendingToolOutcome(didApply: true) }
+                        Task { await viewModel.reconcilePendingToolOutcome(resolution: .applied) }
+                    },
+                    onRequestRecheck: {
+                        Task { await viewModel.reconcileAndRequestReadonlyRecheckIfReady() }
                     },
                     onDidNotApply: {
-                        Task { await viewModel.reconcilePendingToolOutcome(didApply: false) }
+                        Task { await viewModel.reconcilePendingToolOutcome(resolution: .notApplied) }
+                    }
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if let followup = viewModel.outcomeUnknownFollowup {
+                OutcomeUnknownFollowupBar(
+                    followup: followup,
+                    onUseSuggestedPrompt: {
+                        viewModel.applyOutcomeUnknownFollowup()
+                    },
+                    onDismiss: {
+                        viewModel.dismissOutcomeUnknownFollowup()
                     }
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))

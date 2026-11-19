@@ -718,18 +718,36 @@ enum ChatTaskStreamGrouping {
         tools: [UIMessagePart.Tool],
         steps: [ChatToolStepModel]
     ) -> String? {
-        if let detail = failedStep.detail?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !detail.isEmpty {
-            return String(detail.prefix(88))
+        let matchedTool = zip(tools, steps)
+            .first(where: { $0.1.id == failedStep.id })?.0
+            ?? tools.first(where: { $0.toolCallId == failedStep.id })
+        return ChatTaskFailureClassifier.classify(
+            tool: matchedTool,
+            step: failedStep,
+            fallbackReason: failedStep.detail
+        ).localizedReason
+    }
+
+    @MainActor
+    static func failureClassification(for segment: ChatTaskRunSegment) -> ChatTaskFailureClassification? {
+        guard case .needsAttention(_, _, let failedToolTitle, let reason) = segment.rollupState else {
+            return nil
         }
-        // Look up the matching tool's raw output for an error field
-        for (tool, step) in zip(tools, steps) where step.id == failedStep.id {
-            let rawText = tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
-            if let extracted = extractErrorMessage(from: rawText) {
-                return extracted
-            }
+        let steps = segment.detailSteps
+        let matchedPair = zip(segment.tools, steps).first { tool, step in
+            step.state == .failed || hasUnknownOutcome(tool) || step.title == failedToolTitle
         }
-        return IOSAppLocalization.string("工具执行返回错误，结果未生效", defaultValue: "工具执行返回错误，结果未生效")
+        let matchedTool = matchedPair?.0
+            ?? segment.tools.first(where: { hasUnknownOutcome($0) })
+            ?? segment.tools.last
+        let matchedStep = matchedPair?.1
+            ?? steps.first(where: { $0.state == .failed })
+            ?? steps.last
+        return ChatTaskFailureClassifier.classify(
+            tool: matchedTool,
+            step: matchedStep,
+            fallbackReason: reason
+        )
     }
 
     private static func extractErrorMessage(from raw: String) -> String? {
@@ -738,11 +756,9 @@ enum ChatTaskStreamGrouping {
         if let data = trimmed.data(using: .utf8),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             for key in ["error", "message", "reason", "detail", "stderr"] {
-                if let value = json[key] as? String {
-                    let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !clean.isEmpty {
-                        return String(clean.prefix(88))
-                    }
+                if let value = json[key] as? String,
+                   let clean = ChatTaskFailureClassifier.sanitizeHumanText(value) {
+                    return clean
                 }
             }
         }
@@ -750,8 +766,7 @@ enum ChatTaskStreamGrouping {
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty }
-        guard let firstLine, !firstLine.hasPrefix("{") else { return nil }
-        return String(firstLine.prefix(88))
+        return ChatTaskFailureClassifier.sanitizeHumanText(firstLine)
     }
 
     private static func firstLinePreview(_ text: String) -> String? {
@@ -763,7 +778,7 @@ enum ChatTaskStreamGrouping {
         return String(line.prefix(56))
     }
 
-    private static func hasUnknownOutcome(_ tool: UIMessagePart.Tool) -> Bool {
+    static func hasUnknownOutcome(_ tool: UIMessagePart.Tool) -> Bool {
         let analysis = ChatToolOutputFormatter.analysis(for: tool)
         return analysis.derivedValues.value(forKey: "task-unknown-outcome") {
             let rawText = tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")

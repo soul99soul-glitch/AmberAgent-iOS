@@ -9,6 +9,234 @@ import Shared
 @MainActor
 final class ChatMessagePresentationTests: ChatMessageProjectionTestCase {
 
+    func testLocalAndCloudMessageGeometryMatchesForSharedFixtures() async throws {
+        let preferenceKey = IOSDisplayPreferenceKeys.agentName
+        let priorNamePreference = UserDefaults.standard.object(forKey: preferenceKey)
+        UserDefaults.standard.set(true, forKey: preferenceKey)
+        IOSChatRenderPreferences.shared.syncFromDefaults()
+        defer {
+            if let priorNamePreference { UserDefaults.standard.set(priorNamePreference, forKey: preferenceKey) }
+            else { UserDefaults.standard.removeObject(forKey: preferenceKey) }
+            IOSChatRenderPreferences.shared.syncFromDefaults()
+        }
+        let soul = AgentSoulStore.shared
+        let old = (soul.displayName, soul.tagline, soul.soulPrompt, soul.source)
+        let handler = soul.localMutationHandler
+        soul.localMutationHandler = nil
+        soul.update(displayName: "合成名字很长的陪伴伙伴清晨沿河散步", tagline: "", soulPrompt: "合成设定")
+        defer {
+            soul.update(displayName: old.0, tagline: old.1, soulPrompt: old.2, source: old.3)
+            soul.localMutationHandler = handler
+        }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        let text = "合成正文，保留清楚的段落与自然的行距。" + String(repeating: "这段较长的内容用于核对同一消息在不同宿主下的换行。", count: 3)
+        var measurements: [[String: Any]] = []
+        for size in [DynamicTypeSize.large, .accessibility3] {
+            for role in ["user", "agent", "failure", "continuation"] {
+                let isUser = role == "user"
+                let isFailure = role == "failure"
+                var heights: [CGFloat] = []
+                for cloud in [false, true] {
+                    let message = isUser ? UIMessage.companion.user(prompt: text) : UIMessage.companion.assistant(prompt: text)
+                    let event = MacGatewayCloudDialogueEvent(seq: 1, id: "synthetic-visual", kind: isUser ? .userMessage : (isFailure ? .taskResult : .assistantReply),
+                        role: isUser ? "user" : "assistant", text: text, topicId: "synthetic", workItemId: nil, outcome: isFailure ? .failed : nil, soulRevision: nil)
+                    let localRow = AnyView(VStack(alignment: .leading, spacing: ChatLayout.assistantPartSpacing) {
+                        MessageBubbleView(message: message, isAssistantContinuation: role == "continuation")
+                        if isFailure { Text(verbatim: MacGatewayCloudDialogueOutcome.failed.displayTitle).font(.caption2).foregroundStyle(AmberTheme.muted) }
+                    })
+                    let row = cloud ? AnyView(CloudDialogueMessageRow(event: event, text: text, feedback: ChatCompletionFeedback(), isAssistantContinuation: role == "continuation"))
+                        : localRow
+                    let host = UIHostingController(rootView: row.environment(\.dynamicTypeSize, size)
+                        .frame(width: 361, alignment: .topLeading).fixedSize(horizontal: false, vertical: true))
+                    window.rootViewController = host; window.makeKeyAndVisible()
+                    try await Task.sleep(for: .milliseconds(350))
+                    let measured = host.sizeThatFits(in: CGSize(width: 361, height: 10000))
+                    host.view.frame = CGRect(origin: .zero, size: measured)
+                    host.view.layoutIfNeeded()
+                    try await Task.sleep(for: .milliseconds(150))
+                    heights.append(measured.height)
+                    let attachment = XCTAttachment(image: UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
+                        host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+                    })
+                    attachment.name = "parity-\(cloud ? "cloud" : "local")-\(role)-\(size)"
+                    attachment.lifetime = .keepAlways; add(attachment)
+                }
+                measurements.append(["size": String(describing: size), "role": role, "heights": heights])
+                XCTAssertEqual(heights[0], heights[1], accuracy: 1, "Same message typography and envelope must match")
+            }
+        }
+        let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: measurements, options: [.prettyPrinted]), uniformTypeIdentifier: "public.json")
+        attachment.name = "message-host-parity-geometry"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+
+    func testSharedTopCapsuleGeometryMatchesAcrossDuetTabs() async throws {
+        struct EmptyKeys: SettingsAPIKeyStore {
+            func loadApiKey() -> String? { nil }
+            func saveApiKey(_ key: String) -> Bool { true }
+        }
+        let suite = "TopCapsuleTabs-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
+        let settings = SettingsStore(userDefaults: defaults, apiKeyStore: EmptyKeys())
+        var credentials: [String: String] = [:]
+        let shared = IOSSharedSettingsStore(userDefaults: defaults,
+            loadCredential: { credentials[$0] }, storeCredential: { credentials[$0] = $1; return true },
+            deleteCredential: { credentials.removeValue(forKey: $0); return true })
+        let provider = shared.addProvider(IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "Synthetic", apiKey: "synthetic-key", baseUrl: "https://example.invalid/v1",
+            modelName: "Synthetic", modelId: "synthetic-model"))
+        shared.setCurrentChatModelId(try XCTUnwrap(provider.models.first).id.description())
+        let conversations = IOSConversationStore(baseDirectory: directory, subagentConversationIDsProvider: { [] })
+        await conversations.bootstrap()
+        let conversation = try XCTUnwrap(conversations.currentConversation)
+        await conversations.renameConversation(id: conversation.id, title: "合成标题：清晨沿河散步与周末计划")
+        let model = ChatViewModel(settingsStore: settings, sharedSettings: shared, autoGenerateResponses: false)
+        model.conversationStore = conversations
+        model.reloadFromStore()
+        // Populate the actual inline cards without network calls or real account data.
+        let hubs = AmberHubStore.shared
+        let previousHubs = hubs.hubs
+        hubs.hubs = (1...18).map { AmberHubItem(id: "synthetic-\($0)", title: "合成中心 \($0)") }
+        MacGatewayStore.shared.loadBoardFixture()
+        defer { hubs.hubs = previousHubs; MacGatewayStore.shared.resetBoardFixtureForTesting() }
+        var capsule = CGRect.null
+        var capsuleTitle = ""
+        var measurements: [[String: Any]] = []
+        var avatar = CGRect.null
+        var panel = CGRect.null
+        ChatTopBarLayout.onCapsuleFrameForTesting = { capsule = $0; capsuleTitle = $1 }
+        ChatTopBarLayout.onAvatarFrameForTesting = { avatar = $0 }
+        ChatTopBarLayout.onPanelFrameForTesting = { panel = $0 }
+        defer {
+            ChatTopBarLayout.onCapsuleFrameForTesting = nil
+            ChatTopBarLayout.onAvatarFrameForTesting = nil
+            ChatTopBarLayout.onPanelFrameForTesting = nil
+        }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        var didWarmMount = false
+        for size in [DynamicTypeSize.large, .accessibility3] {
+            var baseline: (CGRect, CGRect, CGFloat)?
+            for tab in [AmberDuetModeTab.chat, .tasks, .hubs] {
+                var composer = ChatComposerLocalState()
+                composer.activeDuetTab = tab
+                let root = ChatView(settingsStore: settings, sharedSettings: shared, viewModel: model, initialComposerState: composer)
+                    .environment(conversations)
+                    .environment(ConversationActivityCenter(conversationStore: conversations))
+                    .environment(RouterPath())
+                    .environment(\.dynamicTypeSize, size)
+                capsule = .null; avatar = .null; panel = .null
+                var host = UIHostingController(rootView: root)
+                window.rootViewController = host
+                window.makeKeyAndVisible()
+                window.layoutIfNeeded()
+                if !didWarmMount {
+                    // Bind ChatView's environment owners and settle the first UIWindow scene layout.
+                    try await Task.sleep(for: .milliseconds(400))
+                    host = UIHostingController(rootView: root)
+                    window.rootViewController = host
+                    window.layoutIfNeeded()
+                    didWarmMount = true
+                }
+                try await Task.sleep(for: .milliseconds(250))
+                model.currentRun.state.messages = [UIMessage.companion.user(prompt: "合成问题"),
+                    UIMessage.companion.assistant(prompt: "合成回复，不涉及真实会话。")]
+                model.bumpMessageRevision(reason: .initialLoad)
+                try await Task.sleep(for: .milliseconds(600))
+                host.view.layoutIfNeeded()
+                XCTAssertFalse(capsule.isNull)
+                XCTAssertFalse(avatar.isNull)
+                XCTAssertEqual(capsuleTitle, "合成标题：清晨沿河散步与周末计划")
+                func scrolls(_ view: UIView) -> [UIScrollView] {
+                    (view as? UIScrollView).map { [$0] } ?? view.subviews.flatMap(scrolls)
+                }
+                let contentTop: CGFloat
+                if tab == .chat {
+                    let scroll = try XCTUnwrap(scrolls(host.view).max { $0.bounds.height < $1.bounds.height })
+                    contentTop = scroll.convert(scroll.bounds, to: host.view).minY
+                } else {
+                    XCTAssertFalse(panel.isNull)
+                    contentTop = panel.minY
+                }
+                XCTAssertGreaterThan(contentTop, capsule.maxY, "Content must retain space below the title capsule")
+                measurements.append(["tab": tab.rawValue, "dynamicType": String(describing: size),
+                    "title": capsuleTitle, "contentTop": contentTop,
+                    "capsule": [capsule.minX, capsule.minY, capsule.width, capsule.height],
+                    "avatar": [avatar.minX, avatar.minY, avatar.width, avatar.height],
+                    "panelBottom": panel.isNull ? -1 : panel.maxY, "safeBottom": host.view.safeAreaInsets.bottom,
+                    "root": [host.view.frame.minY, host.view.bounds.width, host.view.bounds.height, host.view.safeAreaInsets.top]])
+                let attachment = XCTAttachment(image: UIGraphicsImageRenderer(bounds: CGRect(x: 0, y: 0, width: window.bounds.width, height: 230)).image { _ in
+                    window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                })
+                attachment.name = "capsule-\(tab.rawValue)-\(size)"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+                if tab != .chat {
+                    let panelScrolls = scrolls(host.view).filter {
+                        let frame = $0.convert($0.bounds, to: host.view)
+                        return frame.minY >= panel.minY && frame.maxY <= panel.maxY && frame.height > 100
+                    }
+                    let panelScroll = try XCTUnwrap(panelScrolls.max { $0.bounds.height < $1.bounds.height })
+                    let scrollFrame = panelScroll.convert(panelScroll.bounds, to: host.view)
+                    XCTAssertLessThan(scrollFrame.maxY, window.bounds.height - host.view.safeAreaInsets.bottom - 44,
+                        "Scrollable content must end above the navigation hit area")
+                    panelScroll.scrollRectToVisible(CGRect(x: 0, y: max(0, panelScroll.contentSize.height - 1), width: 1, height: 1), animated: false)
+                    host.view.layoutIfNeeded()
+                    XCTAssertGreaterThanOrEqual(panelScroll.bounds.maxY + panelScroll.adjustedContentInset.bottom,
+                        panelScroll.contentSize.height - 1, "The last content must remain reachable")
+                }
+                let fullImage = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                    window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                }
+                let bottomAttachment = XCTAttachment(image: fullImage)
+                bottomAttachment.name = "bottom-\(tab.rawValue)-\(size)"
+                bottomAttachment.lifetime = .keepAlways
+                add(bottomAttachment)
+                func edgeColor(_ y: CGFloat) throws -> [CGFloat] {
+                    let cg = try XCTUnwrap(fullImage.cgImage)
+                    let pixel = try XCTUnwrap(cg.cropping(to: CGRect(x: 2 * fullImage.scale, y: y * fullImage.scale, width: 1, height: 1)))
+                    var rgba = [UInt8](repeating: 0, count: 4)
+                    let context = try XCTUnwrap(CGContext(data: &rgba, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                    context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+                    return rgba.prefix(3).map { CGFloat($0) }
+                }
+                let aboveSafeArea = try edgeColor(window.bounds.height - host.view.safeAreaInsets.bottom - 8)
+                let insideSafeArea = try edgeColor(window.bounds.height - 8)
+                for offset in -3...3 {
+                    let seam = try edgeColor((tab == .chat ? window.bounds.height - host.view.safeAreaInsets.bottom : panel.maxY) + CGFloat(offset))
+                    for channel in 0..<3 {
+                        XCTAssertEqual(seam[channel], insideSafeArea[channel], accuracy: 3,
+                            "No horizontal stroke at the bottom safe-area boundary: \(tab)")
+                    }
+                }
+                for channel in 0..<3 {
+                    XCTAssertEqual(aboveSafeArea[channel], insideSafeArea[channel], accuracy: 3,
+                        "Bottom background must continue into the Home Indicator safe area: \(tab)")
+                }
+                if let (pill, portrait, below) = baseline {
+                    XCTAssertEqual(capsule.minY, pill.minY, accuracy: 0.25, "Tab must not move the shared capsule")
+                    XCTAssertEqual(capsule.height, pill.height, accuracy: 0.25, "Tab must not resize the shared capsule")
+                    XCTAssertEqual(capsule.width, pill.width, accuracy: 0.25)
+                    XCTAssertEqual(avatar.minY, portrait.minY, accuracy: 0.25, "Tab must not move the avatar")
+                    XCTAssertEqual(contentTop, below, accuracy: 0.25, "The shared top region must reserve the same content boundary")
+                } else { baseline = (capsule, avatar, contentTop) }
+            }
+        }
+        let geometryAttachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: measurements, options: [.prettyPrinted, .sortedKeys]), uniformTypeIdentifier: "public.json")
+        geometryAttachment.name = "top-capsule-tab-geometry"
+        geometryAttachment.lifetime = .keepAlways
+        add(geometryAttachment)
+    }
+
     func testExactKeepaliveAndFirstGenericWaitHaveNoVisibleTimelineBody() {
         for text in [ChatAsyncTaskSlot.keepaliveDefaultText, "正在处理，请稍候…"] {
             let message = UIMessage.companion.assistant(prompt: text)
@@ -1160,5 +1388,582 @@ final class ChatMessagePresentationTests: ChatMessageProjectionTestCase {
         XCTAssertTrue(longTextView.isScrollEnabled, "达到高度上限后编辑区必须启用内部滚动")
         XCTAssertGreaterThan(longFrameInWindow.height, mediumFrameInWindow.height, "长内容编辑区高度应大于中等内容并停在上限")
         XCTAssertLessThanOrEqual(longFrameInWindow.height, ChatMessageEditSheet.defaultMaxEditorHeight + 2, "长内容编辑区高度不得突破上限")
+    }
+
+    func testSingleLineAgentStatusHeightAndPositionStayLockedAcrossStageUpdates() throws {
+        let stages: [(String, ChatTaskRollupState)] = [
+            ("正在思考", .working(currentStepTitle: "正在思考")),
+            ("正在思考 · 梳理问题", .working(currentStepTitle: "正在思考 · 梳理问题")),
+            ("正在整理回复", .working(currentStepTitle: "正在整理回复")),
+            ("正在生成回复", .working(currentStepTitle: "正在生成回复")),
+            ("正在执行 bash (12s)", .working(currentStepTitle: "正在执行 bash (12s)")),
+            ("正在搜索网页…", .working(currentStepTitle: "正在搜索网页…")),
+            ("等待响应", .working(currentStepTitle: "等待响应")),
+            ("已执行 3 步", .completed(stepCount: 3)),
+        ]
+
+        for dynamicSize in [DynamicTypeSize.large, .accessibility5] {
+            var measuredHeights: [CGFloat] = []
+            var statusFramesMinY: [CGFloat] = []
+
+            for (index, (headline, rollup)) in stages.enumerated() {
+                let segment = ChatTaskRunSegment(
+                    id: "status-stability-\(index)",
+                    messageID: "msg-stability",
+                    taskId: "task-stability",
+                    agentDisplayName: "Amber",
+                    subAgentIdentity: nil,
+                    headline: headline,
+                    subtitle: nil,
+                    rollupState: rollup,
+                    tools: [],
+                    steps: [],
+                    reasonings: [],
+                    mediaBearingTools: [],
+                    hidesCompletedStandaloneReasoning: false,
+                    deferToolDetails: true
+                )
+                let probeView = VStack(alignment: .leading, spacing: 14) {
+                    ChatUserMessageRow {
+                        ChatUserBubble(text: "测试发消息后的单行状态高度与位置稳定性")
+                    }
+                    ChatAssistantStack {
+                        ChatAgentName()
+                        ChatTaskInlineCardView(
+                            segment: segment,
+                            onTapToolDetail: { _ in },
+                            animationTimeOverride: Double(index) * 0.35
+                        )
+                    }
+                }
+                .environment(\.dynamicTypeSize, dynamicSize)
+                .frame(width: 361, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
+
+                let host = UIHostingController(rootView: probeView)
+                let stackSize = host.sizeThatFits(in: CGSize(width: 361, height: 2_000))
+                measuredHeights.append(stackSize.height)
+
+                let cardOnlyHost = UIHostingController(
+                    rootView: ChatTaskInlineCardView(
+                        segment: segment,
+                        onTapToolDetail: { _ in },
+                        animationTimeOverride: Double(index) * 0.35
+                    )
+                    .environment(\.dynamicTypeSize, dynamicSize)
+                    .frame(width: 361, alignment: .topLeading)
+                    .fixedSize(horizontal: false, vertical: true)
+                )
+                let cardSize = cardOnlyHost.sizeThatFits(in: CGSize(width: 361, height: 200))
+                XCTAssertEqual(
+                    cardSize.height,
+                    ChatStatusHeadlineSlot.rowHeight,
+                    accuracy: 0.1,
+                    "Single-line status row must stay locked at 30pt across '\(headline)' (\(dynamicSize))"
+                )
+                statusFramesMinY.append(stackSize.height - cardSize.height)
+            }
+
+            let baselineTotalHeight = try XCTUnwrap(measuredHeights.first)
+            let baselineStatusMinY = try XCTUnwrap(statusFramesMinY.first)
+            for (idx, height) in measuredHeights.enumerated() {
+                XCTAssertEqual(
+                    height,
+                    baselineTotalHeight,
+                    accuracy: 0.1,
+                    "Total user+status stack height drifted at stage \(stages[idx].0) (\(dynamicSize))"
+                )
+                XCTAssertEqual(
+                    statusFramesMinY[idx],
+                    baselineStatusMinY,
+                    accuracy: 0.1,
+                    "Status row vertical origin drifted at stage \(stages[idx].0) (\(dynamicSize))"
+                )
+            }
+        }
+    }
+
+    func testUserBubbleSendEntranceGateClaimsOnlyForegroundSendsAndPreservesGeometry() throws {
+        ChatUserSendEntranceGate.resetForTesting()
+        defer { ChatUserSendEntranceGate.resetForTesting() }
+
+        // 1. Unarmed historical messages never animate.
+        XCTAssertEqual(ChatUserSendEntranceGate.initialProgress(for: "local-user:history-1", at: 100), 1)
+        XCTAssertNil(ChatUserSendEntranceGate.claimOrResume("local-user:history-1", at: 100))
+
+        // 2. Armed foreground send starts at progress 0, claims once, and resumes smoothly mid-flight without restarting.
+        ChatUserSendEntranceGate.arm("local-user:fresh-1", at: 100)
+        XCTAssertEqual(ChatUserSendEntranceGate.initialProgress(for: "local-user:fresh-1", at: 100.01), 0)
+        let firstClaim = try XCTUnwrap(ChatUserSendEntranceGate.claimOrResume("local-user:fresh-1", at: 100.01))
+        XCTAssertEqual(firstClaim.startProgress, 0, accuracy: 0.001)
+        XCTAssertEqual(firstClaim.remainingFraction, 1.0, accuracy: 0.001)
+
+        // Mid-flight swap (e.g. optimistic -> durable row at +120ms) resumes instead of snapping to 0 or 1.
+        let midResume = try XCTUnwrap(ChatUserSendEntranceGate.claimOrResume("local-user:fresh-1", at: 100.13))
+        XCTAssertGreaterThan(midResume.startProgress, 0.5)
+        XCTAssertLessThan(midResume.startProgress, 1.0)
+        XCTAssertLessThan(midResume.remainingFraction, 1.0)
+
+        // Settled re-render / scroll reuse never replays.
+        XCTAssertEqual(ChatUserSendEntranceGate.initialProgress(for: "local-user:fresh-1", at: 100.50), 1)
+        XCTAssertNil(ChatUserSendEntranceGate.claimOrResume("local-user:fresh-1", at: 100.50))
+
+        // 3. Stale armed key (e.g. background / unseen tab > freshnessWindow) expires without animating.
+        ChatUserSendEntranceGate.arm("local-user:stale-1", at: 200)
+        XCTAssertEqual(ChatUserSendEntranceGate.initialProgress(for: "local-user:stale-1", at: 202.0), 1)
+        XCTAssertNil(ChatUserSendEntranceGate.claimOrResume("local-user:stale-1", at: 202.0))
+
+        // 4. Reduce Motion zeroes scale and vertical offset while preserving opacity fade.
+        let normalStart = ChatUserSendEntranceModifier.metrics(progress: 0, reduceMotion: false)
+        XCTAssertEqual(normalStart.opacity, 0, accuracy: 0.001)
+        XCTAssertEqual(normalStart.scale, 0.94, accuracy: 0.001)
+        XCTAssertEqual(normalStart.offsetY, 12, accuracy: 0.001)
+
+        let reducedStart = ChatUserSendEntranceModifier.metrics(progress: 0, reduceMotion: true)
+        XCTAssertEqual(reducedStart.opacity, 0, accuracy: 0.001)
+        XCTAssertEqual(reducedStart.scale, 1.0, accuracy: 0.001)
+        XCTAssertEqual(reducedStart.offsetY, 0, accuracy: 0.001)
+
+        // 5. Render-only entrance never alters measured bubble layout height.
+        let message = UIMessage.companion.user(prompt: "测试 iMessage 风格上屏动效不改变布局尺寸与底部锚点")
+        let hexId = ChatMessageProjector.messageId(for: message)
+        let settledHost = UIHostingController(
+            rootView: MessageBubbleView(message: message)
+                .frame(width: 361, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
+        )
+        let settledSize = settledHost.sizeThatFits(in: CGSize(width: 361, height: 1_000))
+
+        ChatUserSendEntranceGate.arm("local-user:\(hexId)")
+        let armedHost = UIHostingController(
+            rootView: MessageBubbleView(message: message)
+                .frame(width: 361, alignment: .topLeading)
+                .fixedSize(horizontal: false, vertical: true)
+        )
+        let armedSize = armedHost.sizeThatFits(in: CGSize(width: 361, height: 1_000))
+        XCTAssertEqual(armedSize.width, settledSize.width, accuracy: 0.01)
+        XCTAssertEqual(armedSize.height, settledSize.height, accuracy: 0.01)
+    }
+
+    func testLocalComposerSendMountsThinkingOnFirstFrameAndClaimsEntranceOnce() async throws {
+        ChatUserSendEntranceGate.resetForTesting()
+        defer { ChatUserSendEntranceGate.resetForTesting() }
+
+        struct EmptyKeys: SettingsAPIKeyStore {
+            func loadApiKey() -> String? { nil }
+            func saveApiKey(_ key: String) -> Bool { true }
+        }
+        let suite = "LocalSendMotion-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        var credentials: [String: String] = [:]
+        let settings = SettingsStore(userDefaults: defaults, apiKeyStore: EmptyKeys())
+        let shared = IOSSharedSettingsStore(
+            userDefaults: defaults,
+            loadCredential: { credentials[$0] },
+            storeCredential: { credentials[$0] = $1; return true },
+            deleteCredential: { credentials.removeValue(forKey: $0); return true }
+        )
+        let provider = shared.addProvider(
+            IosSettingsMutations.shared.buildOpenAIProvider(
+                name: "MotionTest",
+                apiKey: "sk-motion",
+                baseUrl: "https://example.invalid/v1",
+                modelName: "MotionModel",
+                modelId: "gpt-motion"
+            )
+        )
+        shared.setCurrentChatModelId(try XCTUnwrap(provider.models.first).id.description())
+
+        let conversations = IOSConversationStore(baseDirectory: directory, subagentConversationIDsProvider: { [] })
+        await conversations.bootstrap()
+
+        final class HoldingProvider: IOSAgentTextProvider, @unchecked Sendable {
+            func generateText(
+                providerSetting: ProviderSetting,
+                messages: [UIMessage],
+                params: TextGenerationParams
+            ) async throws -> MessageChunk {
+                try await Task.sleep(nanoseconds: 2_000_000_000)
+                return IOSChatForegroundFixtures.chunk(with: IOSChatForegroundFixtures.assistantText("完成"))
+            }
+        }
+
+        let model = ChatViewModel(settingsStore: settings, sharedSettings: shared, autoGenerateResponses: true)
+        model.conversationStore = conversations
+        model.kernelTextProviderOverrideForTesting = HoldingProvider()
+        model.reloadFromStore()
+
+        let root = ChatView(settingsStore: settings, sharedSettings: shared, viewModel: model)
+            .environment(conversations)
+            .environment(ConversationActivityCenter(conversationStore: conversations))
+            .environment(RouterPath())
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        let host = UIHostingController(rootView: root)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            model.cancelGeneration()
+            window.isHidden = true
+            window.rootViewController = nil
+            previousWindow?.makeKey()
+        }
+
+        try await Task.sleep(for: .milliseconds(250))
+        host.view.layoutIfNeeded()
+
+        model.inputText = "验证本机发送首帧思考占位与单次上屏动效"
+        XCTAssertTrue(model.sendMessage(startsGenerationAfterInsertion: true))
+        let sentMessageId = try XCTUnwrap(model.messages.last.map(ChatMessageProjector.messageId(for:)))
+
+        // Still inside the 0.30s deferred window (`!isGenerationActive`):
+        // "正在思考" anchor and user bubble entrance must already be active without waiting 0.30s.
+        XCTAssertNotNil(model.pendingDeferredGenerationAnchorId)
+        XCTAssertFalse(model.isGenerationActive)
+        try await Task.sleep(for: .milliseconds(60))
+        host.view.layoutIfNeeded()
+
+        XCTAssertTrue(ChatUserSendEntranceGate.hasStarted("local-user:\(sentMessageId)"))
+
+        func findWaveViews(in view: UIView) -> [ChatTaskWaveLayerView] {
+            var found: [ChatTaskWaveLayerView] = []
+            if let wave = view as? ChatTaskWaveLayerView {
+                found.append(wave)
+            }
+            for sub in view.subviews {
+                found.append(contentsOf: findWaveViews(in: sub))
+            }
+            return found
+        }
+
+        let deferredWaves = findWaveViews(in: host.view)
+        XCTAssertEqual(
+            deferredWaves.count,
+            1,
+            "Local composer send must mount '正在思考' status row (ChatTaskWaveLayerView) immediately during the deferred send window instead of popping in 0.3s late"
+        )
+        let deferredWaveMinY = try XCTUnwrap(deferredWaves.first).convert(deferredWaves[0].bounds, to: window).minY
+
+        // Once the 0.30s deferred window elapses and real generation starts (`isGenerationActive == true`),
+        // the status row stays locked at the exact same vertical coordinate without jumping, and the user entrance never replays.
+        try await Task.sleep(for: .milliseconds(360))
+        host.view.layoutIfNeeded()
+        XCTAssertTrue(model.isGenerationActive)
+        let activeWaves = findWaveViews(in: host.view)
+        XCTAssertEqual(activeWaves.count, 1)
+        let activeWaveMinY = try XCTUnwrap(activeWaves.first).convert(activeWaves[0].bounds, to: window).minY
+        XCTAssertEqual(
+            activeWaveMinY,
+            deferredWaveMinY,
+            accuracy: 0.5,
+            "Status row vertical position must not jump when handing off from deferred send window to active generation"
+        )
+        XCTAssertNil(
+            ChatUserSendEntranceGate.claimOrResume("local-user:\(sentMessageId)"),
+            "Settled local user bubble entrance must never replay on subsequent renders"
+        )
+    }
+
+    func testThinkingToOrganizingReplyPreservesUserBubbleAndStatusRowGeometry() async throws {
+        struct Profile {
+            let name: String
+            let dynamicTypeSize: DynamicTypeSize
+            let fontScale: Double
+            let reduceMotion: Bool
+        }
+
+        let profiles: [Profile] = [
+            Profile(name: "standard", dynamicTypeSize: .large, fontScale: 1.0, reduceMotion: false),
+            Profile(name: "largeDynamicTypeAndReduceMotion", dynamicTypeSize: .accessibility3, fontScale: 1.25, reduceMotion: true),
+        ]
+
+        let previousDeliveryMode = UserDefaults.standard.string(forKey: IOSDisplayPreferenceKeys.replyDeliveryMode)
+        let previousFontScale = UserDefaults.standard.object(forKey: IOSDisplayPreferenceKeys.fontScale)
+        defer {
+            if let previousDeliveryMode {
+                UserDefaults.standard.set(previousDeliveryMode, forKey: IOSDisplayPreferenceKeys.replyDeliveryMode)
+            } else {
+                UserDefaults.standard.removeObject(forKey: IOSDisplayPreferenceKeys.replyDeliveryMode)
+            }
+            if let previousFontScale {
+                UserDefaults.standard.set(previousFontScale, forKey: IOSDisplayPreferenceKeys.fontScale)
+            } else {
+                UserDefaults.standard.removeObject(forKey: IOSDisplayPreferenceKeys.fontScale)
+            }
+            IOSChatRenderPreferences.shared.syncFromDefaults()
+            ChatUserSendEntranceGate.resetForTesting()
+            ChatTimelineRowLayoutInvalidation.resetDebugGeometry()
+        }
+
+        for profile in profiles {
+            ChatUserSendEntranceGate.resetForTesting()
+            ChatTimelineRowLayoutInvalidation.resetDebugGeometry()
+            UserDefaults.standard.set(IOSChatReplyDeliveryMode.segmentedBlocks.rawValue, forKey: IOSDisplayPreferenceKeys.replyDeliveryMode)
+            UserDefaults.standard.set(profile.fontScale, forKey: IOSDisplayPreferenceKeys.fontScale)
+            IOSChatRenderPreferences.shared.syncFromDefaults()
+
+            struct EmptyKeys: SettingsAPIKeyStore {
+                func loadApiKey() -> String? { nil }
+                func saveApiKey(_ key: String) -> Bool { true }
+            }
+            let suite = "ThinkingToOrganizing-\(profile.name)-\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+            defer {
+                defaults.removePersistentDomain(forName: suite)
+                try? FileManager.default.removeItem(at: directory)
+            }
+
+            var credentials: [String: String] = [:]
+            let settings = SettingsStore(userDefaults: defaults, apiKeyStore: EmptyKeys())
+            let shared = IOSSharedSettingsStore(
+                userDefaults: defaults,
+                loadCredential: { credentials[$0] },
+                storeCredential: { credentials[$0] = $1; return true },
+                deleteCredential: { credentials.removeValue(forKey: $0); return true }
+            )
+            let providerConfig = shared.addProvider(
+                IosSettingsMutations.shared.buildOpenAIProvider(
+                    name: "StageGeometryTest",
+                    apiKey: "sk-stage",
+                    baseUrl: "https://example.invalid/v1",
+                    modelName: "StageModel",
+                    modelId: "gpt-stage"
+                )
+            )
+            shared.setCurrentChatModelId(try XCTUnwrap(providerConfig.models.first).id.description())
+
+            let conversations = IOSConversationStore(baseDirectory: directory, subagentConversationIDsProvider: { [] })
+            await conversations.bootstrap()
+
+            // Seed 3 tall prior turns (6 messages, indices 0..5) so the timeline is genuinely bottom-pinned
+            // (`contentSize.height > window.height`, matching a real conversation on iPhone 18 Pro) while keeping
+            // indices 0..7 inside `chunk-0` for exact row coordinate projection.
+            let longReply = (1...18).map { "历史回复第 \($0) 行：用于构造真实贴底滚动视口以测量用户气泡与底部状态行的屏幕坐标。" }.joined(separator: "\n")
+            var seeded: [UIMessage] = []
+            for turn in 1...3 {
+                seeded.append(IOSChatForegroundFixtures.userMessage("历史提问 \(turn)"))
+                let reply = IOSChatForegroundFixtures.assistantText(longReply)
+                seeded.append(
+                    UIMessage(
+                        id: reply.id,
+                        role: .assistant,
+                        parts: reply.parts,
+                        annotations: [],
+                        createdAt: reply.createdAt,
+                        finishedAt: reply.createdAt,
+                        modelId: nil,
+                        usage: nil,
+                        translation: nil
+                    )
+                )
+            }
+
+            final class ControlledStageStreamProvider: IOSAgentTextProvider, IOSAgentStreamingProvider, @unchecked Sendable {
+                private let lock = NSLock()
+                private var chunkHandler: (@Sendable (MessageChunk) -> Void)?
+                private var completionHandler: (@Sendable () -> Void)?
+
+                var isStreamReady: Bool { lock.withLock { chunkHandler != nil } }
+
+                func generateText(
+                    providerSetting: ProviderSetting,
+                    messages: [UIMessage],
+                    params: TextGenerationParams
+                ) async throws -> MessageChunk {
+                    IOSChatForegroundFixtures.chunk(with: nil)
+                }
+
+                func streamText(
+                    providerSetting: ProviderSetting,
+                    messages: [UIMessage],
+                    params: TextGenerationParams,
+                    onChunk: @escaping @Sendable (MessageChunk) -> Void,
+                    onComplete: @escaping @Sendable () -> Void,
+                    onError: @escaping @Sendable (KotlinThrowable) -> Void
+                ) -> Kotlinx_coroutines_coreJob? {
+                    lock.withLock {
+                        chunkHandler = onChunk
+                        completionHandler = onComplete
+                    }
+                    return nil
+                }
+
+                func emitDelta(_ delta: UIMessage) {
+                    let chunk = MessageChunk(
+                        id: UUID().uuidString,
+                        model: "gpt-stage",
+                        choices: [UIMessageChoice(index: 0, delta: delta, message: nil, finishReason: nil)],
+                        usage: nil
+                    )
+                    lock.withLock { chunkHandler }?(chunk)
+                }
+
+                func finish() {
+                    let done = lock.withLock { () -> (@Sendable () -> Void)? in
+                        let cb = completionHandler
+                        completionHandler = nil
+                        chunkHandler = nil
+                        return cb
+                    }
+                    done?()
+                }
+            }
+
+            let streamProvider = ControlledStageStreamProvider()
+            let model = ChatViewModel(settingsStore: settings, sharedSettings: shared, autoGenerateResponses: true)
+            model.conversationStore = conversations
+            model.kernelTextProviderOverrideForTesting = streamProvider
+            model.reloadFromStore()
+            model.currentRun.state.messages = seeded
+            _ = await model.persistMessages(state: model.currentRun.state)
+            model.reloadFromStore()
+
+            let root = ChatView(settingsStore: settings, sharedSettings: shared, viewModel: model)
+                .environment(conversations)
+                .environment(ConversationActivityCenter(conversationStore: conversations))
+                .environment(RouterPath())
+                .environment(\.dynamicTypeSize, profile.dynamicTypeSize)
+                .transaction { transaction in
+                    if profile.reduceMotion {
+                        transaction.disablesAnimations = true
+                    }
+                }
+
+            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+            let previousWindow = scene.windows.first(where: \.isKeyWindow)
+            let window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+            let host = UIHostingController(rootView: root)
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            defer {
+                streamProvider.finish()
+                model.cancelGeneration()
+                window.isHidden = true
+                window.rootViewController = nil
+                previousWindow?.makeKey()
+            }
+
+            try await Task.sleep(for: .milliseconds(350))
+            host.view.layoutIfNeeded()
+
+            func findViews<T: UIView>(of type: T.Type, in view: UIView) -> [T] {
+                var result: [T] = []
+                if let match = view as? T { result.append(match) }
+                for sub in view.subviews { result.append(contentsOf: findViews(of: type, in: sub)) }
+                return result
+            }
+
+            func findTimelineScrollView(in rootView: UIView) -> UIScrollView? {
+                findViews(of: UIScrollView.self, in: rootView)
+                    .filter { $0.bounds.height > 300 && $0.contentSize.height > 400 }
+                    .max(by: { $0.contentSize.height < $1.contentSize.height })
+            }
+
+            struct StageGeometrySnapshot {
+                let label: String
+                let userFrameInWindow: CGRect
+                let waveFrameInWindow: CGRect
+                let gapUserMaxYToWaveMinY: CGFloat
+                let scrollContentHeight: CGFloat
+                let scrollOffsetY: CGFloat
+            }
+
+            func sampleGeometry(label: String, userMessageId: String) throws -> StageGeometrySnapshot {
+                host.view.setNeedsLayout()
+                host.view.layoutIfNeeded()
+                let scrollView = try XCTUnwrap(findTimelineScrollView(in: host.view), "Missing timeline UIScrollView at \(label)")
+                scrollView.layoutIfNeeded()
+                let waves = findViews(of: ChatTaskWaveLayerView.self, in: scrollView)
+                XCTAssertEqual(waves.count, 1, "[\(profile.name)] Expected exactly 1 status wave row at \(label)")
+                let wave = try XCTUnwrap(waves.first)
+                let waveInWindow = wave.convert(wave.bounds, to: window)
+
+                let rowBounds = try XCTUnwrap(
+                    ChatTimelineRowLayoutInvalidation.placedRowBounds[userMessageId],
+                    "[\(profile.name)] Missing placedRowBounds for sent user message at \(label)"
+                )
+                let userInScroll = rowBounds.offsetBy(dx: ChatLayout.timelineHorizontalInset, dy: 12)
+                let userInWindow = scrollView.convert(userInScroll, to: window)
+                return StageGeometrySnapshot(
+                    label: label,
+                    userFrameInWindow: userInWindow,
+                    waveFrameInWindow: waveInWindow,
+                    gapUserMaxYToWaveMinY: waveInWindow.minY - userInWindow.maxY,
+                    scrollContentHeight: scrollView.contentSize.height,
+                    scrollOffsetY: scrollView.contentOffset.y
+                )
+            }
+
+            model.inputText = "帮我分析一下为什么正在思考切到正在整理回复时高度会变"
+            XCTAssertTrue(model.sendMessage(startsGenerationAfterInsertion: true))
+            let sentMessageId = try XCTUnwrap(model.messages.last.map(ChatMessageProjector.messageId(for:)))
+
+            for _ in 0..<25 where !streamProvider.isStreamReady {
+                try await Task.sleep(for: .milliseconds(40))
+            }
+            XCTAssertTrue(streamProvider.isStreamReady)
+            try await Task.sleep(for: .milliseconds(120))
+            let preChunkThinking = try sampleGeometry(label: "0-preChunkThinking", userMessageId: sentMessageId)
+
+            // Stage 1: Reasoning delta -> "正在思考" (`isGlobalStatusOnly == true`).
+            let instant = KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0)
+            streamProvider.emitDelta(
+                IOSChatForegroundFixtures.assistantMessage(
+                    parts: [UIMessagePart.Reasoning(reasoning: "正在梳理时间线状态切换与顶部间距逻辑", createdAt: instant, finishedAt: nil, metadata: nil)]
+                )
+            )
+            try await Task.sleep(for: .milliseconds(120))
+            XCTAssertEqual(model.focusedActiveTask?.activityStage, .thinking)
+            let reasoningThinking = try sampleGeometry(label: "1-reasoningThinking", userMessageId: sentMessageId)
+
+            // Stage 1b: Adjacent normal stage switch -> running tool ("正在搜索网页") and back to post-tool "正在思考".
+            let activeSlot = try XCTUnwrap(model.focusedActiveTask)
+            activeSlot.activityStage = .runningTool
+            activeSlot.activeToolName = "search_web"
+            activeSlot.activeToolTitle = "正在搜索网页"
+            model.runActivityRevision &+= 1
+            try await Task.sleep(for: .milliseconds(80))
+            let runningToolSnap = try sampleGeometry(label: "1b-runningTool", userMessageId: sentMessageId)
+
+            activeSlot.activeToolName = nil
+            activeSlot.activeToolTitle = nil
+            activeSlot.activityStage = .thinking
+            model.runActivityRevision &+= 1
+            try await Task.sleep(for: .milliseconds(80))
+            let postToolThinking = try sampleGeometry(label: "1c-postToolThinking", userMessageId: sentMessageId)
+
+            // Stage 2: First Text delta (incomplete first paragraph in segmented mode) -> "正在整理回复" (`activityStage == .generating`).
+            streamProvider.emitDelta(
+                IOSChatForegroundFixtures.assistantText("先看这两个状态在视图树里的真实承载关系，还没遇到换行分段")
+            )
+            try await Task.sleep(for: .milliseconds(120))
+            XCTAssertEqual(model.focusedActiveTask?.activityStage, .generating)
+            let organizingReply = try sampleGeometry(label: "2-organizingReply", userMessageId: sentMessageId)
+
+            let allSnapshots = [preChunkThinking, reasoningThinking, runningToolSnap, postToolThinking, organizingReply]
+            print("[STAGE_GEOMETRY_VERIFIED:\(profile.name)] " + allSnapshots.map {
+                "\($0.label)(userH=\(String(format: "%.2f", $0.userFrameInWindow.height)),userMinY=\(String(format: "%.2f", $0.userFrameInWindow.minY)),waveMinY=\(String(format: "%.2f", $0.waveFrameInWindow.minY)),gap=\(String(format: "%.2f", $0.gapUserMaxYToWaveMinY)))"
+            }.joined(separator: " -> "))
+
+            for snap in allSnapshots {
+                XCTAssertEqual(snap.waveFrameInWindow.height, 16.0, accuracy: 0.5, "[\(profile.name)] Wave indicator height drifted at \(snap.label)")
+                XCTAssertEqual(snap.userFrameInWindow.height, preChunkThinking.userFrameInWindow.height, accuracy: 0.5, "[\(profile.name)] User bubble height changed at \(snap.label)")
+                XCTAssertEqual(snap.gapUserMaxYToWaveMinY, preChunkThinking.gapUserMaxYToWaveMinY, accuracy: 0.5, "[\(profile.name)] Gap between user bubble and status row jumped at \(snap.label)")
+                XCTAssertEqual(snap.userFrameInWindow.minY, preChunkThinking.userFrameInWindow.minY, accuracy: 0.5, "[\(profile.name)] User bubble screen minY jumped at \(snap.label)")
+                XCTAssertEqual(snap.userFrameInWindow.maxY, preChunkThinking.userFrameInWindow.maxY, accuracy: 0.5, "[\(profile.name)] User bubble screen maxY jumped at \(snap.label)")
+                XCTAssertEqual(snap.waveFrameInWindow.minY, preChunkThinking.waveFrameInWindow.minY, accuracy: 0.5, "[\(profile.name)] Status row screen minY jumped at \(snap.label)")
+            }
+        }
     }
 }

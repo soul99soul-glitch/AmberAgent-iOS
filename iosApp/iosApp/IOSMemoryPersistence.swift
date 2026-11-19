@@ -14,8 +14,66 @@ struct IOSMemoryToolApprovalPreview: Equatable {
     let scope: String?
     let kind: String?
     let contentPreview: String?
+    let oldContentPreview: String?
+    let diffPreview: String?
     let targetId: Int?
     let expectedUpdatedAt: Int64?
+
+    init(
+        action: String,
+        scope: String?,
+        kind: String?,
+        contentPreview: String?,
+        oldContentPreview: String? = nil,
+        diffPreview: String? = nil,
+        targetId: Int?,
+        expectedUpdatedAt: Int64?
+    ) {
+        self.action = action
+        self.scope = scope
+        self.kind = kind
+        self.contentPreview = contentPreview
+        self.oldContentPreview = oldContentPreview
+        self.diffPreview = diffPreview
+        self.targetId = targetId
+        self.expectedUpdatedAt = expectedUpdatedAt
+    }
+}
+
+@MainActor
+final class IOSMemoryRecordUndoStore {
+    struct Entry {
+        let token: String
+        let memoryId: Int
+        let action: String
+        let previousRecord: MemoryRecord
+        let resultingUpdatedAt: Int64?
+    }
+
+    static let shared = IOSMemoryRecordUndoStore()
+    private var entriesById: [Int: Entry] = [:]
+
+    func recordPriorValue(existing: MemoryRecord, action: String, resultingUpdatedAt: Int64?) {
+        entriesById[Int(existing.id)] = Entry(
+            token: UUID().uuidString,
+            memoryId: Int(existing.id),
+            action: action,
+            previousRecord: existing,
+            resultingUpdatedAt: resultingUpdatedAt
+        )
+    }
+
+    func entry(for memoryId: Int) -> Entry? {
+        entriesById[memoryId]
+    }
+
+    func removeEntry(for memoryId: Int) {
+        entriesById.removeValue(forKey: memoryId)
+    }
+
+    func reset() {
+        entriesById.removeAll()
+    }
 }
 
 enum IOSMemoryToolExecutor {
@@ -93,6 +151,7 @@ enum IOSMemoryToolExecutor {
         }
     }
 
+    @MainActor
     static func approvalPreview(input: String) -> IOSMemoryToolApprovalPreview? {
         guard let args = jsonObject(input) else { return nil }
         let action = action(from: args)
@@ -100,9 +159,37 @@ enum IOSMemoryToolExecutor {
             return nil
         }
         if IOSMemoryWikiTool.writes.contains(action) {
+            let rawPath = args["path"] as? String ?? "index.md"
+            let resolved = try? IOSMemoryWikiNotes.resolve(rawPath)
+            let wikiNotes = IOSMemoryPersistence.shared.markdownStore.wikiNotes
+            let existingWikiContent = resolved.flatMap { path in
+                wikiNotes.current(path: path)?.content
+                    ?? IOSMemoryPersistence.shared.markdownStore.readDocument(relativePath: path)
+            }
+            let proposedWikiContent: String?
+            if action == "wiki_revert", let resolved, let revId = args["revision_id"] as? String {
+                proposedWikiContent = wikiNotes.history(path: resolved).first(where: { $0.id == revId })?.content
+            } else {
+                proposedWikiContent = args["content"] as? String
+            }
+            let wikiDiff: String?
+            let oldWikiPreview: String?
+            if let existingWikiContent, let proposedWikiContent {
+                oldWikiPreview = previewText(existingWikiContent)
+                wikiDiff = IOSWorkspaceStore.workspaceEditDiffPreview(
+                    original: existingWikiContent,
+                    edited: proposedWikiContent,
+                    path: resolved ?? rawPath
+                ).text
+            } else {
+                oldWikiPreview = nil
+                wikiDiff = nil
+            }
             return IOSMemoryToolApprovalPreview(
                 action: action, scope: "long_term", kind: "note",
-                contentPreview: previewText("页面：\(args["path"] as? String ?? "index.md")\n说明：\(args["reason"] as? String ?? "")\n\(args["content"] as? String ?? "恢复版本：\(args["revision_id"] as? String ?? "")")"),
+                contentPreview: previewText("页面：\(rawPath)\n说明：\(args["reason"] as? String ?? "")\n\(args["content"] as? String ?? "恢复版本：\(args["revision_id"] as? String ?? "")")"),
+                oldContentPreview: oldWikiPreview,
+                diffPreview: wikiDiff,
                 targetId: nil, expectedUpdatedAt: nil
             )
         }
@@ -111,7 +198,27 @@ enum IOSMemoryToolExecutor {
         let targetRecord = targetId.flatMap { id in
             IosMemoryFactory.shared.getAllRecords().first(where: { Int($0.id) == id })
         }
-        let requestedContent = nonEmptyString(args["content"]).map { previewText($0) }
+        let requestedContent = nonEmptyString(args["content"])
+        let oldContentPreview: String?
+        let diffPreview: String?
+        if let targetRecord, ["edit", "update"].contains(action), let requestedContent {
+            oldContentPreview = previewText(targetRecord.content)
+            diffPreview = IOSWorkspaceStore.workspaceEditDiffPreview(
+                original: targetRecord.content,
+                edited: requestedContent,
+                path: "memory/\(targetRecord.id)"
+            ).text
+        } else if let targetRecord, ["delete", "remove"].contains(action) {
+            oldContentPreview = previewText(targetRecord.content)
+            diffPreview = IOSWorkspaceStore.workspaceEditDiffPreview(
+                original: targetRecord.content,
+                edited: "",
+                path: "memory/\(targetRecord.id)"
+            ).text
+        } else {
+            oldContentPreview = nil
+            diffPreview = nil
+        }
         let storedContent: String? = if ["delete", "remove"].contains(action) {
             targetRecord.map { previewText($0.content) }
         } else {
@@ -122,7 +229,9 @@ enum IOSMemoryToolExecutor {
             action: action,
             scope: nonEmptyString(args["scope"] ?? args["type"]),
             kind: nonEmptyString(args["kind"]),
-            contentPreview: requestedContent ?? storedContent,
+            contentPreview: requestedContent.map { previewText($0) } ?? storedContent,
+            oldContentPreview: oldContentPreview,
+            diffPreview: diffPreview,
             targetId: targetId,
             expectedUpdatedAt: targetRecord?.updatedAt
         )
@@ -495,6 +604,13 @@ enum IOSMemoryToolExecutor {
             IOSMemoryWriteAuditStore.shared.record(action: "edit", status: "failed", reason: "persistence failed", memoryId: id)
             return json(["ok": false, "tool": "memory_tool", "action": "edit", "error": "persistence failed", "id": id])
         }
+        if expectedUpdatedAt != nil {
+            IOSMemoryRecordUndoStore.shared.recordPriorValue(
+                existing: existing, action: "edit", resultingUpdatedAt: saved.updatedAt
+            )
+        } else {
+            IOSMemoryRecordUndoStore.shared.removeEntry(for: id)
+        }
         IOSMemoryWriteAuditStore.shared.record(
             action: "edit",
             status: "approved",
@@ -508,6 +624,7 @@ enum IOSMemoryToolExecutor {
             "ok": true,
             "tool": "memory_tool",
             "action": "edit",
+            "undo_token": IOSMemoryRecordUndoStore.shared.entry(for: id)?.token as Any? ?? NSNull(),
             "memory": recordPayload(saved)
         ])
     }
@@ -547,18 +664,91 @@ enum IOSMemoryToolExecutor {
             )
             return staleApprovalResult(action: "delete", id: id)
         }
-        IosMemoryFactory.shared.deleteMemory(id: Int32(id))
+        guard let archived = IosMemoryFactory.shared.setArchived(id: Int32(id), archived: true) else {
+            return json(["ok": false, "tool": "memory_tool", "error": "memory not found", "id": id])
+        }
         guard IOSMemoryPersistence.shared.persist(previousRecords: previousRecords) else {
             IOSMemoryWriteAuditStore.shared.record(action: "delete", status: "failed", reason: "persistence failed", memoryId: id)
             return json(["ok": false, "tool": "memory_tool", "action": "delete", "error": "persistence failed", "id": id])
+        }
+        if let existing {
+            IOSMemoryRecordUndoStore.shared.recordPriorValue(
+                existing: existing,
+                action: "delete",
+                resultingUpdatedAt: archived.updatedAt
+            )
         }
         IOSMemoryWriteAuditStore.shared.record(action: "delete", status: "approved", memoryId: id)
         return json([
             "ok": true,
             "tool": "memory_tool",
             "action": "delete",
+            "undo_token": IOSMemoryRecordUndoStore.shared.entry(for: id)?.token as Any? ?? NSNull(),
             "id": id
         ])
+    }
+
+    /// Reverts the last recorded `edit` or `delete` on `memoryId` ONLY when a
+    /// prior value was captured before the mutation (never for `create`).
+    @MainActor
+    @discardableResult
+    static func revertLastRecordMutation(
+        memoryId: Int,
+        expectedToken: String? = nil,
+        persistence: IOSMemoryPersistence = .shared
+    ) -> [String: Any] {
+        guard let entry = IOSMemoryRecordUndoStore.shared.entry(for: memoryId) else {
+            return [
+                "ok": false,
+                "id": memoryId,
+                "error": "No prior memory value recorded for rollback."
+            ]
+        }
+        guard expectedToken == nil || entry.token == expectedToken else {
+            return ["ok": false, "conflict": true, "error": "A newer memory change exists; undo refused."]
+        }
+        let previousRecords = IosMemoryFactory.shared.snapshotRecords()
+        if entry.action == "edit" {
+            guard let live = previousRecords.first(where: { Int($0.id) == memoryId }),
+                  live.updatedAt == entry.resultingUpdatedAt else {
+                return [
+                    "ok": false,
+                    "conflict": true,
+                    "id": memoryId,
+                    "error": "Memory changed after the recorded edit; rollback refused."
+                ]
+            }
+            guard IosMemoryFactory.shared.updateRecord(record: entry.previousRecord) != nil,
+                  persistence.persist(previousRecords: previousRecords) else {
+                return ["ok": false, "id": memoryId, "error": "Failed to restore edited memory."]
+            }
+        } else if entry.action == "delete" {
+            guard let live = previousRecords.first(where: { Int($0.id) == memoryId }),
+                  live.archived, live.updatedAt == entry.resultingUpdatedAt else {
+                return ["ok": false, "conflict": true, "id": memoryId, "error": "Memory changed after deletion; restore refused."]
+            }
+            guard IosMemoryFactory.shared.restoreMemory(id: Int32(memoryId), now: nowMillis()) != nil,
+                  persistence.persist(previousRecords: previousRecords) else {
+                return ["ok": false, "id": memoryId, "error": "Failed to restore archived memory."]
+            }
+        } else {
+            return ["ok": false, "id": memoryId, "error": "Unsupported rollback action: \(entry.action)."]
+        }
+        IOSMemoryRecordUndoStore.shared.removeEntry(for: memoryId)
+        IOSMemoryWriteAuditStore.shared.record(
+            action: "revert_\(entry.action)",
+            status: "approved",
+            memoryId: memoryId,
+            scope: entry.previousRecord.scope.wireName,
+            kind: entry.previousRecord.kind.wireName,
+            contentPreview: previewText(entry.previousRecord.content)
+        )
+        return [
+            "ok": true,
+            "reverted": true,
+            "id": memoryId,
+            "action": entry.action
+        ]
     }
 
     private static func writeBlockedResult(action: String, writePolicy: IOSMemoryToolWritePolicy) -> String {

@@ -163,6 +163,28 @@ final class ChatCompletionFeedbackTests: XCTestCase {
         XCTAssertEqual(count, 0)
     }
 
+    func testCompletionFadeIsCancelledWithTheRunAndRespectsReduceMotion() async throws {
+        var phases: [Double] = []
+        ChatReplyCompletionAnimation.onPhaseForTesting = { phases.append($0) }
+        defer { ChatReplyCompletionAnimation.onPhaseForTesting = nil }
+        let animation = ChatReplyCompletionAnimation()
+        let owner = ChatCompletionFeedback(trigger: {})
+        owner.setForegroundVisible(true)
+        owner.begin(runID: "cancelled")
+        owner.didDrain(runID: "cancelled", messageID: "reply", partIndex: 0, text: "正文",
+            onCompletion: { animation.play(reduceMotion: false) })
+        owner.finishWithoutFeedback(runID: "cancelled")
+        owner.complete(runID: "cancelled", messageID: "reply", textParts: [0: "正文"])
+        XCTAssertTrue(phases.isEmpty)
+        owner.begin(runID: "reduced")
+        owner.complete(runID: "reduced", messageID: "reply", textParts: [0: "正文"])
+        owner.didDrain(runID: "reduced", messageID: "reply", partIndex: 0, text: "正文",
+            onCompletion: { animation.play(reduceMotion: true) })
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(phases.isEmpty)
+        XCTAssertEqual(animation.opacity, 1)
+    }
+
     func testPreferenceIsReadWhenRevealDrains() {
         withRecordedHaptics { events, defaults in
             let owner = ChatCompletionFeedback()

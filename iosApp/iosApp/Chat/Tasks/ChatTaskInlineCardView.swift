@@ -3,6 +3,63 @@ import SwiftUI
 
 // MARK: - Duet-Style Inline Task Progress & Result Card
 
+/// Fixed-height, baseline-locked single-line status slot shared by local and cloud progress rows.
+/// Keeps CJK ("正在思考"), mixed CJK/ASCII/digit tool titles, and `.medium` -> `.regular` weight
+/// transitions anchored to an identical vertical frame and first-text baseline.
+struct ChatStatusHeadlineSlot: View {
+    static let slotHeight: CGFloat = 22
+    static let rowHeight: CGFloat = 30
+
+    let headline: String
+    let isLive: Bool
+    let foregroundColor: Color
+    let shimmerAccentColor: Color
+    let reduceMotion: Bool
+    var animationTimeOverride: TimeInterval? = nil
+
+    var body: some View {
+        ZStack(alignment: Alignment(horizontal: .leading, vertical: .firstTextBaseline)) {
+            Text(verbatim: "正Ag0")
+                .font(.system(size: 14, weight: .medium))
+                .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize()
+                .frame(width: 0, alignment: .leading)
+                .hidden()
+                .accessibilityHidden(true)
+
+            Text(verbatim: headline)
+                .font(.system(size: 14, weight: isLive ? .medium : .regular))
+                .monospacedDigit()
+                .foregroundStyle(foregroundColor)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .modifier(
+                    ChatTaskProgressTextShimmer(
+                        isActive: isLive && !reduceMotion,
+                        accentColor: shimmerAccentColor,
+                        timeOverride: animationTimeOverride
+                    )
+                )
+                .id(headline)
+                .transition(
+                    reduceMotion
+                        ? .identity
+                        : .asymmetric(
+                            insertion: .opacity.combined(with: .offset(y: 4)),
+                            removal: .opacity.combined(with: .offset(y: -4))
+                        )
+                )
+        }
+        .frame(height: Self.slotHeight, alignment: .leading)
+        .clipped()
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.88),
+            value: headline
+        )
+    }
+}
+
 struct ChatTaskInlineCardView: View {
     let segment: ChatTaskRunSegment
     var onTapToolDetail: (UIMessagePart.Tool) -> Void
@@ -40,37 +97,13 @@ struct ChatTaskInlineCardView: View {
                             timeOverride: animationTimeOverride
                         )
 
-                        ZStack(alignment: .leading) {
-                            Text(segment.headline)
-                                .font(.system(size: 14, weight: rollup.isLive ? .medium : .regular))
-                                .foregroundStyle(lineColor)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .modifier(
-                                    ChatTaskProgressTextShimmer(
-                                        isActive: rollup.isLive && !reduceMotion,
-                                        accentColor: dotColor,
-                                        timeOverride: animationTimeOverride
-                                    )
-                                )
-                                .id(segment.headline)
-                                .transition(
-                                    reduceMotion
-                                        ? .opacity
-                                        : .asymmetric(
-                                            insertion: .opacity
-                                                .combined(with: .offset(y: 5))
-                                                .combined(with: .scale(scale: 0.985, anchor: .leading)),
-                                            removal: .opacity
-                                                .combined(with: .offset(y: -5))
-                                        )
-                                )
-                        }
-                        .frame(height: 22, alignment: .leading)
-                        .clipped()
-                        .animation(
-                            reduceMotion ? nil : .snappy(duration: 0.26, extraBounce: 0),
-                            value: segment.headline
+                        ChatStatusHeadlineSlot(
+                            headline: segment.headline,
+                            isLive: rollup.isLive,
+                            foregroundColor: lineColor,
+                            shimmerAccentColor: dotColor,
+                            reduceMotion: reduceMotion,
+                            animationTimeOverride: animationTimeOverride
                         )
 
                         if !rollup.isLive && !segment.tools.isEmpty {
@@ -79,6 +112,12 @@ struct ChatTaskInlineCardView: View {
                                 .foregroundStyle(AmberTheme.muted2)
                         }
                     }
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: ChatStatusHeadlineSlot.rowHeight,
+                        maxHeight: ChatStatusHeadlineSlot.rowHeight,
+                        alignment: .leading
+                    )
 
                     // A second line only when the user has to know why.
                     if rollup.isFailureOrNeedsUser,
@@ -91,11 +130,22 @@ struct ChatTaskInlineCardView: View {
                             .multilineTextAlignment(.leading)
                             .padding(.leading, 14)
                     }
+
+                    if case .needsAttention = rollup,
+                       let classification = ChatTaskStreamGrouping.failureClassification(for: segment) {
+                        needsAttentionActionCapsule(classification)
+                            .padding(.leading, 14)
+                    }
                 }
-                .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: ChatStatusHeadlineSlot.rowHeight, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.985, haptic: .selection))
+            .buttonStyle(
+                AmberPressFeedbackStyle(
+                    pressedScale: segment.tools.isEmpty ? 1 : 0.985,
+                    haptic: segment.tools.isEmpty ? nil : .selection
+                )
+            )
             .accessibilityElement(children: .combine)
             .accessibilityLabel("\(segment.agentDisplayName) 任务：\(segment.headline)，\(rollup.statusBadgeText)")
             .accessibilityValue(segment.subtitle ?? "")
@@ -141,6 +191,37 @@ struct ChatTaskInlineCardView: View {
 
     private var lineColor: Color {
         rollup.isLive ? AmberTheme.foreground : (rollup.isFailureOrNeedsUser ? rollup.tintColor : AmberTheme.muted)
+    }
+
+    @ViewBuilder
+    private func needsAttentionActionCapsule(_ classification: ChatTaskFailureClassification) -> some View {
+        Button {
+            if segment.tools.count == 1, segment.reasonings.isEmpty, let onlyTool = segment.tools.first {
+                onTapToolDetail(onlyTool)
+            } else {
+                isShowingGroupSheet = true
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Text(classification.badgeText)
+                    .foregroundStyle(AmberTheme.accentRed)
+                Text("·")
+                    .foregroundStyle(AmberTheme.muted)
+                Text(classification.actionLabel)
+                    .foregroundStyle(AmberTheme.foreground)
+            }
+            .font(.caption2.weight(.semibold))
+            .lineLimit(1)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(AmberTheme.accentRed.opacity(0.10), in: Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(AmberTheme.accentRed.opacity(0.26), lineWidth: 0.7)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(classification.badgeText)：\(classification.actionLabel)")
     }
 }
 
@@ -212,6 +293,7 @@ struct ChatTaskProgressDot: View {
                     .offset(y: metrics.offsetY)
             }
         }
+        .frame(width: 22.6, height: 16)
     }
 }
 
@@ -389,13 +471,21 @@ struct ChatTaskGroupDetailSheet: View {
             }
 
             if case .needsAttention(let failedCount, let totalCount, let failedToolTitle, _) = rollup {
+                let classification = ChatTaskStreamGrouping.failureClassification(for: segment)
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "exclamationmark.octagon.fill")
                         .foregroundStyle(AmberTheme.accentRed)
                         .font(.subheadline)
-                    Text("共 \(totalCount) 步操作中，「\(failedToolTitle)」有 \(failedCount) 次失败未恢复。请点击下方具体步骤查看错误原因与原始返回。")
-                        .font(.caption)
-                        .foregroundStyle(AmberTheme.foreground2)
+                    VStack(alignment: .leading, spacing: 2) {
+                        if let classification {
+                            Text(classification.badgeText)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(AmberTheme.accentRed)
+                        }
+                        Text("共 \(totalCount) 步操作中，「\(failedToolTitle)」有 \(failedCount) 次未完成：\(classification?.localizedReason ?? "请查看下方具体步骤原因。")")
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.foreground2)
+                    }
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)

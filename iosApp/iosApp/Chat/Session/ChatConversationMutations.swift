@@ -388,14 +388,16 @@ extension ChatViewModel {
         let prompt = Self.promptText(userText: text, selectedFilePreview: consumesComposer ? pendingSelectedFilePreview : nil)
         let digest = chatInputDigest(for: prompt.isEmpty ? "[image]" : prompt)
         let userMsg = makeUserMessage(prompt: prompt, images: images, metadata: metadata)
+        let messageId = ChatMessageProjector.messageId(for: userMsg)
         recordEpisodeMessageTimestamp(userMsg, conversationId: currentConversationId, timestampMillis: nowMillis)
         pendingAssistantRegeneration = nil
-        // iMessage 式上屏:仅把这条用户消息的插入放进动画事务,驱动消息行的入场 transition。
-        // 批量加载/切换会话走 `messages = store.currentMessages`(不在事务内),不会逐条动画。
-        withAnimation(.spring(Self.userMessageSendSpring)) {
-            messages.append(userMsg)
-            bumpMessageRevision(reason: .userAppend)
+        // iMessage 式上屏：仅显式前台发送在渲染层门控一次气泡入场，不把整棵时间线包裹进全局弹簧事务，
+        // 避免底部锚点与状态占位行继承弹性位移，同时解决新分块（index % 10 == 0）首条消息丢 transition 的问题。
+        if !isStartingWatchQuestion {
+            ChatUserSendEntranceGate.arm("local-user:\(messageId)")
         }
+        messages.append(userMsg)
+        bumpMessageRevision(reason: .userAppend)
         invalidateSuggestionRequest()
         chatSuggestions = []
         if consumesComposer {
@@ -411,7 +413,7 @@ extension ChatViewModel {
                 _ = await self?.persistMessages(conversationId: runConversationId)
             }
         }
-        return (digest, runConversationId, ChatMessageProjector.messageId(for: userMsg))
+        return (digest, runConversationId, messageId)
     }
 
     /// Sends the user message and kicks off generation. For non-vision models the image
@@ -705,7 +707,7 @@ extension ChatViewModel {
     /// the Store still sees an empty current document; force a new ID instead of
     /// reusing the conversation that already has a visible, unsaved message.
     @discardableResult
-    func startNewConversation(commitIf: () -> Bool = { true }) async -> Bool {
+    func startNewConversation(automationLines: IOSPhoneAutomationLines = .shared, commitIf: () -> Bool = { true }) async -> Bool {
         guard let store = conversationStore, commitIf() else { return false }
         startDeferredGenerationNow()
         guard !store.isImportingConversationDocuments else {
@@ -717,8 +719,9 @@ extension ChatViewModel {
             return false
         }
         let sourceConversationId = currentConversationId
-        let mustCreateNewConversation = sourceConversationId == store.currentConversation?.id &&
-            !messages.isEmpty && store.currentMessages.isEmpty
+        let sourceIsAutomation = sourceConversationId.map { automationLines.isDedicated(conversationID: $0.toHexDashString()) } ?? false
+        let mustCreateNewConversation = sourceIsAutomation || (sourceConversationId == store.currentConversation?.id &&
+            !messages.isEmpty && store.currentMessages.isEmpty)
         guard prepareForConversationChange() else { return false }
         if mustCreateNewConversation {
             return await store.newConversation(commitIf: {

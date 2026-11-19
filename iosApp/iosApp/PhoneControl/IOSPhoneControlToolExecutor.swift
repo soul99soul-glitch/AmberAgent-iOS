@@ -44,6 +44,49 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
     }
     private let clipboard: ClipboardAccess
 
+    static func preflightJSON(controller: IOSPhoneControlController) -> String {
+        let enabled = controller.enabled
+        let hasPairing = controller.hasPreparedPairing
+        let connectionPrepared = controller.isConnectionPrepared
+        let selectedAppsCount = controller.selectedBundleIDs.count
+        let occupied = controller.isOccupied
+        let blocker: String
+        let summary: String
+        if !enabled {
+            blocker = "disabled"
+            summary = "手机控制总开关未开启，请前往设置启用。"
+        } else if !hasPairing {
+            blocker = "missing_pairing"
+            summary = "尚未保存本机配对文件，请前往手机控制设置完成配对。"
+        } else if !connectionPrepared {
+            blocker = "connection_unprepared"
+            summary = "尚未准备本机控制连接，请前往手机控制设置启用。"
+        } else if occupied {
+            blocker = "occupied"
+            summary = "当前已有手机控制任务正在运行或收尾，请稍后再试。"
+        } else if selectedAppsCount == 0 {
+            blocker = "no_scope"
+            summary = "控制连接已准备，但尚未选择允许控制的应用（可用 phone_apps 查询并 phone_add_app 添加，或在设置中添加）。"
+        } else {
+            blocker = "none"
+            summary = "手机控制准备就绪，可执行授权操作。"
+        }
+        let deepLink = IOSAppDeepLink.url(for: .phoneControl)?.absoluteString ?? "amber://settings/phone-control"
+        return json([
+            "ok": true,
+            "tool": IOSPhoneControlToolCatalog.preflightToolName,
+            "ready": blocker == "none",
+            "blocker": blocker,
+            "enabled": enabled,
+            "has_pairing": hasPairing,
+            "connection_prepared": connectionPrepared,
+            "selected_apps_count": selectedAppsCount,
+            "occupied": occupied,
+            "settings_deep_link": deepLink,
+            "summary": summary,
+        ])
+    }
+
     init(runID: String, controller: IOSPhoneControlController = .shared,
          jev: IOSJevPhoneControlService = .shared,
          clipboard: ClipboardAccess = .system,
@@ -531,11 +574,14 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                         max(1, min(64, IOSSharedSettingsStore.loadPersistedJevSettings().policy.maxCandidates) - 3)
                     }
                 ))
-                let priorPath = PhoneRecipeStore.lastPath(bundleID: request.bundleID)
+                let priorRecipes = PhoneRecipeStore.candidates(bundleID: request.bundleID, goal: request.goal)
+                let priorPath = priorRecipes.first?.steps
                 let result = await loop.run(request)
-                // 沉淀成功路径：下一轮同一 App 的任务会把上次的做法还给模型参考。
+                // 沉淀成功路径：下一轮同一 App 的任务只将其作为提示词参考。
                 if result.status == .completed {
                     PhoneRecipeStore.save(bundleID: request.bundleID, goal: request.goal, steps: result.steps)
+                } else if result.status == .handback || result.stepVerification != nil {
+                    PhoneRecipeStore.markNeedsReverify(bundleID: request.bundleID, goal: request.goal)
                 }
                 var fields: [String: Any] = [
                     "status": result.status.rawValue,
@@ -554,6 +600,16 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                 }
                 if let continuedFrom = result.continuedFrom { fields["continued_from"] = continuedFrom.rawValue }
                 if let priorPath { fields["last_successful_path"] = priorPath }
+                if !priorRecipes.isEmpty {
+                    fields["recipe_candidates"] = priorRecipes.map { entry in
+                        [
+                            "goal": entry.goal,
+                            "steps": entry.steps,
+                            "success_count": entry.successCount,
+                            "needs_reverify": entry.needsReverify,
+                        ] as [String: Any]
+                    }
+                }
                 if let jevReason = result.jevReason { fields["jev_reason"] = jevReason }
                 if request.steps != nil {
                     fields["verified_step_count"] = result.verifiedStepCount

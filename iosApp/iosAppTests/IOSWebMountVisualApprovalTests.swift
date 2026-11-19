@@ -548,8 +548,6 @@ final class IOSWebMountVisualApprovalTests: IOSWebMountToolTestCase {
 
         XCTAssertFalse(handoff.text.contains("token=secret"))
         XCTAssertFalse(handoff.chatPrompt.contains("abcdef123456"))
-        XCTAssertEqual(handoff.boardSignal.sourceType, IOSBoardSignalSourceType.webmount)
-        XCTAssertTrue(handoff.boardSignal.metadataJson.contains(#""redacted":true"#))
     }
 
 }

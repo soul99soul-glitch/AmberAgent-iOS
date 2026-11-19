@@ -291,11 +291,6 @@ struct IOSGrokWebRequestOptions: Equatable, Sendable {
         disableSearch: false,
         disableMemory: false
     )
-
-    static let novel = IOSGrokWebRequestOptions(
-        disableSearch: true,
-        disableMemory: true
-    )
 }
 
 enum IOSGrokWebPayloadBuilder {

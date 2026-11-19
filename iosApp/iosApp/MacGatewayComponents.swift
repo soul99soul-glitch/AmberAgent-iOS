@@ -124,7 +124,7 @@ struct MacGatewaySectionFooter: View {
     }
 }
 
-/// The tool call an Amber scheduled run is waiting on, under its card. High-risk calls can only be denied here.
+/// The tool call an Amber run is waiting on, under its card. Foreground in-app approval requires biometric verification.
 struct MacGatewayApprovalRow: View {
     let approval: MacGatewayBoardItem.Approval
     let store: MacGatewayStore
@@ -148,19 +148,17 @@ struct MacGatewayApprovalRow: View {
                     MacGatewayCapsuleButton(
                         title: macGatewayL("拒绝"),
                         accessibilityLabel: macGatewayL("拒绝") + " " + approval.tool,
-                        accessibilityHint: approval.highRisk ? macGatewayL("高风险操作，请在 Mac 上核对后批准") : nil
+                        accessibilityHint: approval.highRisk ? macGatewayL("高风险操作，需在本机前台通过生物识别核对后才可批准") : nil
                     ) { decide(false) }
-                    if !approval.highRisk {
-                        MacGatewayCapsuleButton(
-                            title: macGatewayL("批准"),
-                            accessibilityLabel: macGatewayL("批准") + " " + approval.tool
-                        ) { decide(true) }
-                    }
+                    MacGatewayCapsuleButton(
+                        title: macGatewayL(approval.highRisk ? "验证并批准" : "批准"),
+                        accessibilityLabel: macGatewayL(approval.highRisk ? "验证并批准" : "批准") + " " + approval.tool
+                    ) { decide(true) }
                 }
                 Spacer(minLength: 0)
             }
             if approval.highRisk {
-                Text(verbatim: macGatewayL("高风险操作，请在 Mac 上核对后批准"))
+                Text(verbatim: macGatewayL("高风险操作，需在本机前台通过生物识别核对后批准（通知栏仅可拒绝）"))
                     .font(.caption2)
                     .foregroundStyle(AmberTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -174,7 +172,14 @@ struct MacGatewayApprovalRow: View {
     }
 
     private func decide(_ allow: Bool) {
-        Task { await store.decide(sessionKey: approval.sessionKey, toolCallId: approval.toolCallId, allow: allow) }
+        Task {
+            await store.decide(
+                sessionKey: approval.sessionKey,
+                toolCallId: approval.toolCallId,
+                allow: allow,
+                source: .foregroundApp
+            )
+        }
     }
 }
 

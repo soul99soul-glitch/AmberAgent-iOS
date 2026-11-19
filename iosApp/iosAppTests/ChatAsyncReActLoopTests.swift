@@ -1,4 +1,6 @@
 import XCTest
+import SwiftUI
+import UIKit
 @preconcurrency import Shared
 @testable import iosApp
 
@@ -188,7 +190,8 @@ final class ChatAsyncReActLoopTests: XCTestCase {
     private func makeViewModel(
         defaults: UserDefaults,
         sharedSettings: IOSSharedSettingsStore,
-        store: IOSConversationStore
+        store: IOSConversationStore,
+        searchTransport: any IOSSearchHTTPTransport = IOSForegroundNoopSearchTransport()
     ) -> ChatViewModel {
         let dbPath = FileManager.default.temporaryDirectory
             .appendingPathComponent("async-react-loop-\(UUID().uuidString).db")
@@ -200,7 +203,7 @@ final class ChatAsyncReActLoopTests: XCTestCase {
                 storageKey: "async-react-loop-settings-\(UUID().uuidString)"
             ),
             sharedSettings: sharedSettings,
-            searchTransport: IOSForegroundNoopSearchTransport(),
+            searchTransport: searchTransport,
             autoGenerateResponses: true,
             auxiliaryTextProvider: ImmediateAuxiliaryProvider(),
             agentRuntimeDao: db.agentRuntimeDao()
@@ -263,6 +266,42 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         XCTAssertTrue(run.state.messages[1] === mixed)
         XCTAssertEqual(run.state.messages[1].parts.count, 5, "原始界面及历史不得被改写")
         XCTAssertEqual(run.state.messages.count, 5, "只清洗新任务上传基线")
+    }
+
+    func testProviderTerminalAndDisplayedReplyDeliverCompletionOnce() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        await store.bootstrap()
+        let defaults = makeDefaults()
+        let model = makeViewModel(defaults: defaults, sharedSettings: makeSharedSettings(defaults: defaults), store: store)
+        model.reloadFromStore()
+        let key = IOSDisplayPreferenceKeys.completionHaptic
+        let previous = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.set(true, forKey: key)
+        var count = 0
+        AmberHaptics.onTriggerForTesting = { if $0 == .rigidImpact { count += 1 } }
+        defer {
+            AmberHaptics.onTriggerForTesting = nil
+            if let previous { UserDefaults.standard.set(previous, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+        model.completionFeedback.setForegroundVisible(true)
+        model.kernelTextProviderOverrideForTesting = IOSAgentToolEngineTestCase.ParamsRecordingProvider([
+            IOSChatForegroundFixtures.assistantText("<amber-commentary>合成完成正文</amber-commentary>")
+        ])
+        model.inputText = "合成问题"
+        XCTAssertTrue(model.sendMessage())
+        let finished = await waitForCondition { !model.isGenerationActiveForCurrentConversation }
+        XCTAssertTrue(finished)
+        let reply = try XCTUnwrap(model.messages.last(where: { $0.role == .assistant }))
+        let shown = IOSSubAgentOutputProjection.displayTexts(in: reply)
+        XCTAssertEqual(shown[0], "合成完成正文")
+        let terminalDelivered = await waitForCondition {
+            model.completionFeedback.runID(forMessageID: reply.id.toHexDashString()) != nil
+        }
+        XCTAssertTrue(terminalDelivered, "Wait for the terminal callback, not just the generation flag")
+        let run = try XCTUnwrap(model.completionFeedback.runID)
+        model.completionFeedback.didDrain(runID: run, messageID: reply.id.toHexDashString(), partIndex: 0, text: shown[0] ?? "")
+        XCTAssertEqual(count, 1, "Successful provider terminal and displayed reply must deliver completion once")
     }
 
     func testActualStreamDrivesGlobalStatusAndPartialReply() async throws {
@@ -687,6 +726,95 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         XCTAssertEqual(interruptedIds.count, 2)
         let settled = await waitForCondition { !viewModel.isGenerationActive }
         XCTAssertTrue(settled)
+    }
+
+    private final class TimedSlowSearch: IOSSearchHTTPTransport, @unchecked Sendable {
+        private let lock = NSLock()
+        private var start: Double?
+        private var end: Double?
+        var times: (Double?, Double?) { lock.withLock { (start, end) } }
+        func send(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
+            lock.withLock { if start == nil { start = ProcessInfo.processInfo.systemUptime } }
+            try await Task.sleep(for: .seconds(1))
+            lock.withLock { end = ProcessInfo.processInfo.systemUptime }
+            return (IOSForegroundNoopSearchTransport.okResponse(for: request), Data(IOSForegroundNoopSearchTransport.resultHTML.utf8))
+        }
+    }
+
+    func testLocalAcknowledgmentIsVisibleBeforeSlowSearchCompletes() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        await store.bootstrap()
+        let defaults = makeDefaults()
+        let shared = makeSharedSettings(defaults: defaults)
+        shared.setEnableWebSearch(true)
+        shared.setSearchBuiltinBingEnabled(false)
+        shared.setSearchBuiltinDuckDuckGoEnabled(true)
+        let search = TimedSlowSearch()
+        let model = makeViewModel(defaults: defaults, sharedSettings: shared, store: store, searchTransport: search)
+        let provider = ControlledStreamingProvider()
+        model.kernelTextProviderOverrideForTesting = provider
+        model.reloadFromStore()
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let root = ChatView(settingsStore: model.settingsStore, sharedSettings: shared, viewModel: model)
+            .environment(store).environment(ConversationActivityCenter(conversationStore: store)).environment(RouterPath())
+        let host = UIHostingController(rootView: root)
+        window.rootViewController = host; window.makeKeyAndVisible()
+        defer { model.cancelGeneration(); window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        try await Task.sleep(for: .milliseconds(500))
+        let tSend = ProcessInfo.processInfo.systemUptime
+        model.inputText = "合成测试：帮我查查星海六号什么时候发售"
+        XCTAssertTrue(model.sendMessage())
+        let ready = await waitForCondition { provider.callCount == 1 && provider.ready }
+        XCTAssertTrue(ready)
+        let tProviderReady = ProcessInfo.processInfo.systemUptime
+        // A slow first token must be distinguished from client-side display latency.
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertFalse(model.messages.contains { $0.role == .assistant && $0.toText().contains("我先去查官方消息") })
+        let ack = "我先去查官方消息，看看有没有最新的发售安排。"
+        let tAckEmitted = ProcessInfo.processInfo.systemUptime
+        provider.send(IOSChatForegroundFixtures.assistantText(ack))
+        func visibleAck(_ view: UIView) -> Bool {
+            if let text = view as? UITextView, text.text.contains("我先"), !text.isHidden, text.alpha > 0,
+               text.window != nil, text.convert(text.bounds, to: window).intersects(window.bounds) { return true }
+            return view.subviews.contains(where: visibleAck)
+        }
+        let visible = await waitForCondition(timeoutSeconds: 0.25) { visibleAck(host.view) }
+        let tAckVisible = ProcessInfo.processInfo.systemUptime
+        XCTAssertTrue(visible, "Available acknowledgment must reach a visible native text view without another provider event")
+        let tool = UIMessagePart.Tool(toolCallId: "synthetic-search", toolName: "search_web", input: #"{"query":"synthetic release official"}"#,
+            output: [], approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+        provider.send(IOSChatForegroundFixtures.assistantMessage(parts: [tool])); provider.finish()
+        let admitted = await waitForCondition { search.times.0 != nil || model.pendingSearchApproval != nil || provider.callCount == 2 }
+        XCTAssertTrue(admitted)
+        if model.pendingSearchApproval != nil { model.approvePendingSearchTool() }
+        if provider.callCount == 2 && search.times.0 == nil {
+            let trace = XCTAttachment(string: model.messages.map { $0.toText() }.joined(separator: "\n"))
+            trace.name = "synthetic-tool-admission"; trace.lifetime = .keepAlways; add(trace)
+        }
+        let started = await waitForCondition { search.times.0 != nil }
+        XCTAssertTrue(started, "Controlled search must actually execute")
+        XCTAssertNil(search.times.1)
+        XCTAssertTrue(visibleAck(host.view), "Acknowledgment remains visible while tool is blocked")
+        let finished = await waitForCondition { search.times.1 != nil && provider.callCount == 2 && provider.ready }
+        XCTAssertTrue(finished)
+        provider.send(IOSChatForegroundFixtures.assistantText("合成官方结果：发售日期仍待公布。")); provider.finish()
+        let completed = await waitForCondition { !model.isGenerationActive }
+        XCTAssertTrue(completed)
+        let ackCount = model.messages.filter { $0.role == .assistant && $0.toText().contains(ack) }.count
+        XCTAssertEqual(ackCount, 1)
+        model.bumpMessageRevision(reason: .initialLoad)
+        model.bumpMessageRevision(reason: .initialLoad)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(model.messages.filter { $0.role == .assistant && $0.toText().contains(ack) }.count, ackCount,
+            "Repeated history projections cannot append an old acknowledgment")
+        let timings: [String: Double] = ["tSend": tSend, "tProviderReady": tProviderReady, "tAckEmitted": tAckEmitted, "tAckVisible": tAckVisible,
+            "tToolStart": search.times.0 ?? -1, "tToolEnd": search.times.1 ?? -1]
+        let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: timings, options: [.prettyPrinted]), uniformTypeIdentifier: "public.json")
+        attachment.name = "local-ack-timings"; attachment.lifetime = .keepAlways; add(attachment)
+        XCTAssertLessThan(tAckVisible, search.times.1 ?? -1)
     }
 
     func testUpfrontToolAcknowledgmentFormsSeparateBubblesAndKeepsProgressRowVisibleBetweenRounds() async throws {

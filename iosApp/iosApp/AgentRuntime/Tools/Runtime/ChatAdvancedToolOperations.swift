@@ -31,6 +31,8 @@ extension ChatToolRuntime {
                 runID: runId,
                 controller: phoneControlOverride ?? phoneControl
             ).executeApprovedAddApp(arguments: toolCall.input)
+        case IOSPhoneControlToolCatalog.preflightToolName:
+            return IOSPhoneControlToolExecutor.preflightJSON(controller: phoneControlOverride ?? phoneControl)
         case let name where IOSShortcutAuthoringToolCatalog.toolNames.contains(name):
             return await IOSShortcutAuthoringToolExecutor.execute(input: toolCall.input)
         case let name where IOSWakeToolCatalog.toolNames.contains(name):
@@ -46,7 +48,7 @@ extension ChatToolRuntime {
         case IOSHealthAgentToolCatalog.toolName:
             return await IOSHealthAgentToolExecutor.execute(input: toolCall.input)
         case let name where IOSAppleAgentToolCatalog.eventKitToolNames.contains(name):
-            return await IOSEventKitAgentToolExecutor.execute(toolName: name, input: toolCall.input)
+            return await IOSEventKitAgentToolExecutor.execute(toolName: name, input: toolCall.input, runId: runId)
         case let name where IOSAppleAgentToolCatalog.notificationToolNames.contains(name):
             return await IOSNotificationAgentToolExecutor.execute(toolName: name, input: toolCall.input)
         case let name where IOSAppleAgentToolCatalog.alarmToolNames.contains(name):
