@@ -55,7 +55,6 @@ targets:
     sources:
     - path: iosApp
       excludes:
-      - NovelCreation/AGENTS.md
       - AmberSubscriptions.storekit
     - path: PhoneControlRuntime
     - path: SharedWatch
@@ -401,7 +400,6 @@ targets:
     sources:
     - path: iosApp
       excludes:
-      - NovelCreation/AGENTS.md
       - AmberSubscriptions.storekit
       - Info.plist
     - path: PhoneControlRuntime

@@ -277,8 +277,11 @@ public struct PhoneObservation: Sendable, Equatable {
             let hasText = [node.identifier, node.label, node.value].contains { !($0 ?? "").isEmpty }
             return hasText || !containers.contains(node.type) || !node.enabled || node.focused
         }
+        let omitted = nodes.count - visibleNodes.count
         let covered = nodes.filter(\.covered).count
-        var lines = ["app=\(bundleID) pid=\(processID) observation=\(observationID) backend=\(backend) truncated=\(truncated) nodes=\(nodes.count) displayed=\(visibleNodes.count) omitted=\(nodes.count - visibleNodes.count)"
+        let emptyContainers = max(0, omitted - covered)
+        var lines = ["app=\(bundleID) pid=\(processID) observation=\(observationID) backend=\(backend) truncated=\(truncated) nodes=\(nodes.count) displayed=\(visibleNodes.count) omitted=\(omitted)"
+            + (emptyContainers > 0 ? " (empty_containers=\(emptyContainers); unlabeled layout wrappers only, no text or controls omitted)" : "")
             + (covered > 0 ? " covered=\(covered) (a page hidden under the visible one; its elements are not on screen)" : "")]
         for node in visibleNodes {
             let identity = node.identifier.map { " id=\(Self.quoted($0))" } ?? ""

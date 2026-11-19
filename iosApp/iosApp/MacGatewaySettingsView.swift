@@ -23,6 +23,7 @@ struct MacGatewaySettingsView: View {
                             macSection(connection)
                             if let health = store.status?.health { healthSection(health) }
                             cloudConfigSection
+                            deviceContextSharingSection
                             boardSection
                             unpairSection
                         } else {
@@ -63,7 +64,7 @@ struct MacGatewaySettingsView: View {
                 dismiss()
             }
             Spacer(minLength: 0)
-            Text(verbatim: "Mac Gateway")
+            Text(verbatim: L("Amber · 云端"))
                 .font(.title2.weight(.bold))
                 .foregroundStyle(AmberTheme.foreground)
                 .multilineTextAlignment(.center)
@@ -130,17 +131,23 @@ struct MacGatewaySettingsView: View {
 
     private func macSection(_ connection: MacGatewayConnection) -> some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: "Mac")
+            AmberSectionLabel(text: "云端连接")
             AmberFormGroup {
-                MacGatewayRow(icon: "desktopcomputer", title: connection.name, detail: reachabilityText) {
-                    Button { Task { await store.refresh() } } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 18, weight: .medium))
-                            .frame(width: 44, height: 44)
+                MacGatewayRow(icon: "icloud", title: connection.name, detail: reachabilityText) {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(sessionStatusDotColor)
+                            .frame(width: 7, height: 7)
+
+                        Button { Task { await store.refresh() } } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 18, weight: .medium))
+                                .frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(AmberTheme.accent)
+                        .accessibilityLabel(Text(verbatim: L("刷新")))
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(AmberTheme.accent)
-                    .accessibilityLabel(Text(verbatim: L("刷新")))
                 }
                 MacGatewayRowDivider()
                 MacGatewayRow(icon: "bell.badge", title: L("推送通知"), detail: pushDetail) {
@@ -154,7 +161,7 @@ struct MacGatewaySettingsView: View {
                 }
             }
             noticeFooter(fallback: store.isReachable == false
-                ? L("Mac 睡眠、合盖或断网时无法推送，也无法在这里查看状态。")
+                ? L("云端或 Mac 睡眠、断网时无法推送，也无法在这里查看状态。")
                 : nil)
         }
     }
@@ -193,6 +200,94 @@ struct MacGatewaySettingsView: View {
         }
     }
 
+    private var deviceContextSharingSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "本机只读摘要共享")
+            AmberFormGroup {
+                sharingToggleRow(
+                    title: "共享未来 48 小时日程摘要",
+                    subtitle: "仅上传标题与起止时间，不含地点、参会人或备注",
+                    isOn: Binding(
+                        get: { store.shareCalendarUpcomingEnabled },
+                        set: { store.setShareCalendarUpcoming($0) }
+                    )
+                )
+                MacGatewayRowDivider()
+                sharingToggleRow(
+                    title: "共享待办提醒摘要",
+                    subtitle: "仅上传未完成待办标题、到期时间与优先级",
+                    isOn: Binding(
+                        get: { store.shareRemindersDueEnabled },
+                        set: { store.setShareRemindersDue($0) }
+                    )
+                )
+                MacGatewayRowDivider()
+                sharingToggleRow(
+                    title: "共享近期 Workspace 产出目录",
+                    subtitle: "仅上传最近 10 条产出的标题、类型与 60 字摘要",
+                    isOn: Binding(
+                        get: { store.shareWorkspaceArtifactsEnabled },
+                        set: { store.setShareWorkspaceArtifacts($0) }
+                    )
+                )
+                if store.anyDeviceContextSharingEnabled {
+                    MacGatewayRowDivider()
+                    MacGatewayRow(
+                        icon: "arrow.triangle.2.circlepath",
+                        title: L("立即刷新快照"),
+                        detail: deviceContextStatusText
+                    ) {
+                        if store.isSyncingDeviceContext {
+                            ProgressView().frame(width: 44, height: 44)
+                        } else {
+                            MacGatewayCapsuleButton(title: L("刷新")) {
+                                Task { _ = await store.syncDeviceContextIfNeeded(trigger: .manual) }
+                            }
+                        }
+                    }
+                }
+            }
+            noticeFooter(fallback: deviceContextFooterText)
+        }
+    }
+
+    private func sharingToggleRow(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: L(title))
+                    .font(.body)
+                    .foregroundStyle(AmberTheme.foreground)
+                Text(verbatim: L(subtitle))
+                    .font(.footnote)
+                    .foregroundStyle(AmberTheme.muted)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    private var deviceContextStatusText: String {
+        if let expiresMs = store.deviceContextMetadata?.expiresAtEpochMs,
+           store.deviceContextMetadata?.status == "active" {
+            let expiresDate = Date(timeIntervalSince1970: TimeInterval(expiresMs) / 1_000)
+            return L("云端副本将于 ") + expiresDate.formatted(date: .omitted, time: .shortened) + L(" 过期")
+        }
+        if store.deviceContextMetadata?.status == "expired" {
+            return L("云端副本已过期并清理")
+        }
+        return L("仅在前台且开启上方开关时推送")
+    }
+
+    private var deviceContextFooterText: String {
+        if store.pendingDeviceContextRemoteDelete {
+            return L("已关闭本机共享；待连接恢复后将自动清空云端缓存。")
+        }
+        if store.anyDeviceContextSharingEnabled {
+            return deviceContextStatusText + L(" · 全部关闭开关将立即删除云端快照。")
+        }
+        return L("所有共享开关默认关闭，不会上传任何本机摘要。")
+    }
+
     private var boardSection: some View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "任务")
@@ -223,11 +318,30 @@ struct MacGatewaySettingsView: View {
 
     // MARK: - Text
 
+    private var sessionStatusDotColor: Color {
+        switch store.cloudSessionHealth {
+        case .healthy:
+            return AmberTheme.accentGreen
+        case .checking, .modelUnconfigured, .degraded:
+            return .orange
+        case .offline:
+            return AmberTheme.accentRed
+        case .unpaired:
+            return AmberTheme.muted
+        }
+    }
+
     private var reachabilityText: String {
-        switch store.isReachable {
-        case nil: return L("正在连接…")
-        case false: return L("无法连接")
-        case true:
+        switch store.cloudSessionHealth {
+        case .unpaired:
+            return L("未配对")
+        case .checking:
+            return L("正在连接…")
+        case .offline(let reason):
+            return L("无法连接") + (reason.isEmpty ? "" : " · \(reason)")
+        case .modelUnconfigured(let reason), .degraded(let reason):
+            return reason
+        case .healthy:
             guard let sampled = store.status?.health?.sampledAt else { return L("在线") }
             return L("在线") + " · " + L("更新于") + " " + sampled.formatted(.relative(presentation: .named))
         }

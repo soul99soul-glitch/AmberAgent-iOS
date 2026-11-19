@@ -183,8 +183,8 @@ struct MiniAppSettingsView: View {
                 )
                 MiniAppCapabilityDivider(leading: 54)
                 MiniAppPresetToggleRow(
-                    title: "深度阅读摘要",
-                    subtitle: "允许已授权小应用更新自己的深度阅读摘要。",
+                    title: "小应用摘要",
+                    subtitle: "允许已授权小应用更新自己的小应用摘要。",
                     systemImage: "book.pages",
                     tint: AmberTheme.accent,
                     isOn: Binding(

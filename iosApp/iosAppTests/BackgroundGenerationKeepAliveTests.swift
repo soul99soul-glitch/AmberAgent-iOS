@@ -33,6 +33,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
             systemSubmitRetryDelayNanoseconds: UInt64 = 1_500_000_000,
             isApplicationForeground: @escaping () -> Bool = { true },
             isAudioKeepAliveEnabled: @escaping () -> Bool = { false },
+            idleReleaseGraceNanoseconds: UInt64 = 60_000_000_000,
             now: @escaping () -> Date = Date.init,
             livenessHeartbeatMaxIdle: TimeInterval = 180
         ) -> BackgroundGenerationKeepAlive {
@@ -75,6 +76,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
                 audioKeepAlive: audio,
                 locationKeepAlive: location,
                 isAudioKeepAliveEnabled: isAudioKeepAliveEnabled,
+                idleReleaseGraceNanoseconds: idleReleaseGraceNanoseconds,
                 now: now,
                 livenessHeartbeatMaxIdle: livenessHeartbeatMaxIdle
             )
@@ -122,7 +124,10 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
     @MainActor
     private final class LocationSpy: BackgroundLocationKeepAliveControlling {
         var isActive = false
-        func setNeeded(_ needed: Bool) {}
+        var setNeededCalls: [Bool] = []
+        func setNeeded(_ needed: Bool) {
+            setNeededCalls.append(needed)
+        }
     }
 
     private struct SubmitFailure: Error {}
@@ -453,7 +458,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
     func testTransferKeepsAudioAliveUntilDedicatedLeaseBegins() {
         let spy = SystemSpy()
         let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
-        keepAlive.begin("run-1", title: "t", subtitle: "s")
+        keepAlive.begin("run-1", title: "t", subtitle: "s", allowsAudioLeg: true)
         XCTAssertTrue(spy.audio.isActive)
 
         var audioDuringStart = false
@@ -464,7 +469,8 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
                 dedicatedId,
                 title: "t",
                 subtitle: "s",
-                submitSystemTask: false
+                submitSystemTask: false,
+                allowsAudioLeg: true
             )
             spy.events.append("dedicated-submit")
             return true
@@ -662,7 +668,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
 
         XCTAssertEqual(keepAlive.snapshotDetail, "keepAlive=0 adopted=0 audio=0 location=0")
-        keepAlive.begin("run-1", title: "t", subtitle: "s")
+        keepAlive.begin("run-1", title: "t", subtitle: "s", allowsAudioLeg: true)
         XCTAssertEqual(keepAlive.snapshotDetail, "keepAlive=1 adopted=0 audio=1 location=0")
         keepAlive.end("run-1")
         XCTAssertEqual(keepAlive.snapshotDetail, "keepAlive=0 adopted=0 audio=0 location=0")
@@ -674,7 +680,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         let spy = SystemSpy()
         let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
 
-        keepAlive.begin("run-1", title: "t", subtitle: "s")
+        keepAlive.begin("run-1", title: "t", subtitle: "s", allowsAudioLeg: true)
         XCTAssertTrue(spy.audio.isActive)
         XCTAssertEqual(spy.audio.startCount, 1)
         // 音频会被其他 App 打断，系统任务与它并存，不再让位。
@@ -690,8 +696,8 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         let spy = SystemSpy()
         let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
 
-        keepAlive.begin("run-1", title: "t", subtitle: "s")
-        keepAlive.begin("run-2", title: "t", subtitle: "s")
+        keepAlive.begin("run-1", title: "t", subtitle: "s", allowsAudioLeg: true)
+        keepAlive.begin("run-2", title: "t", subtitle: "s", allowsAudioLeg: true)
         keepAlive.end("run-1")
 
         XCTAssertTrue(spy.audio.isActive)
@@ -705,7 +711,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         let spy = SystemSpy()
         let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { false })
 
-        keepAlive.begin("run-1", title: "t", subtitle: "s")
+        keepAlive.begin("run-1", title: "t", subtitle: "s", allowsAudioLeg: true)
 
         XCTAssertFalse(spy.audio.isActive)
         XCTAssertEqual(spy.audio.startCount, 0)
@@ -717,7 +723,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         spy.audio.startSucceeds = false
         let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
 
-        keepAlive.begin("run-1", title: "t", subtitle: "s")
+        keepAlive.begin("run-1", title: "t", subtitle: "s", allowsAudioLeg: true)
 
         XCTAssertEqual(spy.audio.startCount, 1)
         XCTAssertFalse(spy.audio.isActive)
@@ -731,7 +737,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
         var expired = 0
 
-        keepAlive.begin("run-1", title: "t", subtitle: "s") { expired += 1 }
+        keepAlive.begin("run-1", title: "t", subtitle: "s", onExpire: { expired += 1 }, allowsAudioLeg: true)
         spy.audio.isActive = false
         spy.expirationHandlers.first?()
 
@@ -769,7 +775,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { audioEnabled })
         var expired = 0
 
-        keepAlive.begin("run-1", title: "t", subtitle: "s") { expired += 1 }
+        keepAlive.begin("run-1", title: "t", subtitle: "s", onExpire: { expired += 1 }, allowsAudioLeg: true)
         spy.expirationHandlers.first?()
         XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .audio)
 
@@ -788,7 +794,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         spy.audio.startsSynchronously = false
         let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
 
-        keepAlive.begin("run-1", title: "t", subtitle: "s")
+        keepAlive.begin("run-1", title: "t", subtitle: "s", allowsAudioLeg: true)
 
         XCTAssertTrue(spy.audio.isStarting)
         XCTAssertEqual(spy.submittedRequests.count, 1)
@@ -800,7 +806,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         spy.audio.startsSynchronously = false
         let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
 
-        keepAlive.begin("run-1", title: "t", subtitle: "s")
+        keepAlive.begin("run-1", title: "t", subtitle: "s", allowsAudioLeg: true)
         spy.audio.completeStart(success: true)
         NotificationCenter.default.post(name: .amberBackgroundAudioKeepAliveChanged, object: nil)
         try? await Task.sleep(nanoseconds: 80_000_000)
@@ -863,6 +869,100 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
             BackgroundGenerationKeepAlive.isAudioKeepAlivePreferenceEnabled(
                 defaults: defaults,
                 backgroundModes: ["audio", "processing"],
+                defaultEnabled: true
+            )
+        )
+    }
+
+    // MARK: - P1-3: 音频/位置腿准入收窄 (E1-E4)
+
+    func testE1DefaultBeginDoesNotStartAudioOrRequestLocationEvenWhenPrefEnabled() {
+        let spy = SystemSpy()
+        let keepAlive = spy.makeKeepAlive(
+            isApplicationForeground: { false },
+            isAudioKeepAliveEnabled: { true }
+        )
+
+        keepAlive.begin("run-default", title: "t", subtitle: "s")
+
+        XCTAssertFalse(spy.audio.isActive)
+        XCTAssertEqual(spy.audio.startCount, 0)
+        XCTAssertFalse(spy.location.setNeededCalls.contains(true))
+    }
+
+    func testE2EnableLivenessHeartbeatStartsAudioAndReleasesAfterGracePeriod() async {
+        let spy = SystemSpy()
+        var foreground = false
+        let keepAlive = spy.makeKeepAlive(
+            isApplicationForeground: { foreground },
+            isAudioKeepAliveEnabled: { true },
+            idleReleaseGraceNanoseconds: 40_000_000
+        )
+
+        keepAlive.begin("phone", title: "Amber", subtitle: "Control")
+        XCTAssertFalse(spy.audio.isActive)
+        XCTAssertFalse(spy.location.setNeededCalls.contains(true))
+
+        keepAlive.enableLivenessHeartbeat("phone")
+        XCTAssertTrue(spy.audio.isActive)
+        XCTAssertEqual(spy.location.setNeededCalls.last, true)
+
+        foreground = false
+        keepAlive.end("phone")
+        // 后台 idle grace window 内先不断开音频/位置。
+        XCTAssertTrue(spy.audio.isActive)
+        XCTAssertEqual(spy.location.setNeededCalls.last, true)
+
+        try? await Task.sleep(nanoseconds: 120_000_000)
+        XCTAssertFalse(spy.audio.isActive)
+        XCTAssertEqual(spy.location.setNeededCalls.last, false)
+    }
+
+    func testE3AllowsAudioLegHonorsPrefAndExpireAudioOnlyLeasesIgnoresIneligible() {
+        let enabledSpy = SystemSpy()
+        enabledSpy.submitError = SubmitFailure()
+        var audioEnabled = true
+        let enabledKeepAlive = enabledSpy.makeKeepAlive(isAudioKeepAliveEnabled: { audioEnabled })
+        var eligibleExpired = 0
+        var ineligibleExpired = 0
+
+        enabledKeepAlive.begin("eligible", title: "t", subtitle: "s", onExpire: {
+            eligibleExpired += 1
+        }, allowsAudioLeg: true)
+        XCTAssertTrue(enabledSpy.audio.isActive)
+        XCTAssertEqual(enabledSpy.location.setNeededCalls.last, true)
+
+        enabledKeepAlive.begin("ineligible", title: "t", subtitle: "s") {
+            ineligibleExpired += 1
+        }
+        // Eligible lease expiring short window holds by audio; ineligible must not be hijacked by audio.
+        enabledSpy.expirationHandlers[0]()
+        XCTAssertEqual(eligibleExpired, 0)
+        XCTAssertEqual(enabledKeepAlive.executionAssertion(for: "eligible"), .audio)
+
+        enabledSpy.expirationHandlers[1]()
+        XCTAssertEqual(ineligibleExpired, 1)
+        XCTAssertFalse(enabledKeepAlive.holdsLease("ineligible"))
+
+        audioEnabled = false
+        enabledKeepAlive.refreshAudioKeepAlive()
+        XCTAssertEqual(eligibleExpired, 1)
+        XCTAssertFalse(enabledKeepAlive.holdsLease("eligible"))
+
+        let disabledSpy = SystemSpy()
+        let disabledKeepAlive = disabledSpy.makeKeepAlive(isAudioKeepAliveEnabled: { false })
+        disabledKeepAlive.begin("eligible-off", title: "t", subtitle: "s", allowsAudioLeg: true)
+        XCTAssertFalse(disabledSpy.audio.isActive)
+        XCTAssertEqual(disabledSpy.audio.startCount, 0)
+    }
+
+    func testE4WithoutAudioBackgroundModeNeverStartsAudioEvenIfStoredTrue() {
+        let defaults = UserDefaults(suiteName: "amber.e4.\(UUID().uuidString)")!
+        defaults.set(true, forKey: IOSExecutionPreferenceKeys.audioKeepAlive)
+        XCTAssertFalse(
+            BackgroundGenerationKeepAlive.isAudioKeepAlivePreferenceEnabled(
+                defaults: defaults,
+                backgroundModes: ["processing"],
                 defaultEnabled: true
             )
         )

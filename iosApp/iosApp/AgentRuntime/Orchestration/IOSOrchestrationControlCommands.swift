@@ -33,6 +33,7 @@ final class IOSOrchestrationControlCommands {
     private let activityCenter: IOSMailboxActivityCenter
     private let sharedSettingsProvider: () -> IOSSharedSettingsStore?
     private let modelPool: IOSSubAgentModelPool
+    private let taskStore: IOSAdvancedTaskStore
     private let waitTimeoutMinMs: Int64
     private let waitTimeoutMaxMs: Int64
     private let waitTimeoutDefaultMs: Int64
@@ -49,6 +50,7 @@ final class IOSOrchestrationControlCommands {
         activityCenter: IOSMailboxActivityCenter,
         sharedSettingsProvider: @escaping () -> IOSSharedSettingsStore?,
         modelPool: IOSSubAgentModelPool,
+        taskStore: IOSAdvancedTaskStore = .shared,
         waitTimeoutMinMs: Int64,
         waitTimeoutMaxMs: Int64,
         waitTimeoutDefaultMs: Int64
@@ -64,6 +66,7 @@ final class IOSOrchestrationControlCommands {
         self.activityCenter = activityCenter
         self.sharedSettingsProvider = sharedSettingsProvider
         self.modelPool = modelPool
+        self.taskStore = taskStore
         self.waitTimeoutMinMs = waitTimeoutMinMs
         self.waitTimeoutMaxMs = waitTimeoutMaxMs
         self.waitTimeoutDefaultMs = waitTimeoutDefaultMs
@@ -583,6 +586,37 @@ final class IOSOrchestrationControlCommands {
             )
         } ?? finalMessages
         let text = Self.lastAssistantText(runMessages)
+        let configuration = IOSOrchestrationConfigurationCodec.orchestrationConfiguration(from: finalMessages)
+            ?? displayBaseline.flatMap { IOSOrchestrationConfigurationCodec.orchestrationConfiguration(from: $0) }
+        let deliverableHint = configuration?.deliverableHint
+        let checkpointPolicy = configuration?.checkpointPolicy
+        let structuredDigest = IOSSubAgentOutputProjection.structuredDigest(
+            from: text,
+            deliverableHint: deliverableHint,
+            checkpointPolicy: checkpointPolicy
+        )
+        let mappedTaskStatus: IOSAdvancedTaskStatus? = {
+            guard let terminalStatus else { return text.isEmpty ? nil : .completed }
+            switch terminalStatus {
+            case .completed:
+                return .completed
+            case .cancelled:
+                return .cancelled
+            case .failed:
+                return .failed
+            default:
+                return nil
+            }
+        }()
+        _ = IOSSubAgentOutputProjection.syncTaskResultSummary(
+            in: taskStore,
+            childThreadId: childHex,
+            runId: runId,
+            rawText: text,
+            deliverableHint: deliverableHint,
+            checkpointPolicy: checkpointPolicy,
+            status: mappedTaskStatus
+        )
         // P1-c 修复：空转录（如整轮失败、无 assistant 输出）也回传终态——改投
         // 结构化信封携带终态语义，父线程不静默丢失子线程的终止信号；截断与
         // runId 幂等去重与文本路径一致。
@@ -596,6 +630,24 @@ final class IOSOrchestrationControlCommands {
             if let terminalReason = terminalReason?.nilIfBlank {
                 terminalMetadata["terminal_reason"] = terminalReason
             }
+        }
+        let hasStructuredContract = (deliverableHint?.nilIfBlank != nil) || (checkpointPolicy?.nilIfBlank != nil)
+        if let structuredDigest, (!terminalMetadata.isEmpty || hasStructuredContract || payloadSource.count > IOSThreadOrchestrationToolService.finalAnswerMaxChars) {
+            terminalMetadata["structured_summary"] = structuredDigest.toMetadataDictionary()
+        }
+        let formattedBody: String
+        if hasStructuredContract,
+           let structuredDigest,
+           payloadSource.count <= IOSThreadOrchestrationToolService.finalAnswerMaxChars {
+            formattedBody = """
+            [Structured Digest]
+            \(structuredDigest.formattedSummary)
+
+            [Raw Output]
+            \(payloadSource)
+            """
+        } else {
+            formattedBody = payloadSource
         }
         let payload: String
         if payloadSource.count > IOSThreadOrchestrationToolService.finalAnswerMaxChars,
@@ -615,17 +667,17 @@ final class IOSOrchestrationControlCommands {
 
             [Amber host: child result excerpt]
             \(reference)
-            This child run has ended. The report above is a delivery excerpt, not a promise of another message. Read the stored full message with native session_read using the reference above, then follow next_offset until null. If the tool is hidden, use tool_search first; do not call it through mcp_call. Do not request regeneration or wait for more mail just because this excerpt was truncated.
+            This child run has ended. The report above is a delivery excerpt, not a promise of another message. Read the stored full message with native session_read using the reference above, then follow next_offset until null. If the tool is hidden, use tool_search first; do not call it through mcp_call. Do not request regeneration or wait for more mail just because this excerpt was truncated. Never copy or quote the [Amber host: ...] block, raw JSON metadata, or session_read UUIDs in your user-facing reply.
             """
         } else if !terminalMetadata.isEmpty {
             payload = """
-            \(payloadSource)
+            \(formattedBody)
 
             [Amber host: child run ended]
             \(IOSWorkspaceStore.json(terminalMetadata))
             """
         } else {
-            payload = payloadSource
+            payload = formattedBody
         }
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let envelope = MailboxEnvelopeEntity(

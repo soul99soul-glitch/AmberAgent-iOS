@@ -71,6 +71,7 @@ struct ChatContextCompactState: Equatable {
     var status: ChatContextCompactStatus
     var summary: String
     var updatedAt: Date
+    var customCompletedTitle: String? = nil
 
     static let idle = ChatContextCompactState(status: .idle, summary: "", updatedAt: Date.distantPast)
 
@@ -88,6 +89,7 @@ struct ChatContextCompactBoundary: Equatable, Identifiable {
     let afterMessageId: String
     let coveredMessageIds: Set<String>
     let state: ChatContextCompactState
+    var isEpisodeBoundary: Bool = false
 }
 
 extension ChatContextSnapshot {

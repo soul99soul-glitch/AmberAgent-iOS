@@ -12,17 +12,18 @@ enum IOSAppDeepLink {
         case healthSummary
         case weather
         case appleIntegrations
+        case phoneControl
         case wakeTasks
         case wakeDueTasks
         case wakeTask(id: String)
         case agentActivity(AgentActivityDeepLink.Target)
-        /// 深度阅读实时活动卡片的落点。
-        case deepReadTask(id: String)
         /// `amber://gateway/pair?p=<base64url>` from the `amber-gateway pair` QR code.
         case gatewayPair(payload: String)
         /// Task board of the paired Mac: `amber://tasks`. Mac Gateway pushes still carry the older
         /// `amber://settings/mac-gateway`, which lands here too.
         case macTasks
+        /// Paired Cloud schedule or native task detail (`amber://cloud-task/<workItemId>`).
+        case cloudTask(workItemId: String)
     }
 
     static func parse(
@@ -68,13 +69,15 @@ enum IOSAppDeepLink {
             return .weather
         case ("settings", ["apple-integrations"]) where queryItems.isEmpty:
             return .appleIntegrations
+        case ("settings", ["phone-control"]) where queryItems.isEmpty:
+            return .phoneControl
         case ("settings", ["mac-gateway"]) where queryItems.isEmpty:
             return .macTasks
         case ("tasks", []) where queryItems.isEmpty:
             return .macTasks
-        case (AgentActivityDeepLink.deepReadHost, let parts) where parts.count == 1 && queryItems.isEmpty:
-            guard isSafeIdentifier(parts[0], maxLength: 64) else { return nil }
-            return .deepReadTask(id: parts[0])
+        case ("cloud-task", let parts) where parts.count == 1 && queryItems.isEmpty:
+            guard isSafeWorkItemIdentifier(parts[0]) else { return nil }
+            return .cloudTask(workItemId: parts[0])
         case ("gateway", ["pair"]):
             guard queryItems.count == 1, queryItems[0].name == "p",
                   let payload = queryItems[0].value,
@@ -118,6 +121,9 @@ enum IOSAppDeepLink {
         case .appleIntegrations:
             components.host = "settings"
             components.path = "/apple-integrations"
+        case .phoneControl:
+            components.host = "settings"
+            components.path = "/phone-control"
         case .wakeTasks:
             components.host = "wake"
         case .wakeDueTasks:
@@ -129,13 +135,15 @@ enum IOSAppDeepLink {
             components.path = "/\(id)"
         case .macTasks:
             components.host = "tasks"
+        case .cloudTask(let workItemId):
+            guard isSafeWorkItemIdentifier(workItemId) else { return nil }
+            components.host = "cloud-task"
+            components.path = "/\(workItemId)"
         case .gatewayPair(let payload):
             guard isSafeIdentifier(payload, maxLength: MacGatewayPairingPayload.maximumLinkLength) else { return nil }
             components.host = "gateway"
             components.path = "/pair"
             components.queryItems = [URLQueryItem(name: "p", value: payload)]
-        case .deepReadTask(let id):
-            return AgentActivityDeepLink.makeDeepReadURL(taskId: id)
         case .agentActivity(let target):
             return AgentActivityDeepLink.makeURL(
                 runId: target.runId,
@@ -150,6 +158,14 @@ enum IOSAppDeepLink {
         guard !value.isEmpty, value.count <= maxLength else { return false }
         let allowed = CharacterSet(
             charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+        )
+        return value.unicodeScalars.allSatisfy(allowed.contains)
+    }
+
+    private static func isSafeWorkItemIdentifier(_ value: String) -> Bool {
+        guard !value.isEmpty, value.count <= 128 else { return false }
+        let allowed = CharacterSet(
+            charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_:"
         )
         return value.unicodeScalars.allSatisfy(allowed.contains)
     }

@@ -10,11 +10,17 @@ import SwiftUI
 final class ChatSuggestionRequestOwner {
     private(set) var token: UUID?
     var task: Task<Void, Never>?
+    var host = "local"
+    var source: ChatSuggestionSource?
+    var sourceIsCurrent: (@MainActor () -> Bool)?
+    var cached: (source: ChatSuggestionSource, suggestions: [String], modelID: String)?
+    var feedback = ChatSuggestionFeedbackSession()
 
-    func begin() -> UUID {
+    func begin(source: ChatSuggestionSource? = nil) -> UUID {
         task?.cancel()
         let next = UUID()
         token = next
+        self.source = source
         return next
     }
 
@@ -22,11 +28,14 @@ final class ChatSuggestionRequestOwner {
         task?.cancel()
         task = nil
         token = nil
+        source = nil
+        sourceIsCurrent = nil
     }
 
     func finish(ifCurrent requestToken: UUID) -> Bool {
         guard token == requestToken else { return false }
         task = nil
+        token = nil
         return true
     }
 }
@@ -59,27 +68,74 @@ extension ChatViewModel {
         guard let last = state.messages.last, last.role == MessageRole.assistant,
               !last.toText().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
-        // 完成触觉：单次刚性轻触。iOS 本地偏好（默认开）；不复用 KMP
-        // enableMessageGenerationHapticEffect——那是 Android-only 接线且默认关，
-        // 动它会改变 Android 默认行为。
-        let hapticKey = IOSDisplayPreferenceKeys.completionHaptic
-        let defaults = UserDefaults.standard
-        let hapticEnabled = defaults.object(forKey: hapticKey) == nil
-            ? true
-            : defaults.bool(forKey: hapticKey)
-        if hapticEnabled {
-            AmberHaptics.trigger(.rigidImpact)
-        }
+        syncSoulFromCompletedTurnIfNeeded(state: state)
 
-        if isCurrentConversation(state.conversationId) { generateChatSuggestions() }
+        if isCurrentConversation(state.conversationId) { generateChatSuggestions(state: state) }
         let userMessageCount = state.messages.filter { $0.role == MessageRole.user }.count
-        if userMessageCount == 1 { generateConversationTitle(state: state) }
+        if userMessageCount >= 1 { generateConversationTitle(state: state) }
         // 与标题共用 titleModelId；后台成功路径走同一 generator。
         generateConversationListPreview(state: state)
     }
 
+    func finishCompletionFeedback(
+        state: ChatConversationRunState, runID: String, succeeded: Bool, messages: [UIMessage]
+    ) {
+        guard succeeded, isCurrentConversation(state.conversationId),
+              !state.isOrchestratedChild, state.waitingForChildRunId == nil,
+              let last = messages.last, last.role == MessageRole.assistant else {
+            state.completionFeedback.finishWithoutFeedback(runID: runID)
+            return
+        }
+        let textParts: [Int: String] = Dictionary(uniqueKeysWithValues: last.parts.enumerated().compactMap { index, part in
+            guard let text = part as? UIMessagePart.Text,
+                  !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return (index, text.text)
+        })
+        state.completionFeedback.complete(
+            runID: runID, messageID: last.id.toHexDashString(), textParts: textParts
+        )
+    }
+
+    /// 兜底：若用户在本轮明确要求改人设/写入 soul，但模型仅在回复中答应而漏调 `agent_soul_update`，
+    /// 自动把新设定同步进 `AgentSoulStore.shared`，确保顶部形象人设立即生效。
+    private func syncSoulFromCompletedTurnIfNeeded(state: ChatConversationRunState) {
+        let conversationId = state.conversationId?.toHexDashString()
+        guard !state.isOrchestratedChild,
+              AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else {
+            return
+        }
+        let messages = state.messages
+        guard let lastUserIdx = messages.lastIndex(where: { $0.role == MessageRole.user }) else { return }
+        let trailingSlice = messages[lastUserIdx...]
+        let didCallSoulUpdateTool = trailingSlice.contains { msg in
+            msg.parts.contains { part in
+                guard let tool = part as? UIMessagePart.Tool else { return false }
+                return tool.toolName == AgentSoulToolCatalog.updateToolName
+            }
+        }
+        guard !didCallSoulUpdateTool else { return }
+        let userText = messages[lastUserIdx].toText().trimmingCharacters(in: .whitespacesAndNewlines)
+        let assistantText = trailingSlice
+            .filter { $0.role == MessageRole.assistant }
+            .map { $0.toText().trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        let recentContext = messages.prefix(lastUserIdx).suffix(4)
+            .map { $0.toText().trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+        _ = AgentSoulCloudBridge.syncFromTurnIfNeeded(
+            userText: userText,
+            assistantText: assistantText,
+            recentConversationContext: recentContext,
+            isOrchestratedChild: state.isOrchestratedChild,
+            conversationId: conversationId,
+            store: AgentSoulStore.shared
+        )
+    }
+
     /// 辅助模型:优先用指定的辅助模型,未设置时回退当前聊天模型(对齐 Android resolveTaskChatModel)。
-    private func resolveAuxModel(_ auxId: KotlinUuid) -> Model? {
+    func resolveAuxModel(_ auxId: KotlinUuid) -> Model? {
         sharedSettings.snapshot.findModelById(uuid: auxId) ?? sharedSettings.snapshot.getCurrentChatModel()
     }
 
@@ -98,12 +154,12 @@ extension ChatViewModel {
         }.joined(separator: "\n\n")
     }
 
-    private func auxLocaleName() -> String {
+    func auxLocaleName() -> String {
         Locale.current.localizedString(forIdentifier: Locale.current.identifier) ?? Locale.current.identifier
     }
 
     /// 用辅助模型跑一次单轮文本生成(OpenAIKmpProviderAdapter 内部按服务商类型分发 OpenAI/Claude)。
-    private func runAuxModel(model: Model, prompt: String, conversationId: KotlinUuid?) async -> String? {
+    func runAuxModel(model: Model, prompt: String, conversationId: KotlinUuid?) async -> String? {
         let snapshot = sharedSettings.snapshot
         guard let provider = ChatProviderConfiguration.provider(
             for: model,
@@ -154,8 +210,15 @@ extension ChatViewModel {
         guard let model = resolveAuxModel(snapshot.titleModelId),
               let conversationId = state.conversationId,
               let conversationStore,
-              let expectedTitle = conversationStore.summaries.first(where: { $0.id == conversationId })?.title else { return }
-        let content = auxConversationText(maxMessages: 4, messages: state.messages)
+              let expectedTitle = (conversationStore.currentConversation?.id == conversationId
+                  ? conversationStore.currentConversation?.title
+                  : nil) ?? conversationStore.summaries.first(where: { $0.id == conversationId })?.title else { return }
+        let activeMessages = ChatEpisodeStore.shared.unsealedNonSystemMessages(
+            for: conversationId.toHexDashString(),
+            in: state.messages
+        )
+        let sourceMessages = activeMessages.isEmpty ? state.messages : activeMessages
+        let content = auxConversationText(maxMessages: 4, messages: sourceMessages)
         guard !content.isEmpty else { return }
         let baseline = conversationStore.writeBaseline(for: conversationId)
         // 标题 LLM 顺带选 icon key：列表优先用它，避免事后猜标题关键词。
@@ -199,44 +262,21 @@ extension ChatViewModel {
     }
 
     func fillInputFromSuggestion(_ suggestion: String) {
-        invalidateSuggestionRequest()
+        recordSuggestionFeedback(suggestionRequests.feedback.accept(suggestion))
+        suggestionRequests.invalidate()
         inputText = suggestion
         chatSuggestions = []
-    }
-
-    private func generateChatSuggestions() {
-        let snapshot = sharedSettings.snapshot
-        guard let model = resolveAuxModel(snapshot.suggestionModelId) else { return }
-        let content = auxConversationText(maxMessages: 8)
-        guard !content.isEmpty else { return }
-        let prompt = snapshot.suggestionPrompt
-            .replacingOccurrences(of: "{locale}", with: auxLocaleName())
-            .replacingOccurrences(of: "{content}", with: content)
-        let conversationId = currentConversationId
-        let requestToken = beginSuggestionRequest()
-        suggestionRequests.task = Task { [weak self] in
-            guard let self else { return }
-            guard let raw = await self.runAuxModel(model: model, prompt: prompt, conversationId: conversationId) else { return }
-            guard !Task.isCancelled else { return }
-            let suggestions = raw
-                .split(separator: "\n")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-                .prefix(5)
-            self.applySuggestions(
-                Array(suggestions),
-                requestToken: requestToken,
-                conversationId: conversationId
-            )
-        }
     }
 
     func beginSuggestionRequest() -> UUID {
         suggestionRequests.begin()
     }
 
-    func invalidateSuggestionRequest() {
+    func invalidateSuggestionRequest(reason: String = "context_changed", preserveCached: Bool = false) {
+        recordSuggestionFeedback(suggestionRequests.feedback.dismiss(reason: reason))
         suggestionRequests.invalidate()
+        if !preserveCached { suggestionRequests.cached = nil }
+        chatSuggestions = []
     }
 
     func applySuggestions(
@@ -245,12 +285,22 @@ extension ChatViewModel {
         conversationId: KotlinUuid?
     ) {
         guard suggestionRequests.token == requestToken,
-              isCurrentConversation(conversationId),
-              !isGenerationActive else { return }
-        _ = suggestionRequests.finish(ifCurrent: requestToken)
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-            chatSuggestions = suggestions
+              inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let source = suggestionRequests.source
+        if let source {
+            guard source.host == suggestionRequests.host else { return }
+            if source.host == "local" {
+                guard isCurrentConversation(conversationId), !isGenerationActive,
+                      messages.last.map({ String(describing: $0.id) }) == source.turn else { return }
+            } else {
+                guard suggestionRequests.sourceIsCurrent?() == true else { return }
+            }
+        } else {
+            guard isCurrentConversation(conversationId), !isGenerationActive else { return }
         }
+        _ = suggestionRequests.finish(ifCurrent: requestToken)
+        publishSuggestions(Array(suggestions.prefix(ChatSuggestionFilter.maximumCount)), source: source,
+                           modelID: suggestionRequests.cached?.modelID ?? "")
     }
 
     /// 清洗标题:取首行、去引号/首尾标点、限长。

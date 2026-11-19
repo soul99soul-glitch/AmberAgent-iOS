@@ -105,12 +105,17 @@ final class IOSOrchestrationScopeViewModelTests: IOSOrchestrationToolTestCase {
                 .joined(separator: "\n")
         }
 
-        // 普通会话：不注入编排语境。
+        // 普通会话：不注入 mailbox 语境，但始终注入前台 AI 经理并发派工契约并暴露 spawn_agent。
         viewModel.reloadFromStore()
         await viewModel.orchestratedStatusRefreshTask?.value
-        XCTAssertFalse(injectedSystemText(viewModel).contains("[mailbox"))
+        let freshRootText = injectedSystemText(viewModel)
+        XCTAssertFalse(freshRootText.contains("[mailbox"))
+        XCTAssertTrue(freshRootText.contains("AI 经理并发派工契约"))
+        XCTAssertTrue(freshRootText.contains("deliverable_hint"))
+        XCTAssertTrue(freshRootText.contains("checkpoint_policy"))
+        XCTAssertTrue(Set(viewModel.currentToolDeclarationNames()).contains("spawn_agent"))
 
-        // spawn 后父会话（有子边）：注入。
+        // spawn 后父会话（有子边）：同时注入经理契约与 mailbox 语境。
         let spawnResult = parseJSON(await service.execute(
             toolName: "spawn_agent",
             arguments: spawnArguments(taskName: "child"),
@@ -125,14 +130,17 @@ final class IOSOrchestrationScopeViewModelTests: IOSOrchestrationToolTestCase {
         let parentText = injectedSystemText(viewModel)
         XCTAssertTrue(parentText.contains("[mailbox"))
         XCTAssertTrue(parentText.contains("FINAL_ANSWER"))
+        XCTAssertTrue(parentText.contains("AI 经理并发派工契约"))
 
-        // 切到子会话（有父边）：同样注入。
+        // 切到子会话（有父边）：注入 mailbox 语境，但不注入前台经理拆单契约。
         let childHex = try XCTUnwrap(spawnResult["child_thread_id"] as? String)
         let childId = KotlinUuid.companion.parse(uuidString: childHex)
         await store.selectConversation(id: childId)
         viewModel.reloadFromStore()
         await viewModel.orchestratedStatusRefreshTask?.value
-        XCTAssertTrue(injectedSystemText(viewModel).contains("[mailbox"))
+        let childText = injectedSystemText(viewModel)
+        XCTAssertTrue(childText.contains("[mailbox"))
+        XCTAssertFalse(childText.contains("AI 经理并发派工契约"))
     }
 
     /// 管线闭环场景 A/B：spawn 后不切换会话，run 级刷新路径（bindings.refreshOrchestrationLinks

@@ -1,3 +1,4 @@
+import os
 import SwiftUI
 import Shared
 import SwiftStreamingMarkdown
@@ -8,9 +9,21 @@ struct ChatGeneratedImageGrid: View {
     var toolInput: String?
     var onModify: (String, String, String) -> Void = { _, _, _ in }
     var allowsModify: Bool = true
+    private let display: ChatGeneratedImageRequestDisplay
 
-    private var display: ChatGeneratedImageRequestDisplay {
-        ChatGeneratedImageRequestDisplay(toolInput: toolInput)
+    init(
+        images: [UIMessagePart.Image],
+        toolCallID: String? = nil,
+        toolInput: String? = nil,
+        onModify: @escaping (String, String, String) -> Void = { _, _, _ in },
+        allowsModify: Bool = true
+    ) {
+        self.images = images
+        self.toolCallID = toolCallID
+        self.toolInput = toolInput
+        self.onModify = onModify
+        self.allowsModify = allowsModify
+        self.display = ChatGeneratedImageRequestDisplay(toolInput: toolInput)
     }
 
     var body: some View {
@@ -62,9 +75,17 @@ struct ChatGeneratedImageLoadingPlaceholder: View {
     let toolInput: String
     let isAnimating: Bool
     let toolCallID: String
+    private let display: ChatGeneratedImageRequestDisplay
 
-    private var display: ChatGeneratedImageRequestDisplay {
-        ChatGeneratedImageRequestDisplay(toolInput: toolInput)
+    init(
+        toolInput: String,
+        isAnimating: Bool,
+        toolCallID: String
+    ) {
+        self.toolInput = toolInput
+        self.isAnimating = isAnimating
+        self.toolCallID = toolCallID
+        self.display = ChatGeneratedImageRequestDisplay(toolInput: toolInput)
     }
 
     var body: some View {
@@ -151,7 +172,7 @@ struct ChatGeneratedImageFailureCard: View {
     }
 }
 
-struct ChatGeneratedImageRequestDisplay {
+struct ChatGeneratedImageRequestDisplay: Equatable, Sendable {
     var aspectRatio: CGFloat
     var aspectRatioTitle: String
     var requestedCount: Int
@@ -160,14 +181,49 @@ struct ChatGeneratedImageRequestDisplay {
         aspectRatio < 1 ? 236 : nil
     }
 
-    let multiCardWidth: CGFloat = 280
+    var multiCardWidth: CGFloat { 280 }
+
+    private static let cache = OSAllocatedUnfairLock(initialState: [String: ChatGeneratedImageRequestDisplay]())
 
     init(toolInput: String?) {
+        self = Self.parse(toolInput: toolInput)
+    }
+
+    private init(aspectRatio: CGFloat, aspectRatioTitle: String, requestedCount: Int) {
+        self.aspectRatio = aspectRatio
+        self.aspectRatioTitle = aspectRatioTitle
+        self.requestedCount = requestedCount
+    }
+
+    static func parse(
+        toolInput: String?,
+        onJSONParse: (() -> Void)? = nil
+    ) -> ChatGeneratedImageRequestDisplay {
+        if let toolInput, toolInput.count <= 4096,
+           let cached = cache.withLock({ $0[toolInput] }) {
+            return cached
+        }
+        onJSONParse?()
         let object = Self.jsonObject(from: toolInput)
         let parsedAspect = IOSImageAspectRatio(toolValue: object?["aspect_ratio"] as? String)
-        self.aspectRatio = CGFloat(parsedAspect.renderedAspectRatio)
-        self.aspectRatioTitle = parsedAspect.title
-        self.requestedCount = min(max(Self.intValue(object?["count"]) ?? 1, 1), 4)
+        let parsed = ChatGeneratedImageRequestDisplay(
+            aspectRatio: CGFloat(parsedAspect.renderedAspectRatio),
+            aspectRatioTitle: parsedAspect.title,
+            requestedCount: min(max(Self.intValue(object?["count"]) ?? 1, 1), 4)
+        )
+        if let toolInput, !toolInput.isEmpty, toolInput.count <= 4096 {
+            cache.withLock { storage in
+                if storage.count >= 64 {
+                    storage.removeAll(keepingCapacity: true)
+                }
+                storage[toolInput] = parsed
+            }
+        }
+        return parsed
+    }
+
+    static func clearCacheForTesting() {
+        cache.withLock { $0.removeAll() }
     }
 
     private static func intValue(_ value: Any?) -> Int? {

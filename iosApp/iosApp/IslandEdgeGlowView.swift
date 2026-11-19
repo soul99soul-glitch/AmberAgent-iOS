@@ -146,10 +146,15 @@ final class IslandGlowCanvasView: UIView {
     private var effOpacity: Double = 1
     private var isPaused = false
     private var isReduceMotion = false
+    private var isSceneBackgrounded = false
     private var gradientImage: CGImage?
     private var displayLink: CADisplayLink?
     private var cachedStrokeBounds: CGRect = .null
     private var cachedStrokePaths: [CGPath?] = []
+
+    var isDisplayLinkRunningForTesting: Bool {
+        displayLink != nil && displayLink?.isPaused == false
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -161,6 +166,10 @@ final class IslandGlowCanvasView: UIView {
     }
 
     required init?(coder: NSCoder) { nil }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
 
     func configure(spec: IslandGlowSpec, opacity: Double, paused: Bool, reduceMotion: Bool) {
         let specChanged = self.spec != spec
@@ -192,7 +201,7 @@ final class IslandGlowCanvasView: UIView {
     }
 
     private func updateRunning() {
-        let shouldRun = isAnimated && !isPaused && !isReduceMotion && window != nil && !isHidden && alpha > 0.01
+        let shouldRun = isAnimated && !isPaused && !isReduceMotion && !isSceneBackgrounded && window != nil && !isHidden && alpha > 0.01
         if shouldRun {
             if displayLink == nil {
                 let proxy = IslandGlowLinkProxy(self)
@@ -210,13 +219,42 @@ final class IslandGlowCanvasView: UIView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window != nil {
+        NotificationCenter.default.removeObserver(self, name: UIScene.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIScene.willEnterForegroundNotification, object: nil)
+        if let window {
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(handleSceneDidEnterBackground(_:)),
+                name: UIScene.didEnterBackgroundNotification, object: nil
+            )
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(handleSceneWillEnterForeground(_:)),
+                name: UIScene.willEnterForegroundNotification, object: nil
+            )
+            isSceneBackgrounded = window.windowScene?.activationState == .background
             updateRunning()
             setNeedsDisplay()
         } else {
+            isSceneBackgrounded = false
             displayLink?.invalidate()
             displayLink = nil
         }
+    }
+
+    @objc private func handleSceneDidEnterBackground(_ notification: Notification) {
+        if let scene = notification.object as? UIScene, let myScene = window?.windowScene, scene !== myScene {
+            return
+        }
+        isSceneBackgrounded = true
+        updateRunning()
+    }
+
+    @objc private func handleSceneWillEnterForeground(_ notification: Notification) {
+        if let scene = notification.object as? UIScene, let myScene = window?.windowScene, scene !== myScene {
+            return
+        }
+        isSceneBackgrounded = false
+        updateRunning()
+        if window != nil { setNeedsDisplay() }
     }
 
     override var isHidden: Bool {

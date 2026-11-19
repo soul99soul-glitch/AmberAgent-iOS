@@ -5,6 +5,78 @@ import XCTest
 
 /// Streaming output, provider preparation, and interrupted streams.
 final class IOSAgentToolEngineStreamingTests: IOSAgentToolEngineTestCase {
+    private final class BurstPausingProvider: IOSAgentTextProvider, IOSAgentStreamingProvider, @unchecked Sendable {
+        private let lock = NSLock()
+        private let chunks: [MessageChunk]
+        private var completion: (@Sendable () -> Void)?
+
+        init(chunks: [MessageChunk]) { self.chunks = chunks }
+
+        func generateText(providerSetting: ProviderSetting, messages: [UIMessage],
+                          params: TextGenerationParams) async throws -> MessageChunk {
+            chunks.last!
+        }
+
+        func streamText(providerSetting: ProviderSetting, messages: [UIMessage], params: TextGenerationParams,
+                        onChunk: @escaping @Sendable (MessageChunk) -> Void,
+                        onComplete: @escaping @Sendable () -> Void,
+                        onError: @escaping @Sendable (KotlinThrowable) -> Void) -> Kotlinx_coroutines_coreJob? {
+            lock.withLock { completion = onComplete }
+            chunks.forEach(onChunk)
+            return nil
+        }
+
+        func finish() { lock.withLock { completion }?() }
+    }
+
+    func testShortBurstPublishesLastSnapshotBeforeProviderCompletes() async {
+        func delta(_ message: UIMessage) -> MessageChunk {
+            MessageChunk(id: UUID().uuidString, model: "test-model",
+                         choices: [UIMessageChoice(index: 0, delta: message, message: nil, finishReason: nil)],
+                         usage: nil)
+        }
+        let provider = BurstPausingProvider(chunks: [delta(assistantReasoning("先分析")), delta(assistantText("答案"))])
+        let engine = IOSAgentToolEngine(provider: provider, executors: [:])
+        let appeared = expectation(description: "response appears while provider is still open")
+        let stages = AssistantStageRecorder()
+        let providerSetting = makeProviderSetting()
+        let params = makeParams(tools: [])
+        let messages = [userMessage("ask")]
+        let task = Task {
+            await engine.run(providerSetting: providerSetting, messages: messages, params: params,
+                             onAssistantStage: { stages.append($0) },
+                             onAssistantMessageSnapshot: { message in
+                if message.toText().contains("答案") { appeared.fulfill() }
+            })
+        }
+        await fulfillment(of: [appeared], timeout: 1)
+        XCTAssertEqual(stages.snapshot, [.thinking, .generating])
+        provider.finish()
+        let result = await task.value
+        XCTAssertEqual(result.messages.last?.toText().trimmingCharacters(in: .whitespacesAndNewlines), "答案")
+    }
+
+    func testNoDeferredSnapshotArrivesAfterStreamCompletion() async {
+        func delta(_ message: UIMessage) -> MessageChunk {
+            MessageChunk(id: UUID().uuidString, model: "test-model",
+                         choices: [UIMessageChoice(index: 0, delta: message, message: nil, finishReason: nil)],
+                         usage: nil)
+        }
+        let recorder = AssistantTextRecorder()
+        let engine = IOSAgentToolEngine(
+            provider: ScriptedStreamingProvider([delta(assistantReasoning("分析")), delta(assistantText("完成"))]),
+            executors: [:]
+        )
+        let result = await engine.run(
+            providerSetting: makeProviderSetting(), messages: [userMessage("ask")], params: makeParams(tools: []),
+            onAssistantMessageSnapshot: { recorder.append($0.toText()) }
+        )
+        let countAtCompletion = recorder.snapshot.count
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(recorder.snapshot.count, countAtCompletion)
+        XCTAssertEqual(result.messages.last?.toText().trimmingCharacters(in: .whitespacesAndNewlines), "完成")
+    }
+
     func testStreamingAssistantTextDoesNotSnapshotOnEveryChunk() throws {
         let testDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let appDirectory = testDirectory.deletingLastPathComponent().appendingPathComponent("iosApp")

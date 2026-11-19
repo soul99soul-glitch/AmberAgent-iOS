@@ -223,6 +223,41 @@ final class IOSWakeToolTests: XCTestCase {
         XCTAssertTrue(failingStore.tasks.isEmpty)
     }
 
+    func testRecurringWatchScheduleToolAndContinuationPromptContext() async throws {
+        let env = makeEnvironment()
+        let user = F.userMessage("随口帮我盯着国内油价调价窗口，有变动告诉我。")
+        let scheduleCall = call(
+            "wake_schedule",
+            id: "watch-oil-1",
+            input: #"{"title":"盯国内油价调价窗口","prompt":"核查当前计价周期工作日与预计调价幅度","interval_minutes":360,"watch_condition":"国内油价调价窗口开启或预计涨跌超 50 元/吨","stop_when_triggered":true}"#
+        )
+        let result = try await foreground(env, tool: scheduleCall, messages: [user])
+        XCTAssertEqual(result["ok"] as? Bool, true)
+        XCTAssertEqual(result["status"] as? String, "saved")
+        XCTAssertEqual(result["is_recurring_watch"] as? Bool, true)
+        XCTAssertEqual(result["interval_minutes"] as? Int, 360)
+        XCTAssertEqual(result["watch_condition"] as? String, "国内油价调价窗口开启或预计涨跌超 50 元/吨")
+        XCTAssertEqual(result["stop_when_triggered"] as? Bool, true)
+        XCTAssertNotNil(result["next_check_at"] as? String)
+
+        var savedTask = try XCTUnwrap(env.store.tasks.first)
+        XCTAssertTrue(savedTask.isRecurringWatch)
+        XCTAssertEqual(savedTask.intervalMinutes, 360)
+        XCTAssertEqual(savedTask.watchCondition, "国内油价调价窗口开启或预计涨跌超 50 元/吨")
+        savedTask.checkCount = 2
+        savedTask.lastCheckSummary = "第 2 次巡检：当前处于计价周期第 5 个工作日，暂未达到调价窗口"
+
+        let wakeMessage = try ChatViewModel.scheduledWakeMessage(savedTask)
+        let wakeText = wakeMessage.toText()
+        XCTAssertTrue(wakeText.contains("国内油价调价窗口开启或预计涨跌超 50 元/吨"))
+        XCTAssertTrue(wakeText.contains("第 2 次巡检：当前处于计价周期第 5 个工作日，暂未达到调价窗口"))
+        XCTAssertTrue(wakeText.contains("[WATCH_SILENT]"))
+        XCTAssertTrue(wakeText.contains("[WATCH_TRIGGERED]"))
+        XCTAssertTrue(ChatViewModel.scheduledWakeContextPrompt.contains("interval_minutes"))
+        XCTAssertTrue(ChatViewModel.scheduledWakeContextPrompt.contains("[WATCH_SILENT]"))
+        XCTAssertTrue(ChatViewModel.scheduledWakeContextPrompt.contains("[WATCH_TRIGGERED]"))
+    }
+
     private func makeEnvironment() -> Environment {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("wake-tools-\(UUID().uuidString)")
         roots.append(root)

@@ -18,27 +18,29 @@ enum ChatRowDigests {
         renderState: ChatRenderState,
         contentHash: Int,
         isGenerationActive: Bool,
-        displaySettingSignature: String,
-        generativeUiSettingSignature: String,
+        displaySettingSignature: some Hashable,
+        generativeUiSettingSignature: some Hashable,
         hasMultipleVariants: Bool,
-        reasoningLevelLabel: String?
+        reasoningLevelLabel: String?,
+        renderStateRevision: UInt64 = 0
     ) -> ChatRowDigest {
         var layout = Hasher()
         layout.combine(row.messageId)
         layout.combine(String(describing: row.role))
         layout.combine(contentHash)
         layout.combine(row.isAssistantContinuation)
-        layout.combine(row.isLast)
         layout.combine(row.isStreaming)
         layout.combine(row.hasEverStreamed)
         // isGenerating 经由思考胶囊显隐、reasoning 卡自动折叠、widget 流式占位
         // 三条路径真实影响高度,v1 保守归入 layout;精细化(按 part 组成拆位)
-        // 待夹具实测后再收紧。
+        // 待夹具实测后再收紧。单纯 isLast 翻转在已完结气泡上不影响正文高度。
         layout.combine(row.isLast && isGenerationActive)
         layout.combine(renderState.rendererMode.rawValue)
         layout.combine(renderState.liveRenderingEnabled)
+        layout.combine(renderState.frozenMarkdownSnapshot != nil)
         layout.combine(displaySettingSignature)
         layout.combine(generativeUiSettingSignature)
+        layout.combine(renderStateRevision)
         // variantSwitcher 是整行内嵌控件,单变体→多变体切换会让整行多出/少出
         // 一整条控件,直接改变行高;不能只留在 presentation 侧。
         layout.combine(hasMultipleVariants)

@@ -168,13 +168,13 @@ final class IOSDurableRunStoreTests: XCTestCase {
     func testGenericRunCanResumeOnlyItsOwnRecoveryCheckpoint() async throws {
         let db = makeDatabase()
         let store = IOSDurableRunStore(dao: db.agentRuntimeDao())
-        let runId = "novel-run-\(UUID().uuidString)"
+        let runId = "council-run-\(UUID().uuidString)"
         let didStart = try await store.ensureRunning(
             runId: runId,
-            descriptorId: IOSDurableRunStore.Descriptor.novelGeneration,
+            descriptorId: IOSDurableRunStore.Descriptor.council,
             startedAt: 100,
             inputDigest: "digest",
-            inputSnapshotRef: "novel:project:branch"
+            inputSnapshotRef: "council:project:branch"
         )
         XCTAssertTrue(didStart)
         let didCheckpoint = try await store.transition(
@@ -185,10 +185,10 @@ final class IOSDurableRunStoreTests: XCTestCase {
         XCTAssertTrue(didCheckpoint)
         let didResume = try await store.ensureRunning(
             runId: runId,
-            descriptorId: IOSDurableRunStore.Descriptor.novelGeneration,
+            descriptorId: IOSDurableRunStore.Descriptor.council,
             startedAt: 999,
             inputDigest: "ignored",
-            inputSnapshotRef: "novel:project:branch"
+            inputSnapshotRef: "council:project:branch"
         )
         XCTAssertTrue(didResume)
         let loadedSnapshot = try await store.snapshot(runId: runId)

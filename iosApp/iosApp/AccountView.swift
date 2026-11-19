@@ -462,7 +462,7 @@ private struct AccountHeatmapBlock: View {
                         .font(.body.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground)
 
-                    // [Slice 5] 真接：AccountHeatmap 从 AgentRuntimeDao.listAllRuns()
+                    // [Slice 5] 真接：AccountHeatmap 从 AgentRuntimeDao.listRunSummaries()
                     // 加载真实 run，按 startedAt 的日分桶着色。
                     Text("近 21 周每日运行次数（来自 agent_runtime.db）")
                         .font(.caption)
@@ -481,7 +481,7 @@ private struct AccountHeatmap: View {
     private let weeks = 21
     private let rows = 7
 
-    // [Slice 5] 真实运行数据：从 AgentRuntimeDao.listAllRuns() 加载所有 run，
+    // [Slice 5] 真实运行数据：从 AgentRuntimeDao.listRunSummaries() 加载所有 run，
     // 按 startedAt 的"日"分桶计数。空时所有格为 level 0（诚实，不造假）。
     @State private var dailyCounts: [Date: Int] = [:]
     @State private var totalRuns: Int = 0
@@ -527,15 +527,15 @@ private struct AccountHeatmap: View {
     }
 
     // [Slice 5] 调 IosDatabaseFactory.createDatabase().agentRuntimeDao()
-    // .listAllRuns(completionHandler:)（AgentRuntimeDao.kt:42），把每个 run
+    // .listRunSummaries(completionHandler:)，把每个 run
     // 的 startedAt (epoch ms) 折算成"日"key 累加。在 callback 内就把
-    // non-Sendable 的 [AgentRunEntity] 降级成 Sendable 的 [Date:Int]/Int，
+    // non-Sendable 的 [AgentRunSummary] 降级成 Sendable 的 [Date:Int]/Int，
     // 再 resume continuation，避免数据竞争。dao 失败时按空数据渲染（诚实）。
     private func loadRuns() async {
         let dao = IosDatabaseFactory.shared.createDatabase().agentRuntimeDao()
         let calendar = Calendar.current
         let result: (counts: [Date: Int], total: Int) = await withCheckedContinuation { (cont: CheckedContinuation<(counts: [Date: Int], total: Int), Never>) in
-            dao.listAllRuns { result, _ in
+            dao.listRunSummaries { result, _ in
                 let runs = result ?? []
                 var counts: [Date: Int] = [:]
                 for run in runs {

@@ -8,7 +8,6 @@ struct ConversationsView: View {
     let sharedSettings: IOSSharedSettingsStore
     let chatViewModel: ChatViewModel
     let councilChatViewModel: CouncilChatViewModel
-    let novelCreationViewModel: NovelCreationViewModel?
 
     @Environment(RouterPath.self) private var router
     @Environment(IOSConversationStore.self) private var conversationStore
@@ -20,7 +19,6 @@ struct ConversationsView: View {
     @State private var searchQuery: String = ""
     /// Liquid Glass morph namespace（skill: glassEffectID + hierarchy change）。
     @Namespace private var homeSearchNamespace
-    @State private var deepReadStore = IOSDeepReadStore.shared
     @State private var miniAppRepository = IOSMiniAppRepository.shared
     @State private var macGateway = MacGatewayStore.shared
     @State private var renamingConversationId: KotlinUuid?
@@ -36,7 +34,6 @@ struct ConversationsView: View {
     @FocusState private var searchFocused: Bool
     /// 展开后是否已真正拿到焦点；避免 expand 后 170ms 内 focused==false 误触发点外收起。
     @State private var searchHadFocus = false
-    @AccessibilityFocusState private var deepReadShortcutFocused: Bool
     /// 展开搜索后的延迟聚焦任务：取消/离场必须可撤销，否则 170ms 内收起会残留 FocusState。
     @State private var searchFocusTask: Task<Void, Never>?
     /// 入场级联只播放一次：最晚一级 delay .22 + 时长 .48，0.9s 后全部按已入场处理。
@@ -111,6 +108,14 @@ struct ConversationsView: View {
                     .contentShape(Rectangle())
                     .simultaneousGesture(dismissSearchOutsideTap)
 
+                if let cloudProjection = macGateway.cloudDialogueHomeProjection, !isSearchExpanded {
+                    cloudDialoguePinnedRow(cloudProjection)
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .homeCascade(delay: 0.16, enabled: !cascadeComplete)
+                }
+
                 if visibleSummaries.isEmpty {
                     HomeEmptyCard(title: isSearchExpanded && !searchQuery.isEmpty ? "没有匹配的会话" : "还没有会话")
                         .listRowInsets(EdgeInsets())
@@ -174,7 +179,6 @@ struct ConversationsView: View {
             backgroundGenerationRevision &+= 1
         }
         .onAppear {
-            Task { await novelCreationViewModel?.loadProjects(restoresSelection: false) }
             guard !cascadeComplete else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { cascadeComplete = true }
         }
@@ -244,6 +248,11 @@ struct ConversationsView: View {
         } message: {
             Text("此操作不可撤销，会话内的全部消息将被删除。关联子任务会停止，子会话记录保留在“对话存储”中。")
         }
+    }
+
+    /// 单栏且本页是被压入的会话管理页：显示返回对话根的按钮。
+    private var showsHomeBackButton: Bool {
+        !router.showsSidebarControl && !router.path.isEmpty
     }
 
     private var accountInitial: String {
@@ -336,6 +345,20 @@ struct ConversationsView: View {
 
     private func homeHeaderStack(useGlassEffectID: Bool) -> some View {
         HStack(spacing: 10) {
+            // 会话管理态（单栏下被 push 为 `.home`）才需要返回对话根；
+            // 双栏侧栏永远不是被 push 的页面，不能因为详情栏栈非空就多出返回钮。
+            if showsHomeBackButton {
+                AmberGlassCircleButton(
+                    systemImage: "chevron.left",
+                    accessibilityLabel: "返回对话",
+                    size: 38,
+                    symbolSize: 18
+                ) {
+                    collapseSearchIfNeeded()
+                    router.goBack()
+                }
+            }
+
             // Brand mark layer — HStack chrome layout frozen.
             AmberBrandMarkView()
                 .layoutPriority(1)
@@ -581,9 +604,7 @@ struct ConversationsView: View {
     }
 
     private var homeContinueModel: HomeContinueCardModel? {
-        let novelProjects = novelCreationViewModel?.projects.map(HomeNovelProjectRef.init) ?? []
         let councilTask = councilChatViewModel.homeResumeContext.map(HomeCouncilTaskRef.init)
-        let deepReadTasks = deepReadStore.history.map(HomeDeepReadTaskRef.init)
         let imageGeneration = homeImageGenerationContext.flatMap { context -> HomeImageGenerationRef? in
             if context.state == .completed, context.id == viewedImageGenerationID {
                 return nil
@@ -608,9 +629,7 @@ struct ConversationsView: View {
         let macTasks = macGateway.needsYouItems.map(HomeMacTaskRef.init)
 
         return HomeContinueCardModel.resolve(
-            novelProjects: novelProjects,
             councilTask: councilTask,
-            deepReadTasks: deepReadTasks,
             miniApps: miniApps,
             imageGeneration: imageGeneration,
             macTasks: macTasks
@@ -625,8 +644,6 @@ struct ConversationsView: View {
                     HomeContinueButton(model: model) { destination in
                         switch destination {
                         case .openCouncil: router.navigate(to: .council)
-                        case .deepReadTask(let id): router.navigate(to: .deepReadTask(id: id))
-                        case .resumeProject(let id): router.navigate(to: .novelProject(id: id))
                         case .miniAppRunner(let id): router.navigate(to: .miniAppRunner(appId: id))
                         case .generatedImage(let anchor):
                             openGeneratedImage(anchor)
@@ -676,8 +693,6 @@ struct ConversationsView: View {
 
     @ViewBuilder
     private var shortcutButtons: some View {
-        HomeShortcut(entry: .deepRead) { router.navigate(to: .board) }
-            .accessibilityFocused($deepReadShortcutFocused)
         HomeShortcut(entry: .tasks, badge: macGateway.needsYouCount) { router.navigate(to: .macTasks) }
         HomeShortcut(entry: .council) { router.navigate(to: .council) }
         HomeShortcut(entry: .miniApps) { router.navigate(to: .miniApps) }
@@ -691,9 +706,6 @@ struct ConversationsView: View {
         guard router.path.isEmpty,
               UIAccessibility.isVoiceOverRunning,
               oldValue != newValue else { return }
-        if newValue == nil {
-            deepReadShortcutFocused = true
-        }
         let announcement = newValue.map {
             IOSAppLocalization.formatted(
                 "待继续任务更新：%@，%@，%@",
@@ -768,7 +780,63 @@ struct ConversationsView: View {
         }
     }
 
+    private func cloudDialoguePinnedRow(_ projection: MacGatewayCloudDialogueHomeProjection) -> some View {
+        Button {
+            macGateway.setCloudMainDialogueSelected(true)
+            router.navigate(to: .chat)
+        } label: {
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(projection.isOnline ? AmberTheme.accentGreen : AmberTheme.muted)
+                    .frame(width: 8, height: 8)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(projection.title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AmberTheme.foreground)
+                            .lineLimit(1)
+                        Text("只读投影")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(AmberTheme.accent)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(AmberTheme.accent.opacity(0.12), in: Capsule())
+                        if projection.activeWorkCount > 0 {
+                            Text("\(projection.activeWorkCount) 运行中")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(AmberTheme.muted)
+                        }
+                    }
+                    Text(projection.summary)
+                        .font(.footnote)
+                        .foregroundStyle(AmberTheme.muted)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                if projection.hasUnread {
+                    Circle()
+                        .fill(AmberTheme.accent)
+                        .frame(width: 7, height: 7)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AmberTheme.muted)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(AmberTheme.card, in: RoundedRectangle(cornerRadius: AmberTheme.homeCardRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: AmberTheme.homeCardRadius, style: .continuous)
+                    .strokeBorder(AmberTheme.border, lineWidth: AmberTheme.designBorderWidth)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 10)
+        }
+        .buttonStyle(.plain)
+    }
+
     private func openConversation(_ conversationID: KotlinUuid) {
+        macGateway.setCloudMainDialogueSelected(false)
         collapseSearchIfNeeded()
         conversationNavigationTask?.cancel()
         conversationNavigationTask = Task { @MainActor in

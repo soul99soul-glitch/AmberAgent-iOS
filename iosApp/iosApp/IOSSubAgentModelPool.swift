@@ -110,10 +110,14 @@ final class IOSSubAgentModelPool {
     }
 
     func defaultReasoning(for candidate: Candidate) -> ReasoningLevel {
-        for preferred in [ReasoningLevel.auto_, .medium, .high] {
-            if candidate.supportedReasoning.contains(preferred) { return preferred }
+        Self.preferredReasoning(in: candidate.supportedReasoning)
+    }
+
+    static func preferredReasoning(in supported: [ReasoningLevel], fallback: ReasoningLevel = .off) -> ReasoningLevel {
+        for preferred in [ReasoningLevel.high, .xhigh, .medium, .auto_] {
+            if supported.contains(preferred) { return preferred }
         }
-        return candidate.supportedReasoning.first ?? .off
+        return supported.first ?? fallback
     }
 
     func candidate(

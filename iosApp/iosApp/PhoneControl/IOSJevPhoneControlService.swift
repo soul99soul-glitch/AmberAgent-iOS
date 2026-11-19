@@ -46,9 +46,14 @@ final class IOSJevPhoneControlService {
 
     init(deps: Dependencies) { self.deps = deps }
 
+    var canSendActionScreenshots: Bool {
+        deps.settingsProvider().canSendPhoneScreenshots(for: .phoneActions)
+    }
+
     func chooseAction(goal: String, observation: PhoneObservation, candidates: [Candidate],
                       recentSteps: [String], expectation: IOSPhoneGoalExpectation? = nil,
                       runID: String,
+                      recentStepLimit: Int = 5,
                       screenshotProvider: (() async throws -> PhoneScreenshot)? = nil) async -> Selection {
         guard !Task.isCancelled else { return .handback("cancelled") }
         let settings = deps.settingsProvider()
@@ -90,7 +95,7 @@ final class IOSJevPhoneControlService {
             state: { budget in
                 Self.state(goal: goal, candidates: candidates, recentSteps: recentSteps, before: nil,
                            after: observation, expectation: expectation, verification: nil, budget: budget,
-                           screenshot: screenshot?.state)
+                           recentStepLimit: recentStepLimit, screenshot: screenshot?.state)
             })
         let state: String, question: IOSJevQuestion
         switch fitted {
@@ -469,7 +474,8 @@ final class IOSJevPhoneControlService {
     private static func state(goal: String, candidates: [Candidate], recentSteps: [String],
                               before: PhoneObservation?, after: PhoneObservation,
                               expectation: IOSPhoneGoalExpectation?, verification: IOSPhoneGoalVerificationResult?,
-                              budget: Int, screenshot: ScreenshotState? = nil) -> String? {
+                              budget: Int, recentStepLimit: Int = 5,
+                              screenshot: ScreenshotState? = nil) -> String? {
         let source = before.map { [$0, after] } ?? [after]
         let afterIndex = source.count - 1
         // Nodes covered by a pushed page are not on screen; they never reach Jev.
@@ -561,7 +567,7 @@ final class IOSJevPhoneControlService {
         }
         let anchorCount = entries.prefix { $0.tier <= 1 }.count
         entries.prefix(anchorCount).forEach(include)
-        for step in recentSteps.suffix(5).reversed() {
+        for step in recentSteps.suffix(max(1, recentStepLimit)).reversed() {
             let text = String(step.prefix(1_000))
             guard let encoded = try? encoder.encode(text) else { return nil }
             let addedBytes = encoded.count + (state.recentSteps.isEmpty ? 0 : 1)

@@ -351,6 +351,10 @@ struct ChatRuntimeContextBuilder {
     let miniAppRepository: IOSMiniAppRepository
     let miniAppRuntimeEnabled: Bool
     var skillFileStore = IOSSkillFileStore()
+    var workspaceStore: IOSWorkspaceStore? = nil
+    var soulStore: AgentSoulStore? = nil
+    var conversationId: String? = nil
+    var isOrchestratedChild: Bool = false
 
     @MainActor
     func injectingRuntimeContext(
@@ -363,10 +367,51 @@ struct ChatRuntimeContextBuilder {
         prepared = messagesByInjectingMiniAppInstruction(prepared)
         prepared = messagesByInjectingMcpContext(prepared)
         prepared = messagesByInjectingMemoryContext(prepared, memoryRecallOverride: memoryRecallOverride)
+        prepared = messagesByInjectingPairedCloudDigest(prepared)
+        prepared = messagesByInjectingRecentEpisodesContext(prepared)
         prepared = messagesByInjectingSkillContext(prepared)
         prepared = messagesByInjectingWorkspaceToolPolicy(prepared)
         prepared = messagesByInjectingSystemPrompt(prepared)
         return coalesceSystemMessages ? Self.coalescingSystemMessages(prepared) : prepared
+    }
+
+    @MainActor
+    private func messagesByInjectingPairedCloudDigest(_ messages: [UIMessage]) -> [UIMessage] {
+        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else { return messages }
+        let gateway = MacGatewayStore.shared
+        guard gateway.connection != nil,
+              let digest = MacGatewayStore.buildPairedCloudRecentDigest(
+                  cloudTasks: gateway.cloudTasks,
+                  progressByWorkItem: gateway.cloudDialogueProgressByWorkItem,
+                  maxChars: 400
+              ),
+              !digest.isEmpty else {
+            return messages
+        }
+        var prepared = messages
+        let insertionIndex = prepared.firstIndex { $0.role != MessageRole.system } ?? prepared.endIndex
+        prepared.insert(
+            PromptTranscript.shared.sectionMessage(name: "pairedCloudDigest", text: digest),
+            at: insertionIndex
+        )
+        return prepared
+    }
+
+    @MainActor
+    private func messagesByInjectingRecentEpisodesContext(_ messages: [UIMessage]) -> [UIMessage] {
+        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else { return messages }
+        let prompt = ChatEpisodeContextSupport.recentEpisodesPrompt(
+            conversationId: conversationId,
+            isOrchestratedChild: isOrchestratedChild
+        )
+        guard !prompt.isEmpty else { return messages }
+        var prepared = messages
+        let insertionIndex = prepared.firstIndex { $0.role != MessageRole.system } ?? prepared.endIndex
+        prepared.insert(
+            PromptTranscript.shared.sectionMessage(name: "recentEpisodes", text: prompt),
+            at: insertionIndex
+        )
+        return prepared
     }
 
     static func soulSystemMessage(markdown: String) -> UIMessage? {
@@ -378,11 +423,42 @@ struct ChatRuntimeContextBuilder {
         <agents_md>
         \(soul)
         </agents_md>
+
+        \(AgentSoulStore.toolGuidanceSection)
         """)
     }
 
+    @MainActor
+    static func resolvedSoulMarkdown(
+        sharedSettings: IOSSharedSettingsStore,
+        soulStore: AgentSoulStore?
+    ) -> String {
+        let embodiment = (soulStore?.systemPromptSection ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let legacy = sharedSettings.agentRuntime.agentSoulMarkdown
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !embodiment.isEmpty else { return legacy }
+        let storePrompt = (soulStore?.soulPrompt ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !legacy.isEmpty, legacy != storePrompt else { return embodiment }
+        let customName = (soulStore?.displayName ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let adaptedLegacy: String
+        if !customName.isEmpty, customName != AgentSoulStore.defaultDisplayName {
+            adaptedLegacy = legacy.replacingOccurrences(
+                of: "You are Amber, a personal agent on the user's device.",
+                with: "You are \(customName), a personal agent on the user's device."
+            )
+        } else {
+            adaptedLegacy = legacy
+        }
+        return "\(adaptedLegacy)\n\n\(embodiment)"
+    }
+
+    @MainActor
     private func messagesByInjectingSoul(_ messages: [UIMessage]) -> [UIMessage] {
-        guard let soul = Self.soulSystemMessage(markdown: sharedSettings.agentRuntime.agentSoulMarkdown) else {
+        let markdown = Self.resolvedSoulMarkdown(sharedSettings: sharedSettings, soulStore: soulStore)
+        guard let soul = Self.soulSystemMessage(markdown: markdown) else {
             return messages
         }
         return [soul] + messages
@@ -407,13 +483,19 @@ struct ChatRuntimeContextBuilder {
         return [Self.systemMessageWithMemoryMetadata(systemText, ids: memoryIds)] + nonSystem
     }
 
+    @MainActor
     private func messagesByInjectingWorkspaceToolPolicy(_ messages: [UIMessage]) -> [UIMessage] {
         guard sharedSettings.isCapabilityGateEnabled(.workspace) else { return messages }
-        let prompt = """
+        var prompt = """
         Workspace tools are optional. For ordinary writing, drafting, translation, Markdown examples, or formatted answers, reply directly in chat.
         Use Workspace write, edit, move, or delete tools only when the current task explicitly authorizes the corresponding file operation. Progress questions, clarifications, and context compaction do not by themselves revoke that authorization; respect any explicit cancellation or change of scope.
         Use Workspace read, list, or search tools when the current task concerns existing Workspace files or artifacts, or needs inspection to complete an authorized file operation. The host enforces required permissions and approvals.
         """
+        if AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId),
+           let artifactIndex = (workspaceStore ?? .shared).recentArtifactsPromptIndex(limit: 5, maxChars: 600),
+           !artifactIndex.isEmpty {
+            prompt += "\n\nRecent workspace artifacts index:\n\(artifactIndex)"
+        }
         return [PromptTranscript.shared.sectionMessage(name: "workspace", text: prompt)] + messages
     }
 
@@ -529,8 +611,17 @@ struct ChatRuntimeContextBuilder {
         _ messages: [UIMessage],
         memoryRecallOverride: ChatMemoryContextBuilder.RecallResult?
     ) -> [UIMessage] {
+        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else { return messages }
         let result = memoryRecallResult(for: messages, override: memoryRecallOverride)
-        guard let prompt = result.prompt else { return messages }
+        let wikiIndex = IOSMemoryPersistence.shared.wikiNavigation(runtime: sharedSettings.agentRuntime)
+        let runtime = sharedSettings.agentRuntime
+        let maxChars = min(max(Int(runtime.memoryRecall.maxPromptChars), 256), 12000)
+        let experience = IOSMemoryExperienceRecall.prompt(messages: messages, runtime: runtime, store: IOSMemoryPersistence.shared.experiences,
+                                                         selectedMemoryCount: result.ids.count,
+                                                         availableChars: maxChars - (wikiIndex?.count ?? 0) - (result.prompt?.count ?? 0) - 4)
+        let prompt = [wikiIndex, result.prompt, experience].compactMap { $0 }.joined(separator: "\n\n")
+        IOSMemoryPersistence.shared.health.recordPrompt(residentChars: wikiIndex?.count ?? 0, totalChars: prompt.count)
+        guard !prompt.isEmpty else { return messages }
         // Recall changes turn to turn, so it goes after the stable leading
         // system fragments (soul, MCP catalog, orchestration, tool guidance).
         // Prefix-matching prompt caches then keep reusing those fragments.
@@ -580,6 +671,9 @@ struct ChatRuntimeContextBuilder {
         for messages: [UIMessage],
         override: ChatMemoryContextBuilder.RecallResult? = nil
     ) -> ChatMemoryContextBuilder.RecallResult {
+        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else {
+            return ChatMemoryContextBuilder.RecallResult(prompt: nil, records: [])
+        }
         if let override { return override }
         let records = ChatMemoryContextBuilder.recordsForPrompt(
             records: IosMemoryFactory.shared.getAllRecords(),

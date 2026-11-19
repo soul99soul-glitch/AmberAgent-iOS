@@ -478,7 +478,6 @@ final class IOSMemoryRecallPolicyTests: XCTestCase {
             terminalOutputTailChars: base.terminalOutputTailChars,
             terminalInstallTimeoutMs: base.terminalInstallTimeoutMs,
             feishuOfficeEnhancement: base.feishuOfficeEnhancement,
-            todayBoard: base.todayBoard,
             miniApp: base.miniApp,
             contextCompaction: base.contextCompaction,
             memoryRecall: MemoryRecallSetting(

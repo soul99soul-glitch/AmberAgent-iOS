@@ -6,6 +6,7 @@ import UIKit
 struct MacGatewayCloudTasksSection: View {
     let store: MacGatewayStore
     @State private var presentingCompose = false
+    @State private var presentingCloudMainDialogue = false
     @State private var selectedTaskSelection: SelectedCloudTask?
 
     struct SelectedCloudTask: Identifiable, Equatable {
@@ -16,6 +17,21 @@ struct MacGatewayCloudTasksSection: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "云端任务")
             AmberFormGroup {
+                MacGatewayRow(
+                    icon: "bubble.left.and.bubble.right",
+                    title: macGatewayL("已配对云主对话"),
+                    detail: macGatewayL("直接向已配对云主对话发送消息、补充或停止运行中任务（独立于本机对话）"),
+                    action: {
+                        store.setCloudMainDialogueSelected(true)
+                        presentingCloudMainDialogue = true
+                    }
+                ) {
+                    MacGatewayCapsuleButton(title: macGatewayL("进入")) {
+                        store.setCloudMainDialogueSelected(true)
+                        presentingCloudMainDialogue = true
+                    }
+                }
+                MacGatewayRowDivider()
                 MacGatewayRow(
                     icon: "paperplane",
                     title: macGatewayL("交给云端执行"),
@@ -36,6 +52,11 @@ struct MacGatewayCloudTasksSection: View {
             if store.hasActiveCloudTasks {
                 store.startCloudTaskPollingIfNeeded()
             }
+        }
+        .sheet(isPresented: $presentingCloudMainDialogue, onDismiss: {
+            store.setCloudMainDialogueSelected(false)
+        }) {
+            MacGatewayCloudDialogueSheet(store: store)
         }
         .sheet(isPresented: $presentingCompose) {
             MacGatewayCloudTaskComposeSheet(store: store) { submittedRequestId in
@@ -186,12 +207,23 @@ struct MacGatewayCloudTaskComposeSheet: View {
 struct MacGatewayCloudTaskDetailSheet: View {
     let store: MacGatewayStore
     let requestId: String
+    var workItemId: String? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var copiedResult = false
+    @State private var resubmittedRequestId: String?
+    @State private var isResubmitting = false
+    @State private var isLoadingBackfill = false
+
+    private var effectiveRequestId: String {
+        resubmittedRequestId ?? requestId
+    }
 
     private var record: MacGatewayCloudTaskRecord? {
-        store.cloudTasks.first(where: { $0.requestId == requestId })
+        store.cloudTasks.first(where: {
+            (!effectiveRequestId.isEmpty && $0.requestId == effectiveRequestId) ||
+            (workItemId != nil && $0.workItemId == workItemId)
+        })
     }
 
     var body: some View {
@@ -216,6 +248,14 @@ struct MacGatewayCloudTaskDetailSheet: View {
                         }
                     }
                     resultSection(record)
+                } else if isLoadingBackfill {
+                    Section {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text(verbatim: macGatewayL("正在加载云端任务详情…"))
+                                .foregroundStyle(AmberTheme.muted)
+                        }
+                    }
                 } else {
                     Section {
                         Text(verbatim: macGatewayL("任务记录不存在"))
@@ -230,11 +270,13 @@ struct MacGatewayCloudTaskDetailSheet: View {
                     Button(macGatewayL("完成")) { dismiss() }
                 }
             }
-            .task(id: record?.workItemId) {
-                guard let workItemId = record?.workItemId else { return }
-                await store.refreshCloudTask(workItemId: workItemId)
+            .task(id: record?.workItemId ?? workItemId) {
+                guard let resolvedWorkItemId = record?.workItemId ?? workItemId else { return }
+                isLoadingBackfill = (record == nil)
+                _ = await store.ensureCloudTaskLoaded(workItemId: resolvedWorkItemId)
+                isLoadingBackfill = false
                 while !Task.isCancelled {
-                    guard let current = store.cloudTasks.first(where: { $0.requestId == requestId }),
+                    guard let current = record,
                           let id = current.workItemId,
                           !current.isTerminal else {
                         break
@@ -277,6 +319,25 @@ struct MacGatewayCloudTaskDetailSheet: View {
                     Task { _ = await store.retryCloudTask(requestId: record.requestId) }
                 }
                 .disabled(store.busyCloudTaskIds.contains(record.requestId))
+            } else if record.state == .failed {
+                Button(macGatewayL("重新发起任务")) {
+                    let freshId = UUID().uuidString.lowercased()
+                    let request = MacGatewayCloudTaskRequest(
+                        requestId: freshId,
+                        text: record.briefText,
+                        agentId: record.agentId,
+                        title: record.displayTitle
+                    )
+                    isResubmitting = true
+                    Task { @MainActor in
+                        let result = await store.submitCloudTask(request)
+                        isResubmitting = false
+                        if case .success(let submitted) = result {
+                            resubmittedRequestId = submitted.requestId
+                        }
+                    }
+                }
+                .disabled(isResubmitting || store.busyCloudTaskIds.contains(record.requestId))
             }
             if let workItemId = record.workItemId {
                 Button(macGatewayL("刷新状态")) {
@@ -305,7 +366,7 @@ struct MacGatewayCloudTaskDetailSheet: View {
     @ViewBuilder
     private func resultSection(_ record: MacGatewayCloudTaskRecord) -> some View {
         Section(macGatewayL("执行结果")) {
-            if let markdown = record.detail?.resultMarkdown,
+            if let markdown = AmberUnifiedTaskBuilder.userFacingResultMarkdown(from: record.detail?.resultMarkdown),
                !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {

@@ -228,7 +228,6 @@ struct WebMountInfoRow: View {
 struct WebMountHandoffActions: View {
     let handoff: IOSWebMountContentHandoff
     let onChat: () -> Void
-    let onDeepRead: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -257,13 +256,6 @@ struct WebMountHandoffActions: View {
     private var handoffButtons: some View {
         Button(action: onChat) {
             Label("转入聊天", systemImage: "bubble.left.and.text.bubble.right")
-                .font(.caption.weight(.semibold))
-        }
-        .buttonStyle(.glass)
-        .frame(minHeight: 44)
-
-        Button(action: onDeepRead) {
-            Label("转入深度阅读", systemImage: "book.pages")
                 .font(.caption.weight(.semibold))
         }
         .buttonStyle(.glass)

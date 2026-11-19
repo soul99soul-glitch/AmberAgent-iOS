@@ -26,7 +26,6 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).chat.*</string>
-		<string>$(PRODUCT_BUNDLE_IDENTIFIER).deepread.*</string>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).keepalive.*</string>
 		<string>$(PRODUCT_BUNDLE_IDENTIFIER).wake</string>
 	</array>
@@ -36,21 +35,6 @@
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
 	<string>Amber</string>
-	<key>CFBundleDocumentTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleTypeName</key>
-			<string>Amber Novel Project</string>
-			<key>CFBundleTypeRole</key>
-			<string>Editor</string>
-			<key>LSHandlerRank</key>
-			<string>Owner</string>
-			<key>LSItemContentTypes</key>
-			<array>
-				<string>app.amber.ios.novel-project</string>
-			</array>
-		</dict>
-	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -199,28 +183,6 @@
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>UTExportedTypeDeclarations</key>
-	<array>
-		<dict>
-			<key>UTTypeConformsTo</key>
-			<array>
-				<string>public.data</string>
-			</array>
-			<key>UTTypeDescription</key>
-			<string>Amber Novel Project</string>
-			<key>UTTypeIdentifier</key>
-			<string>app.amber.ios.novel-project</string>
-			<key>UTTypeTagSpecification</key>
-			<dict>
-				<key>public.filename-extension</key>
-				<array>
-					<string>ambernovel</string>
-				</array>
-				<key>public.mime-type</key>
-				<string>application/vnd.amberagent.novel+json</string>
-			</dict>
-		</dict>
 	</array>
 </dict>
 </plist>

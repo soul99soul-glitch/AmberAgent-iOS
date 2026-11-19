@@ -166,6 +166,55 @@ struct MacGatewayCloudWorkDetail: Codable, Equatable, Sendable {
     var resultMarkdown: String?
 }
 
+enum MacGatewayCloudActivityPhase: String, Codable, Equatable, Sendable {
+    case started = "STARTED"
+    case progress = "PROGRESS"
+    case done = "DONE"
+    case failed = "FAILED"
+
+    var isTerminal: Bool {
+        switch self {
+        case .done, .failed:
+            true
+        case .started, .progress:
+            false
+        }
+    }
+}
+
+/// Sanitized outward activity entry returned by `GET /v2/agents/{id}/activity`.
+struct MacGatewayCloudActivityStatus: Codable, Equatable, Identifiable, Sendable {
+    var id: String { taskId }
+    var taskId: String
+    var label: String
+    var phase: MacGatewayCloudActivityPhase
+    var updatedAtMs: Int64
+
+    var updatedAtDate: Date {
+        Date(timeIntervalSince1970: TimeInterval(updatedAtMs) / 1_000.0)
+    }
+}
+
+/// Snapshot returned by `GET /v2/agents/{id}/activity` (up to 100 active-first items).
+struct MacGatewayCloudAgentActivity: Codable, Equatable, Sendable {
+    var agentId: String
+    var activities: [MacGatewayCloudActivityStatus]
+    var workItems: [MacGatewayCloudWorkItem]
+}
+
+/// Read-only main timeline entry returned by `GET /v2/timeline`.
+struct MacGatewayCloudTimelineEntry: Codable, Equatable, Identifiable, Sendable {
+    var id: String
+    var role: String
+    var agentId: String?
+    var text: String
+}
+
+struct MacGatewayCloudTimelinePage: Codable, Equatable, Sendable {
+    var items: [MacGatewayCloudTimelineEntry]
+    var nextCursor: String?
+}
+
 /// Persisted per paired `deviceId` so `requestId` and the exact request payload survive timeouts and restarts,
 /// and `workItemId` resumes polling after relaunch.
 struct MacGatewayCloudTaskRecord: Codable, Equatable, Identifiable, Sendable {
@@ -226,11 +275,7 @@ struct MacGatewayCloudTaskRecord: Codable, Equatable, Identifiable, Sendable {
         if let progress = effectiveWorkItem?.progress, !progress.isEmpty, !isTerminal {
             return "\(statusPart) · \(progress)"
         }
-        if let result = detail?.resultMarkdown?.trimmingCharacters(in: .whitespacesAndNewlines), !result.isEmpty {
-            let preview = result
-                .split(whereSeparator: \.isNewline)
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .first { !$0.isEmpty && !$0.hasPrefix("# Settlement Report") } ?? result
+        if let preview = AmberUnifiedTaskBuilder.resultPreview(from: detail?.resultMarkdown) {
             return "\(statusPart) · \(preview)"
         }
         return statusPart
@@ -278,12 +323,28 @@ extension MacGatewayClient {
         let encoded = Self.encodeWorkItemId(id)
         return try decode(await send("POST", "/v2/work-items/\(encoded)/cancel", slow: true))
     }
+
+    func agentActivity(agentId: String) async throws -> MacGatewayCloudAgentActivity {
+        let encoded = Self.encodeWorkItemId(agentId)
+        return try decode(await send("GET", "/v2/agents/\(encoded)/activity"))
+    }
+
+    func timeline(limit: Int = 50, before: String? = nil) async throws -> MacGatewayCloudTimelinePage {
+        let clampedLimit = min(max(limit, 1), 100)
+        var path = "/v2/timeline?limit=\(clampedLimit)"
+        if let before, !before.isEmpty,
+           let encodedCursor = before.addingPercentEncoding(withAllowedCharacters: Self.workItemPathAllowed) {
+            path += "&before=\(encodedCursor)"
+        }
+        return try decode(await send("GET", path))
+    }
 }
 
 // MARK: - Store Operations & Persistence
 
 extension MacGatewayStore {
-    static let cloudTasksKey = "macGateway.cloudTasks.v1"
+    nonisolated static let cloudTasksKey = "macGateway.cloudTasks.v1"
+    nonisolated static let persistenceQueue = DispatchQueue(label: "app.amber.ios.macGateway.persistence", qos: .utility)
 
     var effectiveCloudAgents: [MacGatewayCloudAgent] {
         if cloudAgents.isEmpty {
@@ -327,13 +388,69 @@ extension MacGatewayStore {
         cloudTasks = filtered
     }
 
-    func persistCloudTasks(_ records: [MacGatewayCloudTaskRecord]? = nil) {
+    func persistCloudTasks(_ records: [MacGatewayCloudTaskRecord]? = nil, forceAsync: Bool = false) {
         let list = records ?? cloudTasks
-        if list.isEmpty {
-            defaults.removeObject(forKey: Self.cloudTasksKey)
-        } else if let data = try? JSONEncoder().encode(list) {
-            defaults.set(data, forKey: Self.cloudTasksKey)
+        let targetDefaults = defaults
+        let (epoch, identity) = persistenceCoordinator.snapshot()
+        let coordinator = persistenceCoordinator
+        nonisolated(unsafe) let sendableDefaults = targetDefaults
+        let commitBlock: @Sendable () -> Void = {
+            guard coordinator.canCommit(epoch: epoch, identity: identity) else { return }
+            if list.isEmpty || identity == nil {
+                sendableDefaults.removeObject(forKey: Self.cloudTasksKey)
+            } else if let data = try? JSONEncoder().encode(list) {
+                sendableDefaults.set(data, forKey: Self.cloudTasksKey)
+            }
         }
+        if forceAsync || targetDefaults === UserDefaults.standard {
+            Self.persistenceQueue.async(execute: commitBlock)
+        } else {
+            commitBlock()
+        }
+    }
+
+    @discardableResult
+    func mergeCloudTaskSnapshot(
+        at index: Int,
+        workItem: MacGatewayCloudWorkItem,
+        detail: MacGatewayCloudWorkDetail?,
+        replayed: Bool? = nil
+    ) -> Bool {
+        let existing = cloudTasks[index]
+        if let existingWorkItem = existing.effectiveWorkItem {
+            if workItem.updatedAtMs < existingWorkItem.updatedAtMs {
+                return false
+            }
+            if existingWorkItem.state.isTerminal && !workItem.state.isTerminal {
+                return false
+            }
+        }
+        let updatedDate = workItem.updatedAtDate
+        let resolvedDetail: MacGatewayCloudWorkDetail?
+        if let detail {
+            resolvedDetail = detail
+        } else if var existingDetail = existing.detail {
+            existingDetail.workItem = workItem
+            resolvedDetail = existingDetail
+        } else {
+            resolvedDetail = nil
+        }
+        if let replayed {
+            cloudTasks[index].replayed = replayed
+        }
+        guard existing.workItemId != workItem.id
+            || existing.workItem != workItem
+            || existing.detail != resolvedDetail
+            || existing.lastError != nil
+            || existing.updatedAt != updatedDate else {
+            return false
+        }
+        cloudTasks[index].workItemId = workItem.id
+        cloudTasks[index].workItem = workItem
+        cloudTasks[index].detail = resolvedDetail
+        cloudTasks[index].lastError = nil
+        cloudTasks[index].updatedAt = updatedDate
+        return true
     }
 
     func refreshCloudAgents() async {
@@ -343,10 +460,28 @@ extension MacGatewayStore {
         do {
             let list = try await client.agents()
             guard self.client === client, generation == requestGeneration.cloudAgents else { return }
-            cloudAgents = list
+            if cloudAgents != list {
+                cloudAgents = list
+            }
+            await refreshCloudAgentActivity(agentId: list.first?.id ?? "main")
         } catch is CancellationError {
         } catch {
             guard self.client === client, generation == requestGeneration.cloudAgents else { return }
+            _ = forgetIfRevoked(error)
+        }
+    }
+
+    func refreshCloudAgentActivity(agentId: String = "main") async {
+        guard let client else { return }
+        do {
+            let snapshot = try await client.agentActivity(agentId: agentId)
+            guard self.client === client else { return }
+            if cloudAgentActivities[agentId] != snapshot {
+                cloudAgentActivities[agentId] = snapshot
+            }
+        } catch is CancellationError {
+        } catch {
+            guard self.client === client else { return }
             _ = forgetIfRevoked(error)
         }
     }
@@ -397,11 +532,12 @@ extension MacGatewayStore {
                 return .failure(CancellationError())
             }
             if let index = cloudTasks.firstIndex(where: { $0.requestId == record.requestId }) {
-                cloudTasks[index].workItemId = receipt.workItem.id
-                cloudTasks[index].workItem = receipt.workItem
-                cloudTasks[index].replayed = receipt.replayed
-                cloudTasks[index].lastError = nil
-                cloudTasks[index].updatedAt = receipt.workItem.updatedAtDate
+                _ = mergeCloudTaskSnapshot(
+                    at: index,
+                    workItem: receipt.workItem,
+                    detail: nil,
+                    replayed: receipt.replayed
+                )
                 record = cloudTasks[index]
                 persistCloudTasks()
             }
@@ -412,7 +548,10 @@ extension MacGatewayStore {
             startCloudTaskPollingIfNeeded()
             return .success(record)
         } catch {
-            if forgetIfRevoked(error) {
+            guard self.client === client else {
+                return .failure(CancellationError())
+            }
+            if forgetIfRevoked(error, for: client) {
                 return .failure(MacGatewayError.unauthorized)
             }
             if let index = cloudTasks.firstIndex(where: { $0.requestId == record.requestId }) {
@@ -444,22 +583,62 @@ extension MacGatewayStore {
         do {
             let detail = try await client.workItem(id: workItemId)
             guard self.client === client else { return }
-            if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }) {
-                cloudTasks[index].workItem = detail.workItem
-                cloudTasks[index].detail = detail
-                cloudTasks[index].lastError = nil
-                cloudTasks[index].updatedAt = detail.workItem.updatedAtDate
-                persistCloudTasks()
-            }
+            upsertBackfilledCloudTask(detail)
         } catch is CancellationError {
         } catch {
             guard self.client === client else { return }
-            if forgetIfRevoked(error) { return }
+            if forgetIfRevoked(error, for: client) { return }
             if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }) {
-                cloudTasks[index].lastError = error.localizedDescription
+                let errorMessage = error.localizedDescription
+                guard cloudTasks[index].lastError != errorMessage else { return }
+                cloudTasks[index].lastError = errorMessage
                 persistCloudTasks()
             }
         }
+    }
+
+    /// Backfills a cloud task record fetched from `GET /v2/work-items/{id}` (e.g. a schedule run
+    /// triggered on the cloud daemon rather than originated on this device).
+    @discardableResult
+    func upsertBackfilledCloudTask(_ detail: MacGatewayCloudWorkDetail) -> MacGatewayCloudTaskRecord {
+        if let index = cloudTasks.firstIndex(where: { $0.workItemId == detail.workItem.id || $0.requestId == detail.workItem.id }) {
+            if mergeCloudTaskSnapshot(at: index, workItem: detail.workItem, detail: detail) {
+                persistCloudTasks()
+            }
+            return cloudTasks[index]
+        }
+        let syntheticRequestId = detail.workItem.id
+        let record = MacGatewayCloudTaskRecord(
+            gatewayId: connection?.gatewayId ?? "",
+            deviceId: connection?.deviceId ?? "",
+            request: MacGatewayCloudTaskRequest(
+                requestId: syntheticRequestId,
+                text: detail.brief.isEmpty ? detail.workItem.title : detail.brief,
+                agentId: detail.workItem.agentId,
+                title: detail.workItem.title
+            ),
+            workItemId: detail.workItem.id,
+            workItem: detail.workItem,
+            detail: detail,
+            replayed: false,
+            lastError: nil,
+            createdAt: detail.workItem.updatedAtDate,
+            updatedAt: detail.workItem.updatedAtDate
+        )
+        cloudTasks.insert(record, at: 0)
+        persistCloudTasks()
+        return record
+    }
+
+    @discardableResult
+    func ensureCloudTaskLoaded(workItemId: String) async -> MacGatewayCloudTaskRecord? {
+        await refreshCloudTask(workItemId: workItemId)
+        return cloudTasks.first(where: { $0.workItemId == workItemId || $0.requestId == workItemId })
+    }
+
+    func openCloudTaskFromDeepLink(workItemId: String) async {
+        pendingCloudTaskWorkItemId = workItemId
+        _ = await ensureCloudTaskLoaded(workItemId: workItemId)
     }
 
     func refreshActiveCloudTasks() async {
@@ -484,17 +663,14 @@ extension MacGatewayStore {
         do {
             let detail = try await client.cancelTask(id: workItemId)
             guard self.client === client else { return }
-            if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }) {
-                cloudTasks[index].workItem = detail.workItem
-                cloudTasks[index].detail = detail
-                cloudTasks[index].lastError = nil
-                cloudTasks[index].updatedAt = detail.workItem.updatedAtDate
+            if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }),
+               mergeCloudTaskSnapshot(at: index, workItem: detail.workItem, detail: detail) {
                 persistCloudTasks()
             }
         } catch is CancellationError {
         } catch {
             guard self.client === client else { return }
-            if !forgetIfRevoked(error) {
+            if !forgetIfRevoked(error, for: client) {
                 if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }) {
                     cloudTasks[index].lastError = error.localizedDescription
                     persistCloudTasks()

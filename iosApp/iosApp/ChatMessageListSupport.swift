@@ -2,18 +2,20 @@ import SwiftUI
 import Shared
 
 enum ChatLayout {
-    static let assistantPartSpacing: CGFloat = 8
-    static let contentHorizontalInset: CGFloat = 22
-    static let userMaxWidth: CGFloat = 300
-    static let userMessageRowVerticalPadding: CGFloat = 10
+    static let assistantPartSpacing: CGFloat = 9
+    static let contentHorizontalInset: CGFloat = 18
+    static let timelineHorizontalInset: CGFloat = 16
+    static let userMaxWidth: CGFloat = 319
+    static let userMessageRowVerticalPadding: CGFloat = 7
     static let followBottomGap: CGFloat = 96
     /// 用户真实拖拽/惯性结束在底部附近时恢复自动跟随的意图阈值。
     /// 它必须大于 `bottomStickThreshold`：后者只描述物理 true-bottom，不能混用。
     static let nearBottomResumeThreshold = followBottomGap
     static let bottomStickThreshold: CGFloat = 40
-    /// 内容底部的静止留白:进入会话定位、回到底部时最后一条与输入框之间留出的小距离,
-    /// 和「手动上推→回弹」的自然停靠位一致(不贴死输入框)。
-    static let bottomRestGap: CGFloat = 26
+    /// 内容底部的静止留白：会话定位与回到底部时，最后一条气泡与输入框之间的
+    /// 舒适间距。配合时间线内容层的 `.padding(.bottom)` 使用，两者相加才是可见间隙；
+    /// 现取 12：贴得近但不死贴输入框边缘。
+    static let bottomRestGap: CGFloat = 12
     /// 内容最底部的不可见锚点 id:定位到它(而非最后一条气泡)即停在「带留白的内容底」。
     static let bottomAnchorID = "chat-bottom-rest-anchor"
     /// 流式消息离底部足够远时冻结渲染,避免用户看历史时为不可见的新 token 重排 Markdown。
@@ -45,25 +47,42 @@ struct ChatAssistantStack<Content: View>: View {
 }
 
 struct ChatAgentName: View {
-    @AppStorage(IOSDisplayPreferenceKeys.agentName) private var agentName = true
+    private var agentName: Bool { IOSChatRenderPreferences.shared.agentName }
 
     var body: some View {
         if agentName {
-            Text("Amber")
-                .font(.caption.weight(.semibold))
+            let name = AgentSoulStore.shared.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            Text(name.isEmpty ? AgentSoulStore.defaultDisplayName : name)
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(AmberTheme.muted)
+                .padding(.leading, 4)
+        }
+    }
+}
+
+/// The same trailing alignment and width budget for local and cloud user messages.
+struct ChatUserMessageRow<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Spacer(minLength: 56)
+            VStack(alignment: .trailing, spacing: 4) { content }
+                .frame(maxWidth: ChatLayout.userMaxWidth, alignment: .trailing)
         }
     }
 }
 
 struct ChatUserBubble: View {
     let text: String
-    @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
-    @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
-    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = 17
+    private var fontScale: Double { IOSChatRenderPreferences.shared.fontScale }
+    private var chatFont: String { IOSChatRenderPreferences.shared.chatFont }
+    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
 
     private var boundedScale: Double {
-        min(max(fontScale, 0.88), 1.25)
+        IOSChatFont.clampedScale(fontScale)
     }
 
     private var selectedFont: IOSChatFont {
@@ -97,14 +116,14 @@ struct ChatUserBubble: View {
         Text(text)
             .font(selectedFont.font(size: scaledBodyPointSize * boundedScale))
             .foregroundStyle(AmberTheme.accentInk)
-            .lineSpacing(3 * boundedScale)
+            .lineSpacing(3.2 * boundedScale)
             // cell self-sizing 测量会传入受限的垂直 proposal,普通 Text 会按 proposal
             // 截断——曾表现为用户消息只显示一行。fixedSize 让文本按理想高度完整布局;
             // 超长消息以 50 行为折叠上限,避免单条消息占掉数十屏。
             .lineLimit(50)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 15)
+            .padding(.vertical, 10.5)
             .background(AmberTheme.accent, in: Self.bubbleShape)
             .overlay {
                 Self.bubbleShape
@@ -118,16 +137,16 @@ struct ChatUserBubble: View {
 
 struct ChatAssistantText<Content: View>: View {
     let content: Content
-    @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
-    @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
-    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = 17
+    private var fontScale: Double { IOSChatRenderPreferences.shared.fontScale }
+    private var chatFont: String { IOSChatRenderPreferences.shared.chatFont }
+    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
 
     init(@ViewBuilder content: () -> Content) {
         self.content = content()
     }
 
     private var boundedScale: Double {
-        min(max(fontScale, 0.88), 1.25)
+        IOSChatFont.clampedScale(fontScale)
     }
 
     private var selectedFont: IOSChatFont {
@@ -138,16 +157,14 @@ struct ChatAssistantText<Content: View>: View {
         content
             .font(selectedFont.font(size: scaledBodyPointSize * boundedScale))
             .foregroundStyle(AmberTheme.foreground)
-            .lineSpacing(4 * boundedScale)
+            .lineSpacing(3.2 * boundedScale)
             .fixedSize(horizontal: false, vertical: true)
+            .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            // Custom appWide + lineGrid only: wash keeps body readable over grid.
-            // Builtin Pi is shell-scoped (chat is flat pi paper), so this is usually a no-op.
-            .background {
-                if AmberThemeRuntime.shared.canvasStyle == .lineGrid,
-                   AmberThemeRuntime.shared.showsCanvasTexture(on: .app) {
-                    AmberTheme.background.opacity(0.92)
-                }
+            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(AmberTheme.border, lineWidth: 0.7)
             }
     }
 }
@@ -177,6 +194,7 @@ enum ChatLiveEntranceRegistry {
 private struct ChatLiveEntranceModifier: ViewModifier {
     let key: String
     let isLive: Bool
+    var onStart: (() -> Void)? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase: Phase = .pending
@@ -197,6 +215,7 @@ private struct ChatLiveEntranceModifier: ViewModifier {
                     return
                 }
                 phase = .hidden
+                onStart?()
                 withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .smooth(duration: 0.38)) {
                     phase = .shown
                 }
@@ -205,8 +224,162 @@ private struct ChatLiveEntranceModifier: ViewModifier {
 }
 
 extension View {
-    func chatLiveEntrance(key: String, isLive: Bool) -> some View {
-        modifier(ChatLiveEntranceModifier(key: key, isLive: isLive))
+    func chatLiveEntrance(key: String, isLive: Bool, onStart: (() -> Void)? = nil) -> some View {
+        modifier(ChatLiveEntranceModifier(key: key, isLive: isLive, onStart: onStart))
+    }
+
+    func chatUserSendEntrance(key: String?) -> some View {
+        modifier(ChatUserSendEntranceModifier(key: key))
+    }
+}
+
+/// Explicit opt-in gate for foreground user-sent bubbles (Local & Cloud Main Dialogue).
+/// Only keys armed at the moment of an active user send animate once within `freshnessWindow`;
+/// history loads, scroll reuse, host/tab switches, background/Watch sends, and Cloud event replays
+/// never arm this gate and always render immediately in their settled state.
+@MainActor
+enum ChatUserSendEntranceGate {
+    static let freshnessWindow: TimeInterval = 1.5
+    static let settleDuration: TimeInterval = 0.32
+    private static let historyCapacity = 512
+
+    private struct Entry {
+        let armedAt: TimeInterval
+        var startedAt: TimeInterval?
+    }
+
+    private static var entries: [String: Entry] = [:]
+    private static var insertionOrder: [String] = []
+
+    static func arm(_ key: String, at now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        guard !key.isEmpty else { return }
+        if entries[key] == nil {
+            insertionOrder.append(key)
+            if insertionOrder.count > historyCapacity {
+                let evicted = insertionOrder.removeFirst()
+                entries.removeValue(forKey: evicted)
+            }
+        }
+        entries[key] = Entry(armedAt: now, startedAt: nil)
+    }
+
+    static func initialProgress(
+        for key: String?,
+        at now: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) -> CGFloat {
+        guard let key, let entry = entries[key] else { return 1 }
+        if let startedAt = entry.startedAt {
+            let elapsed = max(0, now - startedAt)
+            guard elapsed < settleDuration else { return 1 }
+            let t = elapsed / settleDuration
+            return CGFloat(1 - pow(1 - t, 3))
+        }
+        return (now - entry.armedAt) <= freshnessWindow ? 0 : 1
+    }
+
+    static func claimOrResume(
+        _ key: String?,
+        at now: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) -> (startProgress: CGFloat, remainingFraction: Double)? {
+        guard let key, var entry = entries[key] else { return nil }
+        if let startedAt = entry.startedAt {
+            let elapsed = max(0, now - startedAt)
+            guard elapsed < settleDuration else { return nil }
+            let t = elapsed / settleDuration
+            let startProgress = CGFloat(1 - pow(1 - t, 3))
+            return (startProgress, max(0.18, 1 - t))
+        }
+        guard (now - entry.armedAt) <= freshnessWindow else {
+            entry.startedAt = now - settleDuration
+            entries[key] = entry
+            return nil
+        }
+        entry.startedAt = now
+        entries[key] = entry
+        return (0, 1.0)
+    }
+
+    static func hasStarted(_ key: String) -> Bool {
+        entries[key]?.startedAt != nil
+    }
+
+    static func isArmed(_ key: String, at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard let entry = entries[key], entry.startedAt == nil else { return false }
+        return (now - entry.armedAt) <= freshnessWindow
+    }
+
+    static func resetForTesting() {
+        entries.removeAll()
+        insertionOrder.removeAll()
+    }
+}
+
+/// iMessage-style trailing user bubble entrance (`opacity: 0 → 1`, `scale: 0.94 → 1.0` anchored at
+/// `.bottomTrailing`, `offsetY: 12 → 0`). Uses render-only effects so row measurement, bottom
+/// pinning, and composer spacing remain untouched, and degrades to a short opacity fade on Reduce Motion.
+struct ChatUserSendEntranceModifier: ViewModifier {
+    let key: String?
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var trackedKey: String?
+    @State private var animatedProgress: CGFloat?
+
+    static func metrics(
+        progress: CGFloat,
+        reduceMotion: Bool
+    ) -> (opacity: Double, scale: CGFloat, offsetY: CGFloat) {
+        let clamped = min(max(progress, 0), 1)
+        let opacity = Double(clamped)
+        guard !reduceMotion else {
+            return (opacity: opacity, scale: 1.0, offsetY: 0)
+        }
+        let scale = 0.94 + 0.06 * clamped
+        let offsetY = 12 * (1 - clamped)
+        return (opacity: opacity, scale: scale, offsetY: offsetY)
+    }
+
+    func body(content: Content) -> some View {
+        let effectiveProgress: CGFloat = {
+            if trackedKey == key, let animatedProgress {
+                return animatedProgress
+            }
+            return ChatUserSendEntranceGate.initialProgress(for: key)
+        }()
+        let current = Self.metrics(progress: effectiveProgress, reduceMotion: reduceMotion)
+        content
+            .opacity(current.opacity)
+            .scaleEffect(current.scale, anchor: .bottomTrailing)
+            .offset(y: current.offsetY)
+            .onAppear {
+                activateIfNeeded(for: key)
+            }
+            .onChange(of: key) { _, newKey in
+                activateIfNeeded(for: newKey)
+            }
+    }
+
+    private func activateIfNeeded(for targetKey: String?) {
+        guard trackedKey != targetKey || animatedProgress == nil else { return }
+        trackedKey = targetKey
+        guard let claim = ChatUserSendEntranceGate.claimOrResume(targetKey) else {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                animatedProgress = 1
+            }
+            return
+        }
+        var initialTransaction = Transaction()
+        initialTransaction.disablesAnimations = true
+        withTransaction(initialTransaction) {
+            animatedProgress = claim.startProgress
+        }
+        let animation: Animation = reduceMotion
+            ? .easeOut(duration: 0.16 * claim.remainingFraction)
+            : .spring(response: 0.30 * claim.remainingFraction, dampingFraction: 0.84)
+        withAnimation(animation) {
+            animatedProgress = 1
+        }
     }
 }
 
@@ -253,6 +426,10 @@ struct ChatAssistantPendingResponseView: View {
 struct ContextCompactTimelineMarker: View {
     let state: ChatContextCompactState
 
+    private var isCustomEpisodeMarker: Bool {
+        state.status == .completed && state.customCompletedTitle != nil
+    }
+
     private var title: String {
         switch state.status {
         case .planning:
@@ -260,7 +437,7 @@ struct ContextCompactTimelineMarker: View {
         case .compacting:
             return "正在压缩上下文"
         case .completed:
-            return "上下文已压缩"
+            return state.customCompletedTitle ?? "上下文已压缩"
         case .failed:
             return "上下文压缩失败"
         case .idle:
@@ -280,6 +457,9 @@ struct ContextCompactTimelineMarker: View {
     }
 
     private var tint: Color {
+        if isCustomEpisodeMarker {
+            return AmberTheme.muted
+        }
         switch state.status {
         case .completed:
             return AmberTheme.accent
@@ -302,14 +482,16 @@ struct ContextCompactTimelineMarker: View {
         VStack(spacing: 7) {
             HStack(spacing: 10) {
                 Rectangle()
-                    .fill(AmberTheme.border.opacity(0.55))
+                    .fill(AmberTheme.border.opacity(isCustomEpisodeMarker ? 0.38 : 0.55))
                     .frame(height: 0.5)
                 HStack(spacing: 6) {
-                    Image(systemName: icon)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(tint)
+                    if !isCustomEpisodeMarker {
+                        Image(systemName: icon)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(tint)
+                    }
                     Text(title)
-                        .font(.footnote.weight(.semibold))
+                        .font(isCustomEpisodeMarker ? .caption.weight(.medium) : .footnote.weight(.semibold))
                         .foregroundStyle(tint)
                         .lineLimit(1)
                     if state.isActive {
@@ -318,7 +500,7 @@ struct ContextCompactTimelineMarker: View {
                 }
                 .fixedSize(horizontal: true, vertical: false)
                 Rectangle()
-                    .fill(AmberTheme.border.opacity(0.55))
+                    .fill(AmberTheme.border.opacity(isCustomEpisodeMarker ? 0.38 : 0.55))
                     .frame(height: 0.5)
             }
 

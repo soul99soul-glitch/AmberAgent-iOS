@@ -18,6 +18,12 @@ import Security
 /// credential class.
 enum IOSCredentialSideTable {
     private static let service = "app.amber.ios.credentials"
+    private static let cacheLock = NSLock()
+    /// In-memory write-through cache mapping credential key -> Optional<String>
+    /// (`.some(nil)` means confirmed absent in Keychain), eliminating repeated
+    /// synchronous main-thread `SecItemCopyMatching` IPC during view body and
+    /// model-availability evaluations.
+    nonisolated(unsafe) private static var memoryCache: [String: String?] = [:]
 
     // MARK: - store / load
 
@@ -28,22 +34,41 @@ enum IOSCredentialSideTable {
     @discardableResult
     static func store(key: String, value: String) -> Bool {
         guard let data = value.data(using: .utf8), !value.isEmpty else { return false }
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
         ]
         let updateStatus = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if updateStatus == errSecSuccess { return true }
-        guard updateStatus == errSecItemNotFound else { return false }
+        if updateStatus == errSecSuccess {
+            memoryCache[key] = .some(value)
+            return true
+        }
+        guard updateStatus == errSecItemNotFound else {
+            memoryCache.removeValue(forKey: key)
+            return false
+        }
         var addQuery = query
         addQuery[kSecValueData as String] = data
         addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+        let added = SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+        if added {
+            memoryCache[key] = .some(value)
+        } else {
+            memoryCache.removeValue(forKey: key)
+        }
+        return added
     }
 
     /// Loads a credential value for a key, or nil if absent.
     static func load(key: String) -> String? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if let cached = memoryCache[key] {
+            return cached
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -53,20 +78,34 @@ enum IOSCredentialSideTable {
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        if status == errSecSuccess, let data = result as? Data, let decoded = String(data: data, encoding: .utf8) {
+            memoryCache[key] = .some(decoded)
+            return decoded
+        }
+        if status == errSecItemNotFound {
+            memoryCache[key] = .some(nil)
+        }
+        return nil
     }
 
     /// Deletes a credential value for a key.
     @discardableResult
     static func delete(key: String) -> Bool {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
         ]
         let status = SecItemDelete(query as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
+        let succeeded = status == errSecSuccess || status == errSecItemNotFound
+        if succeeded {
+            memoryCache[key] = .some(nil)
+        } else {
+            memoryCache.removeValue(forKey: key)
+        }
+        return succeeded
     }
 
     // MARK: - key builders (stable credential refs)

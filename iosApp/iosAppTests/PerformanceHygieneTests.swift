@@ -127,6 +127,41 @@ final class PerformanceHygieneTests: XCTestCase {
         )
     }
 
+    func testChildTimelineAndCopyActionsUseTheirDisplayBoundaries() throws {
+        let child = try source("iosApp/SubAgentConversationView.swift")
+        XCTAssertTrue(child.contains("@State private var timelineUpdates: ChatTimelineUpdates"))
+        XCTAssertTrue(child.contains("timelineUpdates: timelineUpdates"), "Native must use the child's prepared event owner")
+        let load = try slice(of: child, from: "private func loadMessages()", untilLineContaining: "private func handleAction")
+        XCTAssertTrue(load.contains("timelineUpdates.publish("))
+        XCTAssertFalse(child.contains("chatViewModel?.timelineUpdates"))
+        let bubble = try source("iosApp/Chat/Message/MessageBubbleView.swift")
+        XCTAssertTrue(bubble.contains("UIPasteboard.general.string = MessageBubbleView.copyText(for: message)"))
+    }
+
+    func testTimelineActivityConsumesSummaryInsteadOfRawMessages() throws {
+        let content = try source("iosApp/Chat/Presentation/ChatViewScreenSignals.swift")
+        let activity = try slice(of: content, from: "var currentTimelineActivity:", untilLineContaining: "var pendingUserGateRequestID:")
+        XCTAssertFalse(activity.contains("viewModel.messages"))
+        XCTAssertTrue(activity.contains("chatListSummary"))
+    }
+
+    func testMessageBubbleDoesNotDecodeOrSanitizeProtocolEnvelopesDuringRendering() throws {
+        let content = try source("iosApp/Chat/Message/MessageBubbleView.swift")
+        XCTAssertFalse(content.contains("sanitizeAssistantDisplayTextIfEnvelope("))
+        XCTAssertFalse(content.contains("userFacingMailboxDisplayText("))
+        XCTAssertFalse(content.contains("extractUserFacingResult("))
+        XCTAssertFalse(content.contains("JSONSerialization"))
+        for path in [
+            "iosApp/Chat/Timeline/Projection/NativeTimelineProjection.swift",
+            "iosApp/Chat/Timeline/Projection/ChatMessageProjection.swift",
+            "iosApp/Chat/Timeline/ChatRenderState.swift"
+        ] {
+            XCTAssertFalse(try source(path).contains("IOSSubAgentOutputProjection.displayTexts(in:"),
+                           "Body-side projection/live-tail initialization must not decode envelopes either")
+        }
+        XCTAssertTrue(try source("iosApp/Chat/Timeline/ChatTimelineUpdates.swift").contains("projectionCache.prepareDisplayTexts(messages: messages)"))
+    }
+
     // MARK: - ChatViewModel：工具可用性判断不探测系统权限
 
     /// 工具是否暴露只取决于用户设置的能力策略（permissionPolicy(capabilityId:)），不得调用

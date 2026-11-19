@@ -6,7 +6,7 @@ final class SwiftModularizationNavigationUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testHomeSettingsWorkspaceAndDeepReadingLayout() throws {
+    func testHomeSettingsAndWorkspaceLayout() throws {
         let app = XCUIApplication(bundleIdentifier: "app.amber.ios")
         app.launch()
 
@@ -43,23 +43,6 @@ final class SwiftModularizationNavigationUITests: XCTestCase {
         XCTAssertTrue(workspaceBack.isHittable && importFile.isHittable)
         capture(app, page: "workspace")
         assertHeaderLayout([("back", workspaceBack), ("title", workspaceTitle), ("import", importFile)], in: app)
-
-        workspaceBack.tap()
-        XCTAssertTrue(settingsTitle.waitForExistence(timeout: 10), "Workspace did not return to Settings.")
-        let boardEntry = button(["深度阅读", "Deep reading"], in: app)
-        reveal(boardEntry, in: app)
-        boardEntry.tap()
-        let boardTitle = text(["深度阅读", "Deep reading"], in: app)
-        let boardBack = button(["返回", "Back"], in: app)
-        let history = button(["深度阅读历史", "Deep reading history"], in: app)
-        let boardSettings = button(["深度阅读设置", "Deep reading settings"], in: app)
-        XCTAssertTrue(boardTitle.waitForExistence(timeout: 10))
-        XCTAssertTrue(boardBack.isHittable && history.isHittable && boardSettings.isHittable)
-        capture(app, page: "board")
-        assertHeaderLayout([
-            ("back", boardBack), ("title", boardTitle),
-            ("history", history), ("settings", boardSettings)
-        ], in: app)
     }
 
     func testWebMountSettingsNavigationAndSiteListLayout() throws {
@@ -171,71 +154,6 @@ final class SwiftModularizationNavigationUITests: XCTestCase {
         capture(app, page: "chat-attachments")
         assertHeaderLayout([("close attachments", close), ("files", files)], in: app)
         close.tap()
-    }
-
-    func testNovelLocalProjectThreeSectionsAndContextControls() throws {
-        let app = XCUIApplication(bundleIdentifier: "app.amber.ios")
-        app.launch()
-        let newChat = button(["新建聊天", "New chat"], in: app)
-        if !newChat.waitForExistence(timeout: 25) {
-            let back = app.buttons["topbar-back"]
-            XCTAssertTrue(back.waitForExistence(timeout: 10) && back.isHittable)
-            back.tap()
-        }
-        XCTAssertTrue(newChat.waitForExistence(timeout: 15))
-        let novel = button(["小说创作"], in: app)
-        XCTAssertTrue(novel.waitForExistence(timeout: 10) && novel.isHittable)
-        novel.tap()
-
-        let create = button(["新建项目", "新建小说项目"], in: app)
-        XCTAssertTrue(create.waitForExistence(timeout: 15) && create.isHittable)
-        capture(app, page: "novel-projects")
-        let projectName = "Modularization UI Review"
-        let project = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", projectName)).firstMatch
-        if project.exists {
-            XCTAssertTrue(project.isHittable)
-            project.tap()
-        } else {
-            create.tap()
-            let name = app.textFields["小说名称"]
-            XCTAssertTrue(name.waitForExistence(timeout: 10) && name.isHittable)
-            name.tap()
-            name.typeText(projectName)
-            let confirm = button(["创建"], in: app)
-            XCTAssertTrue(confirm.exists && confirm.isHittable && confirm.isEnabled)
-            confirm.tap()
-        }
-
-        let tabs = ["创作", "正文", "设定"].map { button([$0], in: app) }
-        let workspaceReady = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "hittable == true"), object: tabs[0]
-        )
-        XCTAssertEqual(XCTWaiter.wait(for: [workspaceReady], timeout: 20), .completed)
-        capture(app, page: "novel-workspace")
-        for (index, tab) in tabs.enumerated() {
-            XCTAssertTrue(tab.isHittable)
-            XCTAssertGreaterThanOrEqual(tab.frame.width, 44)
-            for offset: CGFloat in [-21, 21] {
-                tabs[(index + 1) % tabs.count].tap()
-                tab.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-                    .withOffset(CGVector(dx: 0, dy: offset)).tap()
-                XCTAssertTrue(tab.isSelected, "The tab must accept a touch throughout its 44pt target.")
-            }
-            capture(app, page: "novel-section-\(index)")
-            assertHeaderLayout(Array(zip(["writing", "manuscript", "settings"], tabs)), in: app)
-        }
-
-        let controls = app.buttons["项目控制"]
-        XCTAssertTrue(controls.exists && controls.isHittable)
-        controls.tap()
-        let preferences = button(["模式与偏好"], in: app)
-        let injection = button(["上下文注入"], in: app)
-        XCTAssertTrue(preferences.waitForExistence(timeout: 10) && preferences.isHittable)
-        capture(app, page: "novel-project-controls")
-        XCTAssertTrue(injection.isHittable)
-        injection.tap()
-        capture(app, page: "novel-context-injection")
-        assertHeaderLayout([("preferences", preferences), ("injection", injection)], in: app)
     }
 
     func testProviderConfigurationModelsAndManualEditorNavigation() throws {

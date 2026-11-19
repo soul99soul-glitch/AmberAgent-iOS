@@ -19,7 +19,11 @@ enum IOSWakeToolExecutor {
         do {
             switch tool.toolName {
             case IOSWakeToolCatalog.schedule:
-                guard Set(args.keys).isSubset(of: ["title", "prompt", "fire_at", "event", "requires_foreground"]) else {
+                let allowedKeys: Set<String> = [
+                    "title", "prompt", "fire_at", "event", "requires_foreground",
+                    "interval_minutes", "watch_condition", "stop_when_triggered"
+                ]
+                guard Set(args.keys).isSubset(of: allowedKeys) else {
                     return failure(tool.toolName, "计划只接受任务内容与触发条件；所属会话和原始授权由 Amber 绑定。")
                 }
                 guard let title = nonemptyString(args["title"]), title.count <= 200,
@@ -44,8 +48,30 @@ enum IOSWakeToolExecutor {
                 } else {
                     event = nil
                 }
-                guard fireAt != nil || event != nil else {
-                    return failure(tool.toolName, "至少提供 fire_at 或 event 作为触发条件。")
+                let intervalMinutes: Int?
+                if let raw = args["interval_minutes"] {
+                    guard let value = integer(raw), (15...43_200).contains(value) else {
+                        return failure(tool.toolName, "interval_minutes 必须是 15 到 43200 之间的整数分钟。")
+                    }
+                    intervalMinutes = value
+                } else {
+                    intervalMinutes = nil
+                }
+                let watchCondition: String?
+                if let raw = args["watch_condition"] {
+                    guard let value = nonemptyString(raw), value.count <= 1_000 else {
+                        return failure(tool.toolName, "watch_condition 必须是非空条件说明，最多 1000 字符。")
+                    }
+                    watchCondition = value
+                } else {
+                    watchCondition = nil
+                }
+                if let raw = args["stop_when_triggered"], !(raw is Bool) {
+                    return failure(tool.toolName, "stop_when_triggered 必须是布尔值。")
+                }
+                let stopWhenTriggered = args["stop_when_triggered"] as? Bool ?? true
+                guard fireAt != nil || event != nil || intervalMinutes != nil else {
+                    return failure(tool.toolName, "至少提供 fire_at、event 或 interval_minutes 作为触发条件。")
                 }
                 if let raw = args["requires_foreground"], !(raw is Bool) {
                     return failure(tool.toolName, "requires_foreground 必须是布尔值。")
@@ -66,17 +92,34 @@ enum IOSWakeToolExecutor {
                     fireAt: fireAt,
                     event: event,
                     requiresForeground: args["requires_foreground"] as? Bool ?? false,
-                    requestID: "\(runID):\(callID)"
+                    requestID: "\(runID):\(callID)",
+                    intervalMinutes: intervalMinutes,
+                    watchCondition: watchCondition,
+                    stopWhenTriggered: stopWhenTriggered
                 )
-                return IOSWorkspaceStore.json([
+                var response: [String: Any] = [
                     "ok": true,
                     "tool": tool.toolName,
                     "status": "saved",
+                    "is_recurring_watch": task.isRecurringWatch,
+                    "stop_when_triggered": task.stopWhenTriggered,
                     "task": try jsonObject(task),
                     "execution_guaranteed": false,
                     "scheduling_status": scheduler.schedulingStatus,
-                    "note": "计划已保存；iOS 不保证准点执行或自动切到前台。requires_foreground 的工作等待前台执行机会。event 只由快捷指令或外部入口显式报告同名事件触发，不代表正在监听其他 App。"
-                ])
+                    "note": task.isRecurringWatch
+                        ? "周期盯梢任务已保存；未命中触发条件时会自动静默续期到下一周期，命中条件时提醒用户。iOS 不保证准点执行或自动切到前台。"
+                        : "计划已保存；iOS 不保证准点执行或自动切到前台。requires_foreground 的工作等待前台执行机会。event 只由快捷指令或外部入口显式报告同名事件触发，不代表正在监听其他 App。"
+                ]
+                if let interval = task.intervalMinutes {
+                    response["interval_minutes"] = interval
+                }
+                if let condition = task.watchCondition {
+                    response["watch_condition"] = condition
+                }
+                if let nextFireAt = task.fireAt {
+                    response["next_check_at"] = ISO8601DateFormatter().string(from: nextFireAt)
+                }
+                return IOSWorkspaceStore.json(response)
             case IOSWakeToolCatalog.list:
                 guard args.isEmpty else { return failure(tool.toolName, "wake_list 不接受参数，只读取当前会话。") }
                 return IOSWorkspaceStore.json([
@@ -128,6 +171,14 @@ enum IOSWakeToolExecutor {
         guard let text = value as? String else { return nil }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func integer(_ value: Any?) -> Int? {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        let doubleValue = number.doubleValue
+        guard doubleValue.isFinite, floor(doubleValue) == doubleValue else { return nil }
+        return number.intValue
     }
 
     private static func date(_ text: String) -> Date? {

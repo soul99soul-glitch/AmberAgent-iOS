@@ -303,20 +303,32 @@ struct ChatActivityIslandView: View {
     var maxWidth: CGFloat = ChatTopBarLayout.islandMaxWidth
     var conversationKey: String? = nil
     var announcement: ConversationActivityNotice? = nil
+    var backgroundRunningCount: Int = 0
+    var capsuleScale: CGFloat = 1
+    var onAvatarTap: (() -> Void)? = nil
+    var onAvatarFrameChange: ((CGRect) -> Void)? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(IOSDisplayPreferenceKeys.activityIslandEdgeGlow) private var activityIslandEdgeGlow = false
 
     init(presentation: ChatIslandPresentation, maxWidth: CGFloat = ChatTopBarLayout.islandMaxWidth,
-         conversationKey: String? = nil, announcement: ConversationActivityNotice? = nil) {
+         conversationKey: String? = nil, announcement: ConversationActivityNotice? = nil,
+         backgroundRunningCount: Int = 0, capsuleScale: CGFloat = 1,
+         onAvatarTap: (() -> Void)? = nil, onAvatarFrameChange: ((CGRect) -> Void)? = nil) {
         self.presentation = presentation
         self.maxWidth = maxWidth
         self.conversationKey = conversationKey
         self.announcement = announcement
+        self.backgroundRunningCount = backgroundRunningCount
+        self.capsuleScale = capsuleScale
+        self.onAvatarTap = onAvatarTap
+        self.onAvatarFrameChange = onAvatarFrameChange
     }
 
     /// 兼容既有调用（wiring canary / 预览）：纯态直接包装，无停留行为。
-    init(state: ChatActivityIslandState) {
+    init(state: ChatActivityIslandState, backgroundRunningCount: Int = 0, onAvatarTap: (() -> Void)? = nil) {
         self.presentation = state.isActive ? .active(state) : .idle(state)
+        self.backgroundRunningCount = backgroundRunningCount
+        self.onAvatarTap = onAvatarTap
     }
 
     private var state: ChatActivityIslandState {
@@ -333,22 +345,93 @@ struct ChatActivityIslandView: View {
         }
     }
 
+    private var personaMood: AmberAgentPersonaMood {
+        if state.kind == .awaitingUser {
+            return .needsInput
+        }
+        if presentation.isTerminalHold || state.tint == .red {
+            return .blocked
+        }
+        return (state.isActive || backgroundRunningCount > 0) ? .running : .idle
+    }
+
     var body: some View {
-        // Lock hug width BEFORE glass. glassEffect sizes to the offered proposal;
-        // if fixedSize comes after, the capsule still paints full bar width.
-        islandContent
-            .padding(.horizontal, 13)
-            .frame(height: 40)
-            .fixedSize(horizontal: true, vertical: false)
-            .background { glowUnderlay }
-            .modifier(ChatActivityIslandGlass())
-            .contentShape(Capsule())
-            .animation(
-                reduceMotion ? nil : .easeInOut(duration: 0.22),
-                value: state.visualKey
-            )
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(Text(accessibilitySummary))
+        ZStack(alignment: .top) {
+            // Layer 0 (Background): Independent Status Capsule — sits slightly behind the avatar's bottom edge
+            // so the avatar gently intrudes onto the top of the capsule without occluding the portrait.
+            islandContent
+                .padding(.horizontal, 13)
+                .padding(.top, 2)
+                .frame(height: state.kind == .title ? 30 : 32)
+                .fixedSize(horizontal: true, vertical: false)
+                .background { glowUnderlay }
+                .modifier(ChatActivityIslandGlass())
+                .background {
+                    #if DEBUG
+                    if ChatTopBarLayout.onCapsuleFrameForTesting != nil {
+                        Color.clear.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                            ChatTopBarLayout.onCapsuleFrameForTesting?($0, state.title)
+                        }
+                    }
+                    #endif
+                }
+                .contentShape(Capsule())
+                .scaleEffect(x: reduceMotion ? 1 : capsuleScale, y: 1)
+                .animation(
+                    reduceMotion ? nil : .easeInOut(duration: 0.22),
+                    value: state.visualKey
+                )
+                .frame(width: maxWidth, height: ChatTopBarLayout.islandCapsuleHeight, alignment: .center)
+                .padding(.top, ChatTopBarLayout.islandCapsuleTopOffset)
+                .zIndex(0)
+
+            // Layer 1 (Foreground): Fixed Top Avatar Anchor — rendered in front of the status capsule with
+            // an 8pt bottom intrusion, locked to top-center of `maxWidth` so it never shifts on width changes.
+            avatarMedallionView
+                .background {
+                    #if DEBUG
+                    if ChatTopBarLayout.onAvatarFrameForTesting != nil {
+                        Color.clear.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                            ChatTopBarLayout.onAvatarFrameForTesting?($0)
+                        }
+                    }
+                    #endif
+                }
+                .frame(width: ChatTopBarLayout.avatarDiameter, height: ChatTopBarLayout.avatarDiameter)
+                .shadow(color: .black.opacity(0.10), radius: 3.5, x: 0, y: 1.5)
+                .background {
+                    if let onAvatarFrameChange {
+                        Color.clear
+                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rect in
+                                onAvatarFrameChange(rect)
+                            }
+                    }
+                }
+                .frame(width: maxWidth, height: ChatTopBarLayout.avatarDiameter, alignment: .top)
+                .transaction { transaction in
+                    transaction.animation = nil
+                }
+                .zIndex(1)
+        }
+        .frame(width: maxWidth, height: ChatTopBarLayout.islandHeight, alignment: .top)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(accessibilitySummary))
+    }
+
+    @ViewBuilder
+    private var avatarMedallionView: some View {
+        if let onAvatarTap {
+            Button(action: onAvatarTap) {
+                AmberAgentPersonaMedallionView(mood: personaMood, diameter: ChatTopBarLayout.avatarDiameter)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
+            .accessibilityIdentifier("chat.topBar.personaAvatarButton")
+            .accessibilityLabel(Text(IOSAppLocalization.string("形象人设", defaultValue: "形象人设")))
+        } else {
+            AmberAgentPersonaMedallionView(mood: personaMood, diameter: ChatTopBarLayout.avatarDiameter)
+                .allowsHitTesting(false)
+        }
     }
 
     private var accessibilitySummary: String {
@@ -401,7 +484,7 @@ struct ChatActivityIslandView: View {
     }
 
     private var regularIslandContent: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 7) {
             if let orb = ChatActivityIslandMapping.orbState(
                 kind: state.kind,
                 systemImage: state.systemImage
@@ -415,25 +498,39 @@ struct ChatActivityIslandView: View {
                 )
                 .frame(width: 24, height: 24)
                 .transition(.opacity)
+            } else if state.kind == .title && backgroundRunningCount > 0 {
+                Circle()
+                    .fill(AmberTheme.accent)
+                    .frame(width: 6, height: 6)
             }
 
             ZStack {
-                Text(state.title)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(AmberTheme.foreground)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    // Cap long titles only; short titles stay content-width (no min stretch).
-                    .frame(maxWidth: min(ChatTopBarLayout.islandTitleMaxWidth,
-                                         max(0, maxWidth - 26 - (state.kind == .title ? 0 : 33))),
-                           alignment: .leading)
-                    .contentTransition(.opacity)
-                    .modifier(IslandTitleGlint(isActive: glintActive))
-                    .id(conversationKey)
-                    .transition(reduceMotion ? .opacity : .asymmetric(
-                        insertion: .move(edge: .trailing).combined(with: .opacity),
-                        removal: .move(edge: .leading).combined(with: .opacity)
-                    ))
+                HStack(spacing: 4) {
+                    Text(state.title)
+                        .font(.system(size: 12.2, weight: .semibold))
+                        .foregroundStyle(AmberTheme.foreground)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    if state.kind == .title && backgroundRunningCount > 0 {
+                        Text("· \(backgroundRunningCount) 项后台运行")
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(AmberTheme.accent)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                // Cap long titles only; short titles stay content-width (no min stretch).
+                .frame(maxWidth: min(ChatTopBarLayout.islandTitleMaxWidth + (backgroundRunningCount > 0 ? 76 : 0),
+                                     max(0, maxWidth - 26 - (state.kind == .title ? (backgroundRunningCount > 0 ? 12 : 0) : 33))),
+                       alignment: .leading)
+                .contentTransition(.opacity)
+                .modifier(IslandTitleGlint(isActive: glintActive))
+                .id(conversationKey)
+                .transition(reduceMotion ? .opacity : .asymmetric(
+                    insertion: .move(edge: .trailing).combined(with: .opacity),
+                    removal: .move(edge: .leading).combined(with: .opacity)
+                ))
             }
             .clipped()
             .animation(reduceMotion ? .easeInOut(duration: 0.18) : .easeInOut(duration: 0.25), value: conversationKey)
@@ -452,8 +549,14 @@ private struct ChatActivityIslandGlass: ViewModifier {
             // Light glass pad (same recipe as toolbar chips) — full AmberTheme.glass
             // is warm paper at high alpha and reads yellow on cream pages.
             content
+                .background(.ultraThinMaterial, in: Capsule())
                 .background(AmberTheme.glass.opacity(0.16), in: Capsule())
                 .glassEffect(.regular, in: Capsule())
+                .overlay {
+                    Capsule()
+                        .strokeBorder(AmberTheme.border.opacity(0.28), lineWidth: 0.5)
+                        .allowsHitTesting(false)
+                }
         } else {
             content
                 .background {

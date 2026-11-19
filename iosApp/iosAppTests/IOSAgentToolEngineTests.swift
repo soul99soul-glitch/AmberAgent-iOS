@@ -7,6 +7,77 @@ import XCTest
 final class IOSAgentToolEngineTests: IOSAgentToolEngineTestCase {
     // MARK: - Tests
 
+    @MainActor
+    func testRouterOffThenWorkerHighPreservesToolContextAndOff() async {
+        let provider = ParamsRecordingProvider([
+            toolCallMessage(toolCallId: "tier-test", toolName: "echo", input: "{}"), assistantText("done")
+        ])
+        let engine = IOSAgentToolEngine(provider: provider, executors: ["echo": RecordingExecutor(.filled("done"))],
+                                        configuration: .init(fastFirstReasoning: true, workerReasoningName: "HIGH"))
+        _ = await engine.run(providerSetting: makeProviderSetting(), messages: [userMessage("ask")],
+                             params: makeParams(tools: []).replacingReasoningLevel(.low))
+        XCTAssertEqual(provider.recordedParams.map(\.reasoningLevel), [.off, .high])
+        XCTAssertTrue(provider.recordedMessages.last?.flatMap(\.parts).contains { $0 is UIMessagePart.Tool } ?? false,
+                      "当前任务的后续工具轮必须保留自身工具上下文")
+
+        let disabledProvider = ParamsRecordingProvider([assistantText("done")])
+        let disabledEngine = IOSAgentToolEngine(provider: disabledProvider, executors: [:],
+                                                configuration: .init(fastFirstReasoning: true, workerReasoningName: "HIGH"))
+        _ = await disabledEngine.run(providerSetting: makeProviderSetting(), messages: [userMessage("ask")],
+                                     params: makeParams(tools: []))
+        XCTAssertEqual(disabledProvider.recordedParams.map(\.reasoningLevel), [.off])
+        let resumedProvider = ParamsRecordingProvider([assistantText("done")])
+        let resumedEngine = IOSAgentToolEngine(provider: resumedProvider, executors: [:],
+            configuration: .init(fastFirstReasoning: true, workerReasoningName: "HIGH", resumesWorker: true))
+        _ = await resumedEngine.run(providerSetting: makeProviderSetting(), messages: [userMessage("ask")],
+                                    params: makeParams(tools: []).replacingReasoningLevel(.medium))
+        XCTAssertEqual(resumedProvider.recordedParams.map(\.reasoningLevel), [.high], "审批恢复不应退回首轮 low")
+        let fallbackProvider = ParamsRecordingProvider([
+            toolCallMessage(toolCallId: "tier-fallback", toolName: "echo", input: "{}"), assistantText("done")
+        ])
+        let fallbackEngine = IOSAgentToolEngine(provider: fallbackProvider, executors: ["echo": RecordingExecutor(.filled("done"))],
+            configuration: .init(fastFirstReasoning: true, workerReasoningName: "MEDIUM"))
+        _ = await fallbackEngine.run(providerSetting: makeProviderSetting(), messages: [userMessage("ask")],
+                                     params: makeParams(tools: []).replacingReasoningLevel(.low))
+        XCTAssertEqual(fallbackProvider.recordedParams.map(\.reasoningLevel), [.off, .medium])
+        XCTAssertEqual(IOSSubAgentModelPool.preferredReasoning(in: [.auto_, .medium, .xhigh, .high]), .high)
+        XCTAssertEqual(IOSSubAgentModelPool.preferredReasoning(in: [.auto_, .medium, .xhigh]), .xhigh)
+        XCTAssertEqual(IOSSubAgentModelPool.preferredReasoning(in: [.auto_, .medium]), .medium)
+        XCTAssertEqual(IOSSubAgentModelPool.preferredReasoning(in: [.low, .off]), .low)
+    }
+
+    @MainActor
+    func testActivePhoneSessionKeepsLowReasoningUnderFastFirstWorkerOverride() async {
+        let provider = ParamsRecordingProvider([
+            toolCallMessage(toolCallId: "launch-duo", toolName: "phone_act", input: #"{"action":"launch","bundle_id":"com.duolingo.DuolingoMobile"}"#),
+            assistantText("done")
+        ])
+        let launchExecutor = RecordingExecutor(.filled(#"{"outcome":"completed"}"#))
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: ["phone_act": launchExecutor],
+            configuration: .init(fastFirstReasoning: true, routerReasoningName: "OFF", workerReasoningName: "HIGH"),
+            ledgerRunId: "phone-run-1",
+            phoneAutomaticReasoning: true,
+            phoneSessionIsActive: { runID in
+                runID == "phone-run-1" && !launchExecutor.calls.isEmpty
+            }
+        )
+        let phoneParams = IOSPhoneAutomationRequestPolicyTests.params(
+            modelID: "deepseek-flash",
+            reasoning: .high,
+            abilities: [.tool, .reasoning],
+            tools: IOSPhoneControlToolCatalog.declarations
+        )
+        _ = await engine.run(
+            providerSetting: makeProviderSetting(),
+            messages: [userMessage("帮我做多邻国")],
+            params: phoneParams
+        )
+        XCTAssertEqual(provider.recordedParams.map(\.reasoningLevel), [.off, .low],
+                       "手机自动化激活后后续轮次必须维持 .low，不能被 workerReasoningName=HIGH 覆盖回高推理")
+    }
+
     func testLastAllowedToolRoundLeavesSteerQueuedForTheNextRun() async {
         actor DrainCounter {
             var count = 0
@@ -549,6 +620,7 @@ final class IOSAgentToolEngineTests: IOSAgentToolEngineTestCase {
     /// 每轮刷新 params 后命中工具「可声明不可执行」（[engine] no executor registered）。
     /// 修复后：传了 toolExposureBridge + executorRebuilder 的路径每轮重建表，
     /// mock 宿主断言第二轮 wm_type 真实被调用。
+    @MainActor
     func testExposedToolGetsExecutorOnNextRoundViaRebuilder() async {
         let declarations = fullIosDeclarations()
         let bridge = IosToolExposureBridge(tools: declarations)
@@ -563,7 +635,7 @@ final class IOSAgentToolEngineTests: IOSAgentToolEngineTestCase {
         ])
         let wmTypeExecutor = RecordingExecutor(.filled("{\"ok\":true,\"typed\":true}"))
         // 与后台协调器同构的注册入口：按当轮 params.tools 注册（闭包捕获当轮 params）。
-        let rebuilder: (TextGenerationParams) -> [String: any IOSToolExecutor] = { params in
+        let rebuilder: @MainActor (TextGenerationParams) -> [String: any IOSToolExecutor] = { params in
             var executors: [String: any IOSToolExecutor] = [:]
             for tool in params.tools {
                 if tool.name == "tool_search" {
@@ -602,7 +674,11 @@ final class IOSAgentToolEngineTests: IOSAgentToolEngineTestCase {
             provider: provider,
             executors: rebuilder(initialParams),
             configuration: .init(maxSteps: 6, honorApprovalPause: false),
-            executorRebuilder: rebuilder
+            executorRebuilder: { params in
+                XCTAssertTrue(Thread.isMainThread,
+                              "工具工厂捕获 MainActor runtime；后台引擎重建前必须切回其执行器")
+                return rebuilder(params)
+            }
         )
 
         let result = await engine.run(

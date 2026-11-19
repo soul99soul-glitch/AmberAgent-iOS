@@ -14,14 +14,15 @@ extension String {
     return document.extractPlainText(removeHeading: removeHeading, coder: coder)
   }
 
+  private static let itemPositionInTableFormat = NSLocalizedString(
+    "a11y_item_position_in_table",
+    bundle: .module,
+    value: "Row %d of %d, Column %d of %d",
+    comment: "a11y understand their position in the table"
+  )
+
   static func itemPositionInTable(rowIndex: Int, totalRow: Int, columnIndex: Int, totalColumn: Int) -> String {
-    return String(format:
-      NSLocalizedString(
-        "a11y_item_position_in_table",
-        bundle: .module,
-        value: "Row %d of %d, Column %d of %d",
-        comment: "a11y understand their position in the table"
-      ), rowIndex, totalRow, columnIndex, totalColumn)
+    return String(format: itemPositionInTableFormat, rowIndex, totalRow, columnIndex, totalColumn)
   }
 
   static func openCitation(citationLabel: String) -> String {

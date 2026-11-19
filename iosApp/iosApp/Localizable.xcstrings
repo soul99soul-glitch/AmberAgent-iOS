@@ -857,29 +857,6 @@
         }
       }
     },
-    "深度阅读生成失败：请在深度阅读设置中选择可用模型，并检查服务商登录状态。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Deep reading failed: select an available model in Deep Reading settings and check the provider sign-in status."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "深度阅读生成失败：请在深度阅读设置中选择可用模型，并检查服务商登录状态。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "深度閱讀生成失敗：請在深度閱讀設定中選擇可用模型，並檢查服務商登入狀態。"
-          }
-        }
-      }
-    },
     "没有可用的聊天模型，请先在服务商设置中配置并选择模型。": {
       "extractionState": "manual",
       "localizations": {
@@ -8332,47 +8309,6 @@
         }
       }
     },
-    "Amber 代笔中": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Amber is ghostwriting"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Amber が代筆中"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Amber 대필 중"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Amber пишет"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Amber 代笔中"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Amber 代筆中"
-          }
-        }
-      }
-    },
     "Amber 后台生成": {
       "extractionState": "manual",
       "localizations": {
@@ -8410,47 +8346,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Amber 背景產生"
-          }
-        }
-      }
-    },
-    "Amber 小说创作中": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Amber is writing a novel"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Amber が小説を執筆中"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Amber 소설 작성 중"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Amber пишет роман"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Amber 小说创作中"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Amber 小說創作中"
           }
         }
       }
@@ -12842,88 +12737,6 @@
         }
       }
     },
-    "上一批已全部完成并收录。点「代笔下一批」继续连写，或修改章数后再开始。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The previous batch is complete and fully adopted. Tap “Ghostwrite next batch” to continue, or change the chapter count before starting again."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "前のバッチはすべて完了し、収録済みです。「次のバッチを代筆」をタップして続けて執筆するか、章数を変更してから開始してください。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이전 배치가 모두 완료되어 수록되었습니다. 「다음 배치 대필」을 눌러 이어서 작성하거나 장 수를 수정한 후 다시 시작하세요."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Предыдущая партия полностью завершена и добавлена. Нажмите «Дописать следующую партию», чтобы продолжить, или измените число глав и начните заново."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "上一批已全部完成并收录。点「代笔下一批」继续连写，或修改章数后再开始。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "上一批已全部完成並收錄。點「代筆下一批」繼續連寫，或修改章數後再開始。"
-          }
-        }
-      }
-    },
-    "上一批已完成。在下方「代笔」区点按钮开始下一批。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The previous batch is complete. Tap the “Ghostwrite” section below to start the next batch."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "前のバッチは完了しました。下の「代筆」欄のボタンから次のバッチを開始してください。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이전 배치가 완료되었습니다. 아래 「대필」 영역의 버튼을 눌러 다음 배치를 시작하세요."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Предыдущая партия завершена. Нажмите кнопку «Дописать» ниже, чтобы начать следующую."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "上一批已完成。在下方「代笔」区点按钮开始下一批。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "上一批已完成。在下方「代筆」區點按鈕開始下一批。"
-          }
-        }
-      }
-    },
     "上一章": {
       "extractionState": "manual",
       "localizations": {
@@ -13580,47 +13393,6 @@
         }
       }
     },
-    "不单独指定时使用小说创作设置中的默认模型。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "When none is specified, the default model from the novel-writing settings is used."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "個別に指定しない場合は、小説の創作設定にあるデフォルトモデルを使用します。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "별도로 지정하지 않으면 소설 창작 설정의 기본 모델을 사용합니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Если модель не указана отдельно, используется модель по умолчанию из настроек создания романа."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "不单独指定时使用小说创作设置中的默认模型。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "未單獨指定時，使用小說創作設定中的預設模型。"
-          }
-        }
-      }
-    },
     "不可用": {
       "extractionState": "manual",
       "localizations": {
@@ -13863,47 +13635,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "世界觀"
-          }
-        }
-      }
-    },
-    "世界观、人物、大纲和写作要求都可以独立维护。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Worldbuilding, characters, outlines, and writing requirements can each be maintained independently."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "世界観、キャラクター、プロット、執筆要件をそれぞれ個別に管理できます。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "세계관, 인물, 개요 및 작성 요구사항을 각각 관리할 수 있습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Мир, персонажей, план сюжета и требования к стилю можно настраивать отдельно."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "世界观、人物、大纲和写作要求都可以独立维护。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "世界觀、人物、大綱和寫作要求都可獨立維護。"
           }
         }
       }
@@ -15302,88 +15033,6 @@
         }
       }
     },
-    "从当前 WebMount 页面创建深度阅读": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Create deep reading from current WebMount page"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "現在のWebMountページから詳細リサーチを作成"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "현재 WebMount 페이지에서 심층 읽기 만들기"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Создать глубокое чтение из текущей страницы WebMount"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "从当前站点页面创建深度阅读"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "從目前站點頁面建立深度閱讀"
-          }
-        }
-      }
-    },
-    "从文件创建深度阅读": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Create deep reading from file"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ファイルから詳細リサーチを作成"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "파일에서 심층 읽기 만들기"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Создать глубокое чтение из файла"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "从文件创建深度阅读"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "從檔案建立深度閱讀"
-          }
-        }
-      }
-    },
     "从检查点 Fork": {
       "extractionState": "manual",
       "localizations": {
@@ -15626,1277 +15275,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "程式碼預覽"
-          }
-        }
-      }
-    },
-    "代笔下一批 · %lld 章": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwrite next batch · %lld chapters"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "次の%lld章を代筆"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "다음 %lld개 장 대필"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Дописать ещё · %lld гл."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔下一批 · %lld 章"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆下一批 · %lld 章"
-          }
-        }
-      }
-    },
-    "代笔下一章": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwrite next chapter"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "次の章を代筆"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "다음 장 대필"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Дописать следующую главу"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔下一章"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆下一章"
-          }
-        }
-      }
-    },
-    "代笔中 · 剧情同步": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting · Plot sync"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中 · ストーリー同期"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 중 · 스토리 동기화"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Пишет · синхронизация сюжета"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔中 · 剧情同步"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中 · 劇情同步"
-          }
-        }
-      }
-    },
-    "代笔中%@ · 写整章": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting%@ · Full chapter"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中%@ · 章全体を執筆"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 중%@ · 전체 장 작성"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Пишет %@ · вся глава"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔中%@ · 写整章"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中%@ · 寫整章"
-          }
-        }
-      }
-    },
-    "代笔中%@ · 剧情同步": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting%@ · Plot sync"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中%@ · ストーリー同期"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 중%@ · 스토리 동기화"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Пишет %@ · синхронизация сюжета"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔中%@ · 剧情同步"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中%@ · 劇情同步"
-          }
-        }
-      }
-    },
-    "代笔中%@ · 定向改写 %lld/%lld": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting%@ · Targeted rewrite %lld/%lld"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中%@ · 指定リライト %lld/%lld"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 중%@ · 지정 재작성 %lld/%lld"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Пишет %@ · переписывание %lld/%lld"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔中%@ · 定向改写 %lld/%lld"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中%@ · 定向改寫 %lld/%lld"
-          }
-        }
-      }
-    },
-    "代笔中%@ · 审核并收录": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting%@ · Review and adopt"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中%@ · 審査して収録"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 중%@ · 검토 및 수록"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Пишет %@ · проверка и добавление"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔中%@ · 审核并收录"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中%@ · 審核並收錄"
-          }
-        }
-      }
-    },
-    "代笔中%@ · 拟定计划": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting%@ · Planning"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中%@ · 計画を作成"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 중%@ · 계획 작성"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Пишет %@ · составление плана"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔中%@ · 拟定计划"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中%@ · 擬定計畫"
-          }
-        }
-      }
-    },
-    "代笔中%@ · 按意见润修": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting%@ · Revising from feedback"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中%@ · コメントに沿って推敲"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 중%@ · 의견에 따라 다듬기"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Пишет %@ · доработка по замечаниям"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔中%@ · 按意见润修"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中%@ · 按意見潤修"
-          }
-        }
-      }
-    },
-    "代笔中%@ · 自动收录": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting%@ · Auto-adopting"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中%@ · 自動収録"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 중%@ · 자동 수록"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Пишет %@ · автоматическое добавление"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔中%@ · 自动收录"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中%@ · 自動收錄"
-          }
-        }
-      }
-    },
-    "代笔仅支持当前主分支": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting is supported only on the current main branch"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆は現在のメインブランチにのみ対応しています"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필은 현재 메인 브랜치에서만 지원됩니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Дописание доступно только в главной ветке"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔仅支持当前主分支"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆僅支援目前主分支"
-          }
-        }
-      }
-    },
-    "代笔写整章前要先确认计划；代笔进行中不能改。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Confirm the plan before ghostwriting a full chapter; it can't be changed during ghostwriting."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章全体を代筆する前に計画を確認してください。代筆中は変更できません。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "전체 장을 대필하기 전에 계획을 확인해야 하며, 대필 중에는 변경할 수 없습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Перед написанием всей главы нужно подтвердить план; во время написания его нельзя менять."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔写整章前要先确认计划；代笔进行中不能改。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆寫整章前要先確認計畫；代筆進行中不能修改。"
-          }
-        }
-      }
-    },
-    "代笔写整章前，请先在标题面板确认本章计划": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Confirm this chapter's plan in the title panel before ghostwriting the full chapter"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章全体を代筆する前に、タイトルパネルでこの章の計画を確認してください"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "전체 장을 대필하기 전에 제목 패널에서 이 장의 계획을 확인하세요."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Перед написанием всей главы подтвердите план этой главы на панели заголовка"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔写整章前，请先在标题面板确认本章计划"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆寫整章前，請先在標題面板確認本章計畫"
-          }
-        }
-      }
-    },
-    "代笔写整章前，请先确认本章计划": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Confirm this chapter's plan before ghostwriting the full chapter"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章全体を代筆する前に、まず本章の計画を確認してください"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "전체 장을 대필하기 전에 이 장의 계획을 먼저 확인하세요."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Перед полным написанием главы подтвердите её план"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔写整章前，请先确认本章计划"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆撰寫整章前，請先確認本章計畫"
-          }
-        }
-      }
-    },
-    "代笔失败%@": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting failed%@"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆に失敗しました%@"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 실패%@"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ошибка написания%@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔失败%@"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆失敗%@"
-          }
-        }
-      }
-    },
-    "代笔已取消%@": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting canceled%@"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆をキャンセルしました%@"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 취소됨%@"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Написание отменено%@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔已取消%@"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆已取消%@"
-          }
-        }
-      }
-    },
-    "代笔已暂停%@": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting paused%@"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆を一時停止しました%@"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 일시 중지됨%@"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Написание приостановлено%@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔已暂停%@"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆已暫停%@"
-          }
-        }
-      }
-    },
-    "代笔已暂停%@ · 情节硬伤": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting paused%@ · Plot issue"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆を一時停止しました%@ · ストーリー上の重大な問題"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 일시 중지됨%@ · 치명적 스토리 문제"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Написание приостановлено%@ · критическая ошибка сюжета"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔已暂停%@ · 情节硬伤"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆已暫停%@ · 情節硬傷"
-          }
-        }
-      }
-    },
-    "代笔已暂停%@ · 检查未稳": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting paused%@ · Check inconclusive"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆を一時停止しました%@ · チェック未確定"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 일시 중지됨%@ · 검사 불안정"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Написание приостановлено%@ · проверка не завершена"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔已暂停%@ · 检查未稳"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆已暫停%@ · 檢查未穩"
-          }
-        }
-      }
-    },
-    "代笔待润修%@": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting awaiting revision%@"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆・推敲待ち%@"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 다듬기 대기%@"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Написание ожидает доработки%@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔待润修%@"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆待潤修%@"
-          }
-        }
-      }
-    },
-    "代笔暂时不能开始，请检查本章计划后重试。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting can't start yet. Check this chapter's plan and try again."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆を開始できません。章の計画を確認して再試行してください。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필을 지금 시작할 수 없습니다. 이 장의 계획을 확인한 후 다시 시도하세요."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Нельзя начать написание. Проверьте план этой главы и повторите попытку."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔暂时不能开始，请检查本章计划后重试。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆暫時無法開始，請檢查本章計畫後重試。"
-          }
-        }
-      }
-    },
-    "代笔条件尚未满足": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting requirements not yet met"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆条件を満たしていません"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 조건이 아직 충족되지 않았습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Условия для написания от имени автора ещё не выполнены"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔条件尚未满足"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆條件尚未滿足"
-          }
-        }
-      }
-    },
-    "代笔模式": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting mode"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆モード"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 모드"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Режим написания"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔模式"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆模式"
-          }
-        }
-      }
-    },
-    "代笔稿需通过审核后由代笔流程收录": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The ghostwritten draft must pass review before the ghostwriting workflow can accept it"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆原稿は審査後に代筆フローで収録されます"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 원고는 검토를 통과한 후 대필 과정에서 수록됩니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Текст от имени автора будет принят рабочим процессом только после проверки"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔稿需通过审核后由代笔流程收录"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆稿須通過審核後，才能由代筆流程收錄"
-          }
-        }
-      }
-    },
-    "代笔章数": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwrite chapter count"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆する章数"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 장 수"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Количество глав для дописывания"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔章数"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆章數"
-          }
-        }
-      }
-    },
-    "代笔等待继续%@": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting waiting to continue%@"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆の続行待ち%@"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 계속 대기%@"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Написание ожидает продолжения%@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔等待继续%@"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆等待繼續%@"
-          }
-        }
-      }
-    },
-    "代笔计划审批": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting plan approval"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆計画の承認"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 계획 승인"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Согласование плана написания"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔计划审批"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆計畫審批"
-          }
-        }
-      }
-    },
-    "代笔进度": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting progress"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆の進捗"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 진행률"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Прогресс написания"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔进度"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆進度"
-          }
-        }
-      }
-    },
-    "代笔进行中": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting in progress"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 진행 중"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Идёт написание"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔进行中"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆進行中"
-          }
-        }
-      }
-    },
-    "代笔进行中，可在下方暂停。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting in progress; you can pause it below."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中です。下から一時停止できます。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 진행 중이며 아래에서 일시 중지할 수 있습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Идёт написание; приостановить можно ниже."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔进行中，可在下方暂停。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆進行中，可在下方暫停。"
-          }
-        }
-      }
-    },
-    "代笔进行中，暂停后可切回共创。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ghostwriting in progress; pause to switch back to co-writing."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆中です。一時停止すると共同制作に戻れます。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 진행 중입니다. 일시 중지한 후 공동 창작으로 돌아갈 수 있습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Идёт написание, после паузы можно вернуться к совместной работе."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代笔进行中，暂停后可切回共创。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆進行中，暫停後可切回共創。"
           }
         }
       }
@@ -21821,43 +20199,43 @@
         }
       }
     },
-    "允许更新这个小应用的深度阅读摘要。": {
+    "允许更新这个小应用的小应用摘要。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Allow this MiniApp to update its deep-reading summary."
+            "value": "Allow this MiniApp to update its MiniApp summary."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "この MiniApp の深掘り読解の要約を更新することを許可します。"
+            "value": "この MiniApp の要約を更新することを許可します。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "이 MiniApp의 심층 읽기 요약 업데이트를 허용합니다."
+            "value": "이 MiniApp의 요약 업데이트를 허용합니다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Разрешить этому MiniApp обновлять сводку глубокого чтения."
+            "value": "Разрешить этому MiniApp обновлять свою сводку."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "允许更新这个小应用的深度阅读摘要。"
+            "value": "允许更新这个小应用的小应用摘要。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "允許更新這個小應用的深度閱讀摘要。"
+            "value": "允許更新這個小應用的小應用摘要。"
           }
         }
       }
@@ -22436,88 +20814,6 @@
         }
       }
     },
-    "先定好这一章要写什么，再按章代笔；过关后自动进书": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Decide what to write in this chapter first, then ghostwrite it chapter by chapter; once it passes review, it's added to the book automatically"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "まずこの章の内容を決めてから章ごとに代筆し、合格後に自動で本へ追加"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "먼저 이 장에서 쓸 내용을 정한 다음 장별로 대필합니다. 통과하면 자동으로 책에 수록됩니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Сначала задайте содержание главы, затем допишите её; после проверки она автоматически попадёт в книгу"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "先定好这一章要写什么，再按章代笔；过关后自动进书"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "先確定這一章要寫什麼，再按章代筆；通過後自動收錄進書"
-          }
-        }
-      }
-    },
-    "先确认本章计划，再开始代笔。可在下方「本章计划」一键根据前文生成草稿；多章时后续计划会自动拟定。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Confirm this chapter's plan before starting ghostwriting. Use “Chapter plan” below to generate a draft from the preceding text in one tap; plans for later chapters are generated automatically when writing multiple chapters."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "まずこの章の計画を確認してから、代筆を開始します。下の「この章の計画」から前の内容に基づく草稿をワンタップで生成できます。複数章の場合、以降の計画は自動作成されます。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "먼저 이 장의 계획을 확인한 후 대필을 시작하세요. 아래의 「이 장의 계획」을 탭하면 앞의 내용을 바탕으로 초안을 한 번에 생성할 수 있습니다. 여러 장인 경우 이후 계획은 자동으로 작성됩니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Сначала подтвердите план этой главы, затем начните написание. Кнопка «План этой главы» ниже создаст черновик по предыдущему тексту; при работе с несколькими главами планы следующих будут составлены автоматически."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "先确认本章计划，再开始代笔。可在下方「本章计划」一键根据前文生成草稿；多章时后续计划会自动拟定。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "先確認本章計畫，再開始代筆。可在下方「本章計畫」一鍵根據前文產生草稿；多章時後續計畫會自動擬定。"
-          }
-        }
-      }
-    },
     "全局模型不可用": {
       "extractionState": "manual",
       "localizations": {
@@ -22842,47 +21138,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "共用儲存空間"
-          }
-        }
-      }
-    },
-    "共创模式": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Co-writing mode"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共同制作モード"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "공동 창작 모드"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Совместное создание"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共创模式"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "共創模式"
           }
         }
       }
@@ -24855,47 +23110,6 @@
         }
       }
     },
-    "准备代笔": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Preparing ghostwriting"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆を準備"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 준비"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Подготовка текста"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "准备代笔"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "準備代筆"
-          }
-        }
-      }
-    },
     "准备图片请求": {
       "extractionState": "manual",
       "localizations": {
@@ -25839,47 +24053,6 @@
         }
       }
     },
-    "切入代笔还需：": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Still needed to start ghostwriting:"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆を始めるには、次の項目が必要です："
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필을 시작하려면 다음이 더 필요합니다:"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Для начала написания ещё нужно:"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "切入代笔还需："
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "切入代筆還需要："
-          }
-        }
-      }
-    },
     "切换分支会停止当前生成": {
       "extractionState": "manual",
       "localizations": {
@@ -26573,47 +24746,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "建立本機 Skill"
-          }
-        }
-      }
-    },
-    "创建深度阅读": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Create deep reading"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "詳細リサーチを作成"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "심층 읽기 생성"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Создать глубокое чтение"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "创建深度阅读"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "建立深度閱讀"
           }
         }
       }
@@ -27930,47 +26062,6 @@
         }
       }
     },
-    "刷新热榜": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Refresh trending"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "トレンドを更新"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "인기 목록 새로 고침"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Обновить топ"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "刷新热榜"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重新整理熱門排行"
-          }
-        }
-      }
-    },
     "前台刷新间隔": {
       "extractionState": "manual",
       "localizations": {
@@ -28008,47 +26099,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "前景重新整理間隔"
-          }
-        }
-      }
-    },
-    "前台热榜刷新会遵守这个偏好；不会伪装完整后台调度。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Foreground trending-feed refresh follows this preference; it does not simulate full background scheduling."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "フォアグラウンドでのトレンド更新はこの設定に従います。完全なバックグラウンドスケジュールではありません。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "포그라운드 인기 순위 새로 고침은 이 설정을 따르지만, 완전한 백그라운드 예약 실행은 아닙니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Обновление трендов на переднем плане учитывает эту настройку; полноценное фоновое расписание не имитируется."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "前台热榜刷新会遵守这个偏好；不会伪装完整后台调度。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "前景熱門榜單重新整理會遵守這項偏好；不會假裝成完整的背景排程。"
           }
         }
       }
@@ -28623,47 +26673,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "劇情同步模型"
-          }
-        }
-      }
-    },
-    "剧情大纲": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Plot outline"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ストーリーのプロット"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "스토리 개요"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "План сюжета"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "剧情大纲"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "劇情大綱"
           }
         }
       }
@@ -29361,47 +27370,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "歷史修訂會保留，用於舊版本、Fork 和稽核。後續產生不再注入這筆資料。"
-          }
-        }
-      }
-    },
-    "历史修订会保留；后续生成不再注入这份剧情大纲。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Historical revisions are retained; this plot outline will no longer be injected into future generations."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "過去のリビジョンは保持されます。以後の生成では、このプロット概要は注入されません。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이전 수정본은 보존되며 이후 생성에는 이 줄거리 개요가 더 이상 주입되지 않습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "История правок сохранится; этот план сюжета больше не внедряется в последующую генерацию."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "历史修订会保留；后续生成不再注入这份剧情大纲。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "歷史修訂會保留；後續產生不再注入這份劇情大綱。"
           }
         }
       }
@@ -30308,88 +28276,6 @@
         }
       }
     },
-    "另有 %lld 条关系、世界观或剧情建议": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld more relationship, worldbuilding, or plot suggestions"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ほかに%lld件の関係・世界観・ストーリー候補"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "관계, 세계관 또는 스토리 제안 %lld개 추가"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ещё %lld предложений по связям, миру или сюжету"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "另有 %lld 条关系、世界观或剧情建议"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "另有 %lld 則關係、世界觀或劇情建議"
-          }
-        }
-      }
-    },
-    "另有 %lld 条被丢弃：模型给的章节号和原文都对不上，无法核实。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld more entries were discarded: the model-provided chapter numbers and original text didn't match, so they couldn't be verified."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ほかに %lld 件を破棄しました：モデルが示した章番号と原文が一致せず、確認できません。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "추가로 %lld건이 폐기되었습니다. 모델이 제시한 장 번호와 원문이 모두 일치하지 않아 확인할 수 없습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Отброшено ещё: %lld. Номер главы и исходный текст от модели не совпадают, проверить их невозможно."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "另有 %lld 条被丢弃：模型给的章节号和原文都对不上，无法核实。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "另有 %lld 則遭捨棄：模型提供的章節編號與原文都對不上，無法核實。"
-          }
-        }
-      }
-    },
     "只会清除变更历史，不会删除已保存的记忆。": {
       "extractionState": "manual",
       "localizations": {
@@ -30509,47 +28395,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "僅寫入剪貼簿，不讀取。"
-          }
-        }
-      }
-    },
-    "只影响状态抽取与重建（收录后同步 / 代笔 stateDelta），不改变创作与审稿模型。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Only state extraction and rebuilding are affected (post-adoption sync / ghostwrite stateDelta); writing and review models are unchanged."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "状態の抽出と再構築（収録後の同期／代筆の stateDelta）にのみ影響し、創作モデルとレビューモデルは変更しません。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "상태 추출 및 재구성(수록 후 동기화 / 대필 stateDelta)에만 영향을 주며 창작 및 검토 모델은 변경하지 않습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Влияет только на извлечение и восстановление состояния (синхронизацию после добавления / stateDelta написания), но не меняет модели создания и редактуры."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "只影响状态抽取与重建（收录后同步 / 代笔 stateDelta），不改变创作与审稿模型。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "只會影響狀態擷取與重建（收錄後同步 / 代筆 stateDelta），不會變更創作與審稿模型。"
           }
         }
       }
@@ -30841,47 +28686,6 @@
         }
       }
     },
-    "可先「根据前文生成草稿」，核对后点确认计划，再开始代笔。代笔进行中不能改。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "You can tap “Generate draft from preceding text,” review it, then confirm the plan before starting ghostwriting. It can't be changed during ghostwriting."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "先に「前の内容から草稿を生成」し、確認後に計画を確定して代筆を開始してください。代筆中は変更できません。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "먼저 「이전 내용으로 초안 생성」을 사용하고 확인한 후 계획을 승인해 대필을 시작하세요. 대필 중에는 변경할 수 없습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Сначала можно «создать черновик по предыдущему тексту», проверить его и подтвердить план, затем начать написание. Во время написания менять его нельзя."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "可先「根据前文生成草稿」，核对后点确认计划，再开始代笔。代笔进行中不能改。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "可先「根據前文產生草稿」，核對後點確認計畫，再開始代筆。代筆進行中不能修改。"
-          }
-        }
-      }
-    },
     "可打开": {
       "extractionState": "manual",
       "localizations": {
@@ -31001,47 +28805,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "可用"
-          }
-        }
-      }
-    },
-    "可用「开始代笔」按批自动写整章并审核收录；也可以继续自己点。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Use “Start ghostwriting” below to automatically write, review, and adopt full chapters in batches; you can also continue manually."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "「代筆を開始」でバッチごとに章全体を自動執筆し、審査・収録できます。自分で進めることもできます。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "「대필 시작」으로 배치마다 전체 장을 자동 작성하고 검토·수록할 수 있습니다. 계속 직접 눌러 진행할 수도 있습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Кнопка «Начать дописывание» автоматически пишет целые главы партиями, проверяет и добавляет их; можно также нажимать вручную."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "可用「开始代笔」按批自动写整章并审核收录；也可以继续自己点。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "可用「開始代筆」按批自動寫整章並審核收錄；也可以繼續手動操作。"
           }
         }
       }
@@ -33670,47 +31433,6 @@
         }
       }
     },
-    "回退章节审批": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Rollback chapter approval"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章の復元を承認"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "장 되돌리기 승인"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Согласование отката главы"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "回退章节审批"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "回退章節審批"
-          }
-        }
-      }
-    },
     "回退这几章": {
       "extractionState": "manual",
       "localizations": {
@@ -34080,47 +31802,6 @@
         }
       }
     },
-    "在创作对话中收录的正文会按章节出现在这里。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Chapters adopted from the creative conversation appear here."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "創作チャットで収録した本文が、章ごとにここに表示されます。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "창작 대화에서 수록한 본문이 장별로 여기에 표시됩니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Основной текст, добавленный в диалоге создания, будет отображаться здесь по главам."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在创作对话中收录的正文会按章节出现在这里。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "在創作對話中收錄的正文會依章節顯示在這裡。"
-          }
-        }
-      }
-    },
     "在本地 WebMount 完成后继续": {
       "extractionState": "manual",
       "localizations": {
@@ -34486,47 +32167,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "處理"
-          }
-        }
-      }
-    },
-    "处理完当前项目后，才能继续批量润色；不会影响已经采用的章节。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Finish the current project before continuing batch polishing; adopted chapters are unaffected."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "現在のプロジェクトの処理が終わるまで、まとめて推敲を続行できません。採用済みの章には影響しません。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "현재 프로젝트를 처리한 후에야 일괄 다듬기를 계속할 수 있으며 이미 채택한 장에는 영향을 주지 않습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Продолжить пакетную редактуру можно после обработки текущего проекта; уже принятые главы не изменятся."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "处理完当前项目后，才能继续批量润色；不会影响已经采用的章节。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "處理完目前專案後，才能繼續批次潤飾；不會影響已採用的章節。"
           }
         }
       }
@@ -35556,88 +33196,6 @@
         }
       }
     },
-    "完整来源章节": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Full source chapter"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "完全な出典章"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "전체 원본 장"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Полная исходная глава"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "完整来源章节"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "完整來源章節"
-          }
-        }
-      }
-    },
-    "完整章节 · 收录后成为新章": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Full chapter · Becomes a new chapter after adoption"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "完全な章 · 収録後に新しい章になります"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "전체 장 · 수록 후 새 장으로 추가"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Полная глава · после добавления станет новой главой"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "完整章节 · 收录后成为新章"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "完整章節 · 收錄後成為新章"
-          }
-        }
-      }
-    },
     "定位": {
       "extractionState": "manual",
       "localizations": {
@@ -36126,47 +33684,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "匯入前摘要：%@"
-          }
-        }
-      }
-    },
-    "导入小说项目或工作区": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Import novel project or workspace"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小説プロジェクトまたはワークスペースをインポート"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "소설 프로젝트 또는 작업 공간 가져오기"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Импортировать проект романа или рабочую область"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "导入小说项目或工作区"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "匯入小說專案或工作區"
           }
         }
       }
@@ -37278,211 +34795,6 @@
         }
       }
     },
-    "小说创作暂不可用": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Novel writing is temporarily unavailable"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小説執筆は現在利用できません"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "소설 창작을 현재 사용할 수 없음"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Создание романа пока недоступно"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小说创作暂不可用"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小說創作暫不可用"
-          }
-        }
-      }
-    },
-    "小说创作设置": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Novel writing settings"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小説執筆設定"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "소설 창작 설정"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Настройки создания романа"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小说创作设置"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小說創作設定"
-          }
-        }
-      }
-    },
-    "小说名称": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Novel title"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小説名"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "소설 이름"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Название романа"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小说名称"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小說名稱"
-          }
-        }
-      }
-    },
-    "小说工作区": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Novel workspace"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小説ワークスペース"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "소설 작업 공간"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Рабочая область романа"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小说工作区"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小說工作區"
-          }
-        }
-      }
-    },
-    "小说默认 · %@": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Novel default · %@"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小説のデフォルト · %@"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "소설 기본값 · %@"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Роман по умолчанию · %@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小说默认 · %@"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小說預設 · %@"
-          }
-        }
-      }
-    },
     "尚无生成上下文记录": {
       "extractionState": "manual",
       "localizations": {
@@ -37770,47 +35082,6 @@
         }
       }
     },
-    "尚未收录的正文编辑、段落选择和章节位置会丢失。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Unadopted manuscript edits, paragraph selections, and chapter positions will be lost."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "まだ収録していない本文の編集、段落の選択、章の位置は失われます。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "아직 수록하지 않은 본문 편집, 단락 선택 및 장 위치는 사라집니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Несохранённые правки основного текста, выбор абзацев и положение главы будут потеряны."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "尚未收录的正文编辑、段落选择和章节位置会丢失。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "尚未收錄的正文編輯、段落選擇和章節位置會遺失。"
-          }
-        }
-      }
-    },
     "就绪": {
       "extractionState": "manual",
       "localizations": {
@@ -38012,47 +35283,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "展開（共 %lld 個字元）"
-          }
-        }
-      }
-    },
-    "工作区是章节和设定的 Markdown 目录，可再导入为新项目。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The Workspace is a Markdown directory for chapters and settings that can be imported as a new project."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ワークスペースは章と設定をまとめた Markdown ディレクトリで、新しいプロジェクトとして再インポートできます。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Workspace는 장과 설정을 담은 Markdown 디렉터리이며 새 프로젝트로 다시 가져올 수 있습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Workspace — каталог Markdown с главами и настройками; его можно снова импортировать как новый проект."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "工作区是章节和设定的 Markdown 目录，可再导入为新项目。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "工作區是章節和設定的 Markdown 目錄，可再次匯入為新專案。"
           }
         }
       }
@@ -40230,47 +37460,6 @@
         }
       }
     },
-    "已开始代笔 %@ 章": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Started ghostwriting %@ chapters"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@章の代筆を開始しました"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@장 대필을 시작했습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Начато дописывание %@ гл."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已开始代笔 %@ 章"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已開始代筆 %@ 章"
-          }
-        }
-      }
-    },
     "已折叠": {
       "extractionState": "manual",
       "localizations": {
@@ -40554,47 +37743,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "已收錄為正式正文"
-          }
-        }
-      }
-    },
-    "已收录的章节会留在正文里。未写完的章会停掉，下次代笔算新的一批。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Adopted chapters remain in the manuscript. Any unfinished chapter will stop, and the next ghostwriting run will count as a new batch."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "収録済みの章は本文に残ります。書きかけの章は停止し、次回の代筆では新しい一括処理として扱います。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "수록된 장은 본문에 남습니다. 완성되지 않은 장은 중지되며 다음 대필에서 새 작업으로 처리됩니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Добавленные главы останутся в основном тексте. Незавершённые главы остановятся; при следующем написании начнётся новая партия."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已收录的章节会留在正文里。未写完的章会停掉，下次代笔算新的一批。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已收錄的章節會留在正文中。未寫完的章節會停止，下次代筆會算作新的一批。"
           }
         }
       }
@@ -41169,88 +38317,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "已置頂"
-          }
-        }
-      }
-    },
-    "已自动拟定下一章计划。确认后开始写本章，批内后续章节全自动连写。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The next chapter's plan was drafted automatically. Confirm it to start writing this chapter; later chapters in the batch will be written automatically in sequence."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "次章の計画を自動作成しました。確認後にこの章の執筆を開始し、バッチ内の後続章は自動で続けて執筆します。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "다음 장 계획을 자동으로 작성했습니다. 확인하면 이 장을 쓰기 시작하며, 배치 안의 다음 장은 모두 자동으로 이어서 작성됩니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "План следующей главы составлен автоматически. После подтверждения начнётся её написание; следующие главы партии будут написаны автоматически."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已自动拟定下一章计划。确认后开始写本章，批内后续章节全自动连写。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已自動擬定下一章計畫。確認後開始寫本章，批內後續章節全自動連寫。"
-          }
-        }
-      }
-    },
-    "已自动拟定下一章计划。确认后开始写，批内后续章节全自动连写。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The next chapter's plan was drafted automatically. Confirm it to start writing; later chapters in the batch will be written automatically in sequence."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "次章の計画を自動作成しました。確認後に執筆を開始し、バッチ内の後続章は自動で続けて執筆します。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "다음 장 계획을 자동으로 작성했습니다. 확인하면 쓰기를 시작하며, 배치 안의 다음 장은 모두 자동으로 이어서 작성됩니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "План следующей главы составлен автоматически. После подтверждения начнётся написание; следующие главы партии будут написаны автоматически."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已自动拟定下一章计划。确认后开始写，批内后续章节全自动连写。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已自動擬定下一章計畫。確認後開始寫，批內後續章節全自動連寫。"
           }
         }
       }
@@ -42239,47 +39305,6 @@
         }
       }
     },
-    "开启下一批代笔": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Start next ghostwriting batch"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "次のバッチの代筆を開始"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "다음 배치 대필 시작"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Начать следующую партию написания"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "开启下一批代笔"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "開啟下一批代筆"
-          }
-        }
-      }
-    },
     "开始": {
       "extractionState": "manual",
       "localizations": {
@@ -42317,170 +39342,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "開始"
-          }
-        }
-      }
-    },
-    "开始一本新小说": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Start a new novel"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新しい小説を始める"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "새 소설 시작"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Начать новый роман"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "开始一本新小说"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "開始一本新小說"
-          }
-        }
-      }
-    },
-    "开始代笔": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Start ghostwriting"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆を開始"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 시작"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Начать дописывание"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "开始代笔"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "開始代筆"
-          }
-        }
-      }
-    },
-    "开始代笔 · %lld 章": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Start ghostwriting · %lld chapters"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%lld章の代筆を開始"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "대필 시작 · %lld개 장"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Начать дописывание · %lld гл."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "开始代笔 · %lld 章"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "開始代筆 · %lld 章"
-          }
-        }
-      }
-    },
-    "开始代笔本章": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Start ghostwriting this chapter"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "この章の代筆を開始"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이 장 대필 시작"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Начать дописывание этой главы"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "开始代笔本章"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "開始代筆本章"
           }
         }
       }
@@ -44617,47 +41478,6 @@
         }
       }
     },
-    "当前状态暂不能修改章节状态": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The chapter status cannot be changed in the current state"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "現在の状態では章の状態を変更できません"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "현재 상태에서는 장 상태를 수정할 수 없습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "В текущем состоянии нельзя изменить статус главы"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "当前状态暂不能修改章节状态"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "目前狀態暫時無法修改章節狀態"
-          }
-        }
-      }
-    },
     "当前状态暂不能生成": {
       "extractionState": "manual",
       "localizations": {
@@ -44818,47 +41638,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "目前章結尾"
-          }
-        }
-      }
-    },
-    "当前章节": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Current chapter"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "現在の章"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "현재 장"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Текущая глава"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "当前章节"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "目前章節"
           }
         }
       }
@@ -45720,47 +42499,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "思考過程%@"
-          }
-        }
-      }
-    },
-    "总剧情大纲": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Overall plot outline"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ストーリー全体のプロット"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "전체 스토리 개요"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Общий план сюжета"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "总剧情大纲"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "總劇情大綱"
           }
         }
       }
@@ -52366,88 +49104,6 @@
         }
       }
     },
-    "前面的章节刚改过，后面几章的剧情记录还在更新，请稍等片刻再继续写。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "An earlier chapter was just edited, and the story notes for later chapters are still updating. Please wait a moment before writing on."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "前の章を変更したばかりで、後続の章のあらすじ記録を更新中です。少し待ってから続きを書いてください。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "앞 장을 방금 수정해서 뒤 장들의 줄거리 기록을 업데이트하는 중입니다. 잠시 후 이어서 써 주세요."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Предыдущая глава только что изменена, записи сюжета следующих глав ещё обновляются. Подождите немного, прежде чем продолжить."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "前面的章节刚改过，后面几章的剧情记录还在更新，请稍等片刻再继续写。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "前面的章節剛改過，後面幾章的劇情記錄還在更新，請稍候片刻再繼續寫。"
-          }
-        }
-      }
-    },
-    "前面的章节改过了，已按新正文更新后面几章的剧情记录。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "An earlier chapter changed, so the story notes for later chapters were updated to match."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "前の章が変更されたため、後続の章のあらすじ記録を新しい本文に合わせて更新しました。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "앞 장이 수정되어 뒤 장들의 줄거리 기록을 새 본문에 맞게 업데이트했습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Предыдущая глава изменена — записи сюжета следующих глав обновлены по новому тексту."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "前面的章节改过了，已按新正文更新后面几章的剧情记录。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "前面的章節改過了，已按新正文更新後面幾章的劇情記錄。"
-          }
-        }
-      }
-    },
     "放弃修改": {
       "extractionState": "manual",
       "localizations": {
@@ -52690,47 +49346,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "放棄封存調整？"
-          }
-        }
-      }
-    },
-    "放弃新建小说？": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Discard new novel?"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新しい小説の作成を破棄しますか？"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "새 소설 만들기를 취소할까요?"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Отменить создание романа?"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "放弃新建小说？"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "放棄建立小說？"
           }
         }
       }
@@ -54088,47 +50703,6 @@
         }
       }
     },
-    "新增剧情大纲": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Add plot outline"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "全体プロットを追加"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "스토리 개요 추가"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Добавить план сюжета"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新增剧情大纲"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新增劇情大綱"
-          }
-        }
-      }
-    },
     "新增后，Agent 会按注入规则在创作时参考它。": {
       "extractionState": "manual",
       "localizations": {
@@ -54494,88 +51068,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "建立分支版本"
-          }
-        }
-      }
-    },
-    "新建小说": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "New novel"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小説を新規作成"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "소설 새로 만들기"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Создать роман"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新建小说"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "建立小說"
-          }
-        }
-      }
-    },
-    "新建小说项目": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "New novel project"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小説プロジェクトを新規作成"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "소설 프로젝트 새로 만들기"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Создать проект романа"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "新建小说项目"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "建立小說專案"
           }
         }
       }
@@ -55724,47 +52216,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "無法辨識核准選項"
-          }
-        }
-      }
-    },
-    "无法读取小说项目": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Couldn't read novel project"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小説プロジェクトを読み込めません"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "소설 프로젝트를 읽을 수 없습니다"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Не удалось прочитать проект романа"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无法读取小说项目"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "無法讀取小說專案"
           }
         }
       }
@@ -60648,47 +57099,6 @@
         }
       }
     },
-    "本章已完成。点「代笔下一章」继续，或修改章数后再开始。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This chapter is complete. Tap “Ghostwrite next chapter” to continue, or change the chapter count before starting again."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "この章は完了しました。「次の章を代筆」をタップして続けるか、章数を変更してから開始してください。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이 장이 완료되었습니다. 「다음 장 대필」을 눌러 계속하거나 장 수를 수정한 후 다시 시작하세요."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Эта глава завершена. Нажмите «Дописать следующую главу», чтобы продолжить, или измените число глав и начните заново."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "本章已完成。点「代笔下一章」继续，或修改章数后再开始。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "本章已完成。點「代筆下一章」繼續，或修改章數後再開始。"
-          }
-        }
-      }
-    },
     "本章必须发生": {
       "extractionState": "manual",
       "localizations": {
@@ -62243,47 +58653,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "模型"
-          }
-        }
-      }
-    },
-    "模型 · 热榜 · 模板": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Models · Trending · Templates"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "モデル · ランキング · テンプレート"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "모델 · 인기 순위 · 템플릿"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Модели · Популярное · Шаблоны"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "模型 · 热榜 · 模板"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "模型 · 熱門榜 · 範本"
           }
         }
       }
@@ -64133,47 +60502,6 @@
         }
       }
     },
-    "正在刷新综合热榜…": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Refreshing combined trending feed…"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "総合トレンドを更新中…"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "종합 인기 순위를 새로 고치는 중…"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Обновление общей ленты трендов…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在刷新综合热榜…"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在重新整理綜合熱門榜單…"
-          }
-        }
-      }
-    },
     "正在加载小应用…": {
       "extractionState": "manual",
       "localizations": {
@@ -64539,47 +60867,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在恢復本章"
-          }
-        }
-      }
-    },
-    "正在恢复章节版本": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Restoring chapter version"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章のバージョンを復元中"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "장 버전 복원 중"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Восстановление версии главы"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在恢复章节版本"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在恢復章節版本"
           }
         }
       }
@@ -65486,47 +61773,6 @@
         }
       }
     },
-    "正在生成深度阅读": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Generating deep-reading summary"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "深掘り読解を生成中"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "심층 읽기 생성 중"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Генерация результата глубокого чтения"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在生成深度阅读"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在產生深度閱讀"
-          }
-        }
-      }
-    },
     "正在生成离线草稿": {
       "extractionState": "manual",
       "localizations": {
@@ -65933,47 +62179,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在讀取..."
-          }
-        }
-      }
-    },
-    "正在读取小说项目": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Reading novel project"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小説プロジェクトを読み込み中"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "소설 프로젝트 읽는 중"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Чтение проекта романа"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在读取小说项目"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在讀取小說專案"
           }
         }
       }
@@ -67167,47 +63372,6 @@
         }
       }
     },
-    "没有启用任何 iOS 支持的热榜来源。请到设置里选择 Hacker News、arXiv AI、InfoQ AI、36Kr、HF Papers 或 GitHub AI。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No iOS-supported trending sources are enabled. Go to Settings to choose Hacker News, arXiv AI, InfoQ AI, 36Kr, HF Papers, or GitHub AI."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "iOS対応のトレンドソースが有効になっていません。設定で Hacker News、arXiv AI、InfoQ AI、36Kr、HF Papers、GitHub AI のいずれかを選択してください。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "iOS에서 지원되는 인기 순위 출처가 활성화되어 있지 않습니다. 설정에서 Hacker News, arXiv AI, InfoQ AI, 36Kr, HF Papers 또는 GitHub AI를 선택하세요."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Не включён ни один источник трендов, поддерживаемый iOS. Выберите в настройках Hacker News, arXiv AI, InfoQ AI, 36Kr, HF Papers или GitHub AI."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "没有启用任何 iOS 支持的热榜来源。请到设置里选择 Hacker News、arXiv AI、InfoQ AI、36Kr、HF Papers 或 GitHub AI。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "沒有啟用任何 iOS 支援的熱門榜單來源。請前往設定選取 Hacker News、arXiv AI、InfoQ AI、36Kr、HF Papers 或 GitHub AI。"
-          }
-        }
-      }
-    },
     "没有待继续任务": {
       "extractionState": "manual",
       "localizations": {
@@ -68233,170 +64397,6 @@
         }
       }
     },
-    "深度阅读历史": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Deep reading history"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "精読の履歴"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "심층 읽기 기록"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "История глубокого чтения"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "深度阅读历史"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "深度閱讀歷史"
-          }
-        }
-      }
-    },
-    "深度阅读模型": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Deep Reading Model"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ディープリーディングモデル"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "심층 읽기 모델"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Модель глубокого чтения"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "深度阅读模型"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "深度閱讀模型"
-          }
-        }
-      }
-    },
-    "深度阅读生成失败：%@": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Deep-reading generation failed: %@"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "詳細リサーチの生成に失敗しました：%@"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "심층 읽기 생성 실패: %@"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Не удалось создать результат глубокого чтения: %@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "深度阅读生成失败：%@"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "深度閱讀產生失敗：%@"
-          }
-        }
-      }
-    },
-    "深度阅读设置": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Deep reading settings"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "精読設定"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "심층 읽기 설정"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Настройки глубокого чтения"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "深度阅读设置"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "深度閱讀設定"
-          }
-        }
-      }
-    },
     "深色": {
       "extractionState": "manual",
       "localizations": {
@@ -69053,47 +65053,6 @@
         }
       }
     },
-    "清除后要重新写好并确认，才能继续代笔写整章。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "After clearing the plan, rewrite and confirm it before you can continue ghostwriting the full chapter."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "消去後は、もう一度書き直して確認しないと、章全体の代筆を続けられません。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "삭제한 후 다시 작성하고 확인해야 장 전체 대필을 계속할 수 있습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "После очистки нужно заново написать и подтвердить план, чтобы продолжить написание всей главы."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "清除后要重新写好并确认，才能继续代笔写整章。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "清除後必須重新撰寫並確認，才能繼續代筆撰寫整章。"
-          }
-        }
-      }
-    },
     "清除后，写整章时就不再参考这些备注。": {
       "extractionState": "manual",
       "localizations": {
@@ -69545,47 +65504,6 @@
         }
       }
     },
-    "源章节版本已经变化": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The source chapter version has changed"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "元の章のバージョンが変わりました"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "원본 장 버전이 변경되었습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Версия исходной главы изменилась"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "源章节版本已经变化"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "來源章節版本已變更"
-          }
-        }
-      }
-    },
     "滚动": {
       "extractionState": "manual",
       "localizations": {
@@ -69992,129 +65910,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "熱度 %@"
-          }
-        }
-      }
-    },
-    "热榜主题": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Trending topics"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "トレンドテーマ"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "인기 주제"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Популярные темы"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "热榜主题"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "熱榜主題"
-          }
-        }
-      }
-    },
-    "热榜及各类榜单中的非中文标题，抓取时即时翻译成通顺中文（专业术语保留原文）。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "When fetched, non-Chinese titles in trending and other lists are translated into natural Chinese (technical terms stay in the original language)."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "トレンドや各種ランキングにある中国語以外のタイトルを、取得時に自然な中国語へ即時翻訳します（専門用語は原文のまま）。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "인기 순위와 각종 목록의 중국어가 아닌 제목을 가져올 때 자연스러운 중국어로 즉시 번역합니다(전문 용어는 원문 유지)."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Заголовки на других языках в трендах и списках, при загрузке переводятся на естественный китайский (профессиональные термины сохраняются в оригинале)."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "热榜及各类榜单中的非中文标题，抓取时即时翻译成通顺中文（专业术语保留原文）。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "熱門榜單及各類榜單中的非中文標題，擷取時即時翻譯成通順中文（專業術語保留原文）。"
-          }
-        }
-      }
-    },
-    "热榜来源 · %@": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Trending source · %@"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ランキングの出典 · %@"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "인기 차트 출처 · %@"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Источник топа · %@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "热榜来源 · %@"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "熱門榜來源 · %@"
           }
         }
       }
@@ -73809,375 +69604,6 @@
         }
       }
     },
-    "章节不存在": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Chapter not found"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章が存在しません"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "장이 존재하지 않습니다"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Глава не существует"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章节不存在"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章節不存在"
-          }
-        }
-      }
-    },
-    "章节位置": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Chapter position"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章の位置"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "장 위치"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Положение главы"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章节位置"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章節位置"
-          }
-        }
-      }
-    },
-    "章节恢复后": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "After chapter restore"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章の復元後"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "장 복원 후"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "После восстановления главы"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章节恢复后"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章節恢復後"
-          }
-        }
-      }
-    },
-    "章节操作": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Chapter actions"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章の操作"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "장 작업"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Действия с главой"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章节操作"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章節操作"
-          }
-        }
-      }
-    },
-    "章节标题": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Chapter title"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章タイトル"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "장 제목"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Заголовок главы"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章节标题"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章節標題"
-          }
-        }
-      }
-    },
-    "章节没有从正文目录删除，请稍后重试。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The chapter wasn't removed from the manuscript directory. Please try again later."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章を本文目次から削除できませんでした。後でもう一度お試しください。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "본문 목차에서 장을 삭제하지 못했습니다. 나중에 다시 시도하세요."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Глава не удалена из содержания основного текста. Повторите позже."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章节没有从正文目录删除，请稍后重试。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章節沒有從正文目錄刪除，請稍後重試。"
-          }
-        }
-      }
-    },
-    "章节版本": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Chapter version"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章のバージョン"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "장 버전"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Версия главы"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章节版本"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章節版本"
-          }
-        }
-      }
-    },
-    "章节版本没有恢复，请稍后重试。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The chapter version wasn't restored. Please try again later."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章のバージョンを復元できませんでした。後でもう一度お試しください。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "장 버전을 복원하지 못했습니다. 나중에 다시 시도하세요."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Версия главы не восстановлена. Повторите позже."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章节版本没有恢复，请稍后重试。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章節版本沒有恢復，請稍後重試。"
-          }
-        }
-      }
-    },
-    "章节状态没有更新，请稍后重试。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Chapter status wasn't updated. Please try again later."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章の状態を更新できませんでした。後でもう一度お試しください。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "장 상태를 업데이트하지 못했습니다. 나중에 다시 시도하세요."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Состояние главы не обновлено. Повторите позже."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章节状态没有更新，请稍后重试。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章節狀態沒有更新，請稍後重試。"
-          }
-        }
-      }
-    },
     "第 %@ 段": {
       "extractionState": "manual",
       "localizations": {
@@ -75162,47 +70588,6 @@
         }
       }
     },
-    "系统暂停了后台代笔，回到前台会自动继续；若仍停在这里，可手动继续本批。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The system paused background ghostwriting. It will continue automatically when you return to the foreground; if it remains paused, continue this batch manually."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "システムがバックグラウンドの代筆を一時停止しました。フォアグラウンドに戻ると自動で続行します。ここで止まったままの場合は、このバッチを手動で続行できます。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "시스템이 백그라운드 대필을 일시 중지했습니다. 포그라운드로 돌아오면 자동으로 계속됩니다. 여전히 여기에 멈춰 있으면 이 배치를 수동으로 계속할 수 있습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Система приостановила фоновое написание; при возврате на передний план оно продолжится автоматически. Если здесь ничего не меняется, продолжите партию вручную."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "系统暂停了后台代笔，回到前台会自动继续；若仍停在这里，可手动继续本批。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "系統暫停了背景代筆，回到前台會自動繼續；若仍停在這裡，可手動繼續本批。"
-          }
-        }
-      }
-    },
     "系统权限": {
       "extractionState": "manual",
       "localizations": {
@@ -75695,47 +71080,6 @@
         }
       }
     },
-    "结束本批代笔？": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "End this ghostwrite batch?"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このバッチの代筆を終了しますか？"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이번 배치 대필을 종료할까요?"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Завершить написание этой партии?"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "结束本批代笔？"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "結束本批代筆？"
-          }
-        }
-      }
-    },
     "结构规划": {
       "extractionState": "manual",
       "localizations": {
@@ -76064,88 +71408,6 @@
         }
       }
     },
-    "继续代笔": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Continue ghostwriting"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆を続ける"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "계속 대필"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Продолжить написание"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "继续代笔"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "繼續代筆"
-          }
-        }
-      }
-    },
-    "继续代笔 · 将重写": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Continue ghostwriting · Rewrite"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "代筆を続ける · 書き直し予定"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "계속 대필 · 다시 쓰기 예정"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Продолжить написание · переписать"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "继续代笔 · 将重写"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "繼續代筆 · 將重寫"
-          }
-        }
-      }
-    },
     "继续同步": {
       "extractionState": "manual",
       "localizations": {
@@ -76265,47 +71527,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "繼續收錄"
-          }
-        }
-      }
-    },
-    "继续本批代笔": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Continue this ghostwriting batch"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このバッチの代筆を続ける"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이 배치 대필 계속"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Продолжить написание партии"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "继续本批代笔"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "繼續本批代筆"
           }
         }
       }
@@ -76470,88 +71691,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "繼續重寫本章"
-          }
-        }
-      }
-    },
-    "续写片段": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Continuation snippet"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "続きの文章"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이어 쓰기 조각"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Фрагмент продолжения"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "续写片段"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "續寫片段"
-          }
-        }
-      }
-    },
-    "综合热榜": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Overall trending"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "総合ランキング"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "종합 인기 차트"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Общий топ"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "综合热榜"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "綜合熱門榜"
           }
         }
       }
@@ -77331,47 +72470,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "缺少寫作要求"
-          }
-        }
-      }
-    },
-    "缺少总剧情大纲": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Overall plot outline missing"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ストーリー全体のプロットがありません"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "전체 스토리 개요가 없습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Нет общего плана сюжета"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "缺少总剧情大纲"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "缺少總劇情大綱"
           }
         }
       }
@@ -81599,47 +76697,6 @@
         }
       }
     },
-    "请填写完整的章节标题和正文。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Fill in both the chapter title and manuscript."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章タイトルと本文を入力してください。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "장 제목과 본문을 모두 입력하세요."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Заполните заголовок главы и основной текст полностью."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "请填写完整的章节标题和正文。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "請填寫完整的章節標題和正文。"
-          }
-        }
-      }
-    },
     "请填写完整的资料标题和内容。": {
       "extractionState": "manual",
       "localizations": {
@@ -83485,47 +78542,6 @@
         }
       }
     },
-    "跟随小说默认": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Follow novel defaults"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "小説のデフォルトに従う"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "소설 기본값 따르기"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "По настройкам романа"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "跟随小说默认"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "跟隨小說預設值"
-          }
-        }
-      }
-    },
     "跟随当前聊天模型": {
       "extractionState": "manual",
       "localizations": {
@@ -83809,47 +78825,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "跳過提問"
-          }
-        }
-      }
-    },
-    "转入深度阅读": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Open in Deep Reading"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "精読に切り替え"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "심층 읽기로 전환"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Перейти к глубокому чтению"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "转入深度阅读"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "轉入深度閱讀"
           }
         }
       }
@@ -85125,47 +80100,6 @@
         }
       }
     },
-    "返回深度阅读": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Back to Deep Reading"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ディープリーディングに戻る"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "심층 읽기로 돌아가기"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "К глубокому чтению"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "返回深度阅读"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "返回深度閱讀"
-          }
-        }
-      }
-    },
     "返回设置": {
       "extractionState": "manual",
       "localizations": {
@@ -85699,47 +80633,6 @@
         }
       }
     },
-    "还没有总剧情大纲": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No overall plot outline yet"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "全体プロットはまだありません"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "전체 줄거리 개요가 아직 없습니다"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Общего плана сюжета пока нет"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "还没有总剧情大纲"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "目前還沒有總劇情大綱"
-          }
-        }
-      }
-    },
     "还没有模式注入。模式注入会按开关状态把固定内容插入对话上下文。": {
       "extractionState": "manual",
       "localizations": {
@@ -85781,47 +80674,6 @@
         }
       }
     },
-    "还没有正式章节": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No finalized chapters yet"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正式な章はまだありません"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "아직 정식 장이 없습니다"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Принятых глав пока нет"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "还没有正式章节"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "目前還沒有正式章節"
-          }
-        }
-      }
-    },
     "还没有活动": {
       "extractionState": "manual",
       "localizations": {
@@ -85859,47 +80711,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "還沒有活動"
-          }
-        }
-      }
-    },
-    "还没有深度阅读任务。创建后会保存到本机历史。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No deep-reading tasks yet. Created tasks are saved to local history."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "精読タスクはまだありません。作成すると、このデバイスの履歴に保存されます。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "아직 심층 읽기 작업이 없습니다. 생성하면 이 기기의 기록에 저장됩니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Задач глубокого чтения пока нет. После создания они сохраняются в локальной истории."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "还没有深度阅读任务。创建后会保存到本机历史。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "目前還沒有深度閱讀任務。建立後會儲存至本機歷史記錄。"
           }
         }
       }
@@ -86642,47 +81453,6 @@
         }
       }
     },
-    "这批代笔": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This ghostwriting batch"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "今回の代筆"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이번 대필 배치"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Текущая партия текста"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "这批代笔"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "這批代筆"
-          }
-        }
-      }
-    },
     "这是 AmberAgent 的受控能力。默认关闭用于保护工具执行、外部连接和远程操作；可在设置页对应行开启。": {
       "extractionState": "manual",
       "localizations": {
@@ -86802,47 +81572,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "這是連線前的安全閘門。未信任或指紋不相符時，不會傳送密碼，也不會執行遠端命令。"
-          }
-        }
-      }
-    },
-    "这条深度阅读历史无法读取。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "This deep-reading history can't be read."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "この精読履歴を読み込めません。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이 심층 읽기 기록을 읽을 수 없습니다."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Не удалось прочитать эту историю глубокого чтения."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "这条深度阅读历史无法读取。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "這筆深度閱讀歷史無法讀取。"
           }
         }
       }
@@ -88237,47 +82966,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "選擇段落"
-          }
-        }
-      }
-    },
-    "选择章节": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Select chapters"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "章を選択"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "장 선택"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Выбрать главы"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "选择章节"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "選擇章節"
           }
         }
       }
@@ -90164,47 +84852,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "重試同步"
-          }
-        }
-      }
-    },
-    "重试失败和未处理章节": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Retry failed and unprocessed chapters"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "失敗した章と未処理の章を再試行"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "실패 및 미처리 장 재시도"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Повторить неудачные и необработанные главы"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重试失败及未处理章节"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重試失敗與未處理章節"
           }
         }
       }
@@ -103862,84 +98509,84 @@
         }
       }
     },
-    "深度阅读摘要": {
+    "小应用摘要": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Deep reading summary"
+            "value": "MiniApp summary"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "深掘り読書の要約"
+            "value": "ミニアプリの要約"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "심층 읽기 요약"
+            "value": "MiniApp 요약"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Краткое содержание глубокого чтения"
+            "value": "Сводка мини-приложения"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "深度阅读摘要"
+            "value": "小应用摘要"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "深度閱讀摘要"
+            "value": "小應用摘要"
           }
         }
       }
     },
-    "允许已授权小应用更新自己的深度阅读摘要。": {
+    "允许已授权小应用更新自己的小应用摘要。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Allow authorized MiniApps to update their own deep reading summary."
+            "value": "Allow authorized MiniApps to update their own MiniApp summary."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "許可されたミニアプリが自身の深掘り読書の要約を更新できるようにします。"
+            "value": "許可されたミニアプリが自身の要約を更新できるようにします。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "승인된 MiniApp이 자체 심층 읽기 요약을 업데이트하도록 허용합니다."
+            "value": "승인된 MiniApp이 자체 요약을 업데이트하도록 허용합니다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Разрешить авторизованным мини-приложениям обновлять собственное краткое содержание глубокого чтения."
+            "value": "Разрешить авторизованным мини-приложениям обновлять собственную сводку."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "允许已授权小应用更新自己的深度阅读摘要。"
+            "value": "允许已授权小应用更新自己的小应用摘要。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "允許已授權小應用更新自己的深度閱讀摘要。"
+            "value": "允許已授權小應用更新自己的小應用摘要。"
           }
         }
       }

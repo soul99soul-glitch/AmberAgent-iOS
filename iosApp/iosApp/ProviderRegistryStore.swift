@@ -15,10 +15,21 @@ protocol ProviderRegistryKeyStore {
     func saveKey(_ key: String, id: String) -> Bool
 }
 
-private struct KeychainProviderRegistryKeyStore: ProviderRegistryKeyStore {
+private final class KeychainProviderRegistryKeyStore: ProviderRegistryKeyStore {
     let keychainPrefix: String
+    private let cacheLock = NSLock()
+    private var memoryCache: [String: String?] = [:]
+
+    init(keychainPrefix: String) {
+        self.keychainPrefix = keychainPrefix
+    }
 
     func loadKey(id: String) -> String? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if let cached = memoryCache[id] {
+            return cached
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainPrefix,
@@ -28,23 +39,43 @@ private struct KeychainProviderRegistryKeyStore: ProviderRegistryKeyStore {
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        if status == errSecSuccess, let data = result as? Data, let decoded = String(data: data, encoding: .utf8) {
+            memoryCache[id] = .some(decoded)
+            return decoded
+        }
+        if status == errSecItemNotFound {
+            memoryCache[id] = .some(nil)
+        }
+        return nil
     }
 
     @discardableResult
     func saveKey(_ key: String, id: String) -> Bool {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainPrefix,
             kSecAttrAccount as String: account(for: id),
         ]
         let deleteStatus = SecItemDelete(query as CFDictionary)
-        guard deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound else { return false }
-        guard !key.isEmpty else { return true }
+        guard deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound else {
+            memoryCache.removeValue(forKey: id)
+            return false
+        }
+        guard !key.isEmpty else {
+            memoryCache[id] = .some(nil)
+            return true
+        }
         var attributes = query
         attributes[kSecValueData as String] = Data(key.utf8)
-        return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
+        let added = SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
+        if added {
+            memoryCache[id] = .some(key)
+        } else {
+            memoryCache.removeValue(forKey: id)
+        }
+        return added
     }
 
     private func account(for id: String) -> String {

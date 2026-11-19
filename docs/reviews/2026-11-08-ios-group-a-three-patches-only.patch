@@ -1,0 +1,2256 @@
+diff --git a/core/conversation-storage/src/commonMain/kotlin/app/amber/core/storage/conversation/ConversationFork.kt b/core/conversation-storage/src/commonMain/kotlin/app/amber/core/storage/conversation/ConversationFork.kt
+index 4992693f..5b55e4d2 100644
+--- a/core/conversation-storage/src/commonMain/kotlin/app/amber/core/storage/conversation/ConversationFork.kt
++++ b/core/conversation-storage/src/commonMain/kotlin/app/amber/core/storage/conversation/ConversationFork.kt
+@@ -5,6 +5,8 @@ import app.amber.ai.ui.UIMessage
+ import app.amber.ai.ui.UIMessagePart
+ import app.amber.core.model.Conversation
+ import app.amber.core.model.MessageNode
++import kotlinx.serialization.json.JsonObject
++import kotlinx.serialization.json.JsonPrimitive
+ import kotlin.time.Clock
+ import kotlin.uuid.Uuid
+ 
+@@ -47,7 +49,18 @@ fun forkConversation(
+         id = newId,
+         assistantId = assistantId ?: source.assistantId,
+         title = newTitle,
+-        messageNodes = messages.map { MessageNode.of(it) },
++        messageNodes = messages.map { message ->
++            // Forked history is context, never a fresh user statement for memory extraction.
++            val inherited = if (message.role == MessageRole.USER) message.copy(
++                parts = message.parts.map { part ->
++                    if (part is UIMessagePart.Text) part.copy(metadata = JsonObject(
++                        part.metadata.orEmpty() + ("amber.memory.inherited" to JsonPrimitive("true"))
++                    )) else part
++                }
++            ) else message
++            MessageNode.of(inherited)
++        },
++        memoryMode = source.memoryMode,
+         isPinned = false,
+         createAt = now,
+         updateAt = now,
+diff --git a/core/conversation-storage/src/jvmTest/kotlin/app/amber/core/storage/conversation/ConversationForkTest.kt b/core/conversation-storage/src/jvmTest/kotlin/app/amber/core/storage/conversation/ConversationForkTest.kt
+index 6947de29..921e418c 100644
+--- a/core/conversation-storage/src/jvmTest/kotlin/app/amber/core/storage/conversation/ConversationForkTest.kt
++++ b/core/conversation-storage/src/jvmTest/kotlin/app/amber/core/storage/conversation/ConversationForkTest.kt
+@@ -55,6 +55,22 @@ class ConversationForkTest {
+                 .joinToString("") { it.text }
+         }
+ 
++    @Test
++    fun forkPreservesMemoryPolicyAndMarksInheritedUserSources() {
++        for (mode in app.amber.core.model.ConversationMemoryMode.entries) {
++            val source = sourceConversation(listOf(node(user("parent fact")), node(assistant("answer")))).copy(memoryMode = mode)
++            for (turns in listOf("none", "all", "1")) {
++                val child = fork(source, turns)
++                assertEquals(mode, child.memoryMode)
++                for (message in child.currentMessages.filter { it.role == MessageRole.USER }) {
++                    val text = message.parts.filterIsInstance<UIMessagePart.Text>().single()
++                    assertEquals("true", text.metadata?.get("amber.memory.inherited")?.toString()?.trim('"'))
++                }
++                assertTrue(source.currentMessages.first().parts.first().metadata == null)
++            }
++        }
++    }
++
+     // MARK: - 三模式
+ 
+     @Test
+diff --git a/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatLocalToolOperations.swift b/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatLocalToolOperations.swift
+index 2680e064..43ae8f0d 100644
+--- a/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatLocalToolOperations.swift
++++ b/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatLocalToolOperations.swift
+@@ -154,13 +154,13 @@ extension ChatToolRuntime {
+     }
+ 
+     func executeMemoryToolCall(_ pending: ChatPendingToolApproval) -> ChatToolRuntimeResult {
+-        let writePolicy = memoryToolWritePolicy(input: pending.toolCall.input, isUserInitiated: false)
++        let writePolicy = memoryToolWritePolicy(input: pending.toolCall.input, isUserInitiated: false, conversationId: pending.conversationId)
+         if case .needsUserAction(let reason) = writePolicy,
+            let request = ChatToolApprovalRequestBuilder.memory(for: pending.toolCall, reason: reason) {
+             return .waitingForApproval(.memory(request))
+         }
+ 
+-        let resultText = dispatchMemoryToolCall(pending.toolCall, writePolicy: writePolicy)
++        let resultText = dispatchMemoryToolCall(pending.toolCall, writePolicy: writePolicy, conversationId: pending.conversationId)
+         return .completed(messagesByFinishingToolCall(
+             pending.toolCall,
+             outputText: resultText,
+@@ -356,17 +356,22 @@ extension ChatToolRuntime {
+     /// 不会触碰页面；只有 active（pinned 验收版本 + 全范围允许）才真正执行。
+     func dispatchMemoryToolCall(
+         _ toolCall: UIMessagePart.Tool,
+-        writePolicy: IOSMemoryToolWritePolicy
++        writePolicy: IOSMemoryToolWritePolicy,
++        conversationId: KotlinUuid? = nil
+     ) -> String {
+         IOSMemoryToolExecutor.execute(
+             input: toolCall.input,
+             runtime: sharedSettings.agentRuntime,
+-            writePolicy: writePolicy
++            writePolicy: writePolicy,
++            conversationId: conversationId?.toHexDashString()
+         )
+     }
+ 
+-    func memoryToolWritePolicy(input: String, isUserInitiated: Bool) -> IOSMemoryToolWritePolicy {
+-        localToolExecutor?.memoryToolWritePolicy(
++    func memoryToolWritePolicy(input: String, isUserInitiated: Bool, conversationId: KotlinUuid? = nil) -> IOSMemoryToolWritePolicy {
++        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId?.toHexDashString()) else {
++            return .denied("Global memory is unavailable in an isolated Hub.")
++        }
++        return localToolExecutor?.memoryToolWritePolicy(
+             input: input,
+             isUserInitiated: isUserInitiated,
+             executionPolicy: IOSExecutionPolicyContext.snapshot
+diff --git a/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatRecipeExecution.swift b/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatRecipeExecution.swift
+index b20f3665..7c2085bb 100644
+--- a/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatRecipeExecution.swift
++++ b/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatRecipeExecution.swift
+@@ -754,11 +754,11 @@ final class ChatRecipeExecution {
+                 isUserInitiated: isUserInitiated
+             ))
+         case .memory:
+-            let policy = runtime.memoryToolWritePolicy(input: argsJSON, isUserInitiated: isUserInitiated)
++            let policy = runtime.memoryToolWritePolicy(input: argsJSON, isUserInitiated: isUserInitiated, conversationId: context.conversationId)
+             if case .needsUserAction(let reason) = policy {
+                 return .needsApproval(reason: reason)
+             }
+-            return recipePrimitiveResult(runtime.dispatchMemoryToolCall(toolCall, writePolicy: policy))
++            return recipePrimitiveResult(runtime.dispatchMemoryToolCall(toolCall, writePolicy: policy, conversationId: context.conversationId))
+         case .ish:
+             let output = await runtime.ishToolExecutionOutput(toolCall, isUserInitiated: isUserInitiated)
+             switch output {
+@@ -862,10 +862,11 @@ final class ChatRecipeExecution {
+             case .allow: return .proceed
+             }
+         case .memory:
+-            if case .needsUserAction(let reason) = runtime.memoryToolWritePolicy(input: argsJSON, isUserInitiated: false) {
+-                return .approvalRequired(reason: reason)
++            switch runtime.memoryToolWritePolicy(input: argsJSON, isUserInitiated: false, conversationId: context.conversationId) {
++            case .needsUserAction(let reason): return .approvalRequired(reason: reason)
++            case .denied(let reason), .deniedByUser(let reason): return .unsupported(reason: reason)
++            case .allow: return .proceed
+             }
+-            return .proceed
+         case .ish:
+             if runtime.isIshToolAutoApproved(
+                 toolName: tool,
+diff --git a/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatToolApprovalCompletion.swift b/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatToolApprovalCompletion.swift
+index 22f24c52..6dc8eeaf 100644
+--- a/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatToolApprovalCompletion.swift
++++ b/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatToolApprovalCompletion.swift
+@@ -52,7 +52,8 @@ extension ChatToolRuntime {
+             input: pending.toolCall.input,
+             runtime: sharedSettings.agentRuntime,
+             writePolicy: writePolicy,
+-            expectedUpdatedAt: expectedUpdatedAt
++            expectedUpdatedAt: expectedUpdatedAt,
++            conversationId: pending.conversationId?.toHexDashString()
+         )
+         return messagesByFinishingToolCall(
+             pending.toolCall,
+diff --git a/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatToolExecutorAdapters.swift b/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatToolExecutorAdapters.swift
+index c660c4db..211c8201 100644
+--- a/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatToolExecutorAdapters.swift
++++ b/iosApp/iosApp/AgentRuntime/Tools/Runtime/ChatToolExecutorAdapters.swift
+@@ -245,11 +245,11 @@ extension ChatToolRuntime {
+         if availableToolNames.contains("memory_tool") {
+             executors["memory_tool"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] _, arguments, _ in
+                 guard let self else { return .failed("Chat runtime is unavailable.") }
+-                let policy = self.memoryToolWritePolicy(input: arguments, isUserInitiated: false)
++                let policy = self.memoryToolWritePolicy(input: arguments, isUserInitiated: false, conversationId: conversationId)
+                 if case .needsUserAction(let reason) = policy {
+                     return .denied("后台生成期间需要回到 App 确认记忆写入：\(reason)")
+                 }
+-                return .filled(self.dispatchMemoryToolCall(self.toolCall(name: "memory_tool", input: arguments), writePolicy: policy))
++                return .filled(self.dispatchMemoryToolCall(self.toolCall(name: "memory_tool", input: arguments), writePolicy: policy, conversationId: conversationId))
+             }
+         }
+ 
+diff --git a/iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift b/iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift
+index 8a481a7b..ca1662ab 100644
+--- a/iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift
++++ b/iosApp/iosApp/Chat/Generation/ChatGenerationRequestBuilder.swift
+@@ -164,26 +164,29 @@ extension ChatViewModel {
+ 
+     func memoryRecordIdsForRuntimeContext(
+         _ messages: [UIMessage],
+-        override: ChatMemoryContextBuilder.RecallResult? = nil
++        override: ChatMemoryContextBuilder.RecallResult? = nil,
++        state: ChatConversationRunState? = nil
+     ) -> [Int32] {
+         let uploadableMessages = messages.filter { !Self.isLocalGenerationError($0) }
+         return ChatRuntimeContextBuilder(
+             sharedSettings: sharedSettings,
+             mcpTools: mcpManager.tools,
+             miniAppRepository: miniAppRepository,
+-            miniAppRuntimeEnabled: isMiniAppRuntimeEnabled
++            miniAppRuntimeEnabled: isMiniAppRuntimeEnabled,
++            conversationId: (state ?? currentRun.state).conversationId?.toHexDashString()
+         ).memoryRecallResult(for: uploadableMessages, override: override).ids
+     }
+ 
+     /// P3a：Jev 关闭/未提供覆盖时的兜底记忆召回结果，供 `ChatKernelRunHost`
+     /// 在一次请求准备内计算一次并复用（见 `memoryRecallResultForRun` 绑定）。
+-    func memoryRecallResultForRun(_ messages: [UIMessage]) -> ChatMemoryContextBuilder.RecallResult {
++    func memoryRecallResultForRun(_ messages: [UIMessage], state: ChatConversationRunState? = nil) -> ChatMemoryContextBuilder.RecallResult {
+         let uploadableMessages = messages.filter { !Self.isLocalGenerationError($0) }
+         return ChatRuntimeContextBuilder(
+             sharedSettings: sharedSettings,
+             mcpTools: mcpManager.tools,
+             miniAppRepository: miniAppRepository,
+-            miniAppRuntimeEnabled: isMiniAppRuntimeEnabled
++            miniAppRuntimeEnabled: isMiniAppRuntimeEnabled,
++            conversationId: (state ?? currentRun.state).conversationId?.toHexDashString()
+         ).memoryRecallResult(for: uploadableMessages)
+     }
+ 
+@@ -193,15 +196,19 @@ extension ChatViewModel {
+     /// 返回本轮的统一选中集合（nil = off/shadow/失败回退）。
+     func prepareJevMemoryRecallSelection(
+         _ messages: [UIMessage],
+-        runId: String?
++        runId: String?,
++        state: ChatConversationRunState? = nil
+     ) async -> ChatMemoryContextBuilder.RecallResult? {
+         let uploadableMessages = messages.filter { !Self.isLocalGenerationError($0) }
+-        return await IOSJevMemoryRecallService.shared.prepareTurnSelection(
++        let conversationId = (state ?? currentRun.state).conversationId?.toHexDashString()
++        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else { return nil }
++        let result = await IOSJevMemoryRecallService.shared.prepareTurnSelection(
+             messages: uploadableMessages,
+             records: IosMemoryFactory.shared.getAllRecords(),
+             runtime: sharedSettings.agentRuntime,
+             identity: IOSJevMemoryRecallService.RunIdentity(runId: runId)
+         )
++        return AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) ? result : nil
+     }
+ 
+     func recordMemoryUsage(_ ids: [Int32], force: Bool = false, state: ChatConversationRunState) {
+@@ -209,6 +216,7 @@ extension ChatViewModel {
+         // 原会话的 state 持有本 run 的去抖；切会话后仍绑定该 state 的 host。
+         // P2-c 修复 2：模型显式引用（citation flush）传 force: true，绕过
+         // 同集去抖——引用是模型信号，与召回标记语义不同，应始终生效。
++        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: state.conversationId?.toHexDashString()) else { return }
+         let ownerKey = state.conversationId?.toHexDashString() ?? ""
+         state.recordMemoryUsage(
+             ids: Set(ids), runId: runRegistry.run(forHex: ownerKey)?.host?.currentRunId, force: force
+@@ -432,7 +440,8 @@ extension ChatViewModel {
+             toolDeclarations.append(ToolKt.createSearchWebToolDeclaration())
+             toolDeclarations.append(ToolKt.createScrapeWebToolDeclaration())
+         }
+-        if IOSMemoryToolExecutor.isEnabled(runtime: sharedSettings.agentRuntime) {
++        if AmberHubStore.shared.allowsGlobalMemory(conversationId: state.conversationId?.toHexDashString()),
++           IOSMemoryToolExecutor.isEnabled(runtime: sharedSettings.agentRuntime) {
+             toolDeclarations.append(MemoryWikiToolKt.createMemoryWikiEnabledToolDeclaration())
+         }
+         if imageGenerationConfigured {
+diff --git a/iosApp/iosApp/Chat/Session/ChatAsyncTaskIsolation.swift b/iosApp/iosApp/Chat/Session/ChatAsyncTaskIsolation.swift
+index 6b33e88d..681469df 100644
+--- a/iosApp/iosApp/Chat/Session/ChatAsyncTaskIsolation.swift
++++ b/iosApp/iosApp/Chat/Session/ChatAsyncTaskIsolation.swift
+@@ -446,9 +446,11 @@ extension ChatViewModel {
+                 }
+             }
+         }
++        let previousProseSig = slot.lastSyncedVisibleProseSignature ??
++            Self.visibleSyncedProseSignature(in: slot.generatedMessages)
+         let latestProseSig = Self.visibleSyncedProseSignature(in: coalescedGenerated)
+-        if let latestProseSig, latestProseSig != slot.lastSyncedVisibleProseSignature {
+-            slot.lastSyncedVisibleProseSignature = latestProseSig
++        slot.lastSyncedVisibleProseSignature = latestProseSig
++        if let latestProseSig, latestProseSig != previousProseSig {
+             slot.recordMeaningfulUserVisibleProgress()
+         }
+         let previousOwnedIds = slot.allOwnedMessageIds
+@@ -517,6 +519,14 @@ extension ChatViewModel {
+                 index = state.messages.lastIndex(where: { $0.id == message.id })
+             }
+             if let index {
++                // Compare only the replaced row: stream deltas must not rescan task history.
++                let previousProseSig = Self.visibleSyncedProseSignature(in: [previous])
++                if let latestProseSig = Self.visibleSyncedProseSignature(in: [message]),
++                   latestProseSig != previousProseSig {
++                    slot.recordMeaningfulUserVisibleProgress()
++                }
++                // The aggregate is rebuilt only when an authoritative transcript next arrives.
++                slot.lastSyncedVisibleProseSignature = nil
+                 slot.currentTranscript[slot.currentTranscript.count - 1] = message
+                 slot.generatedMessages[slot.generatedMessages.count - 1] = message
+                 state.messages[index] = message
+@@ -702,6 +712,9 @@ extension ChatViewModel {
+             if hasBackgroundJob { continue }
+ 
+             for slot in run.orderedSlots where slot.isActiveOrQueued {
++                // Approval waits retain their in-process continuation while the app is suspended.
++                // Resume the same run after a decision, including any unconsumed follow-ups.
++                if slot.host?.hasPendingToolApproval == true { continue }
+                 let runId = slot.runId
+                 cancelUnconsumedFollowups(for: slot, state: run.state)
+                 if slot.isQueuedForConcurrencySlot {
+@@ -723,6 +736,7 @@ extension ChatViewModel {
+             }
+             if let legacyHost = run.host,
+                legacyHost.isRunning,
++               !legacyHost.hasPendingToolApproval,
+                !run.orderedSlots.contains(where: { $0.host === legacyHost }) {
+                 if let runId = legacyHost.currentRunId {
+                     interruptedRunIds.append(runId)
+diff --git a/iosApp/iosApp/Chat/Session/ChatRunComposition.swift b/iosApp/iosApp/Chat/Session/ChatRunComposition.swift
+index bf66ac99..5146af55 100644
+--- a/iosApp/iosApp/Chat/Session/ChatRunComposition.swift
++++ b/iosApp/iosApp/Chat/Session/ChatRunComposition.swift
+@@ -284,14 +284,14 @@ extension ChatViewModel {
+                     ChatViewModel.userFacingGenerationError(rawMessage, modelId: modelId)
+                 },
+                 memoryRecordIdsForRuntimeContext: { [weak self] messages, override in
+-                    self?.memoryRecordIdsForRuntimeContext(messages, override: override) ?? []
++                    self?.memoryRecordIdsForRuntimeContext(messages, override: override, state: state) ?? []
+                 },
+                 prepareJevMemoryRecall: { [weak self] messages, runId in
+                     guard let self else { return nil }
+-                    return await self.prepareJevMemoryRecallSelection(messages, runId: runId)
++                    return await self.prepareJevMemoryRecallSelection(messages, runId: runId, state: state)
+                 },
+                 memoryRecallResultForRun: { [weak self] messages in
+-                    self?.memoryRecallResultForRun(messages) ?? ChatMemoryContextBuilder.RecallResult(prompt: nil, records: [])
++                    self?.memoryRecallResultForRun(messages, state: state) ?? ChatMemoryContextBuilder.RecallResult(prompt: nil, records: [])
+                 },
+                 recordMemoryUsage: { [weak self] ids, force in
+                     self?.recordMemoryUsage(ids, force: force, state: state)
+diff --git a/iosApp/iosApp/Chat/Timeline/ChatTimelineUpdates.swift b/iosApp/iosApp/Chat/Timeline/ChatTimelineUpdates.swift
+index ce434474..dd3b1e3e 100644
+--- a/iosApp/iosApp/Chat/Timeline/ChatTimelineUpdates.swift
++++ b/iosApp/iosApp/Chat/Timeline/ChatTimelineUpdates.swift
+@@ -37,11 +37,11 @@ final class ChatTimelineUpdates {
+             ChatRenderProbe.record("timeline-publish:\(signal.event)")
+         }
+         #endif
+-        projectionCache.prepareDisplayTexts(messages: messages)
+         latestSignal = signal
+         defer { signals.send(signal) }
+         if signal.event == .assistantStreamDelta {
+             guard let tail = messages.last else {
++                projectionCache.prepareDisplayTexts(messages: messages)
+                 ChatRenderProbe.record("tail-fastpath:fail-no-tail")
+                 structuralMessages = messages
+                 sourceIdentities = []
+@@ -50,6 +50,7 @@ final class ChatTimelineUpdates {
+                 return true
+             }
+             guard canBypassNextStreamDelta, let previousTailIdentity = sourceIdentities.last else {
++                projectionCache.prepareDisplayTexts(messages: messages)
+                 ChatRenderProbe.record("tail-fastpath:fail-no-prev-identity")
+                 structuralMessages = messages
+                 sourceIdentities = nextIdentities(for: messages)
+@@ -57,13 +58,19 @@ final class ChatTimelineUpdates {
+                 canBypassNextStreamDelta = Self.canPrepareStreamBypass(for: tail)
+                 return true
+             }
+-            if canUpdateOnlyTail(messages, previousTailIdentity: previousTailIdentity),
+-               consume?(tail, signal) == true {
+-                sourceIdentities[sourceIdentities.count - 1] = ChatMessageContentIdentity(
+-                    reusingMetadataFrom: previousTailIdentity,
+-                    message: tail
+-                )
+-                return false
++            if canUpdateOnlyTail(messages, previousTailIdentity: previousTailIdentity) {
++                // The identity check above also validates history and mutable metadata.
++                // Only this replaced tail needs new display facts before the live consumer runs.
++                projectionCache.prepareTailDisplayTexts(tail, replacing: previousTailIdentity.message)
++                if consume?(tail, signal) == true {
++                    sourceIdentities[sourceIdentities.count - 1] = ChatMessageContentIdentity(
++                        reusingMetadataFrom: previousTailIdentity,
++                        message: tail
++                    )
++                    return false
++                }
++            } else {
++                projectionCache.prepareDisplayTexts(messages: messages)
+             }
+             structuralMessages = messages
+             sourceIdentities = nextIdentities(for: messages)
+@@ -71,6 +78,7 @@ final class ChatTimelineUpdates {
+             canBypassNextStreamDelta = Self.canPrepareStreamBypass(for: tail)
+             return true
+         }
++        projectionCache.prepareDisplayTexts(messages: messages)
+         structuralMessages = messages
+         if let tail = messages.last, Self.canPrepareStreamBypass(for: tail) {
+             sourceIdentities = nextIdentities(for: messages)
+diff --git a/iosApp/iosApp/Chat/Timeline/NativeTimelineProjectionCache.swift b/iosApp/iosApp/Chat/Timeline/NativeTimelineProjectionCache.swift
+index 27d3c835..edee2121 100644
+--- a/iosApp/iosApp/Chat/Timeline/NativeTimelineProjectionCache.swift
++++ b/iosApp/iosApp/Chat/Timeline/NativeTimelineProjectionCache.swift
+@@ -31,6 +31,7 @@ final class NativeTimelineProjectionCache {
+     func prepareDisplayTexts(messages: [UIMessage]) {
+         var prepared: [ObjectIdentifier: NativeTimelineMessageFacts] = [:]
+         for (index, message) in messages.enumerated() {
++            ChatRenderProbe.record("display-facts:visit")
+             let key = ObjectIdentifier(message)
+             if let cached = factsByObjectID[key], cached.hasPreparedDisplayTexts, cached.identity.matches(message) {
+                 prepared[key] = cached
+@@ -44,6 +45,15 @@ final class NativeTimelineProjectionCache {
+         factsByObjectID = prepared
+     }
+ 
++    func prepareTailDisplayTexts(_ message: UIMessage, replacing previous: UIMessage) {
++        ChatRenderProbe.record("display-facts:visit")
++        factsByObjectID.removeValue(forKey: ObjectIdentifier(previous))
++        factsByObjectID[ObjectIdentifier(message)] = NativeTimelineMessageFacts(
++            message: message, identity: ChatMessageContentIdentity(message),
++            displayTexts: IOSSubAgentOutputProjection.displayTexts(in: message)
++        )
++    }
++
+     func displayTexts(for message: UIMessage) -> [Int: String] {
+         guard let facts = factsByObjectID[ObjectIdentifier(message)], facts.identity.matches(message) else {
+             return IOSSubAgentOutputProjection.unpreparedDisplayTexts(in: message)
+diff --git a/iosApp/iosApp/Chat/Timeline/Projection/NativeTimelineProjection.swift b/iosApp/iosApp/Chat/Timeline/Projection/NativeTimelineProjection.swift
+index 01c0b4a9..855d02f7 100644
+--- a/iosApp/iosApp/Chat/Timeline/Projection/NativeTimelineProjection.swift
++++ b/iosApp/iosApp/Chat/Timeline/Projection/NativeTimelineProjection.swift
+@@ -458,7 +458,11 @@ enum NativeTimelineProjector {
+             )
+             previousVisibleWasRawAssistant = messageFacts.rawRole == MessageRole.assistant
+ 
+-            if chatEntry.role == MessageRole.assistant {
++            // The child card owns its heading; the next main reply starts a new heading too.
++            if messageFacts.isSubAgentResult {
++                chatEntry.isAssistantContinuation = false
++                hasVisibleAssistantInTurn = false
++            } else if chatEntry.role == MessageRole.assistant {
+                 chatEntry.isAssistantContinuation = hasVisibleAssistantInTurn == true
+                 if !messageFacts.isGlobalStatusOnly {
+                     hasVisibleAssistantInTurn = true
+@@ -849,7 +853,10 @@ enum NativeTimelineProjector {
+             previousVisibleWasRawAssistant = messageFacts.rawRole == MessageRole.assistant
+ 
+             let entryContinuation: Bool
+-            if messageFacts.effectiveRole == MessageRole.assistant {
++            if messageFacts.isSubAgentResult {
++                entryContinuation = false
++                hasVisibleAssistantInTurn = false
++            } else if messageFacts.effectiveRole == MessageRole.assistant {
+                 entryContinuation = hasVisibleAssistantInTurn
+                 if !messageFacts.isGlobalStatusOnly {
+                     hasVisibleAssistantInTurn = true
+diff --git a/iosApp/iosApp/ChatContextSupport.swift b/iosApp/iosApp/ChatContextSupport.swift
+index 343fa202..dceac317 100644
+--- a/iosApp/iosApp/ChatContextSupport.swift
++++ b/iosApp/iosApp/ChatContextSupport.swift
+@@ -375,6 +375,7 @@ struct ChatRuntimeContextBuilder {
+ 
+     @MainActor
+     private func messagesByInjectingRecentEpisodesContext(_ messages: [UIMessage]) -> [UIMessage] {
++        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else { return messages }
+         let prompt = ChatEpisodeContextSupport.recentEpisodesPrompt(
+             conversationId: conversationId,
+             isOrchestratedChild: isOrchestratedChild
+@@ -580,6 +581,7 @@ struct ChatRuntimeContextBuilder {
+         _ messages: [UIMessage],
+         memoryRecallOverride: ChatMemoryContextBuilder.RecallResult?
+     ) -> [UIMessage] {
++        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else { return messages }
+         let result = memoryRecallResult(for: messages, override: memoryRecallOverride)
+         let wikiIndex = IOSMemoryPersistence.shared.wikiNavigation(runtime: sharedSettings.agentRuntime)
+         let runtime = sharedSettings.agentRuntime
+@@ -639,6 +641,9 @@ struct ChatRuntimeContextBuilder {
+         for messages: [UIMessage],
+         override: ChatMemoryContextBuilder.RecallResult? = nil
+     ) -> ChatMemoryContextBuilder.RecallResult {
++        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else {
++            return ChatMemoryContextBuilder.RecallResult(prompt: nil, records: [])
++        }
+         if let override { return override }
+         let records = ChatMemoryContextBuilder.recordsForPrompt(
+             records: IosMemoryFactory.shared.getAllRecords(),
+diff --git a/iosApp/iosApp/ChatSubAgentResultCard.swift b/iosApp/iosApp/ChatSubAgentResultCard.swift
+index 4615dc1b..9fc0aaaa 100644
+--- a/iosApp/iosApp/ChatSubAgentResultCard.swift
++++ b/iosApp/iosApp/ChatSubAgentResultCard.swift
+@@ -314,25 +314,10 @@ struct AmberTaskDeliverablePreviewContent: View {
+         item.deliverableBullets.filter { $0 != item.resultText }
+     }
+ 
+-    private var cleanedMarkdownBody: String? {
+-        guard let raw = item.rawResultMarkdown?.trimmingCharacters(in: .whitespacesAndNewlines),
+-              !raw.isEmpty else {
+-            return nil
+-        }
+-        let userFacing = IOSSubAgentOutputProjection.isKnownSubAgentResultEnvelope(raw)
+-            ? (IOSSubAgentOutputProjection.extractUserFacingResult(from: raw) ?? "")
+-            : raw
+-        let lines = userFacing.split(whereSeparator: \.isNewline)
+-            .map { String($0) }
+-            .filter { line in
+-                let trimmed = line.replacingOccurrences(of: "#", with: "")
+-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+-                    .lowercased()
+-                return !trimmed.hasPrefix("settlement report") && trimmed != "subagent report"
+-            }
+-        let joined = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+-        guard !joined.isEmpty, joined != item.resultText else { return nil }
+-        return joined
++    var cleanedMarkdownBody: String? {
++        guard let markdown = AmberUnifiedTaskBuilder.userFacingResultMarkdown(from: item.rawResultMarkdown),
++              markdown != item.resultText else { return nil }
++        return markdown
+     }
+ 
+     var body: some View {
+diff --git a/iosApp/iosApp/IOSAgentExperiences.swift b/iosApp/iosApp/IOSAgentExperiences.swift
+index 8733f9f4..80b09d24 100644
+--- a/iosApp/iosApp/IOSAgentExperiences.swift
++++ b/iosApp/iosApp/IOSAgentExperiences.swift
+@@ -11,13 +11,17 @@ struct IOSAgentTaskEvidence: Codable, Equatable {
+     let observation: String
+ }
+ 
+-struct IOSAgentExperienceCandidate: Decodable {
++struct IOSAgentExperienceCandidate: Codable {
+     let content: String
+     let toolCallId: String
+     let quote: String
+     /// A host, project, or task phrase copied from the task/tool evidence.
+     let context: String
+     let expiresInDays: Int?
++
++    var isCredentialSafe: Bool {
++        [content, quote, context].allSatisfy { IOSContextCompactionFidelity.redactCredentials($0) == $0 }
++    }
+ }
+ 
+ /// Task/tool learning is deliberately separate from user facts and wiki notes.
+@@ -53,6 +57,7 @@ final class IOSAgentExperienceStore {
+     /// permission and daily budget gates; no extra model request or scheduler.
+     func save(_ candidates: [IOSAgentExperienceCandidate], evidence: [IOSAgentTaskEvidence],
+               conversationId: String, now: Int64) throws {
++        guard !candidates.isEmpty else { return }
+         guard errorMessage == nil else { throw IOSMemoryCorrection.Failure(errorMessage!) }
+         var next = records
+         for candidate in candidates.prefix(2) {
+@@ -62,7 +67,7 @@ final class IOSAgentExperienceStore {
+                   let source = evidence.first(where: { $0.toolCallId == candidate.toolCallId }),
+                   source.observation.contains(candidate.quote),
+                   (source.task + "\n" + source.observation).localizedCaseInsensitiveContains(candidate.context),
+-                  IOSContextCompactionFidelity.redactCredentials(candidate.content) == candidate.content,
++                  candidate.isCredentialSafe,
+                   IOSMemoryExtractionCoordinator.isGrounded(content: candidate.content, evidence: candidate.quote,
+                                                             context: source.task + "\n" + source.toolName) else { continue }
+             let expiresAt = now + Int64(min(max(candidate.expiresInDays ?? 30, 1), 90)) * 86_400_000
+@@ -85,7 +90,8 @@ final class IOSAgentExperienceStore {
+     func recall(task: String, toolNames: Set<String>, now: Int64, limit: Int = 2) -> [IOSAgentExperience] {
+         guard !task.isEmpty || !toolNames.isEmpty else { return [] }
+         return records.filter { record in
+-            guard record.expiresAt > now else { return false }
++            guard record.expiresAt > now,
++                  [record.content, record.context, record.quote].allSatisfy({ IOSContextCompactionFidelity.redactCredentials($0) == $0 }) else { return false }
+             let contextMatch = task.localizedCaseInsensitiveContains(record.context)
+             let tokens = Set(ChatMemoryContextBuilder.recallTokens(from: task))
+             let overlap = tokens.intersection(ChatMemoryContextBuilder.recallTokens(from: record.content)).count
+@@ -99,20 +105,26 @@ final class IOSAgentExperienceStore {
+         value.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
+     }
+ 
++    static func isInherited(_ message: UIMessage) -> Bool {
++        message.parts.contains { IosToolOutputJsonBridge.shared.metadataString(part: $0, key: "amber.memory.inherited") == "true" }
++    }
++
+     static func evidence(messages: [UIMessage], sourceIds: Set<String>) -> [IOSAgentTaskEvidence] {
+         var result: [IOSAgentTaskEvidence] = []
+         var source: UIMessage?
+         var remaining = 6000
+         for (index, message) in messages.enumerated() {
+             if message.role == .user {
+-                source = sourceIds.contains(message.id.toHexDashString()) && IosMailboxMessageBridge.shared.kind(message: message) == nil ? message : nil
++                source = sourceIds.contains(message.id.toHexDashString()) && !isInherited(message) && IosMailboxMessageBridge.shared.kind(message: message) == nil ? message : nil
+             }
+             guard let source else { continue }
+-            let task = String(source.toText().prefix(400))
++            let task = String(IOSContextCompactionFidelity.redactCredentials(source.toText()).prefix(400))
+             let end = messages[(index + 1)...].firstIndex(where: { $0.role == .user }) ?? messages.endIndex
+             let completion = messages[index..<end].last(where: { $0.role == .assistant })?.id.toHexDashString() ?? message.id.toHexDashString()
+             for case let tool as UIMessagePart.Tool in message.parts where tool.isExecuted && tool.toolName != "memory_tool" {
+-                let raw = tool.input + "\n" + tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
++                let input = ChatToolCallParsing.jsonObject(tool.input) != nil
++                    ? IOSSecretArgumentRedaction.redactedArgumentsJSON(tool.input) : tool.input
++                let raw = input + "\n" + tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
+                 let observation = String(IOSContextCompactionFidelity.redactCredentials(raw).prefix(min(1200, remaining)))
+                 guard !observation.isEmpty else { continue }
+                 result.append(.init(sourceMessageId: source.id.toHexDashString(), completionMessageId: completion, task: task,
+diff --git a/iosApp/iosApp/IOSMemoryCorrection.swift b/iosApp/iosApp/IOSMemoryCorrection.swift
+index 7ec55e0f..c609cb98 100644
+--- a/iosApp/iosApp/IOSMemoryCorrection.swift
++++ b/iosApp/iosApp/IOSMemoryCorrection.swift
+@@ -42,13 +42,15 @@ enum IOSMemoryCorrection {
+         for conversationId in Set(recent.map(\.conversationId)).sorted() {
+             let id = KotlinUuid.companion.parse(uuidString: conversationId)
+             guard let conversation = try? await conversations.loadConversationForOrchestration(id),
+-                  conversation.memoryMode != .disabled else { continue }
++                  conversation.memoryMode != .disabled,
++                  AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else { continue }
+             let messages = conversation.currentMessages
+             let relevant = recent.filter { $0.conversationId == conversationId }
+             for message in messages.reversed() where message.role == .user {
+                 let messageId = message.id.toHexDashString()
+                 guard let episode = relevant.first(where: { $0.messageIds.contains(messageId) }),
+                       IosMailboxMessageBridge.shared.kind(message: message) == nil,
++                      !IOSAgentExperienceStore.isInherited(message),
+                       let stamp = episodes.resolvedTimestampMillis(for: message, conversationId: conversationId) else { continue }
+                 let text = String(message.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n").prefix(2000))
+                 guard !text.isEmpty, text.count <= remaining,
+diff --git a/iosApp/iosApp/IOSMemoryExtractionCoordinator.swift b/iosApp/iosApp/IOSMemoryExtractionCoordinator.swift
+index d4973287..181801e3 100644
+--- a/iosApp/iosApp/IOSMemoryExtractionCoordinator.swift
++++ b/iosApp/iosApp/IOSMemoryExtractionCoordinator.swift
+@@ -21,6 +21,16 @@ final class IOSMemoryExtractionCoordinator {
+     private let environment: () -> (foreground: Bool, idle: Bool, charging: Bool)
+     private let now: () -> Date
+     private var pending: [String: [String]]
++    /// Facts and experiences use separate atomic files. Keep only the sanitized
++    /// unfinished experience write so retry never replays committed fact actions.
++    private struct ExperienceWrite: Codable {
++        let sourceIds: [String]
++        let candidates: [IOSAgentExperienceCandidate]
++        let evidence: [IOSAgentTaskEvidence]
++        let factSummary: String
++    }
++    private var experienceWrites: [String: ExperienceWrite]
++    private static let experienceWritesKey = "app.amber.ios.memoryExtraction.experienceWrites.v1"
+     private var waitingForRetry = false
+     private weak var settings: IOSSharedSettingsStore?
+     private weak var conversations: IOSConversationStore?
+@@ -47,6 +57,8 @@ final class IOSMemoryExtractionCoordinator {
+         self.provider = provider
+         self.environment = environment
+         self.now = now
++        experienceWrites = defaults.data(forKey: Self.experienceWritesKey)
++            .flatMap { try? JSONDecoder().decode([String: ExperienceWrite].self, from: $0) } ?? [:]
+         pending = defaults.dictionary(forKey: Self.pendingKey) as? [String: [String]] ?? [:]
+         statusMessage = defaults.string(forKey: Self.statusKey) ?? "聊天结束后自动提炼值得保留的信息。"
+     }
+@@ -62,7 +74,8 @@ final class IOSMemoryExtractionCoordinator {
+     }
+ 
+     func enqueue(conversationId: KotlinUuid, baseline: [UIMessage], completed: [UIMessage]) {
+-        guard let worker = settings?.agentRuntime.memoryWorker,
++        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId.toHexDashString()),
++              let worker = settings?.agentRuntime.memoryWorker,
+               worker.enabled, worker.extractionEnabled else { return }
+         // Include the initial user turn and user steer messages added during it,
+         // without re-extracting the entire older conversation on every completion.
+@@ -113,7 +126,7 @@ final class IOSMemoryExtractionCoordinator {
+             let day = Calendar.current.startOfDay(for: now()).timeIntervalSince1970
+             let budget = defaults.dictionary(forKey: Self.budgetKey) ?? [:]
+             let runs = (budget["day"] as? Double) == day ? (budget["count"] as? Int ?? 0) : 0
+-            guard runs < Int(worker.maxDailyRuns) else { report("已达到今日自动提炼次数，明天继续。"); return }
++            guard experienceWrites[conversationKey] != nil || runs < Int(worker.maxDailyRuns) else { report("已达到今日自动提炼次数，明天继续。"); return }
+ 
+             let sourceIds = Array(queuedIds.prefix(6))
+             guard UUID(uuidString: conversationKey) != nil else {
+@@ -123,11 +136,22 @@ final class IOSMemoryExtractionCoordinator {
+             let conversationId = KotlinUuid.companion.parse(uuidString: conversationKey)
+             do {
+                 guard let conversation = try await conversations.loadConversationForOrchestration(conversationId),
+-                      conversation.memoryMode != .disabled else {
++                      conversation.memoryMode != .disabled,
++                      AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationKey) else {
+                     removePending(conversationKey, ids: sourceIds)
+                     report("会话已关闭记忆提炼，本次跳过。")
+                     continue
+                 }
++                if let unfinished = experienceWrites[conversationKey] {
++                    let fresh = IOSAgentExperienceStore.evidence(messages: conversation.currentMessages, sourceIds: Set(unfinished.sourceIds))
++                    if conversation.memoryMode == .enabled, snapshot.agentRuntime.enableLongTermMemory {
++                        try persistence.experiences.save(unfinished.candidates, evidence: unfinished.evidence.filter { fresh.contains($0) },
++                                                         conversationId: conversationKey, now: Int64(now().timeIntervalSince1970 * 1000))
++                    }
++                    removePending(conversationKey, ids: unfinished.sourceIds)
++                    report("\(unfinished.factSummary) 经验待写入项已处理。")
++                    continue
++                }
+                 let sources = Self.sourceTexts(conversation, ids: sourceIds)
+                 guard !sources.isEmpty else {
+                     removePending(conversationKey, ids: sourceIds)
+@@ -156,6 +180,7 @@ final class IOSMemoryExtractionCoordinator {
+                 // switches, then take the latest memory snapshot before writing.
+                 guard let current = try await conversations.loadConversationForOrchestration(conversationId),
+                       current.memoryMode != .disabled,
++                      AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationKey),
+                       !(conversation.memoryMode == .enabled && current.memoryMode == .polluted),
+                       Self.sourceTexts(current, ids: sourceIds) == sources else {
+                     report("来源会话已变化，本次未写入；稍后重新提炼。")
+@@ -172,7 +197,14 @@ final class IOSMemoryExtractionCoordinator {
+                 )
+                 if runtime.enableLongTermMemory, current.memoryMode == .enabled {
+                     let fresh = IOSAgentExperienceStore.evidence(messages: current.currentMessages, sourceIds: Set(sources.keys))
+-                    try persistence.experiences.save(output.experiences ?? [], evidence: taskEvidence.filter { fresh.contains($0) },
++                    let candidates = (output.experiences ?? []).filter(\.isCredentialSafe)
++                    let evidence = taskEvidence.filter { fresh.contains($0) }
++                    if !candidates.isEmpty {
++                        experienceWrites[conversationKey] = ExperienceWrite(sourceIds: sourceIds, candidates: candidates,
++                                                                          evidence: evidence, factSummary: result.committedSummary)
++                        try persistExperienceWrites()
++                    }
++                    try persistence.experiences.save(candidates, evidence: evidence,
+                                                      conversationId: conversationKey, now: Int64(now().timeIntervalSince1970 * 1000))
+                 }
+                 removePending(conversationKey, ids: sourceIds)
+@@ -182,16 +214,28 @@ final class IOSMemoryExtractionCoordinator {
+                 return
+             } catch {
+                 // Keep the source IDs for an explicit retry, without a retry loop.
+-                let reason = "自动记忆提炼失败：\(error.localizedDescription)"
++                let unfinished = experienceWrites[conversationKey]
++                let reason = unfinished.map { "\($0.factSummary) 仅经验写入失败，待重试：\(error.localizedDescription)" }
++                    ?? "自动记忆提炼失败：\(error.localizedDescription)"
+                 waitingForRetry = true
+-                audit.record(action: "extract", status: "failed", reason: reason)
++                audit.record(action: "extract", status: unfinished == nil ? "failed" : "partial", reason: reason)
+                 report(reason)
+                 failedThisPass.insert(conversationKey)
+             }
+         }
+     }
+ 
++    private func persistExperienceWrites() throws {
++        defaults.set(try JSONEncoder().encode(experienceWrites), forKey: Self.experienceWritesKey)
++    }
++
+     private func removePending(_ key: String, ids: [String]) {
++        if let unfinished = experienceWrites[key], Set(unfinished.sourceIds).isSubset(of: Set(ids)) {
++            experienceWrites.removeValue(forKey: key)
++            // Encoding only fixed Codable values cannot fail; removal must not
++            // replay an already completed experience write after a restart.
++            defaults.set(try? JSONEncoder().encode(experienceWrites), forKey: Self.experienceWritesKey)
++        }
+         let remaining = (pending[key] ?? []).filter { !ids.contains($0) }
+         pending[key] = remaining.isEmpty ? nil : remaining
+         defaults.set(pending, forKey: Self.pendingKey)
+@@ -203,7 +247,7 @@ final class IOSMemoryExtractionCoordinator {
+     }
+ 
+     private static func userText(_ message: UIMessage) -> String {
+-        guard message.role == .user, IosMailboxMessageBridge.shared.kind(message: message) == nil else { return "" }
++        guard message.role == .user, !IOSAgentExperienceStore.isInherited(message), IosMailboxMessageBridge.shared.kind(message: message) == nil else { return "" }
+         return message.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }
+             .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+     }
+@@ -325,6 +369,10 @@ final class IOSMemoryExtractionCoordinator {
+         var invalidated = 0
+         var confirmed = 0
+ 
++        var committedSummary: String {
++            added + updated + invalidated + confirmed > 0 ? "\(summary) 事实变更已保存。" : summary
++        }
++
+         var summary: String {
+             let parts = [
+                 added > 0 ? "新增 \(added) 条" : nil,
+diff --git a/iosApp/iosApp/IOSMemoryPersistence.swift b/iosApp/iosApp/IOSMemoryPersistence.swift
+index fc4bac23..e4d2f88b 100644
+--- a/iosApp/iosApp/IOSMemoryPersistence.swift
++++ b/iosApp/iosApp/IOSMemoryPersistence.swift
+@@ -33,8 +33,12 @@ enum IOSMemoryToolExecutor {
+         input: String,
+         runtime: AgentRuntimeSetting,
+         writePolicy: IOSMemoryToolWritePolicy,
+-        expectedUpdatedAt: Int64? = nil
++        expectedUpdatedAt: Int64? = nil,
++        conversationId: String? = nil
+     ) -> String {
++        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else {
++            return json(["ok": false, "tool": "memory_tool", "error": "Global memory is unavailable in an isolated Hub."])
++        }
+         guard let args = jsonObject(input) else {
+             return json(["ok": false, "tool": "memory_tool", "error": "memory_tool input must be a JSON object"])
+         }
+diff --git a/iosApp/iosApp/IOSSubAgentOutput.swift b/iosApp/iosApp/IOSSubAgentOutput.swift
+index aaa98bea..5c84dd4a 100644
+--- a/iosApp/iosApp/IOSSubAgentOutput.swift
++++ b/iosApp/iosApp/IOSSubAgentOutput.swift
+@@ -104,7 +104,7 @@ enum IOSSubAgentOutputProjection {
+             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+             .filter { !$0.isEmpty }
+             .last
+-        let summary = bounded(assistantText ?? fallbackSummary ?? "", limit: maxSummaryLength) ?? ""
++        let summary = summaryFromStoredResult(assistantText ?? fallbackSummary ?? "") ?? ""
+         guard !summary.isEmpty || !steps.isEmpty else { return nil }
+         return IOSSubAgentOutputSnapshot(summary: summary, steps: steps, isFinal: isFinal)
+     }
+@@ -125,9 +125,9 @@ enum IOSSubAgentOutputProjection {
+         let summary: String?
+         if isFinal {
+             summary = summaryFromStoredResult(task.resultSummary) ??
+-                bounded(task.error, limit: maxSummaryLength)
++                summaryFromStoredResult(task.error)
+         } else {
+-            summary = bounded(liveText ?? "", limit: maxSummaryLength)
++            summary = summaryFromStoredResult(liveText ?? "")
+         }
+         guard let summary, !summary.isEmpty else {
+             return isFinal
+@@ -235,7 +235,7 @@ enum IOSSubAgentOutputProjection {
+             || trimmed == emptyRunPlaceholder {
+             return true
+         }
+-        if trimmed.hasPrefix("{") || trimmed.hasPrefix("[") {
++        if trimmed.hasPrefix("{") || (trimmed.hasPrefix("[") && !hasLeadingMarkdownLink(trimmed)) {
+             return trimmed.contains("\"structured_summary\"")
+                 || trimmed.contains("\"formatted_summary\"")
+                 || trimmed.contains("\"session_read\"")
+@@ -388,11 +388,50 @@ enum IOSSubAgentOutputProjection {
+     private static func isJSONResultPayload(_ text: String) -> Bool {
+         if text.hasPrefix("{") { return true }
+         guard text.hasPrefix("[") else { return false }
++        if let data = text.data(using: .utf8),
++           (try? JSONSerialization.jsonObject(with: data)) is [Any] {
++            return true
++        }
++        // A Markdown link label may itself contain JSON or nested brackets.
++        // Check its complete link framing before treating a partial array as protocol JSON.
++        if hasLeadingMarkdownLink(text) { return false }
+         let firstItem = text.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+-        // Include truncated object/array envelopes, without classifying Markdown links or labels.
+-        if firstItem.hasPrefix("{") || firstItem.hasPrefix("[") { return true }
+-        guard let data = text.data(using: .utf8) else { return false }
+-        return (try? JSONSerialization.jsonObject(with: data)) is [Any]
++        return firstItem.hasPrefix("{") || firstItem.hasPrefix("[")
++    }
++
++    private static func hasLeadingMarkdownLink(_ text: String) -> Bool {
++        var depth = 0
++        var escaped = false
++        var cursor = text.startIndex
++        while cursor < text.endIndex {
++            let character = text[cursor]
++            cursor = text.index(after: cursor)
++            if escaped { escaped = false; continue }
++            if character == "\\" { escaped = true; continue }
++            if character == "[" { depth += 1 }
++            if character == "]" {
++                depth -= 1
++                if depth == 0 { break }
++            }
++        }
++        guard depth == 0, cursor < text.endIndex else { return false }
++        let opening = text[cursor]
++        guard opening == "(" || opening == "[" else { return false }
++        let closing: Character = opening == "(" ? ")" : "]"
++        depth = 1
++        cursor = text.index(after: cursor)
++        while cursor < text.endIndex {
++            let character = text[cursor]
++            cursor = text.index(after: cursor)
++            if escaped { escaped = false; continue }
++            if character == "\\" { escaped = true; continue }
++            if character == opening { depth += 1 }
++            if character == closing {
++                depth -= 1
++                if depth == 0 { return true }
++            }
++        }
++        return false
+     }
+ 
+     private static func extractReadableSummaryFromJSONString(_ jsonString: String) -> String? {
+@@ -495,6 +534,15 @@ enum IOSSubAgentOutputProjection {
+         return bounded(extracted, limit: maxSummaryLength)
+     }
+ 
++    /// Activity display and text selection share this public snapshot, including legacy archives.
++    static func displaySnapshot(_ snapshot: IOSSubAgentOutputSnapshot) -> IOSSubAgentOutputSnapshot {
++        IOSSubAgentOutputSnapshot(
++            summary: summaryFromStoredResult(snapshot.summary) ?? "",
++            steps: snapshot.steps,
++            isFinal: snapshot.isFinal
++        )
++    }
++
+     static func structuredDigest(
+         from raw: String,
+         deliverableHint: String? = nil,
+@@ -532,11 +580,11 @@ enum IOSSubAgentOutputProjection {
+             }
+             guard !conclusion.isEmpty || !keyPoints.isEmpty else { return nil }
+             let resolvedConclusion = conclusion.isEmpty ? keyPoints.removeFirst() : conclusion
+-            let explicitDecision = object["needs_user_decision"] as? Bool
++            let explicitDecision = (object["needs_user_decision"] as? Bool) ?? (object["needs_decision"] as? Bool)
+             let decisionPrompt = cleanLine(
+                 (object["decision_prompt"] as? String) ?? (object["next_step"] as? String) ?? ""
+             )
+-            let inferredDecision = detectDecisionSignal(in: trimmed)
++            let inferredDecision = decisionSignal(in: trimmed)
+             let needsDecision = explicitDecision ?? (policyRequiresDecision || inferredDecision.needsDecision)
+             return IOSSubAgentStructuredDigest(
+                 conclusion: String(resolvedConclusion.prefix(240)),
+@@ -603,7 +651,7 @@ enum IOSSubAgentOutputProjection {
+             }
+         }
+ 
+-        let decisionSignal = detectDecisionSignal(in: trimmed)
++        let decisionSignal = decisionSignal(in: trimmed)
+         let needsDecision = policyRequiresDecision || decisionSignal.needsDecision
+         return IOSSubAgentStructuredDigest(
+             conclusion: conclusion,
+@@ -678,20 +726,32 @@ enum IOSSubAgentOutputProjection {
+         )
+     }
+ 
+-    private static func stripCodeFences(from text: String) -> String {
+-        var result: [String] = []
+-        var insideFence = false
++    static func linesOutsideCodeFences(_ text: String) -> [String] {
++        var fence: (marker: Character, length: Int)?
++        var visible: [String] = []
+         for line in text.components(separatedBy: .newlines) {
+-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+-            if trimmed.hasPrefix("```") {
+-                insideFence.toggle()
+-                continue
+-            }
+-            if !insideFence {
+-                result.append(line)
++            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
++            if let marker = trimmed.first, marker == "`" || marker == "~" {
++                let length = trimmed.prefix(while: { $0 == marker }).count
++                if length >= 3 {
++                    if let current = fence {
++                        if marker == current.marker, length >= current.length,
++                           trimmed.dropFirst(length).trimmingCharacters(in: .whitespaces).isEmpty {
++                            fence = nil
++                        }
++                    } else {
++                        fence = (marker, length)
++                    }
++                    continue
++                }
+             }
++            if fence == nil { visible.append(line) }
+         }
+-        return result.joined(separator: "\n")
++        return visible
++    }
++
++    private static func stripCodeFences(from text: String) -> String {
++        linesOutsideCodeFences(text).joined(separator: "\n")
+     }
+ 
+     private static func isNoiseLogLine(_ line: String) -> Bool {
+@@ -739,18 +799,24 @@ enum IOSSubAgentOutputProjection {
+         return String(cleaned.prefix(maxChars))
+     }
+ 
+-    private static func detectDecisionSignal(in text: String) -> (needsDecision: Bool, prompt: String?) {
+-        let decisionKeywords = [
+-            "需要你拍板", "需要您拍板", "请拍板", "待你拍板", "待您拍板",
+-            "待你确认", "待您确认", "请确认下一步", "需要你决定", "需要您决定",
+-            "请选择下一步", "是否继续深入", "pause_for_decision"
++    static func decisionSignal(in text: String) -> (needsDecision: Bool, prompt: String?) {
++        let markers = [
++            "[待拍板]", "【待拍板】", "等待拍板", "等我拍板", "等你拍板", "待你拍板",
++            "请拍板", "需要拍板", "需你拍板", "需用户拍板", "待拍板：", "待拍板:",
++            "[needs_decision]", "needs_decision:", "awaiting_decision", "[checkpoint]", "checkpoint:",
++            "阶段完成待确认", "需要你拍板", "需要您拍板", "待您拍板", "待你确认", "待您确认",
++            "请确认下一步", "需要你决定", "需要您决定", "请选择下一步", "是否继续深入", "pause_for_decision"
+         ]
+-        for rawLine in text.components(separatedBy: .newlines) {
+-            let line = cleanLine(rawLine)
+-            guard !line.isEmpty else { continue }
+-            if decisionKeywords.contains(where: { line.contains($0) }) {
+-                return (true, String(line.prefix(140)))
+-            }
++        for rawLine in linesOutsideCodeFences(text) {
++            let line = extractBulletText(from: rawLine) ?? cleanLine(rawLine)
++            let lower = line.replacingOccurrences(of: "`", with: "").lowercased()
++            guard let marker = markers.first(where: lower.hasPrefix) else { continue }
++            let remainder = lower.dropFirst(marker.count)
++                .trimmingCharacters(in: CharacterSet(charactersIn: " ：:·-—\t"))
++            if ["无需", "无须", "不需要", "不用", "不必", "不再"].contains(where: remainder.hasPrefix) { continue }
++            if ["needs_decision:", "awaiting_decision", "checkpoint:"].contains(marker),
++               ["false", "false.", "false。", "0"].contains(remainder) { continue }
++            return (true, String(line.prefix(140)))
+         }
+         return (false, nil)
+     }
+@@ -839,6 +905,14 @@ enum IOSSubAgentOutputLoader {
+     static func load(
+         activity: IOSSubAgentActivity,
+         task: IOSAdvancedTaskRecord?
++    ) async throws -> IOSSubAgentOutputSnapshot? {
++        try await sourceSnapshot(activity: activity, task: task)
++            .map(IOSSubAgentOutputProjection.displaySnapshot)
++    }
++
++    private static func sourceSnapshot(
++        activity: IOSSubAgentActivity,
++        task: IOSAdvancedTaskRecord?
+     ) async throws -> IOSSubAgentOutputSnapshot? {
+         if activity.id.hasPrefix("task:") {
+             guard let task else { return nil }
+@@ -896,7 +970,7 @@ enum IOSSubAgentOutputArchive {
+             }
+         }
+         guard child else { return }
+-        guard let data = try? JSONEncoder().encode(snapshot),
++        guard let data = try? JSONEncoder().encode(IOSSubAgentOutputProjection.displaySnapshot(snapshot)),
+               let payload = String(data: data, encoding: .utf8) else { return }
+         let event = AgentRunEvent(
+             eventId: eventPrefix + runId,
+@@ -934,6 +1008,8 @@ enum IOSSubAgentOutputArchive {
+         }
+         guard let payload,
+               let data = payload.data(using: .utf8) else { return nil }
+-        return try JSONDecoder().decode(IOSSubAgentOutputSnapshot.self, from: data)
++        return IOSSubAgentOutputProjection.displaySnapshot(
++            try JSONDecoder().decode(IOSSubAgentOutputSnapshot.self, from: data)
++        )
+     }
+ }
+diff --git a/iosApp/iosApp/IOSThreadOrchestrationToolService.swift b/iosApp/iosApp/IOSThreadOrchestrationToolService.swift
+index 5315d7de..b5732236 100644
+--- a/iosApp/iosApp/IOSThreadOrchestrationToolService.swift
++++ b/iosApp/iosApp/IOSThreadOrchestrationToolService.swift
+@@ -489,6 +489,7 @@ final class IOSThreadOrchestrationToolService {
+                 reason: "子代理关系保存失败，任务未启动：\(error.localizedDescription)"
+             )
+         }
++        AmberHubStore.shared.inheritConversationBinding(from: parentHex, to: childHex)
+         store.registerSubagentConversation(id: childConversationId)
+         guard await store.saveForkedConversation(forked) else {
+             return Self.errorJSON(
+diff --git a/iosApp/iosApp/MacGatewayCloudTaskViews.swift b/iosApp/iosApp/MacGatewayCloudTaskViews.swift
+index 6383f7a0..201556b2 100644
+--- a/iosApp/iosApp/MacGatewayCloudTaskViews.swift
++++ b/iosApp/iosApp/MacGatewayCloudTaskViews.swift
+@@ -326,7 +326,7 @@ struct MacGatewayCloudTaskDetailSheet: View {
+     @ViewBuilder
+     private func resultSection(_ record: MacGatewayCloudTaskRecord) -> some View {
+         Section(macGatewayL("执行结果")) {
+-            if let markdown = record.detail?.resultMarkdown,
++            if let markdown = AmberUnifiedTaskBuilder.userFacingResultMarkdown(from: record.detail?.resultMarkdown),
+                !markdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                 VStack(alignment: .leading, spacing: 12) {
+                     HStack {
+diff --git a/iosApp/iosApp/MacGatewayCloudTasks.swift b/iosApp/iosApp/MacGatewayCloudTasks.swift
+index bf21ff5c..2607b85a 100644
+--- a/iosApp/iosApp/MacGatewayCloudTasks.swift
++++ b/iosApp/iosApp/MacGatewayCloudTasks.swift
+@@ -275,11 +275,7 @@ struct MacGatewayCloudTaskRecord: Codable, Equatable, Identifiable, Sendable {
+         if let progress = effectiveWorkItem?.progress, !progress.isEmpty, !isTerminal {
+             return "\(statusPart) · \(progress)"
+         }
+-        if let result = detail?.resultMarkdown?.trimmingCharacters(in: .whitespacesAndNewlines), !result.isEmpty {
+-            let preview = result
+-                .split(whereSeparator: \.isNewline)
+-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+-                .first { !$0.isEmpty && !$0.hasPrefix("# Settlement Report") } ?? result
++        if let preview = AmberUnifiedTaskBuilder.resultPreview(from: detail?.resultMarkdown) {
+             return "\(statusPart) · \(preview)"
+         }
+         return statusPart
+diff --git a/iosApp/iosApp/Navigation/AmberDuetChrome.swift b/iosApp/iosApp/Navigation/AmberDuetChrome.swift
+index fb2e22f7..0efd73fc 100644
+--- a/iosApp/iosApp/Navigation/AmberDuetChrome.swift
++++ b/iosApp/iosApp/Navigation/AmberDuetChrome.swift
+@@ -584,7 +584,7 @@ struct AmberDuetTaskCenterCard: View {
+                     openDestinationDirectly(task)
+                 },
+                 onQuickDecision: { task, decision in
+-                    handleQuickDecision(decision, for: task)
++                    Task { await handleQuickDecision(decision, for: task) }
+                 }
+             )
+             .amberFloatingSheet(detents: [.medium, .large])
+@@ -607,7 +607,7 @@ struct AmberDuetTaskCenterCard: View {
+                 },
+                 onQuickDecision: { task, decision in
+                     inlineDeliverableTask = nil
+-                    handleQuickDecision(decision, for: task)
++                    Task { await handleQuickDecision(decision, for: task) }
+                 }
+             )
+         } else {
+@@ -858,7 +858,7 @@ struct AmberDuetTaskCenterCard: View {
+                 HStack(spacing: 8) {
+                     ForEach(item.quickActions) { decision in
+                         Button {
+-                            handleQuickDecision(decision, for: item)
++                            Task { await handleQuickDecision(decision, for: item) }
+                         } label: {
+                             Text(decision.title)
+                                 .font(.system(size: 12, weight: .medium))
+@@ -941,7 +941,11 @@ struct AmberDuetTaskCenterCard: View {
+         }
+     }
+ 
+-    private func handleQuickDecision(_ decision: AmberTaskQuickDecision, for item: AmberUnifiedTaskItem) {
++    func handleQuickDecision(_ decision: AmberTaskQuickDecision, for item: AmberUnifiedTaskItem) async {
++        if decision.kind == .retry, case .cloudTask(let requestId) = item.source {
++            _ = await gateway.retryCloudTask(requestId: requestId)
++            return
++        }
+         if decision.kind == .openDetail {
+             openDestinationDirectly(item)
+             return
+diff --git a/iosApp/iosApp/Navigation/AmberHubStore.swift b/iosApp/iosApp/Navigation/AmberHubStore.swift
+index 566695f8..394bf649 100644
+--- a/iosApp/iosApp/Navigation/AmberHubStore.swift
++++ b/iosApp/iosApp/Navigation/AmberHubStore.swift
+@@ -388,6 +388,17 @@ final class AmberHubStore {
+         self.init(userDefaults: defaults)
+     }
+ 
++    /// Resolve by the run's conversation binding; the visible Hub may have changed.
++    func allowsGlobalMemory(conversationId: String?) -> Bool {
++        guard let conversationId else { return true }
++        return !hubs.contains { $0.memoryPolicy == .hubIsolated && $0.conversationIds.contains(conversationId) }
++    }
++
++    func inheritConversationBinding(from parentId: String, to childId: String) {
++        let hubIds = hubs.filter { $0.conversationIds.contains(parentId) }.map(\.id)
++        for hubId in hubIds { bindConversation(childId, toHub: hubId) }
++    }
++
+     var activeHub: AmberHubItem? {
+         guard let activeHubId else { return nil }
+         return hubs.first(where: { $0.id == activeHubId })
+@@ -721,18 +732,21 @@ enum AmberUnifiedTaskBuilder {
+         filterHubId: String?
+     ) -> Groups {
+         var all: [AmberUnifiedTaskItem] = []
+-        var seenTitles = Set<String>()
++        var seenIdentities = Set<String>()
+         let defaultHubId = hubStore.activeHubId
+ 
+         // 1. Cloud work items the user explicitly handed off (/v2/work-items).
+         for record in gateway.cloudTasks {
+-            let rawMarkdown = record.detail?.resultMarkdown
++            let identity = record.workItemId.map { "cloud-work:\(record.gatewayId):\($0)" }
++                ?? "cloud-request:\(record.gatewayId):\(record.deviceId):\(record.requestId)"
++            guard seenIdentities.insert(identity).inserted else { continue }
++            let rawResult = record.detail?.resultMarkdown
++            let rawMarkdown = Self.userFacingResultMarkdown(from: rawResult)
+             let progressText = record.effectiveWorkItem?.progress
+-            let summary = Self.extractDeliverableSummary(from: rawMarkdown ?? progressText)
++            let summary = Self.extractDeliverableSummary(from: rawResult ?? progressText)
+             let progressDecision = Self.extractDeliverableSummary(from: progressText)
+             let isAwaitingDecision = record.state == .waiting
+-                || summary.needsDecision
+-                || progressDecision.needsDecision
++                || (Self.structuredDecision(in: rawResult) ?? (summary.needsDecision || progressDecision.needsDecision))
+ 
+             let phase: AmberUnifiedTaskPhase
+             let statusText: String
+@@ -801,7 +815,6 @@ enum AmberUnifiedTaskBuilder {
+             }
+ 
+             let matchedHubId = hubStore.hubs.first(where: { $0.taskIds.contains(record.requestId) })?.id ?? defaultHubId
+-            seenTitles.insert(record.displayTitle)
+             all.append(
+                 AmberUnifiedTaskItem(
+                     id: "cloud:\(record.requestId)",
+@@ -830,7 +843,7 @@ enum AmberUnifiedTaskBuilder {
+             let backingRecord = subAgentStore.taskRecord(for: item)
+             let resolvedTitle = backingRecord?.title.trimmingCharacters(in: .whitespacesAndNewlines)
+             let displayTitle = (resolvedTitle?.isEmpty == false) ? resolvedTitle! : item.title
+-            guard seenTitles.insert(displayTitle).inserted else { continue }
++            guard seenIdentities.insert("subagent:\(item.id)").inserted else { continue }
+ 
+             let outcome = backingRecord.flatMap { $0.resultSummary.isEmpty ? nil : $0.resultSummary }
+                 ?? backingRecord.flatMap { $0.logTail.isEmpty ? nil : $0.logTail }
+@@ -838,11 +851,10 @@ enum AmberUnifiedTaskBuilder {
+             let detailSummary = Self.extractDeliverableSummary(from: item.statusDetail)
+             let metadataDecision = backingRecord?.metadata["decision_prompt"]
+                 ?? backingRecord?.metadata["checkpoint"]
+-            let metadataNeedsDecision = (backingRecord?.metadata["needs_decision"]?.lowercased() == "true")
+-                || (metadataDecision?.isEmpty == false)
+-            let hasDecisionCheckpoint = metadataNeedsDecision
+-                || summary.needsDecision
+-                || detailSummary.needsDecision
++            let hasDecisionCheckpoint = Self.needsDecision(
++                metadata: backingRecord?.metadata ?? [:],
++                fallback: Self.structuredDecision(in: outcome) ?? (summary.needsDecision || detailSummary.needsDecision)
++            )
+ 
+             let phase: AmberUnifiedTaskPhase
+             let statusText: String
+@@ -961,7 +973,7 @@ enum AmberUnifiedTaskBuilder {
+                     decisionPrompt: decisionPrompt,
+                     quickActions: quickActions,
+                     deliverableBullets: summary.bullets,
+-                    rawResultMarkdown: outcome,
++                    rawResultMarkdown: Self.userFacingResultMarkdown(from: outcome),
+                     destination: Self.subAgentDestination(taskId: item.taskId),
+                     source: .localSubAgent(item.id)
+                 )
+@@ -973,14 +985,12 @@ enum AmberUnifiedTaskBuilder {
+         // receipts are decisions, not work, so they never become cards here.
+         for record in taskStore.tasks
+         where record.kind != .subAgent && record.kind != .toolApproval {
+-            guard seenTitles.insert(record.title).inserted else { continue }
++            guard seenIdentities.insert("exec:\(record.id)").inserted else { continue }
+             let outcome = record.resultSummary.isEmpty ? (record.logTail.isEmpty ? nil : record.logTail) : record.resultSummary
+             let summary = Self.extractDeliverableSummary(from: outcome)
+             let metadataDecision = record.metadata["decision_prompt"] ?? record.metadata["checkpoint"]
+-            let hasDecisionCheckpoint = record.kind != .modelCouncil && (
+-                (record.metadata["needs_decision"]?.lowercased() == "true")
+-                || (metadataDecision?.isEmpty == false)
+-                || summary.needsDecision
++            let hasDecisionCheckpoint = record.kind != .modelCouncil && Self.needsDecision(
++                metadata: record.metadata, fallback: summary.needsDecision
+             )
+             let isRetryableInTaskBoard = record.retryable && record.kind != .modelCouncil
+ 
+@@ -1086,7 +1096,7 @@ enum AmberUnifiedTaskBuilder {
+                     decisionPrompt: decisionPrompt,
+                     quickActions: quickActions,
+                     deliverableBullets: summary.bullets,
+-                    rawResultMarkdown: outcome,
++                    rawResultMarkdown: Self.userFacingResultMarkdown(from: outcome),
+                     destination: .executionRecord(recordId: record.id),
+                     source: .executionRecord(record.id)
+                 )
+@@ -1161,7 +1171,7 @@ enum AmberUnifiedTaskBuilder {
+             } else {
+                 subtitle = "本机定时 · \(task.status.title)"
+             }
+-            seenTitles.insert(task.title)
++            guard seenIdentities.insert("wake:\(task.id)").inserted else { continue }
+             all.append(
+                 AmberUnifiedTaskItem(
+                     id: "wake:\(task.id)",
+@@ -1177,7 +1187,7 @@ enum AmberUnifiedTaskBuilder {
+                     decisionPrompt: decisionPrompt,
+                     quickActions: quickActions,
+                     deliverableBullets: summary.bullets,
+-                    rawResultMarkdown: task.resultText,
++                    rawResultMarkdown: Self.userFacingResultMarkdown(from: task.resultText),
+                     nextRunAt: phase == .scheduled ? task.fireAt : nil,
+                     destination: .wakeConversation(conversationId: task.conversationID),
+                     source: .wakeTask(task.id)
+@@ -1186,12 +1196,12 @@ enum AmberUnifiedTaskBuilder {
+         }
+ 
+         // 5. Mac-owned schedules. `schedules` is authoritative and also covers
+-        // the disabled ones the board omits, so board schedule rows are skipped.
++        // the disabled ones the board omits. Board rows merge only by schedule ID.
+         for schedule in gateway.schedules ?? [] {
+             let phase: AmberUnifiedTaskPhase = schedule.running ? .running
+                 : (schedule.enabled ? .scheduled : .cancelled)
+             let summary = Self.extractDeliverableSummary(from: schedule.lastStatus)
+-            seenTitles.insert(schedule.name)
++            guard seenIdentities.insert("schedule:\(schedule.id)").inserted else { continue }
+             all.append(
+                 AmberUnifiedTaskItem(
+                     id: "schedule:\(schedule.id)",
+@@ -1205,7 +1215,7 @@ enum AmberUnifiedTaskBuilder {
+                     updatedAt: schedule.lastRunAt ?? schedule.nextRunAt ?? Date(timeIntervalSince1970: 0),
+                     resultText: summary.headline ?? schedule.lastStatus,
+                     deliverableBullets: summary.bullets,
+-                    rawResultMarkdown: schedule.lastStatus,
++                    rawResultMarkdown: Self.userFacingResultMarkdown(from: schedule.lastStatus),
+                     nextRunAt: schedule.enabled ? schedule.nextRunAt : nil,
+                     destination: .macBoard,
+                     source: .gatewaySchedule(schedule.id)
+@@ -1214,8 +1224,14 @@ enum AmberUnifiedTaskBuilder {
+         }
+ 
+         // 6. Mac board runs and agent sessions.
+-        for boardItem in gateway.boardItems where boardItem.kind != .schedule {
+-            guard seenTitles.insert(boardItem.title).inserted else { continue }
++        let knownScheduleIds = Set((gateway.schedules ?? []).map(\.id))
++        for boardItem in gateway.boardItems {
++            if boardItem.kind == .schedule {
++                let scheduleId = boardItem.scheduleId
++                    ?? (boardItem.id.hasPrefix("schedule:") ? String(boardItem.id.dropFirst("schedule:".count)) : nil)
++                if let scheduleId, knownScheduleIds.contains(scheduleId) { continue }
++            }
++            guard seenIdentities.insert("board:\(boardItem.id)").inserted else { continue }
+             let summary = Self.extractDeliverableSummary(from: boardItem.detail)
+             let phase: AmberUnifiedTaskPhase
+             switch boardItem.column {
+@@ -1262,14 +1278,14 @@ enum AmberUnifiedTaskBuilder {
+                     statusText: statusText,
+                     actionButtonTitle: actionTitle,
+                     phase: phase,
+-                    ownership: .backgroundRun,
++                    ownership: boardItem.kind == .schedule ? .scheduledMonitor : .backgroundRun,
+                     hubId: defaultHubId,
+                     updatedAt: boardItem.updatedAt,
+                     resultText: phase == .completed ? summary.headline : nil,
+                     decisionPrompt: decisionPrompt,
+                     quickActions: quickActions,
+                     deliverableBullets: summary.bullets,
+-                    rawResultMarkdown: boardItem.detail.isEmpty ? nil : boardItem.detail,
++                    rawResultMarkdown: Self.userFacingResultMarkdown(from: boardItem.detail.isEmpty ? nil : boardItem.detail),
+                     nextRunAt: boardItem.nextRunAt,
+                     destination: .macBoard,
+                     source: .gatewayBoardItem(boardItem.id)
+diff --git a/iosApp/iosApp/Navigation/AmberUnifiedTaskBuilder+Summary.swift b/iosApp/iosApp/Navigation/AmberUnifiedTaskBuilder+Summary.swift
+index e4aea7e6..4e60bf9c 100644
+--- a/iosApp/iosApp/Navigation/AmberUnifiedTaskBuilder+Summary.swift
++++ b/iosApp/iosApp/Navigation/AmberUnifiedTaskBuilder+Summary.swift
+@@ -1,4 +1,5 @@
+ import Foundation
++import CoreFoundation
+ 
+ extension AmberUnifiedTaskBuilder {
+     // Bottom-badge reads also build task cards. Their unchanged result text must
+@@ -50,37 +51,23 @@ extension AmberUnifiedTaskBuilder {
+         guard !initialTrimmed.isEmpty else {
+             return AmberDeliverableSummary(headline: nil, bullets: [], decisionPrompt: nil, needsDecision: false)
+         }
+-        let trimmedRaw: String
+-        if IOSSubAgentOutputProjection.isKnownSubAgentResultEnvelope(initialTrimmed) {
+-            guard let extracted = IOSSubAgentOutputProjection.extractUserFacingResult(from: initialTrimmed),
+-                  !extracted.isEmpty else {
+-                return AmberDeliverableSummary(headline: nil, bullets: [], decisionPrompt: nil, needsDecision: false)
+-            }
+-            trimmedRaw = extracted
+-        } else {
+-            trimmedRaw = initialTrimmed
++        guard let trimmedRaw = userFacingResultMarkdown(from: initialTrimmed) else {
++            return AmberDeliverableSummary(headline: nil, bullets: [], decisionPrompt: nil, needsDecision: false)
+         }
+-
+-        let overallNeedsDecision = containsDecisionMarker(trimmedRaw)
++        let overallNeedsDecision = structuredDecision(in: initialTrimmed) ?? containsDecisionMarker(trimmedRaw)
+         var headline: String? = nil
+         var explicitBullets: [String] = []
+         var paragraphSentences: [String] = []
+         var decisionPrompt: String? = nil
+         var fallbackHeading: String? = nil
+-        var inCodeBlock = false
+-
+-        for rawLine in trimmedRaw.split(whereSeparator: \.isNewline) {
++        for rawLine in IOSSubAgentOutputProjection.linesOutsideCodeFences(trimmedRaw) {
+             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+-            if line.hasPrefix("```") {
+-                inCodeBlock.toggle()
+-                continue
+-            }
+-            if inCodeBlock || line.isEmpty { continue }
++            if line.isEmpty { continue }
+             if isHorizontalRule(line) || isInternalHeaderLine(line) { continue }
+ 
+             let isHeading = line.hasPrefix("#")
+             let isBullet = isMarkdownBulletLine(line)
+-            let lineHasDecisionMarker = containsDecisionMarker(line)
++            let lineHasDecisionMarker = overallNeedsDecision && containsDecisionMarker(line)
+             let cleaned = cleanMarkdownLine(line)
+             guard !cleaned.isEmpty else { continue }
+ 
+@@ -154,32 +141,57 @@ extension AmberUnifiedTaskBuilder {
+         extractDeliverableSummary(from: raw).headline
+     }
+ 
++    /// One projection for task previews, summaries and copy. Persisted output remains lossless.
++    static func userFacingResultMarkdown(from raw: String?) -> String? {
++        guard let raw else { return nil }
++        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
++        if IOSSubAgentOutputProjection.isKnownSubAgentResultEnvelope(text) {
++            text = IOSSubAgentOutputProjection.extractUserFacingResult(from: text) ?? ""
++        }
++        // amberd owns this exact preamble. Do not strip similarly named fields in user reports.
++        let lines = text.components(separatedBy: "\n")
++        if lines.first?.hasPrefix("# Settlement Report · ") == true,
++           let summary = lines.firstIndex(of: "## Summary"),
++           lines[1..<summary].allSatisfy({ line in
++               line.isEmpty || ["- TaskKey: ", "- Title: ", "- Outcome: "].contains(where: line.hasPrefix)
++           }) {
++            text = lines.dropFirst(summary + 1).joined(separator: "\n")
++                .trimmingCharacters(in: .whitespacesAndNewlines)
++        }
++        return text.isEmpty ? nil : text
++    }
++
++    static func needsDecision(metadata: [String: String], fallback: Bool) -> Bool {
++        for key in ["needs_decision", "needs_user_decision"] {
++            if let value = metadata[key]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
++                if value == "false" { return false }
++                if value == "true" { return true }
++            }
++        }
++        return ["decision_prompt", "checkpoint"].contains {
++            metadata[$0]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
++        } || fallback
++    }
++
++    static func structuredDecision(in text: String?) -> Bool? {
++        guard let text, let data = text.data(using: .utf8),
++              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
++        let facts = object["structured_summary"] as? [String: Any] ?? object
++        for key in ["needs_decision", "needs_user_decision"] {
++            if let value = facts[key] as? NSNumber, CFGetTypeID(value) == CFBooleanGetTypeID() {
++                return value.boolValue
++            }
++        }
++        if let prompt = facts["decision_prompt"] as? String, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
++            return true
++        }
++        return nil
++    }
++
+     static func containsDecisionMarker(_ text: String?) -> Bool {
+         guard let text, !text.isEmpty else { return false }
+-        let lower = text.lowercased()
+-        let markers = [
+-            "[待拍板]",
+-            "【待拍板】",
+-            "等待拍板",
+-            "等我拍板",
+-            "等你拍板",
+-            "待你拍板",
+-            "请拍板",
+-            "需要拍板",
+-            "需你拍板",
+-            "待拍板：",
+-            "待拍板:",
+-            "needs_decision",
+-            "[needs_decision]",
+-            "awaiting_decision",
+-            "[checkpoint]",
+-            "checkpoint:",
+-            "前序阶段完成",
+-            "前序阶段已完成",
+-            "前序步骤已完成",
+-            "阶段完成待确认"
+-        ]
+-        return markers.contains { lower.contains($0) }
++        if let decision = structuredDecision(in: text) { return decision }
++        return IOSSubAgentOutputProjection.decisionSignal(in: text).needsDecision
+     }
+ 
+     private static func isHorizontalRule(_ line: String) -> Bool {
+diff --git a/iosApp/iosAppTests/AmberDuetTaskRedesignTests.swift b/iosApp/iosAppTests/AmberDuetTaskRedesignTests.swift
+index 3ac0f489..28596bad 100644
+--- a/iosApp/iosAppTests/AmberDuetTaskRedesignTests.swift
++++ b/iosApp/iosAppTests/AmberDuetTaskRedesignTests.swift
+@@ -7,6 +7,126 @@ import UIKit
+ @MainActor
+ final class AmberDuetTaskRedesignTests: XCTestCase {
+ 
++    private func withTaskProjectionStores(_ body: (MacGatewayStore, IOSAdvancedTaskStore, IOSSubAgentActivityStore, IOSWakeTaskStore, AmberHubStore) throws -> Void) throws {
++        let suite = "TaskOwnership.\(UUID().uuidString)"
++        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
++        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
++        defer {
++            defaults.removePersistentDomain(forName: suite)
++            try? FileManager.default.removeItem(at: directory)
++        }
++        let tasks = IOSAdvancedTaskStore(userDefaults: defaults)
++        let activity = IOSSubAgentActivityStore(tasks: tasks, defaults: defaults, loadRuns: { [] })
++        try body(MacGatewayStore(defaults: defaults), tasks, activity,
++                 IOSWakeTaskStore(fileURL: directory.appendingPathComponent("wake.json")),
++                 AmberHubStore(defaults: defaults))
++    }
++
++    func testTaskArchiveProjectionKeepsMarkdownAndIntentionalJSON() throws {
++        let body = "# 检查结果\n\n- **通过**\n\n```json\n{\"answer\":42}\n```"
++        let archive = "# Settlement Report · work:one\n- TaskKey: hidden-key\n- Title: hidden-title\n- Outcome: completed\n\n## Summary\n" + body
++        XCTAssertEqual(AmberUnifiedTaskBuilder.userFacingResultMarkdown(from: body), body)
++        let intentionalJSON = #"{"answer":42,"taskKey":"user-output"}"#
++        XCTAssertEqual(AmberUnifiedTaskBuilder.userFacingResultMarkdown(from: intentionalJSON), intentionalJSON)
++        let ordinaryReport = "# 用户报告\n- TaskKey: 用户有意输出\n## Summary\n正文"
++        XCTAssertEqual(AmberUnifiedTaskBuilder.userFacingResultMarkdown(from: ordinaryReport), ordinaryReport)
++        try withTaskProjectionStores { gateway, tasks, activity, wake, hub in
++            _ = tasks.startTask(id: "archive", kind: .remoteCommand, title: "检查", objective: "检查")
++            _ = tasks.updateTask(id: "archive", status: .completed, resultSummary: archive)
++            let groups = AmberUnifiedTaskBuilder.buildTasks(gateway: gateway, subAgentStore: activity,
++                taskStore: tasks, wakeStore: wake, hubStore: hub)
++            let item = try XCTUnwrap(groups.recent.first { $0.id == "exec:archive" })
++            XCTAssertEqual(item.rawResultMarkdown, body, "preview/copy must receive the user report without archive metadata")
++            XCTAssertEqual(AmberTaskDeliverablePreviewContent(item: item).cleanedMarkdownBody, body)
++            XCTAssertEqual(item.deliverableBullets, ["通过"])
++            XCTAssertEqual(tasks.task(id: "archive")?.resultSummary, archive, "stored report stays lossless")
++            XCTAssertEqual(AmberUnifiedTaskBuilder.extractDeliverableSummary(from: body).bullets, ["通过"])
++        }
++    }
++
++    func testTaskIdentityKeepsSameTitleAcrossOwnersAndExecutions() throws {
++        try withTaskProjectionStores { gateway, tasks, activity, wake, hub in
++            for id in ["first", "second"] {
++                _ = tasks.startTask(id: id, kind: .remoteCommand, title: "同名任务", objective: "独立执行")
++            }
++            let sub = tasks.startTask(id: "child", kind: .subAgent, title: "同名任务", objective: "独立子任务")
++            activity.reconcile([try XCTUnwrap(IOSSubAgentActivityStore.activity(sub))])
++            let now = Date()
++            gateway.cloudTasks = ["cloud-one", "cloud-two"].map { id in
++                MacGatewayCloudTaskRecord(gatewayId: "gateway", deviceId: "device",
++                    request: .init(requestId: id, text: "独立请求", title: "同名任务"),
++                    createdAt: now, updatedAt: now)
++            }
++            gateway.cloudTasks.append(try XCTUnwrap(gateway.cloudTasks.first))
++            let groups = AmberUnifiedTaskBuilder.buildTasks(gateway: gateway, subAgentStore: activity,
++                taskStore: tasks, wakeStore: wake, hubStore: hub)
++            XCTAssertEqual(groups.needsAttention.count, 2, "same request identity is represented once")
++            XCTAssertEqual(Set(groups.running.map(\.id)), ["exec:first", "exec:second", "subagent:\(try XCTUnwrap(activity.items.first).id)"])
++            XCTAssertEqual(Set(groups.needsAttention.map(\.id)), ["cloud:cloud-one", "cloud:cloud-two"])
++            XCTAssertEqual(groups.activeCount, 3)
++        }
++    }
++
++    func testDecisionClassificationRejectsNegationCodeAndStructuredFalse() throws {
++        for text in ["无需等待拍板，已完成。", "不需要拍板。", "无需你拍板", "No needs_decision required.", "[待拍板] 无需再确认。",
++                     "```json\n{\"needs_decision\": false}\n```", "~~~json\n{\"needs_decision\":true}\n~~~",
++                     "{\"needs_decision\":false}", "````markdown\n```text\n[待拍板] 示例\n```\n````"] {
++            XCTAssertFalse(AmberUnifiedTaskBuilder.extractDeliverableSummary(from: text).needsDecision, text)
++        }
++        XCTAssertTrue(AmberUnifiedTaskBuilder.extractDeliverableSummary(from: "[待拍板] 选择 A 还是 B？").needsDecision)
++        try withTaskProjectionStores { gateway, tasks, activity, wake, hub in
++            _ = tasks.startTask(id: "decided", kind: .remoteCommand, title: "已决策", objective: "检查")
++            _ = tasks.updateTask(id: "decided", status: .completed, resultSummary: "[待拍板] 历史问题？",
++                                 metadata: ["needs_decision": "false"])
++            _ = tasks.startTask(id: "pending", kind: .remoteCommand, title: "待决策", objective: "检查")
++            _ = tasks.updateTask(id: "pending", status: .completed, resultSummary: "方案已完成。",
++                                 metadata: ["needs_decision": "true", "decision_prompt": "选择哪一个？"])
++            let structuredFalse = #"{"structured_summary":{"needs_user_decision":false,"formatted_summary":"[待拍板] 历史问题？"}}"#
++            let workItem = MacGatewayCloudWorkItem(id: "work-decided", agentId: "main", title: "云端已决策",
++                state: .completed, progress: "[待拍板] 历史进度", updatedAtMs: 1800000000000)
++            gateway.cloudTasks = [.init(gatewayId: "gateway", deviceId: "device",
++                request: .init(requestId: "cloud-decided", text: "检查"), workItemId: workItem.id,
++                detail: .init(workItem: workItem, brief: "检查", sessionArchived: true, resultMarkdown: structuredFalse),
++                createdAt: Date(), updatedAt: Date())]
++            let child = tasks.startTask(id: "child-decided", kind: .subAgent, title: "子代理已决策", objective: "检查")
++            _ = tasks.updateTask(id: child.id, status: .completed, resultSummary: structuredFalse)
++            var projection = try XCTUnwrap(IOSSubAgentActivityStore.activity(try XCTUnwrap(tasks.task(id: child.id))))
++            projection.statusDetail = "[待拍板] 历史进度"
++            activity.reconcile([projection])
++            let groups = AmberUnifiedTaskBuilder.buildTasks(gateway: gateway, subAgentStore: activity,
++                taskStore: tasks, wakeStore: wake, hubStore: hub)
++            XCTAssertTrue(groups.recent.contains { $0.id == "cloud:cloud-decided" })
++            XCTAssertTrue(groups.recent.contains { $0.id == "subagent:\(projection.id)" })
++            XCTAssertTrue(groups.recent.contains { $0.id == "exec:decided" })
++            XCTAssertEqual(groups.needsAttention.map(\.id), ["exec:pending"])
++            XCTAssertEqual(groups.needsAttention.first?.decisionPrompt, "选择哪一个？")
++        }
++    }
++
++    func testStructuredDigestDoesNotPromoteNegationOrCodeToDecisionFacts() throws {
++        for text in ["已完成。\n不需要你拍板。", "已完成。\n```text\n需要你拍板\n```",
++                     "已完成。\n~~~text\n需要您决定\n~~~", "已完成。\n````text\n```text\n请拍板\n```\n````",
++                     #"{"summary":"完成","needs_decision":false,"decision_prompt":"历史问题"}"#] {
++            let digest = try XCTUnwrap(IOSSubAgentOutputProjection.structuredDigest(from: text))
++            XCTAssertFalse(digest.needsUserDecision, text)
++        }
++        XCTAssertTrue(try XCTUnwrap(IOSSubAgentOutputProjection.structuredDigest(from: "已完成。\n请拍板：选择 A 还是 B？")).needsUserDecision)
++        XCTAssertTrue(try XCTUnwrap(IOSSubAgentOutputProjection.structuredDigest(from: "[待拍板] 选择 A 还是 B？")).needsUserDecision)
++        XCTAssertFalse(try XCTUnwrap(IOSSubAgentOutputProjection.structuredDigest(from: "[待拍板] 无需再确认。")).needsUserDecision)
++        try withTaskProjectionStores { gateway, tasks, activity, wake, hub in
++            _ = tasks.startTask(id: "checkpoint-transition", kind: .subAgent, title: "阶段确认", objective: "检查")
++            for (text, expectedAttention) in [("[待拍板] 选择 A 还是 B？", true), ("不需要你拍板，已经完成。", false)] {
++                let record = try XCTUnwrap(IOSSubAgentOutputProjection.syncTaskResultSummary(in: tasks,
++                    taskId: "checkpoint-transition", rawText: text, status: .completed))
++                activity.reconcile([try XCTUnwrap(IOSSubAgentActivityStore.activity(record))])
++                let groups = AmberUnifiedTaskBuilder.buildTasks(gateway: gateway, subAgentStore: activity,
++                    taskStore: tasks, wakeStore: wake, hubStore: hub)
++                XCTAssertEqual(groups.needsAttention.count, expectedAttention ? 1 : 0, text)
++                XCTAssertEqual(groups.recent.count, expectedAttention ? 0 : 1, text)
++            }
++        }
++    }
++
+     private func makeReasoning(_ text: String, finished: Bool = true, seconds: Int64 = 5) -> UIMessagePart.Reasoning {
+         let start = KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 1_700_000_000_000)
+         let end = finished
+diff --git a/iosApp/iosAppTests/ChatAsyncReActLoopTests.swift b/iosApp/iosAppTests/ChatAsyncReActLoopTests.swift
+index 09fb836a..a54aa42b 100644
+--- a/iosApp/iosAppTests/ChatAsyncReActLoopTests.swift
++++ b/iosApp/iosAppTests/ChatAsyncReActLoopTests.swift
+@@ -969,6 +969,53 @@ final class ChatAsyncReActLoopTests: XCTestCase {
+         )
+     }
+ 
++    func testSameIDProvisionalVisibleGrowthResetsKeepaliveButDuplicateBlankAndReasoningDoNot() throws {
++        let (store, directory) = try makeStore()
++        defer { try? FileManager.default.removeItem(at: directory) }
++        let defaults = makeDefaults()
++        let viewModel = makeViewModel(defaults: defaults, sharedSettings: makeSharedSettings(defaults: defaults), store: store)
++        let state = viewModel.currentRun.state
++        let user = UIMessage.companion.user(prompt: "核查进展")
++        state.messages = [user]
++        let slot = ChatAsyncTaskSlot(conversationId: state.conversationId, inputDigest: "visible-growth",
++            anchorUserMessageId: ChatMessageProjector.messageId(for: user), phoneControlUserInitiated: false,
++            providerSetting: IOSChatForegroundFixtures.makeProviderSetting(),
++            params: IOSChatForegroundFixtures.makeParams(toolNames: []), toolExposureBridge: nil,
++            recipeCatalogSnapshot: nil, baselineMessages: [user])
++        viewModel.currentRun.registerSlot(slot)
++        let bindings = viewModel.makeGenerationBindings(state: state, taskSlot: slot)
++        let first = IOSChatForegroundFixtures.assistantText("已完成 A。\n\n")
++        func snapshot(_ text: String, reasoning: String? = nil) -> UIMessage {
++            var parts: [UIMessagePart] = [UIMessagePart.Text(text: text, metadata: nil)]
++            if let reasoning {
++                parts.append(UIMessagePart.Reasoning(reasoning: reasoning, createdAt: KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0), finishedAt: nil, metadata: nil))
++            }
++            return UIMessage(id: first.id, role: first.role, parts: parts, annotations: first.annotations,
++                createdAt: first.createdAt, finishedAt: nil, modelId: first.modelId, usage: first.usage, translation: first.translation)
++        }
++        XCTAssertTrue(bindings.setProvisionalAssistant(snapshot("已完成 A。\n\n")))
++        let growth = snapshot("已完成 A。\n\n已完成 B。\n\n")
++        slot.lastUserVisibleProgressUptime = 1
++        slot.hasEmittedKeepaliveInCurrentSilenceWindow = true
++        XCTAssertTrue(bindings.setProvisionalAssistant(growth))
++        XCTAssertGreaterThan(slot.lastUserVisibleProgressUptime, 1, "同 ID 可见正文增长必须刷新保活时钟")
++        XCTAssertFalse(slot.hasEmittedKeepaliveInCurrentSilenceWindow)
++
++        slot.lastUserVisibleProgressUptime = 2
++        slot.hasEmittedKeepaliveInCurrentSilenceWindow = true
++        XCTAssertTrue(bindings.setProvisionalAssistant(growth))
++        XCTAssertTrue(bindings.setProvisionalAssistant(snapshot(growth.toText(), reasoning: "内部推理继续增长")))
++        XCTAssertEqual(slot.lastUserVisibleProgressUptime, 2, "重复正文和 reasoning 不算新进展")
++        XCTAssertTrue(slot.hasEmittedKeepaliveInCurrentSilenceWindow)
++        bindings.setMessages([user, snapshot(growth.toText(), reasoning: "相同正文权威快照")])
++        XCTAssertEqual(slot.lastUserVisibleProgressUptime, 2, "快路径后重复的权威快照也不能刷新时钟")
++
++        XCTAssertTrue(bindings.setProvisionalAssistant(snapshot("   \n")))
++        XCTAssertEqual(slot.lastUserVisibleProgressUptime, 2, "空白正文不得刷新时钟")
++        XCTAssertTrue(slot.hasEmittedKeepaliveInCurrentSilenceWindow)
++        XCTAssertEqual(state.messages.last?.toText().trimmingCharacters(in: .whitespacesAndNewlines), "")
++    }
++
+     func testKeepaliveFiresOnceAfter60sSilenceResetsOnMeaningfulProgressAndStopsOnTerminalOrFailure() throws {
+         let (store, directory) = try makeStore()
+         defer { try? FileManager.default.removeItem(at: directory) }
+diff --git a/iosApp/iosAppTests/ChatMemoryContextToolTests.swift b/iosApp/iosAppTests/ChatMemoryContextToolTests.swift
+index 5bf08187..3f8feca7 100644
+--- a/iosApp/iosAppTests/ChatMemoryContextToolTests.swift
++++ b/iosApp/iosAppTests/ChatMemoryContextToolTests.swift
+@@ -6,6 +6,30 @@ import WebKit
+ @MainActor
+ final class ChatMemoryContextToolTests: ChatViewModelContextTestCase {
+ 
++    func testIsolatedHubBlocksRuntimeRecallIncludingOverridesAndMemoryTools() throws {
++        let id = KotlinUuid.companion.random().toHexDashString()
++        let hubStore = AmberHubStore.shared
++        let previous = hubStore.hubs
++        defer { hubStore.hubs = previous }
++        hubStore.hubs.append(AmberHubItem(title: "sandbox", memoryPolicy: .hubIsolated, conversationIds: [id]))
++        let settings = IOSSharedSettingsStore(userDefaults: isolatedDefaults())
++        let builder = ChatRuntimeContextBuilder(sharedSettings: settings, mcpTools: [], miniAppRepository: IOSMiniAppRepository(),
++                                               miniAppRuntimeEnabled: false, conversationId: id)
++        let messages = [UIMessage.companion.user(prompt: "hello")]
++        let recalled = ChatMemoryContextBuilder.RecallResult(prompt: "global-secret-memory", records: [])
++        XCTAssertNil(builder.memoryRecallResult(for: messages, override: recalled).prompt)
++        let uploaded = builder.injectingRuntimeContext(into: messages, memoryRecallOverride: recalled)
++        XCTAssertFalse(uploaded.map { $0.toText() }.joined().contains("global-secret-memory"))
++        for action in ["list", "read", "search", "query", "status", "create", "edit", "delete",
++                       "wiki_read", "wiki_search", "wiki_edit", "wiki_history", "wiki_revert"] {
++            let output = IOSMemoryToolExecutor.execute(input: "{\"action\":\"\(action)\"}", runtime: settings.agentRuntime,
++                                                      writePolicy: .allow, conversationId: id)
++            let result = try jsonObject(output)
++            XCTAssertEqual(result["ok"] as? Bool, false, action)
++            XCTAssertTrue((result["error"] as? String)?.contains("isolated") == true, action)
++        }
++    }
++
+     func testPreparedUploadMessagesIncludeMemoryContextWithoutPersistingSystemMessage() throws {
+         let originalRecords = IosMemoryFactory.shared.getAllRecords()
+         IosMemoryFactory.shared.replaceAll(records: [])
+diff --git a/iosApp/iosAppTests/IOSAgentExperienceTests.swift b/iosApp/iosAppTests/IOSAgentExperienceTests.swift
+index db9a46f3..90a3760f 100644
+--- a/iosApp/iosAppTests/IOSAgentExperienceTests.swift
++++ b/iosApp/iosAppTests/IOSAgentExperienceTests.swift
+@@ -4,6 +4,52 @@ import XCTest
+ 
+ @MainActor
+ final class IOSAgentExperienceTests: XCTestCase {
++    func testEmptyCandidatesDoNotTouchCorruptExperienceStore() throws {
++        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
++        defer { try? FileManager.default.removeItem(at: root) }
++        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
++        let file = root.appendingPathComponent("experiences.json")
++        try Data("broken".utf8).write(to: file)
++        let store = IOSAgentExperienceStore(directory: root)
++        XCTAssertNoThrow(try store.save([], evidence: [], conversationId: "c", now: 100))
++        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "broken")
++    }
++
++    func testCredentialContextCannotBeStoredOrRecalledFromLegacyRecords() throws {
++        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
++        defer { try? FileManager.default.removeItem(at: root) }
++        let secret = "password=synthetic-fixture-credential"
++        let observation = "alpha 主机需要指定端口 2222 才能连接。"
++        let evidence = IOSAgentTaskEvidence(sourceMessageId: "u", completionMessageId: "a", task: secret,
++                                          toolCallId: "t", toolName: "terminal_execute", observation: observation)
++        let candidate = IOSAgentExperienceCandidate(content: observation, toolCallId: "t", quote: observation,
++                                                    context: secret, expiresInDays: 1)
++        let store = IOSAgentExperienceStore(directory: root)
++        try store.save([candidate], evidence: [evidence], conversationId: "c", now: 100)
++        XCTAssertTrue(store.records.isEmpty)
++        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
++        let old = IOSAgentExperience(id: "old", content: observation, toolName: "terminal_execute", context: secret,
++                                     conversationId: "c", sourceMessageId: "u", completionMessageId: "a", toolCallId: "t",
++                                     quote: secret, createdAt: 100, expiresAt: 100000)
++        try JSONEncoder().encode([old]).write(to: root.appendingPathComponent("experiences.json"))
++        let reloaded = IOSAgentExperienceStore(directory: root)
++        XCTAssertTrue(reloaded.recall(task: secret, toolNames: [], now: 200).isEmpty)
++    }
++
++    func testTaskEvidenceRedactsUserTaskBeforePrompting() throws {
++        let user = UIMessage.companion.user(prompt: "检查 alpha password=synthetic-fixture-credential")
++        let tool = UIMessagePart.Tool(toolCallId: "t", toolName: "terminal_execute", input: "alpha",
++                                     output: [UIMessagePart.Text(text: "alpha 正常", metadata: nil)],
++                                     approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
++        let base = UIMessage.companion.assistant(prompt: "")
++        let message = base.doCopy(id: base.id, role: base.role, parts: [tool], annotations: base.annotations,
++                                 createdAt: base.createdAt, finishedAt: base.finishedAt, modelId: base.modelId,
++                                 usage: base.usage, translation: base.translation)
++        let evidence = IOSAgentExperienceStore.evidence(messages: [user, message], sourceIds: [user.id.toHexDashString()])
++        XCTAssertEqual(evidence.count, 1)
++        XCTAssertFalse(try IOSAgentExperienceStore.prompt(evidence: evidence).contains("synthetic-fixture-credential"))
++    }
++
+     func testExperiencesAreGroundedDeduplicatedScopedAndExpire() throws {
+         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+         defer { try? FileManager.default.removeItem(at: root) }
+diff --git a/iosApp/iosAppTests/IOSChatKernelRunHostTests.swift b/iosApp/iosAppTests/IOSChatKernelRunHostTests.swift
+index ff41683f..a3681f52 100644
+--- a/iosApp/iosAppTests/IOSChatKernelRunHostTests.swift
++++ b/iosApp/iosAppTests/IOSChatKernelRunHostTests.swift
+@@ -659,3 +659,92 @@ final class IOSChatKernelRunHostTests: IOSChatKernelRunHostTestCase {
+     }
+ 
+ }
++
++@MainActor
++final class IOSForegroundApprovalResumeTests: IOSChatKernelRunHostTestCase {
++    func testForegroundResumePreservesSlotApprovalAndFollowupsThenContinues() async throws {
++        let harness = makeHarness()
++        let provider = HostScriptedProvider(rounds: [
++            toolRound("resume-search", "search_web", #"{"query":"amber"}"#),
++            textRound("审批后继续完成")
++        ])
++        let host = makeHost(harness: harness, provider: provider)
++        defer { host.cancel() }
++        let owner = makeOwner()
++        let run = owner.currentRun
++        let slot = ChatAsyncTaskSlot(
++            conversationId: run.state.conversationId, inputDigest: "foreground-approval",
++            anchorUserMessageId: nil, phoneControlUserInitiated: false,
++            providerSetting: harness.providerSetting, params: harness.params,
++            toolExposureBridge: nil, recipeCatalogSnapshot: nil,
++            baselineMessages: harness.messages
++        )
++        slot.host = host
++        run.registerSlot(slot)
++        start(host, harness: harness)
++        let approval = await harness.waitForPendingSearchApproval()
++        XCTAssertNotNil(approval)
++        let runID = try XCTUnwrap(host.currentRunId)
++        run.rebindSlotRunId(slot: slot, newRunId: runID)
++        slot.targetedFollowups = [ChatLocalTaskFollowup(
++            id: "pending-input", runId: runID, text: "保留待消费补充", createdAtMillis: 1, status: .received
++        )]
++        owner.syncFollowupsToState(slot: slot, state: run.state)
++        run.state.selectedFollowupRunId = runID
++
++        let interrupted = owner.reconcileForegroundRunsAfterSystemSuspensionIfNeeded(hasValidKeepAliveLease: false)
++
++        XCTAssertEqual(interrupted, [])
++        XCTAssertTrue(host.hasPendingToolApproval)
++        XCTAssertTrue(host.isRunning)
++        XCTAssertFalse(slot.isTerminal)
++        XCTAssertEqual(slot.targetedFollowups.first?.status, .received)
++        XCTAssertEqual(run.state.selectedFollowupRunId, runID)
++        XCTAssertEqual(harness.pendingSearchApproval?.id, approval?.id)
++        host.approvePendingSearchTool()
++        let terminal = await harness.waitForTerminal()
++        XCTAssertEqual(terminal, "completed")
++        let idle = await waitForHostIdle(host)
++        XCTAssertTrue(idle)
++        XCTAssertEqual(provider.callCount, 2)
++        XCTAssertEqual(harness.messages.last?.toText(), "审批后继续完成")
++    }
++
++    func testForegroundResumePreservesLegacyHostApprovalThenContinues() async throws {
++        let harness = makeHarness()
++        let provider = HostScriptedProvider(rounds: [
++            toolRound("legacy-search", "search_web", #"{"query":"amber"}"#),
++            textRound("原运行已继续")
++        ])
++        let host = makeHost(harness: harness, provider: provider)
++        defer { host.cancel() }
++        let owner = makeOwner()
++        owner.currentRun.host = host
++        start(host, harness: harness)
++        let approval = await harness.waitForPendingSearchApproval()
++        XCTAssertNotNil(approval)
++        let runID = try XCTUnwrap(host.currentRunId)
++
++        XCTAssertEqual(owner.reconcileForegroundRunsAfterSystemSuspensionIfNeeded(hasValidKeepAliveLease: false), [])
++        XCTAssertEqual(host.currentRunId, runID)
++        XCTAssertTrue(host.hasPendingToolApproval)
++        host.approvePendingSearchTool()
++        let terminal = await harness.waitForTerminal()
++        XCTAssertEqual(terminal, "completed")
++        let idle = await waitForHostIdle(host)
++        XCTAssertTrue(idle)
++        XCTAssertEqual(provider.callCount, 2)
++        XCTAssertEqual(harness.messages.last?.toText(), "原运行已继续")
++    }
++
++    private func makeOwner() -> ChatViewModel {
++        let suite = "IOSForegroundApprovalResumeTests.\(UUID().uuidString)"
++        let defaults = UserDefaults(suiteName: suite)!
++        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
++        return ChatViewModel(
++            settingsStore: SettingsStore(userDefaults: defaults),
++            sharedSettings: IOSSharedSettingsStore(userDefaults: defaults),
++            autoGenerateResponses: false
++        )
++    }
++}
+diff --git a/iosApp/iosAppTests/IOSDialogueTimelineResidualTests.swift b/iosApp/iosAppTests/IOSDialogueTimelineResidualTests.swift
+new file mode 100644
+index 00000000..c431ac72
+--- /dev/null
++++ b/iosApp/iosAppTests/IOSDialogueTimelineResidualTests.swift
+@@ -0,0 +1,83 @@
++import XCTest
++import Shared
++@testable import iosApp
++
++@MainActor
++final class IOSDialogueTimelineResidualTests: XCTestCase {
++    func testChildCardBreaksMainAssistantHeaderAcrossProjectionPaths() throws {
++        let user = UIMessage.companion.user(prompt: "question")
++        let first = UIMessage.companion.assistant(prompt: "main before child")
++        let child = IosMailboxMessageBridge.shared.makeMessage(
++            authorThreadId: "/synthetic/child", type: "FINAL_ANSWER", payload: "child report")
++        let answer = UIMessage.companion.assistant(prompt: "main after child")
++        var messages = [user, first, child, answer]
++        let cache = NativeTimelineProjectionCache()
++        let renderStore = ChatRenderStateStore()
++        var revision = 0
++        func project(_ event: ChatEvent) -> NativeTimelineProjection {
++            revision += 1
++            cache.prepareDisplayTexts(messages: messages)
++            return cache.projection(messages: messages, event: event, sourceRevision: revision,
++                startIndex: 0, configurationIssue: nil, isGenerationActive: true, isLoading: false,
++                isRecognizingImages: false, contextCompactState: .idle, contextCompactBoundaries: [],
++                viewportState: ChatViewportState(), displaySettingSignature: 0, generativeUiSettingSignature: 0,
++                renderStateRevision: 0, reasoningLevelLabel: nil, streamedMessageIDs: [],
++                renderStateStore: renderStore, variantInfoProvider: { _ in nil }, contentHashProvider: { _, _ in 0 })
++        }
++        func flags(_ projection: NativeTimelineProjection) -> [Bool] {
++            projection.entries.filter { $0.kind == .message }.map(\.isAssistantContinuation)
++        }
++        let full = NativeTimelineProjector.build(messages: messages, event: .conversationLoaded)
++        XCTAssertEqual(flags(full), [false, false, false, false])
++        XCTAssertEqual(flags(NativeTimelineProjector.build(messages: messages,
++            event: .conversationLoaded, startIndex: 2)), [false, false])
++        XCTAssertEqual(flags(project(.conversationLoaded)), [false, false, false, false])
++        XCTAssertEqual(flags(project(.toolResultAppended)), [false, false, false, false])
++        XCTAssertEqual(flags(try XCTUnwrap(NativeTimelineProjector.replacingStreamingTail(
++            in: full, messages: messages, event: .assistantStreamDelta,
++            isGenerationActive: true, viewportState: ChatViewportState()))), [false, false, false, false])
++        messages += [UIMessage.companion.user(prompt: "next question"),
++            UIMessage.companion.assistant(prompt: "next main before child"),
++            IosMailboxMessageBridge.shared.makeMessage(authorThreadId: "/synthetic/other-child",
++                type: "FINAL_ANSWER", payload: "next report"),
++            UIMessage.companion.assistant(prompt: "next main after child")]
++        XCTAssertEqual(flags(project(.userMessageAppended)), [false, false, false, false, false, false, false, false])
++    }
++
++    func testTailDisplayPreparationDoesNotWalkHistoryAndStructuralEventsInvalidate() throws {
++        ChatRenderProbe.enabled = true
++        defer { ChatRenderProbe.enabled = false; ChatRenderProbe.reset() }
++        for historyCount in [8, 512] {
++            let updates = ChatTimelineUpdates()
++            let owner = UUID()
++            var messages = (0..<historyCount).map { UIMessage.companion.user(prompt: "history \($0)") }
++            let tail = UIMessage.companion.assistant(prompt: "part")
++            messages.append(tail)
++            updates.publish(.init(revision: 1, reason: .initialLoad), messages: messages)
++            updates.attach(owner: owner) { _, _ in true }
++            defer { updates.detach(owner: owner) }
++            ChatRenderProbe.reset()
++            for revision in 2...5 {
++                let changed = UIMessage(id: tail.id, role: .assistant,
++                    parts: [UIMessagePart.Text(text: "part \(revision)", metadata: nil)], annotations: [],
++                    createdAt: tail.createdAt, finishedAt: nil, modelId: nil, usage: nil, translation: nil)
++                messages[messages.count - 1] = changed
++                XCTAssertFalse(updates.publish(.init(revision: revision, reason: .streamDelta), messages: messages))
++                XCTAssertEqual(updates.projectionCache.displayTexts(for: changed)[0], "part \(revision)")
++                XCTAssertEqual(updates.projectionCache.displayTexts(for: tail)[0], "part")
++            }
++            let visits = ChatRenderProbe.counts["display-facts:visit"]?["all"] ?? 0
++            print("DISPLAY_FACTS history=\(historyCount) deltas=4 visits=\(visits)")
++            XCTAssertEqual(visits, 4, "Display facts preparation must visit only the changed tail")
++            let replaced = UIMessage.companion.assistant(prompt:
++                #"{"structured_summary":{"conclusion":"replacement"},"run_ended":true}"#)
++            messages[0] = replaced
++            updates.publish(.init(revision: 6, reason: .toolResultAppended), messages: messages)
++            XCTAssertEqual(updates.projectionCache.displayTexts(for: replaced)[0], "replacement")
++            messages = [replaced]
++            updates.publish(.init(revision: 7, reason: .branchChange), messages: messages)
++            XCTAssertEqual(updates.structuralMessages.count, 1)
++            XCTAssertEqual(updates.projectionCache.displayTexts(for: replaced)[0], "replacement")
++        }
++    }
++}
+diff --git a/iosApp/iosAppTests/IOSMemoryExtractionTests.swift b/iosApp/iosAppTests/IOSMemoryExtractionTests.swift
+index bb6a6f8d..e0f00e20 100644
+--- a/iosApp/iosAppTests/IOSMemoryExtractionTests.swift
++++ b/iosApp/iosAppTests/IOSMemoryExtractionTests.swift
+@@ -32,6 +32,115 @@ final class IOSMemoryExtractionTests: XCTestCase {
+         }
+     }
+ 
++    func testIsolatedHubSkipsQueuedExtractionAndGlobalWrites() async throws {
++        try await withFixture { f in
++            let user = UIMessage.companion.user(prompt: "我习惯用中文交流。")
++            _ = await f.store.saveCurrent(messages: [user])
++            let id = try XCTUnwrap(f.store.currentConversation?.id)
++            let hubs = AmberHubStore.shared
++            let old = hubs.hubs
++            defer { hubs.hubs = old }
++            hubs.hubs.append(AmberHubItem(title: "sandbox", memoryPolicy: .hubIsolated,
++                                         conversationIds: [id.toHexDashString()]))
++            let provider = StubProvider { _, _ in
++                XCTFail("isolated hub must not invoke global extraction provider")
++                return Self.output(content: "我习惯用中文交流。", source: user)
++            }
++            let coordinator = f.coordinator(provider: provider)
++            coordinator.enqueue(conversationId: id, baseline: [user], completed: [user])
++            await coordinator.processPending()
++            XCTAssertTrue(f.persistence.records.isEmpty)
++            XCTAssertEqual(coordinator.pendingCount, 0)
++        }
++    }
++
++    func testHubIsolationChangedDuringProviderCallPreventsWrite() async throws {
++        try await withFixture { f in
++            let user = UIMessage.companion.user(prompt: "我习惯用中文交流。")
++            _ = await f.store.saveCurrent(messages: [user])
++            let id = try XCTUnwrap(f.store.currentConversation?.id)
++            let hubs = AmberHubStore.shared
++            let old = hubs.hubs
++            defer { hubs.hubs = old }
++            let provider = StubProvider { _, _ in
++                hubs.hubs.append(AmberHubItem(title: "sandbox", memoryPolicy: .hubIsolated,
++                                             conversationIds: [id.toHexDashString()]))
++                return Self.output(content: "我习惯用中文交流。", source: user)
++            }
++            let coordinator = f.coordinator(provider: provider)
++            coordinator.enqueue(conversationId: id, baseline: [user], completed: [user])
++            await coordinator.processPending()
++            XCTAssertTrue(f.persistence.records.isEmpty)
++        }
++    }
++
++    func testForkedInheritedUserCannotBecomeFreshExtractionSource() async throws {
++        try await withFixture { f in
++            let user = UIMessage.companion.user(prompt: "我习惯用中文交流。")
++            _ = await f.store.saveCurrent(messages: [user])
++            let parent = try XCTUnwrap(f.store.currentConversation)
++            let child = ConversationForkKt.forkConversation(source: parent, newId: KotlinUuid.companion.random(),
++                                                            newTitle: "child", forkTurns: "all", assistantId: nil)
++            let saved = await f.store.saveForkedConversation(child)
++            XCTAssertTrue(saved)
++            let provider = StubProvider { _, _ in
++                XCTFail("inherited source must not invoke extraction")
++                return Self.output(content: "我习惯用中文交流。", source: user)
++            }
++            let coordinator = f.coordinator(provider: provider)
++            coordinator.enqueue(conversationId: child.id, baseline: child.currentMessages, completed: child.currentMessages)
++            await coordinator.processPending()
++            XCTAssertTrue(f.persistence.records.isEmpty)
++            XCTAssertEqual(coordinator.pendingCount, 0)
++        }
++    }
++
++    func testExperienceWriteFailureReportsCommittedFactsAndRetriesOnlyExperiences() async throws {
++        try await withFixture { f in
++            let user = UIMessage.companion.user(prompt: "我习惯用中文交流，也检查 alpha 主机。")
++            let observation = "alpha 主机需要指定端口 2222 才能连接。"
++            let tool = UIMessagePart.Tool(toolCallId: "t", toolName: "terminal_execute", input: "alpha",
++                                         output: [UIMessagePart.Text(text: observation, metadata: nil)],
++                                         approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
++            let base = UIMessage.companion.assistant(prompt: "")
++            let result = base.doCopy(id: base.id, role: base.role, parts: [tool], annotations: base.annotations,
++                                     createdAt: base.createdAt, finishedAt: base.finishedAt, modelId: base.modelId,
++                                     usage: base.usage, translation: base.translation)
++            let completed = [user, result]
++            _ = await f.store.saveCurrent(messages: completed)
++            let id = try XCTUnwrap(f.store.currentConversation?.id)
++            let experienceFile = f.memoryURL.deletingLastPathComponent().appendingPathComponent("experiences.json")
++            try FileManager.default.createDirectory(at: experienceFile, withIntermediateDirectories: true)
++            var calls = 0
++            let provider = StubProvider { _, _ in
++                calls += 1
++                return """
++                {"memories":[{"content":"我习惯用中文交流。","evidence":"我习惯用中文交流","sourceMessageId":"\(user.id.toHexDashString())","scope":"long_term","kind":"user","sensitive":false}],"experiences":[{"content":"\(observation)","toolCallId":"t","quote":"\(observation)","context":"alpha"}]}
++                """
++            }
++            let coordinator = f.coordinator(provider: provider)
++            coordinator.enqueue(conversationId: id, baseline: [user], completed: completed)
++            await coordinator.processPending()
++            XCTAssertEqual(f.persistence.records.count, 1)
++            let saved = try XCTUnwrap(f.persistence.records.first)
++            XCTAssertTrue(coordinator.statusMessage.contains("已保存"))
++            XCTAssertTrue(coordinator.statusMessage.contains("经验"))
++            XCTAssertEqual(f.audit.records.first?.status, "partial")
++            XCTAssertEqual(coordinator.pendingCount, 1)
++            try FileManager.default.removeItem(at: experienceFile)
++            let reloaded = IOSMemoryPersistence(fileURL: f.memoryURL)
++            reloaded.load()
++            let restarted = IOSMemoryExtractionCoordinator(defaults: f.defaults, persistence: reloaded, audit: f.audit,
++                                                            provider: provider, environment: { (true, true, true) })
++            restarted.configure(settings: f.settings, conversations: f.store, writesEnabled: { true })
++            await restarted.processPending()
++            XCTAssertEqual(calls, 1, "retry only pending experience write, never re-extract committed facts")
++            XCTAssertEqual(reloaded.records.first?.updatedAt, saved.updatedAt)
++            XCTAssertEqual(reloaded.experiences.records.count, 1)
++            XCTAssertEqual(restarted.pendingCount, 0)
++        }
++    }
++
+     @MainActor
+     private final class WarmupGate {
+         var calls = 0
+diff --git a/iosApp/iosAppTests/IOSOrchestrationToolTests.swift b/iosApp/iosAppTests/IOSOrchestrationToolTests.swift
+index ceafb9cd..db8c8c2b 100644
+--- a/iosApp/iosAppTests/IOSOrchestrationToolTests.swift
++++ b/iosApp/iosAppTests/IOSOrchestrationToolTests.swift
+@@ -7,6 +7,33 @@ import SQLite3
+ /// Spawn bootstrap, child limits, and thread ancestry.
+ @MainActor
+ final class IOSOrchestrationToolTests: IOSOrchestrationToolTestCase {
++    func testSpawnInheritsIsolatedHubBindingAndPollutedMemoryMode() async throws {
++        let base = makeTempDirectory("SpawnMemoryBoundary")
++        defer { try? FileManager.default.removeItem(at: base) }
++        let store = makeStore(directory: base)
++        await store.newConversation()
++        let parentId = try XCTUnwrap(store.currentConversation?.id)
++        await store.saveCurrent(messages: [UIMessage.companion.user(prompt: "parent fact")])
++        let marked = await store.markConversationMemoryPolluted(parentId)
++        XCTAssertTrue(marked)
++        let hubs = AmberHubStore.shared
++        let old = hubs.hubs
++        defer { hubs.hubs = old }
++        let hub = AmberHubItem(title: "sandbox", memoryPolicy: .hubIsolated, conversationIds: [parentId.toHexDashString()])
++        hubs.hubs.append(hub)
++        let db = makeDatabase(directory: base)
++        let scheduler = FakeBackgroundScheduler()
++        let service = makeService(store: store, db: db, scheduler: scheduler, currentConversationId: { parentId })
++        let result = parseJSON(await service.execute(toolName: "spawn_agent", arguments: spawnArguments(taskName: "memory_child"),
++                                                    providerSetting: makeProviderSetting(), params: makeParams(), runId: "parent"))
++        XCTAssertEqual(result["ok"] as? Bool, true)
++        let edges = try await db.threadEdgeDao().allEdges()
++        let edge = try XCTUnwrap(edges.first)
++        XCTAssertTrue(hubs.hubs.first { $0.id == hub.id }?.conversationIds.contains(edge.childThreadId) == true)
++        let child = try await store.loadConversationForOrchestration(KotlinUuid.companion.parse(uuidString: edge.childThreadId))
++        XCTAssertEqual(child?.memoryMode, .polluted)
++    }
++
+     // MARK: - spawn 全链路
+ 
+     func testSpawnDoesNotSaveChildOrStartWhenEdgeWriteFails() async throws {
+diff --git a/iosApp/iosAppTests/IOSSubAgentOutputTests.swift b/iosApp/iosAppTests/IOSSubAgentOutputTests.swift
+index 0306cd66..af1241d6 100644
+--- a/iosApp/iosAppTests/IOSSubAgentOutputTests.swift
++++ b/iosApp/iosAppTests/IOSSubAgentOutputTests.swift
+@@ -97,6 +97,45 @@ final class IOSSubAgentOutputTests: XCTestCase {
+         XCTAssertNil(IOSSubAgentOutputProjection.summaryFromStoredResult(#"{"reasoning":"PRIVATE"}"#))
+     }
+ 
++    func testJSONLookingMarkdownLinksRemainReadableAtEveryDisplayBoundary() throws {
++        let markdown = #"[{"run_ended":true}](https://example.com/report)"#
++        XCTAssertFalse(IOSSubAgentOutputProjection.isKnownSubAgentResultEnvelope(markdown))
++        XCTAssertEqual(IOSSubAgentOutputProjection.extractUserFacingResult(from: markdown), markdown)
++        XCTAssertEqual(IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope(markdown), markdown)
++        let mailbox = IosMailboxMessageBridge.shared.makeMessage(
++            authorThreadId: "/test/reviewer", type: "FINAL_ANSWER", payload: markdown
++        )
++        let part = try XCTUnwrap(mailbox.parts.first as? UIMessagePart.Text)
++        XCTAssertEqual(IOSSubAgentOutputProjection.userFacingMailboxDisplayText(part: part), markdown)
++        XCTAssertTrue(IOSConversationExporter.shareText(for: mailbox).contains(markdown))
++        let assistant = message(role: .assistant, parts: [UIMessagePart.Text(text: markdown, metadata: nil)])
++        XCTAssertEqual(IOSSubAgentOutputProjection.unpreparedDisplayTexts(in: assistant)[0], markdown)
++        for otherLink in [
++            #"[[nested]](https://example.com/path_(one))"#,
++            #"[{"run_ended":true}][report]"#,
++            #"[{"run_ended":true}](https://example.com/report)"# + "\n\n[Amber host: child run ended]\n{\"run_ended\":true}"
++        ] {
++            let expected = otherLink.components(separatedBy: "\n\n")[0]
++            XCTAssertEqual(IOSSubAgentOutputProjection.extractUserFacingResult(from: otherLink), expected)
++        }
++        XCTAssertNil(IOSSubAgentOutputProjection.extractUserFacingResult(from: #"[{"run_ended":true}]"#))
++        XCTAssertNil(IOSSubAgentOutputProjection.extractUserFacingResult(from: #"[{"run_ended":true"#))
++    }
++
++    func testActivityGeneratedSnapshotsSanitizeBeforeBoundingAndSelection() throws {
++        let raw = "Readable result\n\n[Amber host: child run ended]\n{\"run_ended\":true,\"session_read\":{\"offset\":0}}"
++        let output = try XCTUnwrap(IOSSubAgentOutputProjection.snapshot(
++            messages: [message(role: .assistant, parts: [UIMessagePart.Text(text: raw, metadata: nil)])],
++            isFinal: false
++        ))
++        XCTAssertEqual(output.summary, "Readable result", "活动详情与其文字选择复制必须使用净化正文")
++        let unknown = IOSSubAgentOutputProjection.snapshot(
++            messages: [message(role: .assistant, parts: [UIMessagePart.Text(text: #"{"run_ended":true}"#, metadata: nil)])],
++            isFinal: false
++        )
++        XCTAssertNil(unknown)
++    }
++
+     func testLiveOutputRequiresMatchingExecutionIdentity() async throws {
+         let suiteName = "subagent-output-live-\(UUID().uuidString)"
+         let defaults = UserDefaults(suiteName: suiteName)!
+@@ -136,6 +175,36 @@ final class IOSSubAgentOutputTests: XCTestCase {
+         XCTAssertEqual(loaded.summary, "本次执行")
+     }
+ 
++    func testActivityLoaderSanitizesLiveAndLegacyTerminalPublicSnapshots() async throws {
++        let suiteName = "subagent-output-sanitized-\(UUID().uuidString)"
++        let defaults = UserDefaults(suiteName: suiteName)!
++        defer { defaults.removePersistentDomain(forName: suiteName) }
++        let tasks = IOSAdvancedTaskStore(userDefaults: defaults, storageKey: "tasks")
++        let executionId = UUID().uuidString
++        let callId = UUID().uuidString
++        let task = tasks.startTask(kind: .subAgent, title: "test", objective: "test", metadata: [
++            "execution_id": executionId, "tool_call_id": callId
++        ])
++        let raw = "Readable result\n\n[Amber host: child run ended]\n{\"run_ended\":true,\"session_read\":{\"offset\":0}}"
++        let live = SubAgentLiveModel(executionId: executionId)
++        live.replacePublicOutput(IOSSubAgentOutputSnapshot(summary: raw, steps: [], isFinal: false))
++        SubAgentLiveRegistry.shared.register(toolCallId: callId, live)
++        let activity = try XCTUnwrap(IOSSubAgentActivityStore.activity(task))
++        let loadedLive = try await IOSSubAgentOutputLoader.load(activity: activity, task: task)
++        XCTAssertEqual(loadedLive?.summary, "Readable result")
++        let terminal = IOSSubAgentOutputSnapshot(summary: raw, steps: [], isFinal: true)
++        let encoded = try XCTUnwrap(String(data: JSONEncoder().encode(terminal), encoding: .utf8))
++        let finished = try XCTUnwrap(tasks.updateTask(id: task.id, status: .completed, metadata: ["public_output": encoded]))
++        let finishedActivity = try XCTUnwrap(IOSSubAgentActivityStore.activity(finished))
++        let loadedFinal = try await IOSSubAgentOutputLoader.load(activity: finishedActivity, task: finished)
++        XCTAssertEqual(loadedFinal?.summary, "Readable result")
++        XCTAssertEqual(loadedFinal?.isFinal, true)
++        XCTAssertTrue(finished.metadata["public_output"]?.contains("run_ended") == true,
++                      "读取展示净化不能重写原有 task 元数据")
++        let fallback = IOSSubAgentOutputProjection.snapshot(task: task, liveText: raw)
++        XCTAssertEqual(fallback?.summary, "Readable result")
++    }
++
+     func testTerminalPublicSnapshotSurvivesOwnerReleaseAndStaysRunBound() async throws {
+         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+@@ -155,10 +224,28 @@ final class IOSSubAgentOutputTests: XCTestCase {
+         XCTAssertTrue(started)
+         let finished = try await runs.transition(runId: "current", expected: .running, to: .completed, at: 200)
+         XCTAssertTrue(finished)
+-        let snapshot = IOSSubAgentOutputSnapshot(summary: "已完成接口核对", steps: [], isFinal: true)
++        let raw = "已完成接口核对\n\n[Amber host: child run ended]\n{\"run_ended\":true}"
++        let snapshot = IOSSubAgentOutputSnapshot(summary: raw, steps: [], isFinal: true)
+         await IOSSubAgentOutputArchive.archive(runId: "current", conversationId: child, snapshot: snapshot, database: db)
+         let loaded = try await IOSSubAgentOutputArchive.load(runId: "current", database: db)
+-        XCTAssertEqual(loaded, snapshot)
++        XCTAssertEqual(loaded, IOSSubAgentOutputSnapshot(summary: "已完成接口核对", steps: [], isFinal: true))
++        // Old persisted public snapshots predate display normalization.
++        let legacyPayload = try XCTUnwrap(String(data: JSONEncoder().encode(snapshot), encoding: .utf8))
++        let legacy = AgentRunEvent(
++            eventId: "legacy-public-output", type: IOSSubAgentOutputProjection.eventType,
++            payloadType: IOSSubAgentOutputProjection.eventType, payload: legacyPayload,
++            payloadSchemaVersion: 1, isFinal: false, ts: 300,
++            turnId: nil, stepId: nil, toolCallId: nil
++        )
++        let events = RoomAgentEventStore(dao: db.agentRuntimeDao())
++        let inserted = await withCheckedContinuation { continuation in
++            events.appendRunEvent(runId: "current", event: legacy) { value, error in
++                continuation.resume(returning: error == nil && (value?.boolValue ?? false))
++            }
++        }
++        XCTAssertTrue(inserted)
++        let legacyLoaded = try await IOSSubAgentOutputArchive.load(runId: "current", database: db)
++        XCTAssertEqual(legacyLoaded?.summary, "已完成接口核对")
+         let anotherRun = try await IOSSubAgentOutputArchive.load(runId: "next", database: db)
+         XCTAssertNil(anotherRun)
+         let status = try await runs.snapshot(runId: "current")?.status
+diff --git a/iosApp/iosAppTests/MacGatewayTests.swift b/iosApp/iosAppTests/MacGatewayTests.swift
+index f6827e98..64ddde96 100644
+--- a/iosApp/iosAppTests/MacGatewayTests.swift
++++ b/iosApp/iosAppTests/MacGatewayTests.swift
+@@ -296,6 +296,44 @@ struct MacGatewayTests {
+         #expect(!session.hasPendingApproval)
+     }
+ 
++    @Test @MainActor func unifiedBoardKeepsDistinctRunsWithSameTitleAndMergesOnlyScheduleIdentity() async throws {
++        let suite = "UnifiedBoardIdentity.\(UUID().uuidString)"
++        let defaults = try #require(UserDefaults(suiteName: suite))
++        defer { defaults.removePersistentDomain(forName: suite) }
++        let board = #"{"board":[{"id":"run:A","kind":"run","column":"running","title":"同名任务","detail":"执行 A","updatedAt":1800000000,"scheduleId":"schedule-one","waitingForReply":false,"failed":false},{"id":"run:B","kind":"run","column":"needsYou","title":"同名任务","detail":"待回复","updatedAt":1800000001,"waitingForReply":true,"failed":false},{"id":"schedule:schedule-one","kind":"schedule","column":"scheduled","title":"同名任务","detail":"每日","updatedAt":1800000000,"scheduleId":"schedule-one","waitingForReply":false,"failed":false}]}"#
++        let schedules = #"{"schedules":[{"id":"schedule-one","name":"同名任务","rule":"每日","enabled":true,"running":false,"autoApprovesHighRisk":false}]}"#
++        let client = MacGatewayClient(addrs: ["fixture.invalid"], port: 443, fingerprint: "fixture", token: "fixture",
++            transport: { request, _ in
++                let url = request.url!
++                let json = url.path.hasSuffix("/board") ? board : schedules
++                return (Data(json.utf8), HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
++            })
++        let gateway = MacGatewayStore(defaults: defaults)
++        gateway.configureForTesting(connection: .init(gatewayId: "g", name: "Mac", addrs: ["fixture.invalid"],
++            port: 443, fingerprint: "fixture", deviceId: "d"), client: client)
++        await gateway.refreshBoard()
++        await gateway.refreshSchedules()
++        let tasks = IOSAdvancedTaskStore(userDefaults: defaults)
++        let activity = IOSSubAgentActivityStore(tasks: tasks, defaults: defaults, loadRuns: { [] })
++        let wake = IOSWakeTaskStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent(suite))
++        let groups = AmberUnifiedTaskBuilder.buildTasks(gateway: gateway, subAgentStore: activity,
++            taskStore: tasks, wakeStore: wake, hubStore: AmberHubStore(defaults: defaults))
++        #expect(groups.running.map(\.id) == ["board:run:A"])
++        #expect(groups.needsAttention.map(\.id) == ["board:run:B"])
++        #expect(groups.scheduled.map(\.id) == ["schedule:schedule-one"])
++        #expect(groups.activeCount == 2)
++
++        let boardOnly = MacGatewayStore(defaults: defaults)
++        boardOnly.configureForTesting(connection: .init(gatewayId: "g", name: "Mac", addrs: ["fixture.invalid"],
++            port: 443, fingerprint: "fixture", deviceId: "d"), client: client)
++        await boardOnly.refreshBoard()
++        let fallback = AmberUnifiedTaskBuilder.buildTasks(gateway: boardOnly, subAgentStore: activity,
++            taskStore: tasks, wakeStore: wake, hubStore: AmberHubStore(defaults: defaults))
++        #expect(fallback.scheduled.map(\.id) == ["board:schedule:schedule-one"],
++                "a board schedule stays visible until the same schedule owner has been fetched")
++        #expect(fallback.running.count == 1 && fallback.needsAttention.count == 1)
++    }
++
+     @Test func cloudTaskRequestEncodesStrictContractFieldsAndValidates() throws {
+         let req = MacGatewayCloudTaskRequest(
+             requestId: "550e8400-e29b-41d4-a716-446655440000",
+@@ -447,8 +485,21 @@ struct MacGatewayTests {
+         #expect(store.cloudTasks[0].needsSubmissionRetry)
+ 
+         // 3. Retry uses the exact same requestId and payload, succeeds with 202, and saves workItem.id
+-        let retryAttempt = await store.retryCloudTask(requestId: "req-fixed-1")
+-        let acceptedRecord = try retryAttempt.get()
++        let suiteHub = AmberHubStore(defaults: defaults)
++        let tasks = IOSAdvancedTaskStore(userDefaults: defaults)
++        let activity = IOSSubAgentActivityStore(tasks: tasks, defaults: defaults, loadRuns: { [] })
++        var followups: [AmberUnifiedTaskItem] = []
++        var dismissals = 0
++        let panel = AmberDuetTaskCenterCard(gateway: store, subAgentStore: activity, hubStore: suiteHub,
++            onOpenFullTaskBoard: {}, onFollowupTask: { followups.append($0) },
++            onDismissPanel: { dismissals += 1 })
++        let item = AmberUnifiedTaskItem(id: "cloud:req-fixed-1", title: taskRequest.title,
++            subtitle: "", statusText: "提交未完成", phase: .needsAttention, ownership: .delegated,
++            source: .cloudTask("req-fixed-1"))
++        await panel.handleQuickDecision(.init(title: "重试", kind: .retry), for: item)
++        #expect(followups.isEmpty, "retry must replay the owner request rather than fill the chat composer")
++        #expect(dismissals == 0, "keep the retry result/error visible in the panel")
++        let acceptedRecord = try #require(store.cloudTasks.first)
+         store.stopCloudTaskPolling()
+         #expect(acceptedRecord.workItemId == "work:opaque-1")
+         #expect(acceptedRecord.state == .working)
+@@ -459,6 +510,10 @@ struct MacGatewayTests {
+         #expect(submitBodies.count >= 2)
+         #expect(Set(submitBodies).count == 1, "address fallback and retry must send identical requestId and JSON body")
+         #expect(seen.allSatisfy { $0.auth == "Bearer paired-token-1" })
++        await panel.handleQuickDecision(.init(title: "调整方向", kind: .adjustDirection,
++            followupInstruction: "带入这条任务"), for: item)
++        #expect(followups.count == 1 && followups.first?.actionTitle == "带入这条任务",
++                "ordinary followup keeps its independent composer action")
+ 
+         // 4. Refresh transitions to COMPLETED and preserves Markdown/code/JSON in resultMarkdown
+         await server.markCompleted()

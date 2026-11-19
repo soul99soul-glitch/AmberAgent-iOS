@@ -2,6 +2,25 @@ import SwiftUI
 import Shared
 import SwiftStreamingMarkdown
 
+private struct IOSWorkspaceStoreEnvironmentKey: EnvironmentKey {
+    static let defaultValue: IOSWorkspaceStore? = nil
+}
+
+extension EnvironmentValues {
+    @MainActor
+    var workspaceStore: IOSWorkspaceStore {
+        get { self[IOSWorkspaceStoreEnvironmentKey.self] ?? .shared }
+        set { self[IOSWorkspaceStoreEnvironmentKey.self] = newValue }
+    }
+}
+
+extension View {
+    @MainActor
+    func environment(_ object: IOSWorkspaceStore) -> some View {
+        environment(\.workspaceStore, object)
+    }
+}
+
 /// Parent text/tool updates must not reconstruct every completed tool card.
 /// The callback captures this row's stable State location and the same Tool.
 private struct ChatToolPartRow: View, @MainActor Equatable {
@@ -18,9 +37,26 @@ private struct ChatToolPartRow: View, @MainActor Equatable {
     }
 }
 
+private final class MessageBubbleActionBox {
+    var onRegenerate: () -> Void = {}
+    var onRequestEdit: (String) -> Void = { _ in }
+    var onEdit: (String) -> Void = { _ in }
+    var onDelete: () -> Void = {}
+    var onSelectVariant: (Int) -> Void = { _ in }
+    var onGenerativeWidgetAction: (String) -> Void = { _ in }
+    var onModifyGeneratedImage: (String, String, String) -> Void = { _, _, _ in }
+    var onOpenMiniApp: (String) -> Void = { _ in }
+    var onOpenMiniApps: () -> Void = {}
+    var onOpenSubagentConversation: ((String) -> Void)? = nil
+    var artifactPinAction: ChatArtifactPinHandler? = nil
+    var workspaceStore: IOSWorkspaceStore? = nil
+    var completionFeedback: ChatCompletionFeedback? = nil
+}
+
 struct MessageBubbleView: View {
 
     let message: UIMessage
+    var displayTexts: [Int: String] = [:]
     var messageIndex: Int = 0
     var isAssistantContinuation: Bool = false
     var variantInfo: IOSConversationStore.VariantInfo? = nil
@@ -63,17 +99,396 @@ struct MessageBubbleView: View {
     /// the group header renders first; the message's own parts render only when
     /// the group is expanded.
     var phoneToolGroup: ChatPhoneToolGroupSummary? = nil
+    /// Set when this message belongs to a turn drawn as one progress line: only the
+    /// head draws it, on its first task run; every other run keeps just its media.
+    var assistantTurn: ChatAssistantTurnRole? = nil
+    /// Set when this message heads a continuous automation process screenshot batch.
+    var automationScreenshotGroup: ChatAutomationScreenshotBatchSummary? = nil
 
-    @Environment(IOSWorkspaceStore.self) private var workspaceStore
+    @Environment(\.workspaceStore) private var workspaceStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.locale) private var locale
     @Environment(\.chatMessageEditingAllowed) private var messageEditingAllowed
+    @Environment(\.chatCompletionFeedback) private var completionFeedback
     @Environment(\.chatArtifactPinAction) private var artifactPinAction
     @Environment(\.chatMessageAnchorHighlighted) private var chatMessageAnchorHighlighted
+    @State private var actionBox = MessageBubbleActionBox()
+    private var renderPreferences: IOSChatRenderPreferences { IOSChatRenderPreferences.shared }
+
+    var body: some View {
+        let _ = {
+            actionBox.onRegenerate = onRegenerate
+            actionBox.onRequestEdit = onRequestEdit
+            actionBox.onEdit = onEdit
+            actionBox.onDelete = onDelete
+            actionBox.onSelectVariant = onSelectVariant
+            actionBox.onGenerativeWidgetAction = onGenerativeWidgetAction
+            actionBox.onModifyGeneratedImage = onModifyGeneratedImage
+            actionBox.onOpenMiniApp = onOpenMiniApp
+            actionBox.onOpenMiniApps = onOpenMiniApps
+            actionBox.onOpenSubagentConversation = onOpenSubagentConversation
+            actionBox.artifactPinAction = artifactPinAction
+            actionBox.workspaceStore = workspaceStore
+            actionBox.completionFeedback = completionFeedback
+        }()
+        let prefs = renderPreferences
+        MessageBubbleEquatableContent(
+            message: message,
+            displayTexts: displayTexts,
+            contentIdentity: ChatMessageContentIdentity(message, index: messageIndex),
+            messageIndex: messageIndex,
+            isAssistantContinuation: isAssistantContinuation,
+            variantInfo: variantInfo,
+            displaySetting: displaySetting,
+            generativeUiSetting: generativeUiSetting,
+            displaySignature: Self.displaySignature(displaySetting, prefs: prefs),
+            generativeSignature: Self.generativeSignature(generativeUiSetting),
+            isGenerating: isGenerating,
+            isChatGenerationActive: isChatGenerationActive,
+            isLastMessage: isLastMessage,
+            hasEverStreamed: hasEverStreamed,
+            liveMarkdownRenderingEnabled: liveMarkdownRenderingEnabled,
+            frozenMarkdownSnapshot: frozenMarkdownSnapshot,
+            reasoningLevelLabel: reasoningLevelLabel,
+            imageAccessibilityFocusToolCallID: imageAccessibilityFocusToolCallID,
+            phoneToolGroup: phoneToolGroup,
+            assistantTurn: assistantTurn,
+            automationScreenshotGroup: automationScreenshotGroup,
+            workspaceStoreID: ObjectIdentifier(workspaceStore),
+            reduceMotion: reduceMotion,
+            locale: locale,
+            messageEditingAllowed: messageEditingAllowed,
+            hasArtifactPinAction: artifactPinAction != nil,
+            chatMessageAnchorHighlighted: chatMessageAnchorHighlighted,
+            appLanguage: prefs.appLanguage,
+            actions: actionBox
+        )
+        .equatable()
+    }
+
+    private static func displaySignature(_ setting: DisplaySetting?, prefs: IOSChatRenderPreferences) -> Int {
+        var hasher = Hasher()
+        hasher.combine(prefs.fontScale)
+        hasher.combine(prefs.chatFont)
+        hasher.combine(prefs.agentName)
+        hasher.combine(prefs.appLanguage)
+        hasher.combine(prefs.replyDeliveryMode)
+        if let setting {
+            hasher.combine(ObjectIdentifier(setting))
+            hasher.combine(setting.hash)
+        } else {
+            hasher.combine(0)
+        }
+        return hasher.finalize()
+    }
+
+    /// Called only by the copy action; raw protocol text remains available to storage/model paths.
+    static func copyText(for message: UIMessage) -> String {
+        message.role == MessageRole.assistant ? IOSConversationExporter.shareText(for: message) : message.toText()
+    }
+
+    private static func generativeSignature(_ setting: GenerativeUiSetting?) -> Int {
+        guard let setting else { return 0 }
+        var hasher = Hasher()
+        hasher.combine(ObjectIdentifier(setting))
+        hasher.combine(setting.hash)
+        return hasher.finalize()
+    }
+
+    static func shouldRenderReasoningCard(_ reasoning: UIMessagePart.Reasoning) -> Bool {
+        !ReasoningMetadataKt.isEmptyProtocolReasoning(reasoning: reasoning)
+    }
+
+    static func firstVisibleReasoningIndex(in parts: [UIMessagePart]) -> Int? {
+        parts.firstIndex { part in
+            guard let reasoning = part as? UIMessagePart.Reasoning else { return false }
+            return shouldRenderReasoningCard(reasoning)
+        }
+    }
+
+    static func hasVisibleAssistantContent(in parts: [UIMessagePart]) -> Bool {
+        parts.contains { part in
+            if let text = part as? UIMessagePart.Text {
+                return text.text.contains { !$0.isWhitespace }
+            }
+            if let reasoning = part as? UIMessagePart.Reasoning {
+                return shouldRenderReasoningCard(reasoning)
+            }
+            return true
+        }
+    }
+
+    static func instantToDate(_ instant: KotlinInstant) -> Date {
+        Date(timeIntervalSince1970:
+            Double(instant.epochSeconds) + Double(instant.nanosecondsOfSecond) / 1_000_000_000)
+    }
+}
+
+private struct MessageBubbleEquatableContent: View, @MainActor Equatable {
+    let message: UIMessage
+    let displayTexts: [Int: String]
+    let contentIdentity: ChatMessageContentIdentity
+    let messageIndex: Int
+    let isAssistantContinuation: Bool
+    let variantInfo: IOSConversationStore.VariantInfo?
+    let displaySetting: DisplaySetting?
+    let generativeUiSetting: GenerativeUiSetting?
+    let displaySignature: Int
+    let generativeSignature: Int
+    let isGenerating: Bool
+    let isChatGenerationActive: Bool
+    let isLastMessage: Bool
+    let hasEverStreamed: Bool
+    let liveMarkdownRenderingEnabled: Bool
+    let frozenMarkdownSnapshot: String?
+    let reasoningLevelLabel: String?
+    let imageAccessibilityFocusToolCallID: String?
+    let phoneToolGroup: ChatPhoneToolGroupSummary?
+    let assistantTurn: ChatAssistantTurnRole?
+    let automationScreenshotGroup: ChatAutomationScreenshotBatchSummary?
+    let workspaceStoreID: ObjectIdentifier
+    let reduceMotion: Bool
+    let locale: Locale
+    let messageEditingAllowed: Bool
+    let hasArtifactPinAction: Bool
+    let chatMessageAnchorHighlighted: Bool
+    let appLanguage: String
+    let actions: MessageBubbleActionBox
+
+    private var observesChatGenerationActive: Bool {
+        contentIdentity.cachedParts.contains { part in
+            if part is UIMessagePart.MiniApp { return true }
+            return (part as? UIMessagePart.Tool)?.toolName == "generate_image"
+        }
+    }
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        // Isolate `isLastMessage`: flipping `isLastMessage` (`true -> false`) on an
+        // idle/settled message does not change `isGenerating && isLastMessage` and
+        // must never re-evaluate body text or Markdown subtrees.
+        lhs.message === rhs.message &&
+            lhs.displayTexts == rhs.displayTexts &&
+            lhs.contentIdentity.matches(rhs.message) &&
+            lhs.isAssistantContinuation == rhs.isAssistantContinuation &&
+            lhs.variantInfo == rhs.variantInfo &&
+            lhs.displaySignature == rhs.displaySignature &&
+            lhs.generativeSignature == rhs.generativeSignature &&
+            lhs.isGenerating == rhs.isGenerating &&
+            (lhs.isGenerating && lhs.isLastMessage) == (rhs.isGenerating && rhs.isLastMessage) &&
+            (!(lhs.observesChatGenerationActive || rhs.observesChatGenerationActive) ||
+                lhs.isChatGenerationActive == rhs.isChatGenerationActive) &&
+            lhs.hasEverStreamed == rhs.hasEverStreamed &&
+            (lhs.liveMarkdownRenderingEnabled == rhs.liveMarkdownRenderingEnabled ||
+                (!lhs.isGenerating && !rhs.isGenerating &&
+                 lhs.frozenMarkdownSnapshot == nil && rhs.frozenMarkdownSnapshot == nil)) &&
+            lhs.frozenMarkdownSnapshot == rhs.frozenMarkdownSnapshot &&
+            lhs.reasoningLevelLabel == rhs.reasoningLevelLabel &&
+            lhs.imageAccessibilityFocusToolCallID == rhs.imageAccessibilityFocusToolCallID &&
+            lhs.phoneToolGroup?.signature == rhs.phoneToolGroup?.signature &&
+            lhs.assistantTurn == rhs.assistantTurn &&
+            lhs.automationScreenshotGroup?.signature == rhs.automationScreenshotGroup?.signature &&
+            lhs.workspaceStoreID == rhs.workspaceStoreID &&
+            lhs.reduceMotion == rhs.reduceMotion &&
+            lhs.locale == rhs.locale &&
+            lhs.messageEditingAllowed == rhs.messageEditingAllowed &&
+            lhs.hasArtifactPinAction == rhs.hasArtifactPinAction &&
+            lhs.chatMessageAnchorHighlighted == rhs.chatMessageAnchorHighlighted
+    }
+
+    var body: some View {
+        MessageBubbleStatefulContent(
+            message: message,
+            displayTexts: displayTexts,
+            contentIdentity: contentIdentity,
+            messageIndex: messageIndex,
+            isAssistantContinuation: isAssistantContinuation,
+            variantInfo: variantInfo,
+            displaySetting: displaySetting,
+            generativeUiSetting: generativeUiSetting,
+            displaySignature: displaySignature,
+            generativeSignature: generativeSignature,
+            isGenerating: isGenerating,
+            isChatGenerationActive: isChatGenerationActive,
+            isLastMessage: isLastMessage,
+            hasEverStreamed: hasEverStreamed,
+            liveMarkdownRenderingEnabled: liveMarkdownRenderingEnabled,
+            frozenMarkdownSnapshot: frozenMarkdownSnapshot,
+            reasoningLevelLabel: reasoningLevelLabel,
+            imageAccessibilityFocusToolCallID: imageAccessibilityFocusToolCallID,
+            phoneToolGroup: phoneToolGroup,
+            assistantTurn: assistantTurn,
+            automationScreenshotGroup: automationScreenshotGroup,
+            workspaceStore: actions.workspaceStore ?? .shared,
+            reduceMotion: reduceMotion,
+            locale: locale,
+            messageEditingAllowed: messageEditingAllowed,
+            completionFeedback: actions.completionFeedback,
+            hasArtifactPinAction: hasArtifactPinAction,
+            chatMessageAnchorHighlighted: chatMessageAnchorHighlighted,
+            appLanguage: appLanguage,
+            actions: actions
+        )
+    }
+}
+
+private struct MessageBubbleOuterShellSignature: Equatable {
+    let awaitingSegmentedFirstBlock: Bool
+    let isAssistantContinuation: Bool
+    let showsVariantSwitcher: Bool
+    let variantSelectedIndex: Int
+    let variantCount: Int
+    let annotationsCount: Int
+    let displaySignature: Int
+    let generativeSignature: Int
+    let reduceMotion: Bool
+    let appLanguage: String
+    let localeIdentifier: String
+    let hostedTextPartMask: UInt64
+    let hostedTextEmptyMask: UInt64
+}
+
+@MainActor
+private final class MessageBubbleOuterLayoutTracker {
+    private var lastMessageID: String?
+    private var hostedTextPartIndices: Set<Int> = []
+    private var lastSignature: MessageBubbleOuterShellSignature?
+
+    func shouldMarkRowDirty(
+        messageID: String,
+        canUseGraphHost: Bool,
+        hasOuterMediaOrNonTextParts: Bool,
+        parts: [UIMessagePart],
+        isLiveStreaming: Bool,
+        isMiniAppStreamingCard: (String, Bool) -> Bool,
+        displayTextProvider: (UIMessagePart.Text, Int) -> String,
+        awaitingSegmentedFirstBlock: Bool,
+        isAssistantContinuation: Bool,
+        showsVariantSwitcher: Bool,
+        variantSelectedIndex: Int,
+        variantCount: Int,
+        annotationsCount: Int,
+        displaySignature: Int,
+        generativeSignature: Int,
+        reduceMotion: Bool,
+        appLanguage: String,
+        localeIdentifier: String
+    ) -> Bool {
+        if lastMessageID != messageID {
+            lastMessageID = messageID
+            hostedTextPartIndices.removeAll(keepingCapacity: true)
+            lastSignature = nil
+        }
+
+        guard canUseGraphHost, !hasOuterMediaOrNonTextParts else {
+            lastSignature = nil
+            return true
+        }
+
+        var hostedMask: UInt64 = 0
+        var emptyMask: UInt64 = 0
+        var nonEmptyTextCount = 0
+
+        for (partIndex, part) in parts.enumerated() {
+            guard let textPart = part as? UIMessagePart.Text, !textPart.text.isEmpty else {
+                continue
+            }
+            if partIndex >= 64 || isMiniAppStreamingCard(textPart.text, isLiveStreaming) {
+                lastSignature = nil
+                return true
+            }
+            if isLiveStreaming {
+                hostedTextPartIndices.insert(partIndex)
+            }
+            guard hostedTextPartIndices.contains(partIndex) else {
+                lastSignature = nil
+                return true
+            }
+            let bit = UInt64(1) << UInt64(partIndex)
+            hostedMask |= bit
+            nonEmptyTextCount += 1
+            if displayTextProvider(textPart, partIndex).isEmpty {
+                emptyMask |= bit
+            }
+        }
+
+        guard nonEmptyTextCount > 0 else {
+            lastSignature = nil
+            return true
+        }
+
+        let signature = MessageBubbleOuterShellSignature(
+            awaitingSegmentedFirstBlock: awaitingSegmentedFirstBlock,
+            isAssistantContinuation: isAssistantContinuation,
+            showsVariantSwitcher: showsVariantSwitcher,
+            variantSelectedIndex: variantSelectedIndex,
+            variantCount: variantCount,
+            annotationsCount: annotationsCount,
+            displaySignature: displaySignature,
+            generativeSignature: generativeSignature,
+            reduceMotion: reduceMotion,
+            appLanguage: appLanguage,
+            localeIdentifier: localeIdentifier,
+            hostedTextPartMask: hostedMask,
+            hostedTextEmptyMask: emptyMask
+        )
+        if signature == lastSignature {
+            return false
+        }
+        lastSignature = signature
+        return true
+    }
+}
+
+private struct MessageBubbleStatefulContent: View {
+    let message: UIMessage
+    let displayTexts: [Int: String]
+    let contentIdentity: ChatMessageContentIdentity
+    let messageIndex: Int
+    let isAssistantContinuation: Bool
+    let variantInfo: IOSConversationStore.VariantInfo?
+    let displaySetting: DisplaySetting?
+    let generativeUiSetting: GenerativeUiSetting?
+    let displaySignature: Int
+    let generativeSignature: Int
+    let isGenerating: Bool
+    let isChatGenerationActive: Bool
+    let isLastMessage: Bool
+    let hasEverStreamed: Bool
+    let liveMarkdownRenderingEnabled: Bool
+    let frozenMarkdownSnapshot: String?
+    let reasoningLevelLabel: String?
+    let imageAccessibilityFocusToolCallID: String?
+    let phoneToolGroup: ChatPhoneToolGroupSummary?
+    let assistantTurn: ChatAssistantTurnRole?
+    let automationScreenshotGroup: ChatAutomationScreenshotBatchSummary?
+    let workspaceStore: IOSWorkspaceStore
+    let reduceMotion: Bool
+    let locale: Locale
+    let messageEditingAllowed: Bool
+    let completionFeedback: ChatCompletionFeedback?
+    let hasArtifactPinAction: Bool
+    let chatMessageAnchorHighlighted: Bool
+    let appLanguage: String
+    let actions: MessageBubbleActionBox
+
     @State private var workspaceSaveAlert: WorkspaceSaveAlert?
     @State private var toolDetailTarget: ToolDetailTarget?
-    @AppStorage(IOSDisplayPreferenceKeys.autoExpandThinking) private var autoExpandThinking = true
+    @State private var taskStepCache = ChatTaskToolStepCache()
+    @State private var outerLayoutTracker = MessageBubbleOuterLayoutTracker()
+    @Environment(\.chatTimelineGrowth) private var timelineGrowth
     @AccessibilityFocusState private var focusedGeneratedImageToolCallID: String?
+
+    private var onRegenerate: () -> Void { actions.onRegenerate }
+    private var onRequestEdit: (String) -> Void { actions.onRequestEdit }
+    private var onEdit: (String) -> Void { actions.onEdit }
+    private var onDelete: () -> Void { actions.onDelete }
+    private var onSelectVariant: (Int) -> Void { actions.onSelectVariant }
+    private var onGenerativeWidgetAction: (String) -> Void { actions.onGenerativeWidgetAction }
+    private var onModifyGeneratedImage: (String, String, String) -> Void { actions.onModifyGeneratedImage }
+    private var onOpenMiniApp: (String) -> Void { actions.onOpenMiniApp }
+    private var onOpenMiniApps: () -> Void { actions.onOpenMiniApps }
+    private var onOpenSubagentConversation: ((String) -> Void)? { actions.onOpenSubagentConversation }
+    private var artifactPinAction: ChatArtifactPinHandler? { actions.artifactPinAction }
 
     private var isUser: Bool {
         message.role == MessageRole.user
@@ -85,31 +500,137 @@ struct MessageBubbleView: View {
         messageEditingAllowed && !isGenerating
     }
 
+    private func streamingBoundarySignature(
+        text: String,
+        partIndex: Int,
+        nonEmptyTextPartCount: Int,
+        isSourceMessageComplete: Bool
+    ) -> ChatStreamingGraphContentSignature {
+        let isLiveStreaming = isGenerating && isLastMessage
+        let isSegmented = IOSChatRenderPreferences.shared.isSegmentedReplyDelivery
+        let textToken: ChatStreamingGraphContentSignature.TextToken = (isSegmented && isLiveStreaming && liveMarkdownRenderingEnabled)
+            ? .segmentedCommittedUTF16(ChatSegmentedMarkdownCommitPolicy.committedUTF16Count(in: text, isStreaming: true))
+            : .full(text)
+        return ChatStreamingGraphContentSignature(
+            partIndex: partIndex,
+            isSegmented: isSegmented,
+            isLiveStreaming: isLiveStreaming,
+            reduceMotion: reduceMotion,
+            liveMarkdownRenderingEnabled: liveMarkdownRenderingEnabled,
+            hasEverStreamed: hasEverStreamed,
+            isSourceMessageComplete: isSourceMessageComplete,
+            displaySignature: displaySignature,
+            generativeSignature: generativeSignature,
+            textToken: textToken,
+            frozenMarkdownSnapshot: nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil
+        )
+    }
+
+    private var hasNonTextVisibleAssistantParts: Bool {
+        message.parts.contains { part in
+            if part is UIMessagePart.Text || part is UIMessagePart.Reasoning { return false }
+            if let tool = part as? UIMessagePart.Tool {
+                return ChatTaskStreamGrouping.isMediaBearing(tool)
+            }
+            return true
+        }
+    }
+
+    private func isAwaitingSegmentedFirstBlock(messageHexID: String) -> Bool {
+        guard !isUser,
+              isGenerating && isLastMessage,
+              liveMarkdownRenderingEnabled,
+              IOSChatRenderPreferences.shared.isSegmentedReplyDelivery,
+              !hasNonTextVisibleAssistantParts else {
+            return false
+        }
+        return !ChatSegmentedBubbleReadiness.shared.isReady(messageID: messageHexID)
+    }
+
+    private func markOuterRowDirtyIfNeeded(
+        messageHexID: String,
+        isSubAgentResult: Bool,
+        awaitingSegmentedFirstBlock: Bool
+    ) {
+        let hasMediaTurnTools = assistantTurn?.progress?.tools.contains(where: ChatTaskStreamGrouping.isMediaBearing) == true
+        let hasOuterMediaOrNonTextParts = hasNonTextVisibleAssistantParts || hasMediaTurnTools || automationScreenshotGroup != nil
+        let shouldInvalidate = outerLayoutTracker.shouldMarkRowDirty(
+            messageID: messageHexID,
+            canUseGraphHost: timelineGrowth != nil && !isUser && !isSubAgentResult,
+            hasOuterMediaOrNonTextParts: hasOuterMediaOrNonTextParts,
+            parts: message.parts,
+            isLiveStreaming: isGenerating && isLastMessage,
+            isMiniAppStreamingCard: Self.shouldRenderMiniAppStreamingCard,
+            displayTextProvider: { part, index in displayText(for: part, at: index) },
+            awaitingSegmentedFirstBlock: awaitingSegmentedFirstBlock,
+            isAssistantContinuation: isAssistantContinuation,
+            showsVariantSwitcher: (variantInfo?.hasMultipleVariants == true) && canBranch,
+            variantSelectedIndex: variantInfo?.selectedIndex ?? 0,
+            variantCount: variantInfo?.variantCount ?? 0,
+            annotationsCount: message.annotations.count,
+            displaySignature: displaySignature,
+            generativeSignature: generativeSignature,
+            reduceMotion: reduceMotion,
+            appLanguage: appLanguage,
+            localeIdentifier: locale.identifier
+        )
+        if shouldInvalidate {
+            ChatTimelineRowLayoutInvalidation.markRowDirty(messageHexID)
+        }
+    }
+
     var body: some View {
+        let messageHexID = message.id.toHexDashString()
+        let isSubAgentResult = ChatMessageProjector.isSubAgentResult(message)
+        let awaitingSegmentedFirstBlock = (!isUser && !isSubAgentResult)
+            ? isAwaitingSegmentedFirstBlock(messageHexID: messageHexID)
+            : false
+        let _ = markOuterRowDirtyIfNeeded(
+            messageHexID: messageHexID,
+            isSubAgentResult: isSubAgentResult,
+            awaitingSegmentedFirstBlock: awaitingSegmentedFirstBlock
+        )
+        #if DEBUG
+        let _ = ChatRenderProbe.record("message", id: messageHexID)
+        #endif
         Group {
-            if ChatMessageProjector.isSubAgentResult(message) {
-                ChatSubAgentResultCard(message: message, displaySetting: displaySetting)
+            if isSubAgentResult {
+                ChatSubAgentResultCard(
+                    sender: IosMailboxMessageBridge.shared.sender(message: message) ?? "subagent",
+                    displayText: message.parts.enumerated().compactMap { index, part in
+                        guard let text = part as? UIMessagePart.Text else { return nil }
+                        return displayText(for: text, at: index)
+                    }.joined(separator: "\n\n"),
+                    displaySetting: displaySetting
+                )
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if isUser {
-                HStack {
-                    Spacer(minLength: 48)
-
-                    VStack(alignment: .trailing, spacing: 4) {
-                        if let sender = IosMailboxMessageBridge.shared.sender(message: message) {
-                            Label(mailboxSourceTitle(sender), systemImage: "arrow.turn.down.right")
-                                .font(.caption)
-                                .foregroundStyle(AmberTheme.muted)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .accessibilityIdentifier("chat.mailbox.source")
-                        }
-                        variantSwitcher
-                        messagePartsWithAnchorHighlight
+                let mailboxSender = IosMailboxMessageBridge.shared.sender(message: message)
+                ChatUserMessageRow {
+                    if let sender = mailboxSender {
+                        Label(mailboxSourceTitle(sender), systemImage: "arrow.turn.down.right")
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("chat.mailbox.source")
                     }
-                    .frame(maxWidth: ChatLayout.userMaxWidth, alignment: .trailing)
+                    variantSwitcher
+                    messagePartsWithAnchorHighlight
+                    if let part = message.parts.compactMap({ $0 as? UIMessagePart.Text }).first,
+                       let receipt = IosToolOutputJsonBridge.shared.metadataString(part: part, key: "chat_followup_state") {
+                        Text(receipt == "queued" ? "已收到 · 待当前步骤结束后生效" :
+                             receipt == "applied" ? "已采纳" : "未生效")
+                            .font(.caption2)
+                            .foregroundStyle(AmberTheme.muted)
+                    }
                 }
+                .chatUserSendEntrance(key: mailboxSender == nil ? "local-user:\(messageHexID)" : nil)
             } else {
+                let animateSegmentedHeader = IOSChatRenderPreferences.shared.isSegmentedReplyDelivery
+                    && isGenerating && isLastMessage && !reduceMotion
                 ChatAssistantStack {
-                    if !isAssistantContinuation || variantInfo?.hasMultipleVariants == true {
+                    if !awaitingSegmentedFirstBlock,
+                       (!isAssistantContinuation || variantInfo?.hasMultipleVariants == true) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             if !isAssistantContinuation {
                                 ChatAgentName()
@@ -118,13 +639,22 @@ struct MessageBubbleView: View {
                                 variantBadge
                             }
                         }
+                        .modifier(ChatSegmentedHeaderEntranceModifier(enabled: animateSegmentedHeader))
                     }
-                    variantSwitcher
-                    fallbackThinkingCard
+                    if !awaitingSegmentedFirstBlock {
+                        variantSwitcher
+                    }
                     messagePartsWithAnchorHighlight
-                    annotationsBlock
+                    if !awaitingSegmentedFirstBlock {
+                        annotationsBlock
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: awaitingSegmentedFirstBlock ? 0 : nil, alignment: .top)
+                .opacity(awaitingSegmentedFirstBlock ? 0 : 1)
+                .clipped()
+                .allowsHitTesting(!awaitingSegmentedFirstBlock)
+                .accessibilityHidden(awaitingSegmentedFirstBlock)
                 .contextMenu { messageActions }
             }
         }
@@ -146,14 +676,12 @@ struct MessageBubbleView: View {
                 dismissButton: .default(Text("好"))
             )
         }
-        // 只注入可判等的值：新建闭包每次都不相等，会让所有代码块与 Markdown 随气泡重算失效。
-        .environment(\.chatArtifactMessageID, artifactPinAction == nil ? nil : ChatMessageProjector.messageId(for: message))
-        // vendor 默认「复制」只有文字可点；Amber 显式放大到整组图标+文字、约 44pt 高（不改布局）。
+        .environment(\.markdownLayoutInvalidationID, messageHexID)
+        .environment(\.chatArtifactMessageID, hasArtifactPinAction ? ChatMessageProjector.messageId(for: message) : nil)
         .environment(\.swiftStreamingMarkdownCodeCopyHitOutset, 13)
-        // 流式 block 渲染路径的代码块头部同样放“收进产物架”，与 AmberMarkdownView 一致。
         .environment(
             \.swiftStreamingMarkdownCodeBlockHeaderAccessory,
-            artifactPinAction == nil ? nil : ChatCodeBlockHeaderAccessory.streamingHeaderProvider
+            hasArtifactPinAction ? ChatCodeBlockHeaderAccessory.streamingHeaderProvider : nil
         )
     }
 
@@ -300,7 +828,7 @@ struct MessageBubbleView: View {
             }
         }
         Button {
-            UIPasteboard.general.string = message.toText()
+            UIPasteboard.general.string = MessageBubbleView.copyText(for: message)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         } label: {
             Label("复制", systemImage: "doc.on.doc")
@@ -357,18 +885,8 @@ struct MessageBubbleView: View {
     @ViewBuilder
     private var messageParts: some View {
         Group {
-            if let group = phoneToolGroup {
-                // Phone-step group head: the header always comes first; the head's own
-                // steps (and reasoning) render only when expanded, nested under it.
-                VStack(alignment: .leading, spacing: ChatLayout.assistantPartSpacing) {
-                    ChatPhoneToolGroupHeader(summary: group)
-                        .id(group.anchorID)
-                    if group.isExpanded {
-                        messagePartRows
-                            .padding(.leading, ChatPhoneToolGroupHeader.expandedStepIndent)
-                            .transition(.opacity)
-                    }
-                }
+            if !isUser {
+                assistantTaskGroupedRows
             } else {
                 messagePartRows
             }
@@ -385,6 +903,241 @@ struct MessageBubbleView: View {
         }
     }
 
+    private func displayText(for part: UIMessagePart.Text, at index: Int) -> String {
+        if let projected = displayTexts[index] { return projected }
+        // Preview/unprojected callers may render ordinary prose, but never decode or expose an envelope.
+        let text = IosMailboxMessageBridge.shared.displayText(part: part)
+        if IOSSubAgentOutputProjection.isKnownSubAgentResultEnvelope(text)
+            || IosToolOutputJsonBridge.shared.metadataString(part: part, key: "kind") == "FINAL_ANSWER" {
+            return ""
+        }
+        return text
+    }
+
+    @ViewBuilder
+    private var assistantTaskGroupedRows: some View {
+        let messageID = ChatMessageProjector.messageId(for: message)
+        let currentTools = message.parts.compactMap { $0 as? UIMessagePart.Tool } +
+            (assistantTurn?.progress?.tools ?? [])
+        let _ = taskStepCache.prepare(
+            tools: currentTools,
+            languageKey: "\(appLanguage)|\(locale.identifier)"
+        )
+        let segments = ChatTaskStreamGrouping.segments(
+            for: message,
+            messageID: messageID,
+            isGeneratingTail: isGenerating && isLastMessage,
+            stepCache: taskStepCache,
+            usesTurnProgress: true
+        )
+        ForEach(segments) { segment in
+            switch segment {
+            case .text(_, let partIndex, let textPart):
+                if Self.shouldRenderMiniAppStreamingCard(
+                    textPart.text,
+                    isLiveStream: isGenerating && isLastMessage
+                ) {
+                    ChatMiniAppStreamingCard(
+                        text: textPart.text,
+                        isGenerating: true
+                    )
+                    .transition(.opacity)
+                } else {
+                    // 逐字平滑吐字：上游 delta 成块到达，直接整块上屏会一次撑高多行，
+                    // 观感是「黑框先跳、文字后亮」。按帧小步推进让折行自然逐行上推。
+                    let messageHexID = message.id.toHexDashString()
+                    let isSourceComplete = IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: IOSIntelligentUITerminal.completedKey) == "completed"
+                    let sanitizedText = displayText(for: textPart, at: partIndex)
+                    ChatStreamingGraphBoundary(
+                        isStreaming: isGenerating && isLastMessage,
+                        messageID: messageHexID,
+                        contentSignature: streamingBoundarySignature(
+                            text: sanitizedText,
+                            partIndex: partIndex,
+                            nonEmptyTextPartCount: nonEmptyTextPartCount,
+                            isSourceMessageComplete: isSourceComplete
+                        )
+                    ) {
+                        ChatStreamingRevealPacer(
+                            text: sanitizedText,
+                            isStreaming: isGenerating && isLastMessage,
+                            reduceMotion: reduceMotion,
+                            liveRenderingEnabled: liveMarkdownRenderingEnabled,
+                            completionFeedback: completionFeedback,
+                            messageID: messageHexID,
+                            textPartIndex: partIndex
+                        ) { revealedText, isPacingReveal in
+                            ChatAssistantText {
+                                ChatAssistantMarkdownView(
+                                    markdown: revealedText,
+                                    renderCacheNamespace: "\(message.id):text:\(partIndex)",
+                                    displaySetting: displaySetting,
+                                    generativeUiSetting: generativeUiSetting,
+                                    isStreaming: (isGenerating && isLastMessage) || isPacingReveal,
+                                    hasEverStreamed: hasEverStreamed,
+                                    liveRenderingEnabled: liveMarkdownRenderingEnabled,
+                                    frozenMarkdownSnapshot: nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil,
+                                    onGenerativeWidgetAction: onGenerativeWidgetAction,
+                                    isSourceMessageComplete: isSourceComplete,
+                                    sourceMessageID: messageHexID,
+                                    sourceTextPartIndex: partIndex
+                                )
+                            }
+                        }
+                    }
+                    // 流式正文不做整块透明度淡入：上游 delta 是成块到达的，逐块淡入会
+                    // 让气泡先撑高、文字以暗灰鬼影过半秒才浮现（黑框先跳、字后亮）。
+                    // 只有「该消息首段正文」保留一次入场，其余一律实色立即可读。
+                    .chatLiveEntrance(
+                        key: "\(message.id):text:\(partIndex)",
+                        isLive: isLiveTail && nonEmptyTextPartCount == 1 && !IOSChatRenderPreferences.shared.isSegmentedReplyDelivery
+                    )
+                }
+            case .taskGroup(let taskSegment):
+                toolSegmentMediaViews(
+                    tools: taskSegment.mediaBearingTools,
+                    segmentID: taskSegment.id,
+                    isFirstMediaSegment: segments.firstIndex(where: {
+                        switch $0 {
+                        case .taskGroup(let s): !s.mediaBearingTools.isEmpty
+                        case .groupedTools(_, let tools): !tools.isEmpty
+                        default: false
+                        }
+                    }).map { segments[$0].id == segment.id } ?? false
+                )
+            case .groupedTools(let segID, let mediaBearingTools):
+                toolSegmentMediaViews(
+                    tools: mediaBearingTools,
+                    segmentID: segID,
+                    isFirstMediaSegment: segments.firstIndex(where: {
+                        switch $0 {
+                        case .taskGroup(let s): !s.mediaBearingTools.isEmpty
+                        case .groupedTools(_, let tools): !tools.isEmpty
+                        default: false
+                        }
+                    }).map { segments[$0].id == segment.id } ?? false
+                )
+            case .imageGallery(_, let startIndex, let images):
+                ChatMediaGallery(items: images.enumerated().map { offset, image in
+                    .image(image, id: "\(message.id):image:\(startIndex + offset)")
+                }, compact: false)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            case .video(_, let partIndex, let video):
+                ChatVideoCard(video: ChatVideoDescriptor(part: video, id: "\(message.id):video:\(partIndex)"))
+            case .miniApp(_, _, let miniApp):
+                IOSMiniAppChatCard(
+                    part: miniApp,
+                    onRun: { onOpenMiniApp(miniApp.appId) },
+                    onOpenList: onOpenMiniApps,
+                    onModify: { prompt in
+                        guard messageEditingAllowed && !isChatGenerationActive else { return false }
+                        onGenerativeWidgetAction(prompt)
+                        return true
+                    }
+                )
+            }
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: message.parts.map(Self.partAnimationKey).joined(separator: "|"))
+    }
+
+    @ViewBuilder
+    private func toolSegmentMediaViews(
+        tools: [UIMessagePart.Tool],
+        segmentID: String,
+        isFirstMediaSegment: Bool
+    ) -> some View {
+        let messageID = ChatMessageProjector.messageId(for: message)
+        let nonAutomationTools = tools.filter {
+            !ChatAutomationScreenshotGrouping.isAutomationScreenshotTool($0, allowDiskLookup: false)
+        }
+        if let batch = automationScreenshotGroup {
+            if isFirstMediaSegment {
+                ChatAutomationScreenshotAlbumView(
+                    items: batch.items,
+                    toggleID: batch.toggleID,
+                    controlledExpanded: batch.isExpanded
+                )
+            }
+        } else {
+            let inlineShots = tools.flatMap {
+                ChatAutomationScreenshotGrouping.screenshotItems(for: $0, messageID: messageID, allowDiskLookup: false)
+            }
+            if !inlineShots.isEmpty {
+                ChatAutomationScreenshotAlbumView(
+                    items: inlineShots,
+                    toggleID: "automation-shots-\(messageID)-\(segmentID)"
+                )
+            }
+        }
+        ForEach(nonAutomationTools, id: \.toolCallId) { tool in
+            toolMediaView(for: tool)
+        }
+    }
+
+    @ViewBuilder
+    private func toolMediaView(for tool: UIMessagePart.Tool) -> some View {
+        if tool.toolName != "generate_image" {
+            ChatToolMediaGallery(tool: tool).equatable()
+            ForEach(Array(tool.output.enumerated()), id: \.offset) { index, output in
+                if let video = output as? UIMessagePart.Video {
+                    ChatVideoCard(video: ChatVideoDescriptor(part: video, id: "\(tool.toolCallId):video:\(index)"))
+                }
+            }
+        } else {
+            let images = tool.output.compactMap { $0 as? UIMessagePart.Image }
+            if !images.isEmpty {
+                ChatGeneratedImageGrid(
+                    images: images,
+                    toolCallID: tool.toolCallId,
+                    toolInput: tool.input,
+                    onModify: onModifyGeneratedImage,
+                    allowsModify: !isChatGenerationActive
+                )
+                .id(ChatImageGenerationAnchorTarget.id(
+                    messageID: ChatMessageProjector.messageId(for: message),
+                    toolCallID: tool.toolCallId
+                ))
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("图片已生成")
+                .accessibilityFocused($focusedGeneratedImageToolCallID, equals: tool.toolCallId)
+                .transition(.opacity)
+            } else if tool.output.isEmpty {
+                ChatGeneratedImageLoadingPlaceholder(
+                    toolInput: tool.input,
+                    isAnimating: isGenerating && isLastMessage,
+                    toolCallID: tool.toolCallId
+                )
+                .id(ChatImageGenerationAnchorTarget.id(
+                    messageID: ChatMessageProjector.messageId(for: message),
+                    toolCallID: tool.toolCallId
+                ))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("正在生成图片")
+                .accessibilityFocused($focusedGeneratedImageToolCallID, equals: tool.toolCallId)
+                .transition(.opacity)
+            } else {
+                ChatGeneratedImageFailureCard(
+                    reason: ChatToolOutputFormatter.imageFailureReason(from: tool.output)
+                        ?? "图片生成工具没有返回图片。",
+                    toolCallID: tool.toolCallId
+                )
+                .id(ChatImageGenerationAnchorTarget.id(
+                    messageID: ChatMessageProjector.messageId(for: message),
+                    toolCallID: tool.toolCallId
+                ))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    "图片生成失败：" + (
+                        ChatToolOutputFormatter.imageFailureReason(from: tool.output)
+                            ?? "图片生成工具没有返回图片。"
+                    )
+                )
+                .accessibilityFocused($focusedGeneratedImageToolCallID, equals: tool.toolCallId)
+                .transition(.opacity)
+            }
+        }
+    }
+
     @ViewBuilder
     private var messagePartRows: some View {
         ForEach(Array(message.parts.enumerated()), id: \.offset) { partIndex, part in
@@ -394,7 +1147,7 @@ struct MessageBubbleView: View {
                     // 再用 .contentShape(.contextMenuPreview, 气泡圆角) 把平台裁成气泡形状,消除灰角。
                     ChatUserBubble(
                         text: GenerativeUiPlanner.shared.stripVisualRouteTagsForDisplay(
-                            text: IosMailboxMessageBridge.shared.displayText(part: textPart)
+                            text: displayText(for: textPart, at: partIndex)
                         )
                     )
                         .contentShape(
@@ -414,37 +1167,58 @@ struct MessageBubbleView: View {
                     )
                     .transition(.opacity)
                 } else {
-                    ChatAssistantText {
-                        ChatAssistantMarkdownView(
-                            markdown: textPart.text,
-                            renderCacheNamespace: "\(message.id):text:\(partIndex)",
-                            displaySetting: displaySetting,
-                            generativeUiSetting: generativeUiSetting,
-                            isStreaming: isGenerating && isLastMessage,
-                            hasEverStreamed: hasEverStreamed,
-                            liveRenderingEnabled: liveMarkdownRenderingEnabled,
-                            frozenMarkdownSnapshot: nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil,
-                            onGenerativeWidgetAction: onGenerativeWidgetAction,
-                            isSourceMessageComplete: IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: IOSIntelligentUITerminal.completedKey) == "completed",
-                            sourceMessageID: message.id.toHexDashString(),
-                            sourceTextPartIndex: partIndex
+                    // 逐字平滑吐字：上游 delta 成块到达，直接整块上屏会一次撑高多行，
+                    // 观感是「黑框先跳、文字后亮」。按帧小步推进让折行自然逐行上推。
+                    let messageHexID = message.id.toHexDashString()
+                    let isSourceComplete = IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: IOSIntelligentUITerminal.completedKey) == "completed"
+                    let sanitizedText = displayText(for: textPart, at: partIndex)
+                    ChatStreamingGraphBoundary(
+                        isStreaming: isGenerating && isLastMessage,
+                        messageID: messageHexID,
+                        contentSignature: streamingBoundarySignature(
+                            text: sanitizedText,
+                            partIndex: partIndex,
+                            nonEmptyTextPartCount: nonEmptyTextPartCount,
+                            isSourceMessageComplete: isSourceComplete
                         )
+                    ) {
+                        ChatStreamingRevealPacer(
+                            text: sanitizedText,
+                            isStreaming: isGenerating && isLastMessage,
+                            reduceMotion: reduceMotion,
+                            liveRenderingEnabled: liveMarkdownRenderingEnabled,
+                            completionFeedback: completionFeedback,
+                            messageID: messageHexID,
+                            textPartIndex: partIndex
+                        ) { revealedText, isPacingReveal in
+                            ChatAssistantText {
+                                ChatAssistantMarkdownView(
+                                    markdown: revealedText,
+                                    renderCacheNamespace: "\(message.id):text:\(partIndex)",
+                                    displaySetting: displaySetting,
+                                    generativeUiSetting: generativeUiSetting,
+                                    isStreaming: (isGenerating && isLastMessage) || isPacingReveal,
+                                    hasEverStreamed: hasEverStreamed,
+                                    liveRenderingEnabled: liveMarkdownRenderingEnabled,
+                                    frozenMarkdownSnapshot: nonEmptyTextPartCount == 1 ? frozenMarkdownSnapshot : nil,
+                                    onGenerativeWidgetAction: onGenerativeWidgetAction,
+                                    isSourceMessageComplete: isSourceComplete,
+                                    sourceMessageID: messageHexID,
+                                    sourceTextPartIndex: partIndex
+                                )
+                            }
+                        }
                     }
-                    .chatLiveEntrance(key: "\(message.id):text:\(partIndex)", isLive: isLiveTail)
-                }
-            } else if let reasoning = part as? UIMessagePart.Reasoning {
-                if Self.shouldRenderReasoningCard(reasoning) {
-                    ChatReasoningCard(
-                        bodyText: reasoning.reasoning,
-                        isThinking: reasoning.finishedAt == nil && isGenerating && isLastMessage,
-                        startedAt: Self.instantToDate(reasoning.createdAt),
-                        finishedSeconds: Self.reasoningDurationSeconds(reasoning),
-                        levelLabel: reasoningLevelLabel,
-                        autoCloseThinking: displaySetting?.autoCloseThinking ?? true,
-                        autoExpandThinking: autoExpandThinking
+                    // 流式正文不做整块透明度淡入：上游 delta 是成块到达的，逐块淡入会
+                    // 让气泡先撑高、文字以暗灰鬼影过半秒才浮现（黑框先跳、字后亮）。
+                    // 只有「该消息首段正文」保留一次入场，其余一律实色立即可读。
+                    .chatLiveEntrance(
+                        key: "\(message.id):text:\(partIndex)",
+                        isLive: isLiveTail && nonEmptyTextPartCount == 1 && !IOSChatRenderPreferences.shared.isSegmentedReplyDelivery
                     )
-                    .chatLiveEntrance(key: reasoningEntranceKey(partIndex: partIndex), isLive: isLiveTail)
                 }
+            } else if part is UIMessagePart.Reasoning {
+                EmptyView()
             } else if part is UIMessagePart.Image {
                 if partIndex == 0 || !(message.parts[partIndex - 1] is UIMessagePart.Image) {
                     let images = message.parts[partIndex...].prefix { $0 is UIMessagePart.Image }
@@ -571,21 +1345,6 @@ struct MessageBubbleView: View {
                 reduceMotion ? nil : .easeOut(duration: 0.18),
                 value: chatMessageAnchorHighlighted
             )
-    }
-
-    @ViewBuilder
-    private var fallbackThinkingCard: some View {
-        if !isUser, isGenerating, isLastMessage, !hasVisibleAssistantContent {
-            ChatReasoningCard(
-                bodyText: "",
-                isThinking: true,
-                levelLabel: reasoningLevelLabel,
-                autoCloseThinking: displaySetting?.autoCloseThinking ?? true,
-                autoExpandThinking: autoExpandThinking
-            )
-            .transition(.opacity)
-            .chatLiveEntrance(key: thinkingEntranceKey, isLive: true)
-        }
     }
 
     private var isLiveTail: Bool { isGenerating && isLastMessage }
@@ -736,6 +1495,24 @@ private enum WorkspaceSaveAlert: Identifiable {
         case .failed(let message):
             message
         }
+    }
+}
+
+private struct ChatSegmentedHeaderEntranceModifier: ViewModifier {
+    let enabled: Bool
+    @State private var appeared = false
+
+    func body(content: Content) -> some View {
+        let settled = !enabled || appeared
+        content
+            .opacity(settled ? 1 : 0)
+            .offset(y: settled ? 0 : 6)
+            .onAppear {
+                guard enabled, !appeared else { return }
+                withAnimation(.easeOut(duration: 0.18)) {
+                    appeared = true
+                }
+            }
     }
 }
 

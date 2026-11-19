@@ -7,7 +7,10 @@ import Shared
 
 /// Keep environment identity stable while the timeline refreshes its callback.
 @MainActor
-final class ChatPhoneToolGroupToggleHandler {
+final class ChatPhoneToolGroupToggleHandler: Equatable {
+    nonisolated static func == (lhs: ChatPhoneToolGroupToggleHandler, rhs: ChatPhoneToolGroupToggleHandler) -> Bool {
+        lhs === rhs
+    }
     var action: (@MainActor (String) -> Void)?
 
     func callAsFunction(_ groupID: String) {
@@ -296,5 +299,227 @@ struct ChatPhoneToolGroupHeader: View {
                     .foregroundStyle(AmberTheme.accentRed)
             }
         }
+    }
+}
+
+// MARK: - Compact & Expandable Automation Process Screenshot Album
+
+struct ChatAutomationScreenshotAlbumView: View {
+    let items: [ChatMediaItem]
+    let toggleID: String
+    var controlledExpanded: Bool? = nil
+
+    @Environment(\.chatPhoneToolGroupToggle) private var toggleHandler
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var localExpanded = false
+    @State private var previewSelection: ChatMediaItem?
+
+    private var isExpanded: Bool {
+        if toggleHandler != nil, let controlledExpanded {
+            return controlledExpanded
+        }
+        return controlledExpanded ?? localExpanded
+    }
+
+    private func toggleExpansion() {
+        if let toggleHandler, controlledExpanded != nil {
+            toggleHandler(toggleID)
+        } else {
+            withAnimation(reduceMotion ? nil : ChatPhoneToolGroupHeader.expansionAnimation) {
+                localExpanded.toggle()
+            }
+        }
+    }
+
+    static func titleText(count: Int) -> String {
+        IOSAppLocalization.formatted(
+            "过程截图 · %ld 张",
+            defaultValue: "过程截图 · %ld 张",
+            arguments: [count]
+        )
+    }
+
+    static func sourceSummary(items: [ChatMediaItem]) -> String {
+        var distinct: [String] = []
+        for item in items {
+            let trimmed = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, !distinct.contains(trimmed) {
+                distinct.append(trimmed)
+            }
+        }
+        if distinct.isEmpty { return "" }
+        if distinct.count <= 2 { return distinct.joined(separator: " · ") }
+        return "\(distinct[0]) · \(distinct[1]) 等"
+    }
+
+    static func accessibilitySummaryLabel(items: [ChatMediaItem], isExpanded: Bool) -> String {
+        [titleText(count: items.count), sourceSummary(items: items), isExpanded ? "已展开" : "已收起"]
+            .filter { !$0.isEmpty }
+            .joined(separator: "，")
+    }
+
+    private var sourceSummaryText: String {
+        Self.sourceSummary(items: items)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: isExpanded ? 10 : 0) {
+            Button(action: toggleExpansion) {
+                headerContent
+            }
+            .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.985, haptic: .selection))
+            .frame(minHeight: 48, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Self.accessibilitySummaryLabel(items: items, isExpanded: isExpanded))
+            .accessibilityHint(isExpanded ? "轻点收起过程截图相册" : "轻点展开逐张查看过程截图与来源")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityIdentifier("chat.automationScreenshotAlbum.header")
+
+            if isExpanded {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 10) {
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                            expandedTile(item: item, index: index)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 10)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .background(AmberTheme.surface2.opacity(0.65), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(AmberTheme.border.opacity(0.75), lineWidth: 0.8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fullScreenCover(item: $previewSelection) { item in
+            ChatMediaGalleryPreview(items: items, initialID: item.id)
+        }
+    }
+
+    @ViewBuilder
+    private var headerContent: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    thumbnailStack
+                    Text(Self.titleText(count: items.count))
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(AmberTheme.foreground2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    chevronView
+                }
+                if !sourceSummaryText.isEmpty {
+                    Text(sourceSummaryText)
+                        .font(.caption2)
+                        .foregroundStyle(AmberTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        } else {
+            HStack(spacing: 10) {
+                thumbnailStack
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(Self.titleText(count: items.count))
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(AmberTheme.foreground2)
+                        .lineLimit(1)
+                    if !sourceSummaryText.isEmpty {
+                        Text(sourceSummaryText)
+                            .font(.caption2)
+                            .foregroundStyle(AmberTheme.muted)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 4)
+                Text(isExpanded ? "收起" : "展开")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(AmberTheme.muted)
+                    .lineLimit(1)
+                chevronView
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+    }
+
+    private var thumbnailStack: some View {
+        let previews = Array(items.prefix(3))
+        return HStack(spacing: -8) {
+            ForEach(Array(previews.enumerated()), id: \.element.id) { idx, item in
+                ChatMediaImage(url: item.url, contentMode: .fill, pixelLimit: 200, showsStatus: false)
+                    .frame(width: 26, height: 36)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(AmberTheme.surface, lineWidth: 1.2)
+                    }
+                    .zIndex(Double(previews.count - idx))
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private var chevronView: some View {
+        Image(systemName: "chevron.down")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(AmberTheme.muted)
+            .rotationEffect(.degrees(isExpanded ? -180 : 0))
+            .animation(reduceMotion ? nil : ChatPhoneToolGroupHeader.expansionAnimation, value: isExpanded)
+    }
+
+    private func expandedTile(item: ChatMediaItem, index: Int) -> some View {
+        let sourceURL = item.sourceURL.flatMap(ChatMediaURL.external)
+        let sourceHost = sourceURL?.host ?? "来源"
+        let displayTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return VStack(alignment: .leading, spacing: 5) {
+            ZStack(alignment: .topLeading) {
+                ChatMediaImage(url: item.url, contentMode: .fit, pixelLimit: 900)
+                    .frame(width: 144, height: 204)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Text("\(index + 1)/\(items.count)")
+                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.black.opacity(0.58), in: Capsule(style: .continuous))
+                    .padding(6)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { previewSelection = item }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(displayTitle.isEmpty ? "第 \(index + 1) 张过程截图" : displayTitle)
+            .accessibilityHint("轻点全屏逐张查看")
+            .accessibilityAddTraits(.isButton)
+
+            if !displayTitle.isEmpty {
+                Text(displayTitle)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(AmberTheme.foreground2)
+                    .lineLimit(1)
+                    .accessibilityLabel(displayTitle)
+            }
+            if let sourceURL {
+                Link(destination: sourceURL) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(sourceHost)
+                            .lineLimit(1)
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(AmberTheme.accent)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("查看来源 \(sourceHost)")
+            }
+        }
+        .frame(width: 144, alignment: .leading)
     }
 }

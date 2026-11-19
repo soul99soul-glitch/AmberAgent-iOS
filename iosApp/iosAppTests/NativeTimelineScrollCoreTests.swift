@@ -1,9 +1,103 @@
 import CoreGraphics
+import SwiftUI
 import UIKit
 import XCTest
 @testable import iosApp
 
 final class NativeTimelineScrollCoreTests: XCTestCase {
+    @MainActor
+    private final class ResolverState: ObservableObject {
+        @Published var canAttach: Bool
+        @Published var revision = 0
+        let driver = NativeTimelineScrollDriver()
+        var resolutionCount = 0
+
+        init(canAttach: Bool) {
+            self.canAttach = canAttach
+        }
+    }
+
+    private struct ResolverFixture: View {
+        @ObservedObject var state: ResolverState
+
+        var body: some View {
+            let canAttach = state.canAttach
+            let _ = state.revision
+            ScrollView {
+                Color.clear.frame(height: 1_200)
+                    .background {
+                        NativeTimelineScrollViewResolver(
+                            onResolve: { scrollView in
+                                state.resolutionCount += 1
+                                guard canAttach else { return }
+                                state.driver.attach(scrollView)
+                            },
+                            onMetricsChanged: {}
+                        )
+                    }
+            }
+        }
+    }
+
+    @MainActor
+    func testResolverAttachesWhenSurfaceBecomesVisibleAfterResolution() async throws {
+        let state = ResolverState(canAttach: false)
+        try await withResolvedScrollView(state: state) { host in
+            XCTAssertGreaterThan(state.resolutionCount, 0)
+            XCTAssertFalse(state.driver.isAttached)
+
+            state.canAttach = true
+            await settleResolver(host)
+
+            XCTAssertTrue(state.driver.isAttached, "已解析视图后仍须用最新可见状态挂载 driver")
+        }
+    }
+
+    @MainActor
+    func testResolverReattachesAfterDriverInvalidation() async throws {
+        let state = ResolverState(canAttach: true)
+        try await withResolvedScrollView(state: state) { host in
+            XCTAssertTrue(state.driver.isAttached)
+            state.driver.invalidate()
+            XCTAssertFalse(state.driver.isAttached)
+
+            state.revision += 1
+            await settleResolver(host)
+
+            XCTAssertTrue(state.driver.isAttached, "保留 UIKit 视图时 driver 失效后必须可以重新挂载")
+        }
+    }
+
+    @MainActor
+    private func withResolvedScrollView(
+        state: ResolverState,
+        body: (UIHostingController<ResolverFixture>) async -> Void
+    ) async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let host = UIHostingController(rootView: ResolverFixture(state: state))
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            state.driver.invalidate()
+            window.isHidden = true
+            window.rootViewController = nil
+            previousKeyWindow?.makeKey()
+        }
+        await settleResolver(host)
+        await body(host)
+    }
+
+    @MainActor
+    private func settleResolver(_ host: UIHostingController<ResolverFixture>) async {
+        for _ in 0..<6 {
+            try? await Task.sleep(for: .milliseconds(16))
+            host.view.layoutIfNeeded()
+        }
+    }
+
     private final class InteractionReportingScrollView: UIScrollView {
         var reportsTracking = false
         var reportsDragging = false
@@ -604,11 +698,28 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
         XCTAssertEqual(scrollView.contentOffset, .zero)
     }
 
-    func testComposerFocusOverridesHistoryPauseAndRequestsBottomImmediately() {
+    func testComposerFocusPreservesHistoryPauseAndDoesNotPullToBottom() {
         let result = NativeTimelineScrollCore.reduce(
             state: .pausedForUser,
             intent: .explicitBottom(source: .composerFocus, animated: false, keyboardToken: 7),
             geometry: geometry(offsetY: 120, distanceToBottom: 600),
+            now: 10
+        )
+
+        XCTAssertEqual(result.state, .pausedForUser)
+        XCTAssertEqual(result.actions, [])
+    }
+
+    func testComposerFocusWhenFollowingBottomRequestsBottomImmediately() {
+        let following = NativeTimelineScrollState.followingBottom(
+            virtualOffset: 520,
+            target: 520,
+            lastFollowRequestAt: 8
+        )
+        let result = NativeTimelineScrollCore.reduce(
+            state: following,
+            intent: .explicitBottom(source: .composerFocus, animated: false, keyboardToken: 7),
+            geometry: geometry(offsetY: 520, distanceToBottom: 0),
             now: 10
         )
 
@@ -618,11 +729,11 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
         )
         XCTAssertEqual(
             result.actions,
-            [.requestBottomAnchor(animated: false, source: .composerFocus)]
+            [.stopFrameDriver, .requestBottomAnchor(animated: false, source: .composerFocus)]
         )
     }
 
-    func testComposerFocusOverridesActiveUserInteraction() {
+    func testComposerFocusDoesNotOverrideActiveUserInteraction() {
         let result = NativeTimelineScrollCore.reduce(
             state: .pausedForUser,
             intent: .explicitBottom(source: .composerFocus, animated: false, keyboardToken: 9),
@@ -630,14 +741,8 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             now: 10
         )
 
-        XCTAssertEqual(
-            result.state,
-            .keyboardFocus(NativeTimelineKeyboardFocusTransaction(token: 9, stableFrames: 0))
-        )
-        XCTAssertEqual(
-            result.actions,
-            [.requestBottomAnchor(animated: false, source: .composerFocus)]
-        )
+        XCTAssertEqual(result.state, .pausedForUser)
+        XCTAssertEqual(result.actions, [])
     }
 
     func testButtonBottomOverridesActiveUserInteraction() {
@@ -723,7 +828,7 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
         XCTAssertEqual(result.actions, [])
     }
 
-    func testStreamGrowthAtBottomStartsFollowingDriverFromIdle() {
+    func testStreamGrowthAtBottomDefersPinningToLayoutAnchorFromIdle() {
         let result = NativeTimelineScrollCore.reduce(
             state: .idle,
             intent: .streamContentGrew(),
@@ -731,14 +836,16 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             now: 2
         )
 
+        // 流式增长直接钉底：虚拟偏移与目标同为底部，不保留落后于内容的旧偏移。
         XCTAssertEqual(
             result.state,
             .followingBottom(virtualOffset: 520, target: 520, lastFollowRequestAt: 2)
         )
-        XCTAssertEqual(result.actions, [.startFrameDriver])
+        // 流式贴底交给 SwiftUI 布局阶段的 .sizeChanges 锚点；driver 不写 offset，避免双机制争夺。
+        XCTAssertEqual(result.actions, [])
     }
 
-    func testStreamGrowthNearBottomStartsFollowingDriverFromIdle() {
+    func testStreamGrowthNearBottomDefersPinningToLayoutAnchorFromIdle() {
         let result = NativeTimelineScrollCore.reduce(
             state: .idle,
             intent: .streamContentGrew(),
@@ -746,11 +853,13 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             now: 2
         )
 
+        // 近底接管同样一步贴到底目标，不再用弹簧逐帧追一段。
         XCTAssertEqual(
             result.state,
-            .followingBottom(virtualOffset: 500, target: 520, lastFollowRequestAt: 2)
+            .followingBottom(virtualOffset: 520, target: 520, lastFollowRequestAt: 2)
         )
-        XCTAssertEqual(result.actions, [.startFrameDriver])
+        // 流式贴底交给 SwiftUI 布局阶段的 .sizeChanges 锚点；driver 不写 offset，避免双机制争夺。
+        XCTAssertEqual(result.actions, [])
     }
 
     func testRepeatedStreamGrowthClampsTargetMonotonically() {
@@ -766,9 +875,10 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             geometry: geometry(offsetY: 500, contentHeight: 1_000),
             now: 2
         )
+        // 目标不允许回退（保持单调）；而虚拟偏移会就地贴上当前底目标。
         XCTAssertEqual(
             dipped.state,
-            .followingBottom(virtualOffset: 500, target: 700, lastFollowRequestAt: 2)
+            .followingBottom(virtualOffset: 700, target: 700, lastFollowRequestAt: 2)
         )
 
         let grown = NativeTimelineScrollCore.reduce(
@@ -779,7 +889,7 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
         )
         XCTAssertEqual(
             grown.state,
-            .followingBottom(virtualOffset: 500, target: 920, lastFollowRequestAt: 3)
+            .followingBottom(virtualOffset: 920, target: 920, lastFollowRequestAt: 3)
         )
     }
 
@@ -999,7 +1109,7 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
         XCTAssertEqual(result.actions, [.writeOffsetY(520), .stopFrameDriver])
     }
 
-    func testStreamGrowthRestartsFrameDriverAfterSettledFollowingStopped() {
+    func testStreamGrowthDefersPinningAfterSettledFollowingStopped() {
         let following = NativeTimelineScrollState.followingBottom(
             virtualOffset: 520,
             target: 520,
@@ -1013,16 +1123,18 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             now: 3
         )
 
+        // 帧驱动已停后再次流式：直接钉到新的底部目标，不再重启弹簧追随。
         XCTAssertEqual(
             result.state,
-            .followingBottom(virtualOffset: 520, target: 680, lastFollowRequestAt: 3)
+            .followingBottom(virtualOffset: 680, target: 680, lastFollowRequestAt: 3)
         )
-        XCTAssertEqual(result.actions, [.startFrameDriver])
+        // 流式贴底交给 SwiftUI 布局阶段的 .sizeChanges 锚点；driver 不写 offset，避免双机制争夺。
+        XCTAssertEqual(result.actions, [])
     }
 
     // MARK: - 终态排空滞后允许度（lagAllowance）
 
-    /// 流式拍携带的 allowance 进入跟随状态，供 tick 连续收紧时间常数。
+    /// 流式拍携带的 allowance 仍进入跟随状态，但偏移已与底目标对齐。
     func testStreamGrowthCarriesLagAllowanceIntoFollowingState() {
         let following = NativeTimelineScrollState.followingBottom(
             virtualOffset: 500,
@@ -1039,7 +1151,7 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
 
         XCTAssertEqual(
             result.state,
-            .followingBottom(virtualOffset: 500, target: 920, lastFollowRequestAt: 2, lagAllowance: 0.25)
+            .followingBottom(virtualOffset: 920, target: 920, lastFollowRequestAt: 2, lagAllowance: 0.25)
         )
     }
 
@@ -1252,6 +1364,128 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             releaseVelocityY: -400,
             distanceToBottom: 30
         ), "近底轻甩预测过冲，直接接管"
+        )
+    }
+
+    @MainActor
+    func testKeyboardViewportShrinkSynchronizesBottomWhenAtBottomAndPreservesHistoryWhenPaused() {
+        let driver = NativeTimelineScrollDriver()
+        let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
+        scrollView.contentSize = CGSize(width: 390, height: 1_600)
+        scrollView.contentOffset = CGPoint(x: 0, y: 800)
+        driver.attach(scrollView)
+
+        // 1) 在底部时键盘弹起（可用高度 800 -> 464）：同步跟到底部新目标 1136。
+        driver.handleKeyboardWillChangeFrame(duration: 0.25, curveRaw: 7)
+        scrollView.frame = CGRect(x: 0, y: 0, width: 390, height: 464)
+        driver.handleLayoutMetricsChanged()
+        XCTAssertEqual(scrollView.contentOffset.y, 1_136, accuracy: 0.5)
+
+        // 2) 在底部时键盘收起（可用高度 464 -> 800）：同步回锚到 800。
+        driver.handleKeyboardWillChangeFrame(duration: 0.25, curveRaw: 7)
+        scrollView.frame = CGRect(x: 0, y: 0, width: 390, height: 800)
+        driver.handleLayoutMetricsChanged()
+        XCTAssertEqual(scrollView.contentOffset.y, 800, accuracy: 0.5)
+
+        // 3) 用户上滑浏览历史后（pausedForUser, offsetY = 240）：键盘弹起不得拉回底部。
+        driver.submit(.userDragBegan)
+        scrollView.contentOffset = CGPoint(x: 0, y: 240)
+        driver.submit(.userDragEnded(isAtBottom: false))
+        driver.handleKeyboardWillChangeFrame(duration: 0.25, curveRaw: 7)
+        scrollView.frame = CGRect(x: 0, y: 0, width: 390, height: 464)
+        driver.handleLayoutMetricsChanged()
+        XCTAssertEqual(scrollView.contentOffset.y, 240, accuracy: 0.5)
+    }
+
+    @MainActor
+    func testTapDismissPolicyAllowsPlainTextAndBlankAreaWhilePreservingLinksControlsAndSelection() {
+        let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
+        let contentView = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
+        scrollView.addSubview(contentView)
+
+        let button = UIButton(frame: CGRect(x: 16, y: 16, width: 100, height: 44))
+        contentView.addSubview(button)
+
+        let textView = UITextView(frame: CGRect(x: 16, y: 80, width: 320, height: 120))
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = false
+        let attributed = NSMutableAttributedString(string: "普通正文段落 ")
+        let linkStart = attributed.length
+        attributed.append(NSAttributedString(
+            string: "https://example.com",
+            attributes: [.link: URL(string: "https://example.com")!]
+        ))
+        let linkRange = NSRange(location: linkStart, length: attributed.length - linkStart)
+        textView.attributedText = attributed
+        textView.layoutIfNeeded()
+        contentView.addSubview(textView)
+
+        // 空白区域点击 -> 允许收起键盘
+        XCTAssertTrue(
+            NativeTimelineTapDismissPolicy.shouldAllowTapToDismiss(
+                in: scrollView,
+                hitView: contentView,
+                locationInHitView: CGPoint(x: 200, y: 500)
+            )
+        )
+
+        // 按钮控件点击 -> 不触发收起键盘
+        XCTAssertFalse(
+            NativeTimelineTapDismissPolicy.shouldAllowTapToDismiss(
+                in: scrollView,
+                hitView: button,
+                locationInHitView: CGPoint(x: 20, y: 20)
+            )
+        )
+
+        // 普通消息文本点击 -> 允许收起键盘
+        let plainGlyphIndex = textView.layoutManager.glyphIndexForCharacter(at: 1)
+        let plainRect = textView.layoutManager.boundingRect(
+            forGlyphRange: NSRange(location: plainGlyphIndex, length: 1),
+            in: textView.textContainer
+        )
+        let plainPoint = CGPoint(
+            x: plainRect.midX + textView.textContainerInset.left,
+            y: plainRect.midY + textView.textContainerInset.top
+        )
+        XCTAssertTrue(
+            NativeTimelineTapDismissPolicy.shouldAllowTapToDismiss(
+                in: scrollView,
+                hitView: textView,
+                locationInHitView: plainPoint
+            )
+        )
+
+        // 链接文本点击 -> 不拦截链接，不触发收起键盘
+        let linkGlyphRange = textView.layoutManager.glyphRange(
+            forCharacterRange: linkRange,
+            actualCharacterRange: nil
+        )
+        let linkRect = textView.layoutManager.boundingRect(
+            forGlyphRange: linkGlyphRange,
+            in: textView.textContainer
+        )
+        let linkPoint = CGPoint(
+            x: linkRect.midX + textView.textContainerInset.left,
+            y: linkRect.midY + textView.textContainerInset.top
+        )
+        XCTAssertFalse(
+            NativeTimelineTapDismissPolicy.shouldAllowTapToDismiss(
+                in: scrollView,
+                hitView: textView,
+                locationInHitView: linkPoint
+            )
+        )
+
+        // 存在活动文本选区时点击 -> 不打断选词复制
+        textView.selectedRange = NSRange(location: 0, length: 2)
+        XCTAssertFalse(
+            NativeTimelineTapDismissPolicy.shouldAllowTapToDismiss(
+                in: scrollView,
+                hitView: textView,
+                locationInHitView: plainPoint
+            )
         )
     }
 }

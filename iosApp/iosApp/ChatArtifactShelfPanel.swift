@@ -27,6 +27,7 @@ struct ChatArtifactShelfPanel: View {
     /// 多选状态保持 internal，便于测试夹具直接渲染多选态。
     @State var isSelecting = false
     @State var selectedArtifactIDs: Set<String> = []
+    @State var expandedWebGroupTurns: Set<Int> = []
     @State private var exportState = ChatArtifactShelfExportState()
     @State private var isSavingImages = false
     @State private var selectionNotice: String?
@@ -112,6 +113,16 @@ struct ChatArtifactShelfPanel: View {
             maxHeight: maxHeight, headerHeight: headerHeight, footerHeight: footerHeight,
             sectionsHeight: sectionsHeight, isSelecting: isSelecting
         )
+    }
+
+    static func visibleWebPages(
+        in artifacts: ConversationArtifactIndex,
+        expandedTurns: Set<Int>
+    ) -> [ConversationArtifactIndex.WebPage] {
+        guard artifacts.webPages.count > 1 else { return artifacts.webPages }
+        return artifacts.webPageGroups
+            .filter { expandedTurns.contains($0.turn) }
+            .flatMap(\.pages)
     }
 
     /// 列表可用高度；退出多选后底栏高度不再参与计算。
@@ -264,18 +275,69 @@ struct ChatArtifactShelfPanel: View {
 
     private var webPagesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("网页", count: artifacts.webPages.count)
-            ForEach(artifacts.webPages) { page in
-                ChatArtifactWebPageRow(page: page,
-                    isSelecting: isSelecting,
-                    isSelected: selectedArtifactIDs.contains(ChatArtifactActions.selectionID(for: page)),
-                    onToggleSelection: { toggleSelection(ChatArtifactActions.selectionID(for: page)) },
-                    onContinue: { continueFrom(.webPage(page)) }) {
-                    selectedDetail = .webPage(page)
-                } onLocate: {
-                    onLocate(page.source)
+            if artifacts.webPages.count <= 1 {
+                sectionTitle("网页", count: artifacts.webPages.count)
+                ForEach(artifacts.webPages) { page in
+                    webPageRow(page)
+                }
+            } else {
+                HStack(spacing: 6) {
+                    Text("网页")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AmberTheme.muted)
+                    Text("\(artifacts.webPageGroups.count) 轮 · \(artifacts.webPages.count) 条")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(AmberTheme.muted.opacity(0.8))
+                }
+                ForEach(artifacts.webPageGroups) { group in
+                    let isExpanded = expandedWebGroupTurns.contains(group.turn)
+                    let groupSelectionIDs = Set(group.pages.map(ChatArtifactActions.selectionID(for:)))
+                    let isGroupSelected = !groupSelectionIDs.isEmpty && groupSelectionIDs.isSubset(of: selectedArtifactIDs)
+                    ChatArtifactWebTurnGroupCard(
+                        group: group,
+                        isExpanded: isExpanded,
+                        isSelecting: isSelecting,
+                        isSelected: isGroupSelected,
+                        onToggleExpand: {
+                            if expandedWebGroupTurns.contains(group.turn) {
+                                expandedWebGroupTurns.remove(group.turn)
+                            } else {
+                                expandedWebGroupTurns.insert(group.turn)
+                            }
+                        },
+                        onToggleGroupSelection: {
+                            if isGroupSelected {
+                                selectedArtifactIDs.subtract(groupSelectionIDs)
+                            } else {
+                                selectedArtifactIDs.formUnion(groupSelectionIDs)
+                            }
+                        },
+                        onLocateGroup: {
+                            if let source = group.latestSource {
+                                onLocate(source)
+                            }
+                        }
+                    ) {
+                        ForEach(group.pages) { page in
+                            webPageRow(page)
+                        }
+                    }
                 }
             }
+        }
+    }
+
+    private func webPageRow(_ page: ConversationArtifactIndex.WebPage) -> some View {
+        ChatArtifactWebPageRow(
+            page: page,
+            isSelecting: isSelecting,
+            isSelected: selectedArtifactIDs.contains(ChatArtifactActions.selectionID(for: page)),
+            onToggleSelection: { toggleSelection(ChatArtifactActions.selectionID(for: page)) },
+            onContinue: { continueFrom(.webPage(page)) }
+        ) {
+            selectedDetail = .webPage(page)
+        } onLocate: {
+            onLocate(page.source)
         }
     }
 
@@ -972,6 +1034,83 @@ private struct ChatArtifactFileVersionCard: View {
     }
 
 
+}
+
+private struct ChatArtifactWebTurnGroupCard<ExpandedContent: View>: View {
+    let group: ConversationArtifactIndex.WebPageGroup
+    let isExpanded: Bool
+    let isSelecting: Bool
+    let isSelected: Bool
+    let onToggleExpand: () -> Void
+    let onToggleGroupSelection: () -> Void
+    let onLocateGroup: () -> Void
+    @ViewBuilder let expandedContent: () -> ExpandedContent
+
+    private var subtitle: String {
+        group.pages.map(\.title).joined(separator: " · ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                if isSelecting {
+                    Button(action: onToggleGroupSelection) {
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                            .font(.title3)
+                            .foregroundStyle(isSelected ? AmberTheme.accent : AmberTheme.muted)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(isSelected ? "取消选择第 \(group.turn) 轮网页" : "选择第 \(group.turn) 轮网页")
+                }
+                Button(action: onToggleExpand) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "globe")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(AmberTheme.accent)
+                            .frame(width: 30, height: 30)
+                            .background(AmberTheme.accent.opacity(0.08), in: Circle())
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("第 \(group.turn) 轮检索 · \(group.pages.count) 个网页")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(AmberTheme.foreground)
+                                .lineLimit(1)
+                            Text(subtitle)
+                                .font(.caption2)
+                                .foregroundStyle(AmberTheme.muted)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(AmberTheme.muted)
+                            .frame(width: 18, height: 18)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("chat-artifact-web-group-toggle.\(group.turn)")
+                Button(action: onLocateGroup) {
+                    Text("第 \(group.turn) 轮 ↗")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(AmberTheme.accent)
+                        .fixedSize()
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("定位到第 \(group.turn) 轮")
+                .accessibilityIdentifier("chat-artifact-web-group-locate.\(group.turn)")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: AmberTheme.radiusLarge, style: .continuous))
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 6) {
+                    expandedContent()
+                }
+                .padding(.leading, 10)
+            }
+        }
+    }
 }
 
 private struct ChatArtifactWebPageRow: View {

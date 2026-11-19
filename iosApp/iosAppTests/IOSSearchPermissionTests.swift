@@ -114,27 +114,6 @@ final class IOSSearchPermissionTests: XCTestCase {
                        "The live automatic policy remains distinct from the frozen denied run")
     }
 
-    func testNovelSearchExecutorsRespectTheirCapturedSearchPermission() async throws {
-        let fixture = try SearchPermissionFixture()
-        defer { fixture.close() }
-        for policy in [IOSAgentPermissionPolicy.askEveryTime, .disabled, .autoApprove] {
-            let executors = IOSExecutionPolicyContext.$snapshot.withValue(fixture.policy(policy)) {
-                fixture.runtime.novelDiscussionToolExecutors()
-            }
-            let executor = try XCTUnwrap(executors["search_web"])
-            let outcome = await Self.execute(Invocation(executor: executor, tool: fixture.call))
-            switch (policy, outcome) {
-            case (.askEveryTime, .needsApproval), (.disabled, .denied):
-                XCTAssertTrue(fixture.transport.requests.isEmpty)
-            case (.autoApprove, .filled(let text)):
-                XCTAssertTrue(text.contains(SearchPermissionTransport.resultTitle))
-                XCTAssertFalse(fixture.transport.requests.isEmpty)
-            default:
-                XCTFail("Unexpected Novel search outcome for \(policy): \(outcome)")
-            }
-        }
-    }
-
     private func assertSearchResult(
         _ outcome: IOSAgentToolOutcome, file: StaticString = #filePath, line: UInt = #line
     ) {

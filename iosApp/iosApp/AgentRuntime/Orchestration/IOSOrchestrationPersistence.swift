@@ -229,9 +229,9 @@ enum IOSOrchestrationPersistence {
 
     static func latestRunStatusByConversation(agentRuntimeDao: AgentRuntimeDao) async -> [String: String] {
         await withCheckedContinuation { cont in
-            agentRuntimeDao.listAllRuns() { result, _ in
+            agentRuntimeDao.listRunSummaries() { result, _ in
                 let runs = result ?? []
-                var latestByConversation: [String: AgentRunEntity] = [:]
+                var latestByConversation: [String: AgentRunSummary] = [:]
                 for run in runs {
                     guard IOSDurableRunStore.Descriptor.chatRecoveryAliases.contains(run.agentDescriptorId),
                           let conversationId = run.conversationId else { continue }

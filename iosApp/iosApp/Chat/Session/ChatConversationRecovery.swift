@@ -19,6 +19,9 @@ extension ChatViewModel {
             reason: reason,
             lagAllowance: lagAllowance
         )
+        if timelineUpdates.publish(messageUpdateSignal, messages: messages) {
+            timelineStructuralSignal = messageUpdateSignal
+        }
         // 独立保留产物刷新信号，避免工具结果与后续文字 chunk 合并上屏时丢失。
         switch reason {
         // 生成式 UI 修复重试直接发布定稿正文（.assistantStreamClosed），也要重建索引。
@@ -42,8 +45,8 @@ extension ChatViewModel {
         guard let store = conversationStore else { return }
         invalidateSuggestionRequest()
         let selectedRun = currentRun
-        // Keep live deltas and approval continuations when returning to an active run.
-        if selectedRun.host?.isRunning != true {
+        // Keep live deltas, queued concurrency placeholders, and approval continuations when returning to an active/queued run.
+        if !selectedRun.hasActiveOrQueuedTask {
             let storedMessages = store.currentMessages
             messages = messagesByTerminatingStaleSearches(in: storedMessages, store: store) ?? storedMessages
             // 历史消息的 token 估算在后台预热，发送时的请求准备只剩查表。
@@ -63,6 +66,7 @@ extension ChatViewModel {
                     guard let self, state.steerQueueRevision == revision else { return }
                     state.steerQueue = loaded
                     state.steerQueueLoaded = true
+                    self.recoverQueuedFollowups(state: state)
                 }
             } else {
                 state.steerQueue = []
@@ -84,9 +88,14 @@ extension ChatViewModel {
     }
 
     func refreshContextCompactBoundaries() {
-        contextCompactBoundaries = IOSContextCompactionCoordinator.shared.timelineBoundaries(
+        let compactBoundaries = IOSContextCompactionCoordinator.shared.timelineBoundaries(
             conversationId: currentConversationId, messages: messages
         )
+        let episodeBoundaries = ChatEpisodeStore.shared.timelineBoundaries(
+            conversationId: currentConversationId, messages: messages
+        )
+        contextCompactBoundaries = compactBoundaries + episodeBoundaries
+        tokenRevision &+= 1
     }
 
     private func messagesByTerminatingStaleSearches(
@@ -355,23 +364,29 @@ extension ChatViewModel {
                 )
                 result.outcomeUnknownRunIds.insert(pair.runId)
                 for toolCallId in unknownToolCallIds.sorted() {
-                    guard let toolName = recoveredMessages
+                    let matchedTool = recoveredMessages
                         .flatMap(\.parts)
-                        .compactMap({ $0 as? UIMessagePart.Tool })
-                        .first(where: { $0.toolCallId == toolCallId })?.toolName
-                        ?? actions.toolNames[toolCallId] else { continue }
+                        .compactMap { $0 as? UIMessagePart.Tool }
+                        .first(where: { $0.toolCallId == toolCallId })
+                    guard let toolName = matchedTool?.toolName ?? actions.toolNames[toolCallId] else { continue }
+                    let targetSummary = matchedTool.flatMap {
+                        IOSToolOutcomeUnknownDescriptor.extractRedactedTargetSummary(from: $0.input)
+                    }
                     discoveredUnknowns.append(IOSToolOutcomeUnknownDescriptor(
                         runId: pair.runId,
                         conversationId: pair.conversationId,
                         toolCallId: toolCallId,
-                        toolName: toolName
+                        toolName: toolName,
+                        targetSummary: targetSummary
                     ))
                 }
             }
             didUpdateCurrentConversation = didUpdateCurrentConversation || currentConversationId == conversationId
         }
 
-        for descriptor in discoveredUnknowns where !toolOutcomeUnknownDescriptors.contains(descriptor) {
+        for descriptor in discoveredUnknowns where !toolOutcomeUnknownDescriptors.contains(where: {
+            $0.runId == descriptor.runId && $0.toolCallId == descriptor.toolCallId
+        }) {
             toolOutcomeUnknownDescriptors.append(descriptor)
         }
         if let descriptor = discoveredUnknowns.sorted(by: {
@@ -391,26 +406,41 @@ extension ChatViewModel {
     }
 
     func reconcilePendingToolOutcome(didApply: Bool) async {
-        guard let descriptor = pendingToolOutcomeUnknown,
-              let conversationStore,
-              let conversationId = conversationStore.summaries.first(where: {
+        await reconcilePendingToolOutcome(resolution: didApply ? .applied : .notApplied)
+    }
+
+    func reconcilePendingToolOutcome(resolution: IOSOutcomeUnknownResolution) async {
+        guard !isReconcilingToolOutcome,
+              let descriptor = pendingToolOutcomeUnknown,
+              let conversationStore else { return }
+        isReconcilingToolOutcome = true
+        defer { isReconcilingToolOutcome = false }
+        let ledger = IOSAgentRunLedger(dao: agentRuntimeDao)
+        guard let transactions = await ledger.toolTransactions(runId: descriptor.runId),
+              transactions.contains(where: {
+                  $0.toolCallId == descriptor.toolCallId &&
+                  ($0.state == .outcomeUnknown || ($0.state == .reconciled && $0.outcome == resolution.ledgerOutcome))
+              }) else { return }
+        guard let conversationId = conversationStore.summaries.first(where: {
                   $0.id.toHexDashString() == descriptor.conversationId
               })?.id,
               let storedMessages = await conversationStore.messages(for: conversationId) else { return }
         let reconciledMessages = IOSToolCallRecoveryApplier.applyOutcomeUnknownReconciliation(
             toolCallId: descriptor.toolCallId,
-            didApply: didApply,
+            resolution: resolution,
             to: storedMessages
         )
         guard await conversationStore.save(messages: reconciledMessages, to: conversationId) else { return }
         guard await IOSRunRecovery.reconcileOutcomeUnknown(
             runId: descriptor.runId,
             toolCallId: descriptor.toolCallId,
-            didApply: didApply,
+            resolution: resolution,
             dao: agentRuntimeDao,
             runStore: runStore
         ) else { return }
-        toolOutcomeUnknownDescriptors.removeAll { $0 == descriptor }
+        toolOutcomeUnknownDescriptors.removeAll {
+            $0.runId == descriptor.runId && $0.toolCallId == descriptor.toolCallId
+        }
         let hasRemainingUnknown = toolOutcomeUnknownDescriptors.contains {
             $0.runId == descriptor.runId && $0.conversationId == descriptor.conversationId
         }
@@ -419,10 +449,68 @@ extension ChatViewModel {
             conversationId: descriptor.conversationId,
             toolCallId: descriptor.toolCallId,
             hasRemainingUnknown: hasRemainingUnknown,
-            didApply: didApply
+            resolution: resolution
         )
+        outcomeUnknownFollowup = makeOutcomeUnknownFollowup(for: descriptor, resolution: resolution)
         if currentConversationId == conversationId {
             reloadFromStore(reason: .branchChange)
+        }
+    }
+
+    func reconcileAndRequestReadonlyRecheckIfReady() async {
+        await reconcilePendingToolOutcome(resolution: .recheckRequested)
+        guard pendingToolOutcomeUnknown == nil,
+              outcomeUnknownFollowup?.resolution == .recheckRequested else { return }
+        applyOutcomeUnknownFollowup(autoSendIfConfigured: true)
+    }
+
+    func applyOutcomeUnknownFollowup(autoSendIfConfigured: Bool = false) {
+        guard let followup = outcomeUnknownFollowup else { return }
+        outcomeUnknownFollowup = nil
+        inputText = followup.suggestedPrompt
+        if autoSendIfConfigured,
+           autoGenerateResponses,
+           !hasPendingUserGate,
+           !isGenerationActive,
+           makeProviderSetting() != nil {
+            sendMessage(startsGenerationAfterInsertion: true)
+        }
+    }
+
+    func dismissOutcomeUnknownFollowup() {
+        outcomeUnknownFollowup = nil
+    }
+
+    private func makeOutcomeUnknownFollowup(
+        for descriptor: IOSToolOutcomeUnknownDescriptor,
+        resolution: IOSOutcomeUnknownResolution
+    ) -> IOSOutcomeUnknownFollowup? {
+        let targetNote = descriptor.redactedTargetSummary.map { "（目标：\($0)）" } ?? ""
+        switch resolution {
+        case .applied:
+            return nil
+        case .notApplied:
+            return IOSOutcomeUnknownFollowup(
+                conversationId: descriptor.conversationId,
+                runId: descriptor.runId,
+                toolCallId: descriptor.toolCallId,
+                toolName: descriptor.toolName,
+                localizedToolTitle: descriptor.localizedToolTitle,
+                resolution: .notApplied,
+                suggestedPrompt: "刚才的「\(descriptor.localizedToolTitle)」\(targetNote)已确认未生效，请重新发起该操作并提交审批。",
+                buttonTitle: IOSAppLocalization.string("重新发起（需审批）", defaultValue: "重新发起（需审批）")
+            )
+        case .recheckRequested:
+            return IOSOutcomeUnknownFollowup(
+                conversationId: descriptor.conversationId,
+                runId: descriptor.runId,
+                toolCallId: descriptor.toolCallId,
+                toolName: descriptor.toolName,
+                localizedToolTitle: descriptor.localizedToolTitle,
+                resolution: .recheckRequested,
+                suggestedPrompt: "请仅使用只读工具核查「\(descriptor.localizedToolTitle)」\(targetNote)当前实际状态，禁止重放原工具调用；若核查后仍需修改，必须由用户重新确认审批。",
+                buttonTitle: IOSAppLocalization.string("发起只读核查", defaultValue: "发起只读核查")
+            )
         }
     }
 

@@ -623,6 +623,19 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
         XCTAssertLessThanOrEqual(fitted.width, columnWidth + 1, "fitted=\(fitted)")
     }
 
+    func testChatBrowserNavigationWithoutSeparateStatusFitsColumn() {
+        let record = makeLongWebMountRecord()
+        let shortcut = UIHostingController(rootView: AgentBrowserTaskCompactBar(
+            record: record, runSummary: nil, showsOnlyShortcut: true, onExpand: {}
+        ))
+        let expanded = UIHostingController(rootView: AgentBrowserTaskCard(
+            record: record, showsStatus: false, onOpen: {}
+        ))
+        let bounds = CGSize(width: columnWidth, height: UIView.layoutFittingExpandedSize.height)
+        XCTAssertLessThanOrEqual(shortcut.sizeThatFits(in: bounds).width, columnWidth + 1)
+        XCTAssertLessThanOrEqual(expanded.sizeThatFits(in: bounds).width, columnWidth + 1)
+    }
+
     func testWebMountApprovalCardFitsLongAutomationMetadataWithinChatColumn() {
         let longToken = String(repeating: "segment-without-breaks-", count: 24)
         let request = WebMountToolApprovalRequest(

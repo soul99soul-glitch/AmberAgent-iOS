@@ -22,6 +22,21 @@ struct IOSLocalNotificationRequest: Equatable {
     let deepLink: URL
     var categoryIdentifier: String? = nil
     var userInfo: [String: String] = [:]
+    var playsSound = true
+}
+
+enum IOSTaskCompletionNotificationFeedback {
+    static let markerKey = "amber.taskCompletion"
+    static let fireDateKey = "amber.taskCompletionFireDate"
+
+    static func isTaskCompletion(identifier: String, userInfo: [AnyHashable: Any]) -> Bool {
+        identifier.hasPrefix("amber.task-complete.") || userInfo[markerKey] as? String == "true"
+    }
+
+    static func presentationOptions(identifier: String, userInfo: [AnyHashable: Any]) -> UNNotificationPresentationOptions {
+        // Foreground reply feedback belongs to the reveal owner, not a second system alert.
+        isTaskCompletion(identifier: identifier, userInfo: userInfo) ? [.banner] : [.banner, .sound]
+    }
 }
 
 @MainActor
@@ -35,6 +50,7 @@ protocol IOSLocalNotificationCenter: AnyObject {
     /// 否则每轮新 runId 都会叠一条。
     func deliveredRequestIdentifiers() async -> [String]
     func removeDeliveredRequests(identifiers: [String])
+    func updateTaskCompletionSound(enabled: Bool) async throws
 }
 
 @MainActor
@@ -65,7 +81,10 @@ final class IOSUserNotificationCenterAdapter: IOSLocalNotificationCenter {
         let content = UNMutableNotificationContent()
         content.title = request.title
         content.body = request.body
-        content.sound = .default
+        let isCompletion = IOSTaskCompletionNotificationFeedback.isTaskCompletion(
+            identifier: request.identifier, userInfo: request.userInfo
+        )
+        content.sound = request.playsSound && (!isCompletion || AmberHaptics.isCompletionHapticEnabled()) ? .default : nil
         content.threadIdentifier = "amber.local"
         content.userInfo = request.userInfo.merging(["deepLink": request.deepLink.absoluteString]) { _, link in link }
         if let category = request.categoryIdentifier { content.categoryIdentifier = category }
@@ -94,6 +113,28 @@ final class IOSUserNotificationCenterAdapter: IOSLocalNotificationCenter {
     func removePendingRequests(identifiers: [String]) {
         center.removePendingNotificationRequests(withIdentifiers: identifiers)
     }
+
+    func updateTaskCompletionSound(enabled: Bool) async throws {
+        let requests = await center.pendingNotificationRequests()
+        for request in requests where IOSTaskCompletionNotificationFeedback.isTaskCompletion(
+            identifier: request.identifier, userInfo: request.content.userInfo
+        ) {
+            guard (request.content.sound != nil) != enabled,
+                  let content = request.content.mutableCopy() as? UNMutableNotificationContent else { continue }
+            content.sound = enabled ? .default : nil
+            let trigger: UNNotificationTrigger?
+            if let timestamp = content.userInfo[IOSTaskCompletionNotificationFeedback.fireDateKey] as? String,
+               let seconds = TimeInterval(timestamp) {
+                trigger = UNTimeIntervalNotificationTrigger(
+                    timeInterval: max(0.1, Date(timeIntervalSince1970: seconds).timeIntervalSince(now())),
+                    repeats: false
+                )
+            } else {
+                trigger = request.trigger
+            }
+            try await center.add(UNNotificationRequest(identifier: request.identifier, content: content, trigger: trigger))
+        }
+    }
 }
 
 enum IOSLocalNotificationScheduleResult: Equatable {
@@ -112,6 +153,7 @@ final class IOSLocalNotificationService {
     private let permissionCoordinator: IOSSystemPermissionCoordinator
     private let now: () -> Date
     private let completionNotificationsEnabled: () -> Bool
+    private let completionHapticEnabled: () -> Bool
     private let watchNotificationDefaults: UserDefaults?
     private static let pendingWatchAttentionKey = "amber.watch.pendingAttention.v1"
     private var pendingWatchAttentionIdentifier: String?
@@ -127,12 +169,14 @@ final class IOSLocalNotificationService {
         completionNotificationsEnabled: @escaping () -> Bool = {
             UserDefaults.standard.bool(forKey: IOSAppleIntegrationPreferenceKeys.completionNotificationsEnabled)
         },
+        completionHapticEnabled: @escaping () -> Bool = { AmberHaptics.isCompletionHapticEnabled() },
         watchNotificationDefaults: UserDefaults? = .standard
     ) {
         self.center = center
         self.permissionCoordinator = permissionCoordinator
         self.now = now
         self.completionNotificationsEnabled = completionNotificationsEnabled
+        self.completionHapticEnabled = completionHapticEnabled
         self.watchNotificationDefaults = watchNotificationDefaults
         pendingWatchAttentionIdentifier = watchNotificationDefaults?.string(forKey: Self.pendingWatchAttentionKey)
     }
@@ -159,19 +203,46 @@ final class IOSLocalNotificationService {
         let identifier = "amber.task-complete.\(conversationID)"
         guard cancellationRevision == completionCancellationRevision,
               completionNotificationsEnabled() else { return .notAuthorized }
+        let fireDate = now().addingTimeInterval(1)
         try await center.add(IOSLocalNotificationRequest(
             identifier: identifier,
             title: "Amber 任务已结束",
             body: "点按查看这段对话的最新结果。",
-            fireDate: now().addingTimeInterval(1),
-            deepLink: deepLink
+            fireDate: fireDate,
+            deepLink: deepLink,
+            userInfo: [
+                IOSTaskCompletionNotificationFeedback.markerKey: "true",
+                IOSTaskCompletionNotificationFeedback.fireDateKey: String(fireDate.timeIntervalSince1970)
+            ],
+            playsSound: completionHapticEnabled()
         ))
         guard cancellationRevision == completionCancellationRevision,
               completionNotificationsEnabled() else {
             center.removePendingRequests(identifiers: [identifier])
             return .notAuthorized
         }
+        // A settings change can race the asynchronous add; reconcile after it commits too.
+        try await refreshTaskCompletionSound()
         return .scheduled(identifier: identifier)
+    }
+
+    func refreshTaskCompletionSound() async throws {
+        let cancellationRevision = completionCancellationRevision
+        var enabled = completionHapticEnabled()
+        while true {
+            try await center.updateTaskCompletionSound(enabled: enabled)
+            guard cancellationRevision == completionCancellationRevision else {
+                // Updating pending content uses add; a concurrent cancel must still win.
+                let identifiers = await center.pendingRequestIdentifiers().filter {
+                    $0.hasPrefix("amber.task-complete.")
+                }
+                if !identifiers.isEmpty { center.removePendingRequests(identifiers: identifiers) }
+                return
+            }
+            let latest = completionHapticEnabled()
+            guard latest != enabled else { return }
+            enabled = latest
+        }
     }
 
     /// A fresh question gets one notification; progress and old snapshots stay silent.
@@ -413,6 +484,7 @@ final class IOSDeepLinkInbox {
     private var durablePendingURLs: Set<String> = []
     private var handler: ((URL) -> Void)?
     private var promptHandoffs: [String: String] = [:]
+    private var phoneAutomationHandoffs: [String: String] = [:]
     private let defaults: UserDefaults
     private let persistenceEnabled: Bool
     private let pendingURLsKey = "app.amber.ios.deepLinkInbox.pendingURLs.v1"
@@ -437,15 +509,21 @@ final class IOSDeepLinkInbox {
         durablePendingURLs = Set(pending.map(\.absoluteString))
     }
 
-    func preparePromptHandoff(_ prompt: String) -> IOSAppDeepLink.Destination? {
+    func preparePromptHandoff(_ prompt: String, phoneAutomationID: String? = nil) -> IOSAppDeepLink.Destination? {
         guard let prompt = IOSAppDeepLink.normalizedPrompt(prompt) else { return nil }
         let id = UUID().uuidString.lowercased()
         promptHandoffs[id] = prompt
+        phoneAutomationHandoffs[id] = phoneAutomationID
         return .agentPrompt(handoffID: id)
     }
 
+    func phoneAutomationID(forPromptHandoff id: String) -> String? {
+        phoneAutomationHandoffs[id.lowercased()]
+    }
+
     func consumePromptHandoff(id: String) -> String? {
-        promptHandoffs.removeValue(forKey: id.lowercased())
+        phoneAutomationHandoffs.removeValue(forKey: id.lowercased())
+        return promptHandoffs.removeValue(forKey: id.lowercased())
     }
 
     func submit(_ url: URL, persistUntilHandled: Bool = false) {
@@ -587,6 +665,17 @@ enum MacGatewayApprovalNotification {
               let call = userInfo["toolCallId"] as? String, !call.isEmpty else { return nil }
         return Decision(sessionKey: key, toolCallId: call, allow: allow)
     }
+
+    static func highRiskOpenAppURL(actionIdentifier: String, userInfo: [AnyHashable: Any]) -> URL? {
+        guard actionIdentifier == approveAction || actionIdentifier == UNNotificationDefaultActionIdentifier,
+              (userInfo["highRisk"] as? Bool) == true else { return nil }
+        if let value = userInfo["deepLink"] as? String,
+           let url = URL(string: value),
+           IOSAppDeepLink.parse(url) != nil {
+            return url
+        }
+        return URL(string: "amber://tasks")
+    }
 }
 
 @MainActor
@@ -621,7 +710,10 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .sound]
+        IOSTaskCompletionNotificationFeedback.presentationOptions(
+            identifier: notification.request.identifier,
+            userInfo: notification.request.content.userInfo
+        )
     }
 
     func userNotificationCenter(
@@ -644,13 +736,26 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
         }
         if let decision = MacGatewayApprovalNotification.decision(actionIdentifier: response.actionIdentifier,
                                                                     userInfo: response.notification.request.content.userInfo) {
-            let delivered = await MacGatewayStore.shared.decide(sessionKey: decision.sessionKey, toolCallId: decision.toolCallId,
-                                                                allow: decision.allow)
+            let delivered = await MacGatewayStore.shared.decide(
+                sessionKey: decision.sessionKey,
+                toolCallId: decision.toolCallId,
+                allow: decision.allow,
+                source: .notification
+            )
             if !delivered, let message = MacGatewayStore.shared.notice.flatMap({ $0.isError ? $0.text : nil }) {
                 let content = UNMutableNotificationContent()
                 content.title = IOSAppLocalization.string("操作未完成", defaultValue: "操作未完成")
                 content.body = message
                 try? await center.add(UNNotificationRequest(identifier: "amber.gateway-decision-result", content: content, trigger: nil))
+            }
+            return
+        }
+        if let openURL = MacGatewayApprovalNotification.highRiskOpenAppURL(
+            actionIdentifier: response.actionIdentifier,
+            userInfo: response.notification.request.content.userInfo
+        ) {
+            await MainActor.run {
+                IOSDeepLinkInbox.shared.submit(openURL)
             }
             return
         }

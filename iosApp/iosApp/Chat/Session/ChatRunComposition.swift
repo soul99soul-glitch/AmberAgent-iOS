@@ -10,14 +10,17 @@ private let chatLedgerLogger = Logger(subsystem: "app.amber.ios", category: "cha
 extension ChatViewModel {
 
     /// Each conversation retains its existing Host until its run has finished.
-    func makeKernelRunHost(state: ChatConversationRunState) -> ChatKernelRunHost {
+    func makeKernelRunHost(
+        state: ChatConversationRunState,
+        taskSlot: ChatAsyncTaskSlot? = nil
+    ) -> ChatKernelRunHost {
         var textProviderOverride: (any IOSAgentTextProvider)?
 #if DEBUG
         textProviderOverride = kernelTextProviderOverrideForTesting
 #endif
         return ChatKernelRunHost(
             dependencies: makeGenerationDependencies(),
-            bindings: makeGenerationBindings(state: state),
+            bindings: makeGenerationBindings(state: state, taskSlot: taskSlot),
             toolLedger: chatRunLedger,
             textProvider: textProviderOverride,
             phoneControl: phoneControl,
@@ -36,17 +39,26 @@ extension ChatViewModel {
             mcpManager: mcpManager,
             orchestrationToolService: orchestrationToolService,
             memoryPollutionMarker: memoryPollutionMarker,
-            conversationStoreProvider: { [weak self] in self?.conversationStore }
+            conversationStoreProvider: { [weak self] in self?.conversationStore },
+            agentSoulStore: agentSoulStore
         )
     }
 
-    func makeGenerationBindings(state: ChatConversationRunState) -> ChatGenerationBindings {
+    func makeGenerationBindings(
+        state: ChatConversationRunState,
+        taskSlot: ChatAsyncTaskSlot? = nil
+    ) -> ChatGenerationBindings {
         ChatGenerationBindings(
                 getMessages: {
-                    state.messages
+                    taskSlot?.currentTranscript ?? state.messages
                 },
-                setMessages: { messages in
-                    state.messages = messages
+                setMessages: { [weak self] messages in
+                    if let taskSlot, let self {
+                        guard !taskSlot.isTerminal else { return }
+                        self.spliceTaskTranscript(messages, for: taskSlot, into: state)
+                    } else {
+                        state.messages = messages
+                    }
                 },
                 bumpMessageRevision: { [weak self] reason, lagAllowance in
                     guard let self else { return }
@@ -55,9 +67,18 @@ extension ChatViewModel {
                         self.bumpMessageRevision(reason: reason, lagAllowance: lagAllowance)
                     }
                 },
-                setIsLoading: { isLoading in
+                setIsLoading: { [weak self] isLoading in
                     if isLoading { state.clearChildResultWait() }
-                    state.isLoading = isLoading
+                    if let taskSlot, let self {
+                        let run = self.runRegistry.current(for: state.conversationId)
+                        if !isLoading, taskSlot.host?.isRunning != true {
+                            self.markTaskSlotTerminal(taskSlot, in: run)
+                        } else {
+                            self.refreshLiveTaskMessageIds(in: run)
+                        }
+                    } else {
+                        state.isLoading = isLoading
+                    }
                 },
                 setPendingMemoryApproval: { [weak self] request in
                     state.pendingMemoryApproval = request
@@ -163,14 +184,7 @@ extension ChatViewModel {
                 },
                 persistMessages: { [weak self] conversationId in
                     guard let self else { return false }
-                    return await self.persistMessagesSnapshot(
-                        state.messages,
-                        targetConversationId: conversationId,
-                        pendingRegeneration: state.pendingAssistantRegeneration,
-                        store: self.conversationStore,
-                        writeBaseline: conversationId.flatMap { self.conversationStore?.writeBaseline(for: $0) },
-                        state: state
-                    )
+                    return await self.persistMessages(state: state)
                 },
                 capturePersistMessagesBaseline: { [weak self] conversationId in
                     guard let store = self?.conversationStore,
@@ -181,14 +195,16 @@ extension ChatViewModel {
                 },
                 persistMessagesSnapshot: { [weak self] snapshot, conversationId, writeBaseline in
                     guard let self else { return false }
-                    return await self.persistMessagesSnapshot(
-                        snapshot,
-                        targetConversationId: conversationId,
-                        pendingRegeneration: state.pendingAssistantRegeneration,
-                        store: self.conversationStore,
-                        writeBaseline: writeBaseline,
-                        state: state
-                    )
+                    if let taskSlot {
+                        if !taskSlot.isTerminal {
+                            self.spliceTaskTranscript(snapshot, for: taskSlot, into: state)
+                        }
+                        return await self.persistMessages(state: state)
+                    }
+                    return await self.persistMessagesSnapshot(snapshot,
+                        targetConversationId: conversationId, pendingRegeneration: state.pendingAssistantRegeneration,
+                        store: self.conversationStore, writeBaseline: writeBaseline, state: state)
+
                 },
                 recordRun: { [weak self] runId, startedAt, status, inputDigest, conversationId, protocolContext in
                     guard let self else { return false }
@@ -213,6 +229,7 @@ extension ChatViewModel {
                     return await self.resumeRunAfterPermission(runId: runId)
                 },
                 startLiveActivity: { [weak self] runId, conversationId, presentation in
+                    state.completionFeedback.begin(runID: runId)
                     self?.startLiveActivity(
                         runId: runId,
                         conversationId: conversationId,
@@ -246,14 +263,14 @@ extension ChatViewModel {
                     ChatViewModel.userFacingGenerationError(rawMessage, modelId: modelId)
                 },
                 memoryRecordIdsForRuntimeContext: { [weak self] messages, override in
-                    self?.memoryRecordIdsForRuntimeContext(messages, override: override) ?? []
+                    self?.memoryRecordIdsForRuntimeContext(messages, override: override, state: state) ?? []
                 },
                 prepareJevMemoryRecall: { [weak self] messages, runId in
                     guard let self else { return nil }
-                    return await self.prepareJevMemoryRecallSelection(messages, runId: runId)
+                    return await self.prepareJevMemoryRecallSelection(messages, runId: runId, state: state)
                 },
                 memoryRecallResultForRun: { [weak self] messages in
-                    self?.memoryRecallResultForRun(messages) ?? ChatMemoryContextBuilder.RecallResult(prompt: nil, records: [])
+                    self?.memoryRecallResultForRun(messages, state: state) ?? ChatMemoryContextBuilder.RecallResult(prompt: nil, records: [])
                 },
                 recordMemoryUsage: { [weak self] ids, force in
                     self?.recordMemoryUsage(ids, force: force, state: state)
@@ -267,22 +284,48 @@ extension ChatViewModel {
                     )
                 },
                 drainSteerQueue: { [weak self] conversationId in
-                    await self?.drainSteerQueue(state: state) ?? []
+                    guard let self else { return [] }
+                    if let taskSlot {
+                        return await self.drainTaskSteerQueue(slot: taskSlot, state: state)
+                    }
+                    return await self.drainSteerQueue(state: state)
                 },
                 drainMailbox: { [weak self] conversationId in
                     await self?.drainMailbox(state: state) ?? []
                 },
                 handleSteerQueueAtTerminal: { [weak self] conversationId, autoContinue in
-                    self?.handleSteerQueueAtRunTerminal(state: state, autoContinue: autoContinue)
+                    guard let self else { return }
+                    if let taskSlot, !autoContinue {
+                        self.cancelUnconsumedFollowups(for: taskSlot, state: state)
+                    }
+                    self.handleSteerQueueAtRunTerminal(
+                        state: state,
+                        autoContinue: autoContinue,
+                        completedSlot: autoContinue ? taskSlot : nil
+                    )
                 },
                 restoreSteerQueueLeftover: { [weak self] conversationId in
-                    self?.restoreSteerQueueLeftoverToComposer(state: state)
+                    guard let self else { return }
+                    if let taskSlot {
+                        self.cancelUnconsumedFollowups(for: taskSlot, state: state)
+                    }
+                    self.restoreSteerQueueLeftoverToComposer(state: state)
                 },
                 onForegroundYield: { runId in
                     state.waitingForChildRunId = runId
                 },
                 onRunTerminal: { [weak self] conversationId, runId, terminalStatus, finalMessages, displayBaseline in
                     guard let self else { return }
+                    self.finishCompletionFeedback(
+                        state: state, runID: runId, succeeded: terminalStatus == .completed,
+                        messages: finalMessages
+                    )
+                    if let taskSlot {
+                        if terminalStatus != .completed {
+                            self.cancelUnconsumedFollowups(for: taskSlot, state: state)
+                        }
+                        self.markTaskSlotTerminal(taskSlot, in: self.runRegistry.current(for: state.conversationId))
+                    }
                     self.observeYieldedChildResults(state: state, runId: runId)
                     if let conversationId {
                         self.refreshIntelligentUIReceipts(messages: finalMessages, conversationID: conversationId.toHexDashString())
@@ -315,6 +358,112 @@ extension ChatViewModel {
                 },
                 refreshOrchestrationLinks: { [weak self] in
                     await self?.refreshOrchestratedStatus(state: state)
+                },
+                recordTaskActivity: { [weak self, weak taskSlot] stage in
+                    guard let self, let taskSlot, !taskSlot.isTerminal else { return }
+                    let now = ProcessInfo.processInfo.systemUptime
+                    let wasStale = now - taskSlot.lastActivityUptime >= 30
+                    taskSlot.lastActivityUptime = now
+                    let stageChanged = stage.map { $0 != taskSlot.activityStage } ?? false
+                    let restartsPlan = stage == .preparing && !taskSlot.plannedActivityStages.isEmpty
+                    if let stage {
+                        if stage == .preparing {
+                            taskSlot.currentRoundAssistantMessageId = nil
+                        }
+                        if restartsPlan {
+                            taskSlot.stagePlanStartedUptime = now
+                        }
+                        taskSlot.activityStage = stage
+                        if stage == .failed {
+                            taskSlot.explicitFailureOrStallReason = "failed"
+                        } else if stage == .waitingForConfirmation, taskSlot.lastSyncedVisibleStage != stage {
+                            taskSlot.lastSyncedVisibleStage = stage
+                            taskSlot.recordMeaningfulUserVisibleProgress(at: now)
+                        }
+                        if stage != .runningTool {
+                            taskSlot.activeToolName = nil
+                            taskSlot.activeToolTitle = nil
+                        }
+                    }
+                    if (stageChanged || wasStale || restartsPlan), self.isCurrentConversation(state.conversationId) {
+                        self.runActivityRevision &+= 1
+                    }
+                },
+                foregroundReasoningLevels: { [weak self] model in
+                    guard let self, !state.isOrchestratedChild,
+                          self.sharedSettings.snapshot.findModelById(uuid: model.id) != nil else { return [] }
+                    return self.sharedSettings.subAgentReasoningLevels(modelId: model.id.toHexDashString())
+                },
+                isForegroundRouterRun: { !state.isOrchestratedChild },
+                recordTaskToolActivity: { [weak self, weak taskSlot] name, input in
+                    guard let self, let taskSlot, !taskSlot.isTerminal else { return }
+                    let title = ChatToolStepModel.activeProgressTitle(toolName: name, input: input)
+                    let stageChanged = taskSlot.activityStage != .runningTool
+                    if stageChanged {
+                        taskSlot.activityStage = .runningTool
+                    }
+                    guard stageChanged || taskSlot.activeToolName != name || taskSlot.activeToolTitle != title else { return }
+                    taskSlot.activeToolName = name
+                    taskSlot.activeToolTitle = title
+                    let isPollingTool = name == "list_agents" || name == "wait_agent"
+                    let toolSignature = "\(name)|\(title ?? "")"
+                    if !isPollingTool, toolSignature != taskSlot.lastSyncedVisibleToolSignature {
+                        taskSlot.lastSyncedVisibleToolSignature = toolSignature
+                        taskSlot.recordMeaningfulUserVisibleProgress()
+                    }
+                    if self.isCurrentConversation(state.conversationId) { self.runActivityRevision &+= 1 }
+                },
+                recordTaskProgressPlan: { [weak self, weak taskSlot] stages in
+                    guard let self, let taskSlot, !taskSlot.isTerminal, !stages.isEmpty,
+                          taskSlot.plannedActivityStages != stages else { return }
+                    taskSlot.plannedActivityStages = stages
+                    taskSlot.stagePlanStartedUptime = ProcessInfo.processInfo.systemUptime
+                    taskSlot.recordMeaningfulUserVisibleProgress()
+                    if self.isCurrentConversation(state.conversationId) { self.runActivityRevision &+= 1 }
+                },
+                recordTaskReasoning: { [weak self, weak taskSlot] reasoning in
+                    guard let self, let taskSlot, !taskSlot.isTerminal else { return }
+                    let now = ProcessInfo.processInfo.systemUptime
+                    var summary: String?
+                    if let reasoning, !reasoning.isEmpty {
+                        guard now - taskSlot.reasoningSummaryUpdatedUptime >= 1.8 else { return }
+                        let tail = String(reasoning.suffix(256))
+                        let sentence = tail.components(separatedBy: CharacterSet(charactersIn: "。！？!?\n，、：:;；"))
+                            .reversed().first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }?
+                            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                        let isChinese = !sentence.isEmpty && sentence.unicodeScalars.allSatisfy {
+                            (0x3400...0x9FFF).contains($0.value) || CharacterSet.whitespaces.contains($0)
+                        }
+                        let sensitive = ["密码", "密碼", "口令", "密钥", "私钥", "令牌", "凭据", "秘密"]
+                            .contains(where: sentence.contains)
+                        if isChinese && !sensitive { summary = String(sentence.prefix(18)) }
+                        taskSlot.reasoningSummaryUpdatedUptime = now
+                    } else {
+                        taskSlot.reasoningSummaryUpdatedUptime = 0
+                    }
+                    if taskSlot.liveReasoningSummary != summary {
+                        taskSlot.liveReasoningSummary = summary
+                        if self.isCurrentConversation(state.conversationId) { self.runActivityRevision &+= 1 }
+                    }
+                },
+                setProvisionalAssistant: { [weak self, weak taskSlot] message in
+                    guard let self, let taskSlot, !taskSlot.isTerminal else { return false }
+                    let messageID = ChatMessageProjector.messageId(for: message)
+                    let structuralChange = taskSlot.generatedMessages.last?.id != message.id ||
+                        taskSlot.currentRoundAssistantMessageId != messageID
+                    taskSlot.currentRoundAssistantMessageId = messageID
+                    self.spliceTaskProvisionalAssistant(message, for: taskSlot, into: state)
+                    if structuralChange, self.isCurrentConversation(state.conversationId) {
+                        self.runActivityRevision &+= 1
+                    }
+                    return true
+                },
+                recordStreamHeartbeat: { [weak taskSlot] in
+                    guard let taskSlot, !taskSlot.isTerminal else { return }
+                    taskSlot.lastActivityUptime = ProcessInfo.processInfo.systemUptime
+                },
+                abandonCompletionFeedback: { runId in
+                    state.completionFeedback.finishWithoutFeedback(runID: runId)
                 }
         )
     }

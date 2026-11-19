@@ -185,6 +185,22 @@ interface AgentRuntimeDao {
     @Query("SELECT * FROM agent_run ORDER BY started_at ASC")
     suspend fun listAllRuns(): List<AgentRunEntity>
 
+    /** UI/activity consumers must not hydrate capability and input snapshots. */
+    @Query("""
+        SELECT run_id, agent_descriptor_id, conversation_id, status, started_at,
+               finished_at, interrupted_reason, terminal_reason
+        FROM agent_run ORDER BY started_at ASC
+    """)
+    suspend fun listRunSummaries(): List<AgentRunSummary>
+
+    /** Notices also need the original pending-input token for approval previews. */
+    @Query("""
+        SELECT run_id, agent_descriptor_id, conversation_id, status, started_at,
+               finished_at, input_snapshot_ref
+        FROM agent_run ORDER BY started_at ASC
+    """)
+    suspend fun listRunNoticeSummaries(): List<AgentRunNoticeSummary>
+
     @Query("DELETE FROM trace_span WHERE run_id IN (SELECT run_id FROM agent_run WHERE status = 'completed' AND finished_at < :cutoff)")
     suspend fun pruneOldSpans(cutoff: Long)
 

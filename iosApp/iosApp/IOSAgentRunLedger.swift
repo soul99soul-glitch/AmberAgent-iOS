@@ -443,7 +443,7 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
 
     private func runCandidates(conversationId: String) async -> [RunCandidate] {
         await withCheckedContinuation { continuation in
-            dao.listAllRuns { rows, _ in
+            dao.listRunSummaries { rows, _ in
                 let candidates = (rows ?? []).compactMap { run -> RunCandidate? in
                     guard IOSDurableRunStore.Descriptor.chatRecoveryAliases.contains(run.agentDescriptorId),
                           run.conversationId?.caseInsensitiveCompare(conversationId) == .orderedSame else {
@@ -902,14 +902,17 @@ enum IOSToolEffectClassMapping {
             return .pure
         }
         // 会话读取：跨会话检索与当前会话原始历史，均为本地只读，重放无副作用。
-        if ["session_search", "session_read", "history_search", "history_fetch"].contains(toolName) {
+        if ["session_search", "session_read", "history_search", "history_fetch", ChatEpisodeRecallTool.name].contains(toolName) {
             return .pure
         }
         // 本地运行时自省快照（Jev 模式/门控/目录计数）——纯读，重放无副作用。
         if toolName == "runtime_status" {
             return .pure
         }
-        if toolName == "phone_status" || toolName == "phone_observe" || toolName == "phone_apps" {
+        if toolName == "phone_status"
+            || toolName == IOSPhoneControlToolCatalog.preflightToolName
+            || toolName == "phone_observe"
+            || toolName == "phone_apps" {
             return .pure
         }
         if toolName == IOSWeatherToolCatalog.toolName
@@ -922,8 +925,11 @@ enum IOSToolEffectClassMapping {
         if toolName == "provider_config_status" {
             return .pure
         }
-        if toolName == "theme_pack_status" {
+        if toolName == "theme_pack_status" || toolName == AgentSoulToolCatalog.getToolName {
             return .pure
+        }
+        if toolName == AgentSoulToolCatalog.updateToolName {
+            return .sideEffect
         }
         // SSH profile：list 是本地只读快照；三个写工具改本机配置 + 钥匙串凭证，
         // 重放会在不同目标上再写一次，按 sideEffect 处理。
@@ -1025,7 +1031,7 @@ enum IOSToolEffectClassMapping {
             return .sideEffect
         }
         switch rawAction.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "list", "read", "search", "query", "status":
+        case "list", "read", "search", "query", "status", "wiki_read", "wiki_search", "wiki_history":
             return .pure
         case "edit", "update", "delete", "remove":
             return .idempotent
@@ -1351,19 +1357,49 @@ enum IOSToolCallRecoveryApplier {
         didApply: Bool,
         to messages: [UIMessage]
     ) -> [UIMessage] {
+        applyOutcomeUnknownReconciliation(
+            toolCallId: toolCallId,
+            resolution: didApply ? .applied : .notApplied,
+            to: messages
+        )
+    }
+
+    static func applyOutcomeUnknownReconciliation(
+        toolCallId: String,
+        resolution: IOSOutcomeUnknownResolution,
+        to messages: [UIMessage]
+    ) -> [UIMessage] {
         guard let toolName = messages
             .flatMap(\.parts)
             .compactMap({ $0 as? UIMessagePart.Tool })
             .first(where: { $0.toolCallId == toolCallId })?.toolName else {
             return messages
         }
-        let reason = didApply
-            ? "用户确认：该操作已经生效。为避免重复执行，不会再次运行此工具。"
-            : "用户确认：该操作没有生效。本次调用已结束；如仍需要，请重新发起。"
-        let output = [UIMessagePart.Text(
-            text: failureJSON(toolName: toolName, reason: reason),
-            metadata: nil
-        )]
+        let reason: String
+        switch resolution {
+        case .applied:
+            reason = "用户确认：该操作已经生效。为避免重复执行，不会再次运行此工具。"
+        case .notApplied:
+            reason = "用户确认：该操作没有生效。本次调用已结束；如仍需要，请重新发起。"
+        case .recheckRequested:
+            reason = "结果未知：用户要求先只读核查目标现状。禁止重放此调用；如核查后仍需修改，必须重新发起并重新审批。"
+        }
+        let payload: [String: Any] = [
+            "ok": false,
+            "tool": toolName,
+            "reason": reason,
+            "outcome": resolution.ledgerOutcome,
+            "reconciled": true,
+            "replay_prohibited": true
+        ]
+        let text: String
+        if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+           let encoded = String(data: data, encoding: .utf8) {
+            text = encoded
+        } else {
+            text = failureJSON(toolName: toolName, reason: reason)
+        }
+        let output = [UIMessagePart.Text(text: text, metadata: nil)]
         return replacingToolOutput(toolCallId: toolCallId, output: output, in: messages)
     }
 

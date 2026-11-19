@@ -2,43 +2,6 @@ import Foundation
 import SwiftUI
 import WebKit
 
-enum IOSDeepReadWebMountAdapter {
-    @MainActor
-    static func currentPageSource(
-        controller: IOSWebMountController = .shared,
-        maxChars: Int = 20_000
-    ) async -> Result<IOSDeepReadSource, IOSDeepReadSourceNormalizationError> {
-        let snapshot = controller.runtime.snapshot
-        guard snapshot.status == .ready else {
-            let reason = snapshot.error.map(IOSWebMountRedactor.redactedText)?.nilIfBlank
-                ?? "站点当前没有已加载完成的页面；请先打开站点并停留在要深读的页面。"
-            return .failure(.unsupported(reason))
-        }
-        do {
-            let extracted = try await controller.runtime.extract(mode: "readable", maxChars: maxChars, maxLinks: 20)
-            let rawResult = extracted["text"] as? String
-                ?? (extracted["result"] as? [String: Any])?["text"] as? String
-                ?? ""
-            let result = IOSWebMountRedactor.redactedText(rawResult)
-            let rawTitle = extracted["title"] as? String
-                ?? (extracted["result"] as? [String: Any])?["title"] as? String
-                ?? snapshot.title
-                ?? "站点页面"
-            let title = IOSWebMountRedactor.redactedText(rawTitle)
-            let rawURL = extracted["url"] as? String
-                ?? (extracted["result"] as? [String: Any])?["url"] as? String
-                ?? snapshot.currentURL
-            let url = IOSWebMountRedactor.redactedURL(rawURL)
-            let source = try IOSDeepReadSourceNormalizer.webMountSource(title: title, url: url, text: result)
-            return .success(source)
-        } catch let error as IOSDeepReadSourceNormalizationError {
-            return .failure(error)
-        } catch {
-            return .failure(.unsupported("站点页面正文读取失败：\(IOSDeepReadUserFacingText.fromError(error))"))
-        }
-    }
-}
-
 struct IOSWebMountContentHandoff: Equatable, Identifiable {
     let id: String
     let siteId: String
@@ -61,23 +24,6 @@ struct IOSWebMountContentHandoff: Equatable, Identifiable {
         正文：
         \(String(text.prefix(12_000)))
         """
-    }
-
-    var boardSignal: IOSRawBoardSignal {
-        IOSRawBoardSignal(
-            sourceType: IOSBoardSignalSourceType.webmount,
-            sourceRef: "webmount:\(siteId):\(sourceURL)",
-            title: title.nilIfBlank ?? siteName,
-            content: String(text.prefix(4_000)),
-            signalTime: createdAtMillis,
-            metadataJson: IOSWebMountController.json([
-                "site_id": siteId,
-                "site_name": siteName,
-                "source_url": sourceURL,
-                "link_count": linkCount,
-                "redacted": true
-            ])
-        )
     }
 
     static func from(
@@ -112,7 +58,6 @@ final class IOSWebMountContentHandoffStore {
     static let shared = IOSWebMountContentHandoffStore()
 
     private var pendingChatHandoff: IOSWebMountContentHandoff?
-    private var pendingDeepReadHandoff: IOSWebMountContentHandoff?
 
     private init() {}
 
@@ -123,15 +68,6 @@ final class IOSWebMountContentHandoffStore {
     func consumeChatHandoff() -> IOSWebMountContentHandoff? {
         defer { pendingChatHandoff = nil }
         return pendingChatHandoff
-    }
-
-    func prepareDeepRead(_ handoff: IOSWebMountContentHandoff) {
-        pendingDeepReadHandoff = handoff
-    }
-
-    func consumeDeepReadHandoff() -> IOSWebMountContentHandoff? {
-        defer { pendingDeepReadHandoff = nil }
-        return pendingDeepReadHandoff
     }
 }
 

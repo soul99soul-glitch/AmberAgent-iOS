@@ -467,8 +467,36 @@ final class IOSSystemPermissionCoordinator {
         return modes.contains(mode)
     }
 
+    nonisolated static func missingEntitlements(
+        for capability: IOSPlatformCapability,
+        bundleIdentifier: String? = Bundle.main.bundleIdentifier,
+        infoDictionary: [String: Any]? = Bundle.main.infoDictionary
+    ) -> [String] {
+        capability.requiredEntitlements.filter {
+            entitlementValue($0, bundleIdentifier: bundleIdentifier, infoDictionary: infoDictionary) == nil
+        }
+    }
+
+    nonisolated static func isModelToolEntitled(
+        _ toolName: String,
+        bundleIdentifier: String? = Bundle.main.bundleIdentifier,
+        infoDictionary: [String: Any]? = Bundle.main.infoDictionary
+    ) -> Bool {
+        guard let capability = IOSCapabilityRegistry.capabilities.first(where: { $0.modelToolNames.contains(toolName) }) else {
+            return false
+        }
+        guard capability.status != .unsupported else {
+            return false
+        }
+        return missingEntitlements(
+            for: capability,
+            bundleIdentifier: bundleIdentifier,
+            infoDictionary: infoDictionary
+        ).isEmpty
+    }
+
     private func missingEntitlements(for capability: IOSPlatformCapability) -> [String] {
-        capability.requiredEntitlements.filter { Self.entitlementValue($0) == nil }
+        Self.missingEntitlements(for: capability)
     }
 
     private func requiresExtensionTarget(_ capability: IOSPlatformCapability) -> Bool {
@@ -476,15 +504,19 @@ final class IOSSystemPermissionCoordinator {
             capability.requestKind == .entitlementAndExtensionRequired
     }
 
-    private static func entitlementValue(_ key: String) -> Any? {
+    nonisolated private static func entitlementValue(
+        _ key: String,
+        bundleIdentifier: String? = Bundle.main.bundleIdentifier,
+        infoDictionary: [String: Any]? = Bundle.main.infoDictionary
+    ) -> Any? {
         #if os(macOS)
         guard let task = SecTaskCreateFromSelf(kCFAllocatorDefault) else { return nil }
         return SecTaskCopyValueForEntitlement(task, key as CFString, nil as UnsafeMutablePointer<Unmanaged<CFError>?>?)
         #else
-        let infoKey = Bundle.main.bundleIdentifier?.contains(".experimental-gpl") == true
+        let infoKey = bundleIdentifier?.contains(".experimental-gpl") == true
             ? "AmberAgentExperimentalConfiguredEntitlements"
             : "AmberAgentConfiguredEntitlements"
-        let declaredEntitlements = Bundle.main.object(forInfoDictionaryKey: infoKey) as? [String] ?? []
+        let declaredEntitlements = infoDictionary?[infoKey] as? [String] ?? []
         return declaredEntitlements.contains(key) ? true : nil
         #endif
     }

@@ -15,9 +15,13 @@ extension IOSContextCompactionCoordinator {
         text.weightedTokenChars / 4 + 1
     }
 
+    private static func estimatedMessageChars(_ message: UIMessage) -> Int {
+        message.role.name.count + message.parts.reduce(0) { $0 + estimatedChars($1) }
+    }
+
     static func estimateTokens(_ messages: [UIMessage]) -> Int {
         let chars = messages.reduce(0) { total, message in
-            total + message.role.name.count + message.parts.reduce(0) { $0 + estimatedChars($1) }
+            total + estimatedMessageChars(message)
         }
         return max(chars / 4, messages.count * 4)
     }
@@ -296,26 +300,34 @@ extension IOSContextCompactionCoordinator {
 
         let systemMessages = messages.filter { $0.role == MessageRole.system }
         let tail = messages.filter { $0.role != MessageRole.system }
-        var selected: [UIMessage] = []
+        let systemChars = systemMessages.reduce(0) { $0 + estimatedMessageChars($1) }
+        var selectedReversed: [UIMessage] = []
+        selectedReversed.reserveCapacity(tail.count)
+        var runningChars = systemChars
         for message in tail.reversed() {
-            selected.insert(message, at: 0)
-            let candidate = systemMessages + selected
-            if estimateTokens(candidate) > maxTokens {
-                selected.removeFirst()
-                if selected.isEmpty {
+            let messageChars = estimatedMessageChars(message)
+            let candidateChars = runningChars + messageChars
+            let candidateCount = systemMessages.count + selectedReversed.count + 1
+            if max(candidateChars / 4, candidateCount * 4) > maxTokens {
+                if selectedReversed.isEmpty {
                     // 唯一候选超预算：不再整条硬保（那会撑爆 assertFitsRequest 让
                     // 请求必败）——先就地截断其工具输出到预算内；无可截工具输出
                     // （纯文本巨消息）才保留旧行为（宁超窗不丢消息）。
-                    selected.insert(
-                        messageFittedToTokenBudget(message, systemMessages: systemMessages, maxTokens: maxTokens),
-                        at: 0
+                    let fitted = messageFittedToTokenBudget(
+                        message,
+                        systemMessages: systemMessages,
+                        maxTokens: maxTokens
                     )
+                    selectedReversed.append(fitted)
+                    runningChars += estimatedMessageChars(fitted)
                 }
                 break
             }
+            selectedReversed.append(message)
+            runningChars = candidateChars
         }
-        var result = systemMessages + selected
-        guard estimateTokens(result) > maxTokens else {
+        var result = systemMessages + selectedReversed.reversed()
+        guard max(runningChars / 4, result.count * 4) > maxTokens else {
             return appendingTruncationNotice(to: result, originalCount: originalCount, maxTokens: maxTokens)
         }
 
@@ -345,12 +357,16 @@ extension IOSContextCompactionCoordinator {
         systemMessages: [UIMessage],
         maxTokens: Int
     ) -> UIMessage {
-        if estimateTokens(systemMessages + [message]) <= maxTokens { return message }
+        let systemChars = systemMessages.reduce(0) { $0 + estimatedMessageChars($1) }
+        let candidateCount = systemMessages.count + 1
+        if max((systemChars + estimatedMessageChars(message)) / 4, candidateCount * 4) <= maxTokens {
+            return message
+        }
         var fitted = message
         var fit = false
         for limit in [12_000, 8_000, 6_000, 4_000, 3_000, 2_000, 1_500, 1_000, 800, 600, 400, 200] {
             fitted = truncatingToolOutputs(in: message, maxCharsPerOutput: limit)
-            if estimateTokens(systemMessages + [fitted]) <= maxTokens {
+            if max((systemChars + estimatedMessageChars(fitted)) / 4, candidateCount * 4) <= maxTokens {
                 fit = true
                 break
             }

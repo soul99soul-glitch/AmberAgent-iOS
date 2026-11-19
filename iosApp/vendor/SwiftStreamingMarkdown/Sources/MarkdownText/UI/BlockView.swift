@@ -42,6 +42,7 @@ struct SingleBlockView: View {
   @Environment(\.markdownConfig) var config: MarkdownRenderConfig
   @Environment(\.markdownUsesTextKit1ForAttachmentFreeText) var usesTextKit1ForAttachmentFreeText
   @Environment(\.swiftStreamingMarkdownCodeBlockHeaderAccessory) private var codeBlockHeaderAccessory
+  @Environment(\.markdownSegmentedBlockEntrance) private var segmentedBlockEntrance
   @State private var hasMountedText = false
 
   let renderable: MarkdownRenderable
@@ -138,6 +139,7 @@ struct SingleBlockView: View {
         BlockQuoteView(item: item)
       }
     }
+    .modifier(SegmentedBlockEntranceModifier(isEnabled: segmentedBlockEntrance))
   }
 
   private func shouldUseTextKit1(for contents: NSAttributedString) -> Bool {
@@ -152,5 +154,35 @@ struct SingleBlockView: View {
       stop.pointee = true
     }
     return !containsAttachment
+  }
+}
+
+private struct SegmentedBlockEntranceModifier: ViewModifier {
+  let isEnabled: Bool
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var hasEntered: Bool
+
+  init(isEnabled: Bool) {
+    self.isEnabled = isEnabled
+    self._hasEntered = State(initialValue: !isEnabled)
+  }
+
+  func body(content: Content) -> some View {
+    let settled = hasEntered || !isEnabled
+    content
+      .opacity(settled ? 1 : 0)
+      .offset(y: (settled || reduceMotion) ? 0 : 6)
+      .onAppear {
+        guard !hasEntered else { return }
+        if reduceMotion {
+          withAnimation(.easeOut(duration: 0.14)) {
+            hasEntered = true
+          }
+        } else {
+          withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+            hasEntered = true
+          }
+        }
+      }
   }
 }

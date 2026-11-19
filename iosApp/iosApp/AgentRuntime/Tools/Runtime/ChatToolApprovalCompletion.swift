@@ -52,7 +52,8 @@ extension ChatToolRuntime {
             input: pending.toolCall.input,
             runtime: sharedSettings.agentRuntime,
             writePolicy: writePolicy,
-            expectedUpdatedAt: expectedUpdatedAt
+            expectedUpdatedAt: expectedUpdatedAt,
+            conversationId: pending.conversationId?.toHexDashString()
         )
         return messagesByFinishingToolCall(
             pending.toolCall,
@@ -344,6 +345,8 @@ extension ChatToolRuntime {
                     ?? "ios.apple.agent_tools",
                 "Apple device capability"
             )
+        } else if pending.toolCall.toolName == "phone_add_app" {
+            audit = ("ios.phone.control", "iPhone controllable app scope expansion")
         } else {
             audit = ("ios.skills.management", "local Skill operation")
         }
@@ -444,7 +447,8 @@ extension ChatToolRuntime {
                     providerSetting: pending.providerSetting,
                     params: pending.params,
                     runId: pending.runId,
-                    conversationId: pending.conversationId
+                    conversationId: pending.conversationId,
+                    phoneControlOverride: pending.phoneControl
                 )
             }
         } else if pending.toolCall.toolName == "theme_pack_import" {
@@ -452,6 +456,13 @@ extension ChatToolRuntime {
             resultText = ChatToolOutputFormatter.toolFailureJSON(
                 toolName: pending.toolCall.toolName,
                 reason: "用户还原了试穿，主题未保存。",
+                denied: true,
+                status: "denied"
+            )
+        } else if pending.toolCall.toolName == "phone_add_app" {
+            resultText = ChatToolOutputFormatter.toolFailureJSON(
+                toolName: pending.toolCall.toolName,
+                reason: "用户拒绝将该应用加入可控列表。",
                 denied: true,
                 status: "denied"
             )

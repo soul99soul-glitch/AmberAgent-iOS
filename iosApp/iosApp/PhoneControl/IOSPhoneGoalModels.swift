@@ -171,6 +171,7 @@ struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
 
     let goal: String
     let bundleID: String
+    let pageAnchor: IOSPhoneGoalTarget?
     let actions: [IOSPhoneGoalActionSpec]
     let steps: [IOSPhoneSequenceStep]?
     let completion: IOSPhoneGoalExpectation
@@ -180,13 +181,16 @@ struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case goal, actions, steps, completion
         case bundleID = "bundle_id"
+        case pageAnchor = "page_anchor"
         case maxSteps = "max_steps"
     }
 
     init(goal: String, bundleID: String, actions: [IOSPhoneGoalActionSpec],
-         completion: IOSPhoneGoalExpectation, maxSteps: Int = IOSPhoneGoalRequest.defaultMaxSteps) {
+         completion: IOSPhoneGoalExpectation, maxSteps: Int = IOSPhoneGoalRequest.defaultMaxSteps,
+         pageAnchor: IOSPhoneGoalTarget? = nil) {
         self.goal = goal
         self.bundleID = bundleID
+        self.pageAnchor = pageAnchor
         self.actions = actions
         self.steps = nil
         self.completion = completion
@@ -198,6 +202,7 @@ struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
          completion: IOSPhoneGoalExpectation, maxSteps: Int? = nil) {
         self.goal = goal
         self.bundleID = bundleID
+        self.pageAnchor = nil
         self.actions = []
         self.steps = steps
         self.completion = completion
@@ -206,9 +211,11 @@ struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
     }
 
     init(goal: String, bundleID: String, completion: IOSPhoneGoalExpectation,
-         maxSteps: Int = IOSPhoneGoalRequest.defaultMaxSteps) {
+         maxSteps: Int = IOSPhoneGoalRequest.defaultMaxSteps,
+         pageAnchor: IOSPhoneGoalTarget? = nil) {
         self.goal = goal
         self.bundleID = bundleID
+        self.pageAnchor = pageAnchor
         self.actions = []
         self.steps = nil
         self.completion = completion
@@ -220,6 +227,7 @@ struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         goal = try container.decode(String.self, forKey: .goal)
         bundleID = try container.decode(String.self, forKey: .bundleID)
+        pageAnchor = try container.decodeIfPresent(IOSPhoneGoalTarget.self, forKey: .pageAnchor)
         steps = try container.decodeIfPresent([IOSPhoneSequenceStep].self, forKey: .steps)
         actions = try container.decodeIfPresent([IOSPhoneGoalActionSpec].self, forKey: .actions) ?? []
         completion = try container.decode(IOSPhoneGoalExpectation.self, forKey: .completion)
@@ -232,6 +240,7 @@ struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(goal, forKey: .goal)
         try container.encode(bundleID, forKey: .bundleID)
+        try container.encodeIfPresent(pageAnchor, forKey: .pageAnchor)
         if let steps { try container.encode(steps, forKey: .steps) }
         else if !usesLiveCandidates { try container.encode(actions, forKey: .actions) }
         try container.encode(completion, forKey: .completion)
@@ -246,6 +255,12 @@ struct IOSPhoneGoalRequest: Codable, Equatable, Sendable {
         }
         guard (1...Self.maximumSteps).contains(maxSteps) else {
             throw IOSPhoneGoalValidationError.invalid("max_steps must be 1–\(Self.maximumSteps).")
+        }
+        if let pageAnchor {
+            guard steps == nil else {
+                throw IOSPhoneGoalValidationError.invalid("Root page_anchor cannot be combined with ordered steps.")
+            }
+            try pageAnchor.validate()
         }
         if let steps {
             guard actions.isEmpty, (1...12).contains(steps.count) else {

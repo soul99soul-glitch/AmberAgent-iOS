@@ -15,11 +15,11 @@ struct AmberPalette {
 // getters read the @Observable runtime, any SwiftUI body that reads AmberTheme.* auto-tracks
 // theme changes and re-renders — with zero changes at the ~1500 existing call sites.
 enum AmberTheme {
-    // 暖纸：画布 #EFE7D6、卡片 #FFFDF7，投影偏暖棕。
+    // 暖纸（Argon Warm Editorial）：画布 #FBF9F5、次表面 #F3EFEA、纯白抬升卡片 #FFFFFF。
     static let paperLight = AmberPalette(
-        background: 0xEFE7D6, surface: 0xFFFDF7, surface2: 0xF0EBE2,
-        foreground: 0x1B1813, foreground2: 0x5B5449, muted: 0x746D62, muted2: 0x918A80,
-        border: 0xDBCEBC, borderSoft: 0xECE3D6
+        background: 0xFBF9F5, surface: 0xF3EFEA, surface2: 0xEAE4DC,
+        foreground: 0x1E1B18, foreground2: 0x3D3731, muted: 0x787067, muted2: 0x9E958B,
+        border: 0xE6E0D6, borderSoft: 0xEFEAE1
     )
     // 暖灰（E 版默认）：画布 #ECE8E4 + 暖白卡片 #F6F5F3。
     static let neutralLight = AmberPalette(
@@ -117,23 +117,6 @@ enum AmberTheme {
         border: 0xD7C1BD, borderSoft: 0xE3D0CD
     )
 
-    private static func base(_ key: KeyPath<AmberPalette, UInt32>, alpha: Double = 1) -> Color {
-        base(light: key, dark: key, alpha: alpha)
-    }
-
-    private static func base(
-        light lightKey: KeyPath<AmberPalette, UInt32>, dark darkKey: KeyPath<AmberPalette, UInt32>,
-        alpha: Double = 1
-    ) -> Color {
-        let paper = AmberThemeRuntime.shared.paper
-        let design = AmberThemeRuntime.shared.design
-        let lightHex = resolvedCanvasPalette(paper: paper, design: design, dark: false)[keyPath: lightKey]
-        let darkHex = resolvedCanvasPalette(paper: paper, design: design, dark: true)[keyPath: darkKey]
-        return Color(uiColor: UIColor { trait in
-            UIColor(hex: trait.userInterfaceStyle == .dark ? darkHex : lightHex, alpha: alpha)
-        })
-    }
-
     /// Canvas palette for one appearance: the paper palette with the design theme's color
     /// overrides applied. Single source for native tokens and web surfaces (deep-read reader).
     static func resolvedCanvasPalette(
@@ -143,27 +126,29 @@ enum AmberTheme {
         return (dark ? design?.dark : design?.light)?.resolving(base) ?? base
     }
 
-    static var background: Color { base(\.background) }
+    private static var tokens: ResolvedTokens { AmberThemeRuntime.shared.resolvedTokens }
+
+    static var background: Color { tokens.background }
     /// 顶栏弹出面板底色：借 EDR 线性提亮到 1.25 倍，与页面背景拉开亮度层级。
     /// 暗色背景近黑，倍乘几乎无效，改以 `surface` 为底抬高层级。
     /// 不支持 EDR 的屏幕会色调映射回 SDR。
-    static var elevatedPanel: Color {
-        base(light: \.background, dark: \.surface).exposureAdjust(log2(1.25))
-    }
-    static var surface: Color { base(\.surface) }
-    static var surface2: Color { base(\.surface2) }
-    static var card: Color { base(\.surface) }
-    static var foreground: Color { base(\.foreground) }
-    static var foreground2: Color { base(\.foreground2) }
-    static var muted: Color { base(\.muted) }
-    static var muted2: Color { base(\.muted2) }
-    static var border: Color { base(\.border) }
-    static var borderSoft: Color { base(\.borderSoft) }
+    static var elevatedPanel: Color { tokens.elevatedPanel }
+    static var surface: Color { tokens.surface }
+    static var surface2: Color { tokens.surface2 }
+    /// 抬升纯白卡片面（Argon `surfaceElevated`）：浅色暖纸/中性画布上为 #FFFFFF，深色下为 `surface2`。
+    static var surfaceElevated: Color { tokens.surfaceElevated }
+    static var card: Color { tokens.surface }
+    static var foreground: Color { tokens.foreground }
+    static var foreground2: Color { tokens.foreground2 }
+    static var muted: Color { tokens.muted }
+    static var muted2: Color { tokens.muted2 }
+    static var border: Color { tokens.border }
+    static var borderSoft: Color { tokens.borderSoft }
 
     // Runtime accent (the user's swatch). accentInk = on-accent text/icon color.
-    static var accent: Color { Color(hex: AmberThemeRuntime.shared.accentHex) }
-    static var accentTint: Color { Color(hex: AmberThemeRuntime.shared.accentHex, alpha: 0.12) }
-    static var accentInk: Color { Color(hex: AmberThemeRuntime.shared.accentInkHex) }
+    static var accent: Color { tokens.accent }
+    static var accentTint: Color { tokens.accentTint }
+    static var accentInk: Color { tokens.accentInk }
 
     // Semantic status colors stay fixed (status is always color + symbol/label elsewhere).
     // `accentAmber` / `statusAmber` = warning · running · attention chrome — NOT the user theme accent.
@@ -173,12 +158,12 @@ enum AmberTheme {
     static let accentAmber = Color(hex: statusAmberHex)
     /// Alias for call sites that want the semantic name (same as `accentAmber`).
     static var statusAmber: Color { accentAmber }
-    static let accentGreen = Color(hex: 0x3DA35D)
+    static let accentGreen = Color(hex: 0x2E7D5B)
     static let accentCyan = Color(hex: 0x2AA0BC)
-    static let accentRed = Color(hex: 0xC8402F)
+    static let accentRed = Color(hex: 0xC84031)
 
-    static var glass: Color { base(\.background, alpha: 0.72) }
-    static var glassStrong: Color { base(\.background, alpha: 0.85) }
+    static var glass: Color { tokens.glass }
+    static var glassStrong: Color { tokens.glassStrong }
 
     static let radiusSmall: CGFloat = 6
     static let radiusMedium: CGFloat = 8
@@ -210,256 +195,48 @@ enum AmberTheme {
     // 画布相关（sep/activeCard/avatar…）随 Paper 变；彩色强调走 runtime accent。
 
     /// 全 App 唯一分隔线语言：1px hairline。
-    static var separator: Color { homeColor(\.sep, alpha: \.sepAlpha) }
+    static var separator: Color { tokens.separator }
     /// hover/按压垫底（前景只允许加深，禁止变浅变灰）。
-    static var press: Color { homeColor(\.press, alpha: \.pressAlpha) }
-    static var hoverCard: Color { homeColor(\.hoverCard) }
+    static var press: Color { tokens.press }
+    static var hoverCard: Color { tokens.hoverCard }
     /// 激活会话行通栏色带。
     /// Notion 暖白：中性浅墨晕（≈ rgba(0,0,0,0.04)），蓝只留在图标/头像，避免整行「皮肤」蓝。
     /// 其它 paper：仍随 accent 浅染。
-    static var activeCard: Color {
-        Color(uiColor: UIColor { trait in
-            let dark = trait.userInterfaceStyle == .dark
-            if AmberThemeRuntime.shared.paper == .notion {
-                return UIColor(hex: dark ? 0xFFFFFF : 0x000000, alpha: dark ? 0.08 : 0.04)
-            }
-            let hex = AmberThemeRuntime.shared.accentHex
-            return UIColor(hex: hex, alpha: dark ? 0.16 : 0.09)
-        })
-    }
+    static var activeCard: Color { tokens.activeCard }
     /// 节标题墨（设计令牌 sec，与 foreground2 数值同构但语义独立，防止联动漂移）。
-    static var section: Color { homeColor(\.section) }
+    static var section: Color { tokens.section }
     /// 当前/激活头像底：随 accent 浅染（Continue 功能方块、会话当前行共用）。
-    static var avatarActive: Color {
-        Color(uiColor: UIColor { trait in
-            let hex = AmberThemeRuntime.shared.accentHex
-            let alpha: Double = trait.userInterfaceStyle == .dark ? 0.32 : 0.18
-            return UIColor(hex: hex, alpha: alpha)
-        })
-    }
+    static var avatarActive: Color { tokens.avatarActive }
     /// 当前/激活头像墨：浅色用 accent 本体；深色用 on-accent 墨（高亮色走白/浅，琥珀等走深墨时抬亮一档）。
-    static var avatarActiveInk: Color {
-        Color(uiColor: UIColor { trait in
-            let accent = AmberThemeRuntime.shared.accentHex
-            if trait.userInterfaceStyle == .dark {
-                let ink = AmberThemeRuntime.shared.accentInkHex
-                // 深色画布上：若 ink 是白/浅则用 ink；若 ink 是深色（琥珀/鼠尾草）则用 accent 提亮可读性。
-                let r = Double((ink >> 16) & 0xFF)
-                let g = Double((ink >> 8) & 0xFF)
-                let b = Double(ink & 0xFF)
-                let luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
-                return UIColor(hex: luminance > 0.6 ? ink : accent)
-            }
-            return UIColor(hex: accent)
-        })
-    }
-    static var avatarIdle: Color { homeColor(\.avatarIdle) }
-    static var avatarIdleInk: Color { homeColor(\.avatarIdleInk) }
+    static var avatarActiveInk: Color { tokens.avatarActiveInk }
+    static var avatarIdle: Color { tokens.avatarIdle }
+    static var avatarIdleInk: Color { tokens.avatarIdleInk }
     /// 首页/浮层强调色别名：绑定用户可选 accent（齿轮、新建图标、旧 fab 调用点）。
-    static var fab: Color { accent }
-    static var fabInk: Color { accentInk }
+    static var fab: Color { tokens.accent }
+    static var fabInk: Color { tokens.accentInk }
     /// focus-visible 焦点环（随 accent）。
-    static var focusRing: Color {
-        Color(hex: AmberThemeRuntime.shared.accentHex, alpha: 0.55)
-    }
+    static var focusRing: Color { tokens.focusRing }
     /// 当前会话头像呼吸光晕（色随 accent；alpha 刻意压低，只余光提示）。
-    static var activeAvatarGlow: Color {
-        Color(uiColor: UIColor { trait in
-            let hex = AmberThemeRuntime.shared.accentHex
-            if trait.userInterfaceStyle == .dark {
-                return UIColor(hex: hex, alpha: 0.14)
-            }
-            let alpha: Double
-            switch AmberThemeRuntime.shared.paper {
-            case .paper: alpha = 0.14
-            case .white: alpha = 0.12
-            default: alpha = 0.15
-            }
-            return UIColor(hex: hex, alpha: alpha)
-        })
-    }
+    static var activeAvatarGlow: Color { tokens.activeAvatarGlow }
     /// 首页控制层玻璃配方（仅搜索胶囊钮/展开搜索条/齿轮按钮三个控件，设计 §2）。
     /// 浅色（含暖纸）：白 .78→.58 纵向渐变；深色：白 .14→.08。
     /// 描边 .5px 白 .5（深色 .16）、顶部内高光白 .9（深色 .16）、投影 rgba(40,36,28) .10/.06（深色黑 .30/.22）。
-    static var homeGlassTop: Color { homeGlassWhite(\.glassTopAlpha) }
-    static var homeGlassBottom: Color { homeGlassWhite(\.glassBottomAlpha) }
-    static var homeGlassEdge: Color { homeGlassWhite(\.glassEdgeAlpha) }
-    static var homeGlassHighlight: Color { homeGlassWhite(\.glassHighlightAlpha) }
-    static var homeGlassShadowAmbient: Color { homeColor(\.glassShadow, alpha: \.glassShadowAmbientAlpha) }
-    static var homeGlassShadowContact: Color { homeColor(\.glassShadow, alpha: \.glassShadowContactAlpha) }
+    static var homeGlassTop: Color { tokens.homeGlassTop }
+    static var homeGlassBottom: Color { tokens.homeGlassBottom }
+    static var homeGlassEdge: Color { tokens.homeGlassEdge }
+    static var homeGlassHighlight: Color { tokens.homeGlassHighlight }
+    static var homeGlassShadowAmbient: Color { tokens.homeGlassShadowAmbient }
+    static var homeGlassShadowContact: Color { tokens.homeGlassShadowContact }
     /// 贴身接触线投影（卡片「坐」在画布上的关键，不要飘）。
-    static var cardShadowContact: Color {
-        if let opacity = AmberThemeRuntime.shared.design?.components?.shadowOpacity { return .black.opacity(opacity * 0.5) }
-        return homeColor(\.shadowContact, alpha: \.shadowContactAlpha)
-    }
+    static var cardShadowContact: Color { tokens.cardShadowContact }
     /// 弱环境光投影。
-    static var cardShadowAmbient: Color {
-        if let opacity = AmberThemeRuntime.shared.design?.components?.shadowOpacity { return .black.opacity(opacity) }
-        return homeColor(\.shadowAmbient, alpha: \.shadowAmbientAlpha)
-    }
+    static var cardShadowAmbient: Color { tokens.cardShadowAmbient }
 
     /// 环境光投影的几何随主题变化（浅色 0 5px 14px -6px，深色 0 8px 20px -8px），
     /// 颜色已通过上面的动态令牌解析，这里只提供几何。
     static func cardShadowAmbientGeometry(for colorScheme: ColorScheme) -> (radius: CGFloat, y: CGFloat) {
         if let radius = AmberThemeRuntime.shared.design?.components?.shadowRadius { return (CGFloat(radius), CGFloat(radius) * 0.5) }
         return colorScheme == .dark ? (10, 8) : (7, 5)
-    }
-
-    private struct AmberHomeTokens {
-        let sep, press, hoverCard, activeCard: UInt32
-        let sepAlpha, pressAlpha: Double
-        let section: UInt32
-        let avatarActive, avatarActiveInk, avatarIdle, avatarIdleInk: UInt32
-        let shadowContact, shadowAmbient: UInt32
-        let shadowContactAlpha, shadowAmbientAlpha: Double
-        let glassTopAlpha, glassBottomAlpha, glassEdgeAlpha, glassHighlightAlpha: Double
-        let glassShadow: UInt32
-        let glassShadowAmbientAlpha, glassShadowContactAlpha: Double
-    }
-
-    // 暖灰 light
-    private static let homeNeutral = AmberHomeTokens(
-        sep: 0x161410, press: 0x463A28, hoverCard: 0xF0EEEA, activeCard: 0xEFE9DF,
-        sepAlpha: 0.045, pressAlpha: 0.06,
-        section: 0x55524D,
-        avatarActive: 0xE8DDC6, avatarActiveInk: 0x6F5019, avatarIdle: 0xEDEBE7, avatarIdleInk: 0x8F8B85,
-        shadowContact: 0x3A342C, shadowAmbient: 0x3A342C,
-        shadowContactAlpha: 0.09, shadowAmbientAlpha: 0.05,
-        glassTopAlpha: 0.78, glassBottomAlpha: 0.58, glassEdgeAlpha: 0.5, glassHighlightAlpha: 0.9,
-        glassShadow: 0x28241C, glassShadowAmbientAlpha: 0.10, glassShadowContactAlpha: 0.06
-    )
-    // 暖纸 light
-    private static let homePaper = AmberHomeTokens(
-        sep: 0x261E14, press: 0x594223, hoverCard: 0xF7F1E6, activeCard: 0xF4EAD8,
-        sepAlpha: 0.05, pressAlpha: 0.055,
-        section: 0x5B5449,
-        avatarActive: 0xEADCBC, avatarActiveInk: 0x6F5019, avatarIdle: 0xF0EBE2, avatarIdleInk: 0x918A80,
-        shadowContact: 0x4C3B22, shadowAmbient: 0x4C3B22,
-        shadowContactAlpha: 0.09, shadowAmbientAlpha: 0.06,
-        glassTopAlpha: 0.78, glassBottomAlpha: 0.58, glassEdgeAlpha: 0.5, glassHighlightAlpha: 0.9,
-        glassShadow: 0x28241C, glassShadowAmbientAlpha: 0.10, glassShadowContactAlpha: 0.06
-    )
-    // 中性白 light：冷灰分隔/投影，激活带浅中性灰
-    private static let homeWhite = AmberHomeTokens(
-        sep: 0x000000, press: 0x000000, hoverCard: 0xF0F0EF, activeCard: 0xEBEBEA,
-        sepAlpha: 0.08, pressAlpha: 0.05,
-        section: 0x5C5C5C,
-        avatarActive: 0xE8E8E7, avatarActiveInk: 0x3A3A3A, avatarIdle: 0xEEEEED, avatarIdleInk: 0x8E8E8E,
-        shadowContact: 0x000000, shadowAmbient: 0x000000,
-        shadowContactAlpha: 0.06, shadowAmbientAlpha: 0.04,
-        glassTopAlpha: 0.82, glassBottomAlpha: 0.62, glassEdgeAlpha: 0.45, glassHighlightAlpha: 0.9,
-        glassShadow: 0x000000, glassShadowAmbientAlpha: 0.08, glassShadowContactAlpha: 0.05
-    )
-    // 深色（玻璃改 10% 白、投影改黑系）
-    private static let homeDark = AmberHomeTokens(
-        sep: 0xFFFFFF, press: 0xFFFFFF, hoverCard: 0x29262D, activeCard: 0x302A25,
-        sepAlpha: 0.055, pressAlpha: 0.055,
-        section: 0xC3BEC5,
-        avatarActive: 0x443824, avatarActiveInk: 0xE0BA72, avatarIdle: 0x2B2930, avatarIdleInk: 0xAAA5AD,
-        shadowContact: 0x000000, shadowAmbient: 0x000000,
-        shadowContactAlpha: 0.58, shadowAmbientAlpha: 0.76,
-        glassTopAlpha: 0.14, glassBottomAlpha: 0.08, glassEdgeAlpha: 0.16, glassHighlightAlpha: 0.16,
-        glassShadow: 0x000000, glassShadowAmbientAlpha: 0.30, glassShadowContactAlpha: 0.22
-    )
-
-    private static func homeTokens(for paper: AmberThemeRuntime.Paper, dark: Bool, design: AmberThemeDesign? = nil) -> AmberHomeTokens {
-        if let source = dark ? design?.dark : design?.light {
-            let palette = source.resolving(dark ? paper.darkPalette : paper.lightPalette)
-            let chrome = dark ? homeDark : homeNeutral
-            return AmberHomeTokens(
-                sep: palette.foreground, press: palette.foreground,
-                hoverCard: palette.surface2, activeCard: palette.surface2,
-                sepAlpha: chrome.sepAlpha, pressAlpha: chrome.pressAlpha,
-                section: palette.foreground2,
-                avatarActive: palette.surface2, avatarActiveInk: palette.foreground,
-                avatarIdle: palette.surface2, avatarIdleInk: palette.muted,
-                shadowContact: chrome.shadowContact, shadowAmbient: chrome.shadowAmbient,
-                shadowContactAlpha: chrome.shadowContactAlpha, shadowAmbientAlpha: chrome.shadowAmbientAlpha,
-                glassTopAlpha: chrome.glassTopAlpha, glassBottomAlpha: chrome.glassBottomAlpha,
-                glassEdgeAlpha: chrome.glassEdgeAlpha, glassHighlightAlpha: chrome.glassHighlightAlpha,
-                glassShadow: chrome.glassShadow,
-                glassShadowAmbientAlpha: chrome.glassShadowAmbientAlpha,
-                glassShadowContactAlpha: chrome.glassShadowContactAlpha
-            )
-        }
-        if dark {
-            switch paper {
-            case .neutral:
-                // E-edition warm-gray chrome stays the canonical dark home table.
-                return homeDark
-            case .paper, .white, .pi, .notion:
-                // Only retint idle/hover/section against that paper's dark surfaces;
-                // glass/shadow geometry stay on homeDark (no full per-paper home tables).
-                return homeDarkAligned(to: paper.darkPalette)
-            case .garnet, .ochre, .turmeric, .magenta, .lotus:
-                break
-            }
-        } else {
-            switch paper {
-            case .neutral: return homeNeutral
-            case .paper: return homePaper
-            case .white: return homeWhite
-            case .pi: return homePaper // cream draft paper shares warm-home chrome
-            case .notion: return homeWhite // warm-white workspace
-            case .garnet, .ochre, .turmeric, .magenta, .lotus:
-                break
-            }
-        }
-        // 沉浸式单色画布目前是隐藏的占位主题：从各自调色板派生中性令牌。
-        let palette = dark ? paper.darkPalette : paper.lightPalette
-        return AmberHomeTokens(
-            sep: palette.foreground, press: palette.foreground,
-            hoverCard: palette.surface2, activeCard: palette.surface2,
-            sepAlpha: 0.18, pressAlpha: 0.08,
-            section: palette.foreground2,
-            avatarActive: palette.surface2, avatarActiveInk: palette.foreground,
-            avatarIdle: palette.surface2, avatarIdleInk: palette.muted,
-            shadowContact: 0x000000, shadowAmbient: 0x000000,
-            shadowContactAlpha: 0.25, shadowAmbientAlpha: 0.30,
-            glassTopAlpha: 0.14, glassBottomAlpha: 0.08, glassEdgeAlpha: 0.16, glassHighlightAlpha: 0.16,
-            glassShadow: 0x000000, glassShadowAmbientAlpha: 0.30, glassShadowContactAlpha: 0.22
-        )
-    }
-
-    /// Dark home chrome that tracks `paper.darkPalette` for surfaces next to the card face.
-    private static func homeDarkAligned(to palette: AmberPalette) -> AmberHomeTokens {
-        AmberHomeTokens(
-            sep: homeDark.sep, press: homeDark.press,
-            hoverCard: palette.surface2, activeCard: homeDark.activeCard,
-            sepAlpha: homeDark.sepAlpha, pressAlpha: homeDark.pressAlpha,
-            section: palette.foreground2,
-            avatarActive: homeDark.avatarActive, avatarActiveInk: homeDark.avatarActiveInk,
-            avatarIdle: palette.surface2, avatarIdleInk: palette.muted,
-            shadowContact: homeDark.shadowContact, shadowAmbient: homeDark.shadowAmbient,
-            shadowContactAlpha: homeDark.shadowContactAlpha, shadowAmbientAlpha: homeDark.shadowAmbientAlpha,
-            glassTopAlpha: homeDark.glassTopAlpha, glassBottomAlpha: homeDark.glassBottomAlpha,
-            glassEdgeAlpha: homeDark.glassEdgeAlpha, glassHighlightAlpha: homeDark.glassHighlightAlpha,
-            glassShadow: homeDark.glassShadow,
-            glassShadowAmbientAlpha: homeDark.glassShadowAmbientAlpha,
-            glassShadowContactAlpha: homeDark.glassShadowContactAlpha
-        )
-    }
-
-    /// 玻璃用的动态白（alpha 随主题表解析）。
-    private static func homeGlassWhite(_ alpha: KeyPath<AmberHomeTokens, Double>) -> Color {
-        let paper = AmberThemeRuntime.shared.paper
-        let design = AmberThemeRuntime.shared.design
-        return Color(uiColor: UIColor { trait in
-            let tokens = homeTokens(for: paper, dark: trait.userInterfaceStyle == .dark, design: design)
-            return UIColor(hex: 0xFFFFFF, alpha: tokens[keyPath: alpha])
-        })
-    }
-
-    private static func homeColor(
-        _ key: KeyPath<AmberHomeTokens, UInt32>,
-        alpha: KeyPath<AmberHomeTokens, Double>? = nil
-    ) -> Color {
-        let paper = AmberThemeRuntime.shared.paper
-        let design = AmberThemeRuntime.shared.design
-        return Color(uiColor: UIColor { trait in
-            let tokens = homeTokens(for: paper, dark: trait.userInterfaceStyle == .dark, design: design)
-            return UIColor(hex: tokens[keyPath: key], alpha: alpha.map { tokens[keyPath: $0] } ?? 1)
-        })
     }
 }
 
@@ -535,8 +312,11 @@ final class AmberThemeRuntime {
         }
     }
 
+    private(set) var resolvedTokens: AmberTheme.ResolvedTokens
+
     var design: AmberThemeDesign? {
         didSet {
+            if oldValue != design { refreshResolvedTokens() }
             guard persistEnabled else { return }
             UserDefaults.standard.set(design.flatMap { try? JSONEncoder().encode($0) }, forKey: Keys.design)
         }
@@ -551,9 +331,24 @@ final class AmberThemeRuntime {
         didSet { persistString(Keys.selectedThemeName, selectedThemeName) }
     }
 
-    var paper: Paper { didSet { persistString(Keys.paper, paper.rawValue) } }
-    var accentHex: UInt32 { didSet { persistInt(Keys.accent, Int(accentHex)) } }
-    var accentInkHex: UInt32 { didSet { persistInt(Keys.accentInk, Int(accentInkHex)) } }
+    var paper: Paper {
+        didSet {
+            if oldValue != paper { refreshResolvedTokens() }
+            persistString(Keys.paper, paper.rawValue)
+        }
+    }
+    var accentHex: UInt32 {
+        didSet {
+            if oldValue != accentHex { refreshResolvedTokens() }
+            persistInt(Keys.accent, Int(accentHex))
+        }
+    }
+    var accentInkHex: UInt32 {
+        didSet {
+            if oldValue != accentInkHex { refreshResolvedTokens() }
+            persistInt(Keys.accentInk, Int(accentInkHex))
+        }
+    }
     /// Canvas texture overlay style (default `.flat` = solid color only).
     var canvasStyle: AmberCanvasStyle {
         didSet { persistString(Keys.canvasStyle, canvasStyle.rawValue) }
@@ -629,16 +424,25 @@ final class AmberThemeRuntime {
         selectedThemeID = d.string(forKey: Keys.selectedThemeID)
         selectedThemeName = d.string(forKey: Keys.selectedThemeName)
         let savedDesign = d.data(forKey: Keys.design).flatMap { try? JSONDecoder().decode(AmberThemeDesign.self, from: $0) }
-        if let savedDesign, (try? savedDesign.validate()) != nil {
-            design = savedDesign
+        // 默认主题 = 暖纸 × 赤陶（Argon Warm Editorial 定稿）；用户显式选择过的偏好仍以持久化值为准。
+        let initialPaper = Paper(rawValue: d.string(forKey: Keys.paper) ?? "") ?? .paper
+        let initialAccentHex = (d.object(forKey: Keys.accent) as? Int).map { UInt32($0) } ?? AmberAccentOption.terracotta.accentHex
+        let initialAccentInkHex = (d.object(forKey: Keys.accentInk) as? Int).map { UInt32($0) } ?? AmberAccentOption.terracotta.inkHex
+        let initialDesign: AmberThemeDesign? = if let savedDesign, (try? savedDesign.validate()) != nil {
+            savedDesign
         } else {
-            design = nil
+            nil
         }
-        // 默认主题 = 中性暖灰 × 琥珀金（E 版定稿）；用户显式选择过的偏好仍以持久化值为准。
-        // Style 槽缺省 = 现状观感，旧安装升级后仍匹配原 6 色 pack。
-        paper = Paper(rawValue: d.string(forKey: Keys.paper) ?? "") ?? .neutral
-        accentHex = (d.object(forKey: Keys.accent) as? Int).map { UInt32($0) } ?? AmberAccentOption.amberGold.accentHex
-        accentInkHex = (d.object(forKey: Keys.accentInk) as? Int).map { UInt32($0) } ?? AmberAccentOption.amberGold.inkHex
+        design = initialDesign
+        paper = initialPaper
+        accentHex = initialAccentHex
+        accentInkHex = initialAccentInkHex
+        resolvedTokens = AmberTheme.ResolvedTokens(
+            paper: initialPaper,
+            design: initialDesign,
+            accentHex: initialAccentHex,
+            accentInkHex: initialAccentInkHex
+        )
         canvasStyle = AmberCanvasStyle(rawValue: d.string(forKey: Keys.canvasStyle) ?? "") ?? .flat
         brandMarkStyle = AmberBrandMarkStyle(rawValue: d.string(forKey: Keys.brandMark) ?? "") ?? .systemWordmark
         shortcutIconStyle = AmberShortcutIconStyle(rawValue: d.string(forKey: Keys.shortcutIconStyle) ?? "") ?? .phosphorFill
@@ -657,6 +461,15 @@ final class AmberThemeRuntime {
             canvasScope = .shell
             d.set(AmberCanvasScope.shell.rawValue, forKey: Keys.canvasScope)
         }
+    }
+
+    private func refreshResolvedTokens() {
+        resolvedTokens = AmberTheme.ResolvedTokens(
+            paper: paper,
+            design: design,
+            accentHex: accentHex,
+            accentInkHex: accentInkHex
+        )
     }
 
     func apply(_ paper: Paper) {
@@ -807,7 +620,7 @@ enum AmberAccentOption: String, CaseIterable, Identifiable {
     var accentHex: UInt32 {
         switch self {
         case .amberGold:  0xB9863A
-        case .terracotta: 0xB8623A
+        case .terracotta: 0xC96442
         case .sage:       0x5E9C6E
         case .mistBlue:   0x4F86D6
         case .steelBlue:  0x6B8CAD // pi-dotgrid / Open Design
@@ -883,12 +696,131 @@ enum IOSDisplayPreferenceKeys {
     static let completionHaptic = "app.amber.ios.display.completionHaptic"
     static let streamingBlockMarkdown = "app.amber.ios.display.streamingBlockMarkdown"
     static let coalescedTextBlocks = "app.amber.ios.display.coalescedTextBlocks"
+    static let replyDeliveryMode = "app.amber.ios.display.replyDeliveryMode"
+}
+
+enum IOSChatReplyDeliveryMode: String, CaseIterable, Identifiable {
+    case liveStreaming = "live"
+    case segmentedBlocks = "segmented"
+
+    static let `default`: Self = .liveStreaming
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .liveStreaming: "实时流式"
+        case .segmentedBlocks: "分段呈现"
+        }
+    }
+}
+
+/// Value-diffed `@Observable` mirror of chat display and language preferences in `UserDefaults.standard`.
+///
+/// `@AppStorage` observes `UserDefaults.didChangeNotification` without per-key filtering before
+/// scheduling SwiftUI view invalidations, causing unrelated `UserDefaults.standard` writes to
+/// penetrate `Equatable` timeline rows and clear `ChatTimelineRowLayout` caches. Diffing values
+/// before mutating `@Observable` properties keeps unrelated writes silent while preserving
+/// immediate updates when a display or language setting actually changes.
+@Observable
+final class IOSChatRenderPreferences {
+    nonisolated(unsafe) static let shared = IOSChatRenderPreferences()
+
+    private(set) var fontScale: Double
+    private(set) var chatFont: String
+    private(set) var agentName: Bool
+    private(set) var appLanguage: String
+    private(set) var followGeneration: Bool
+    private(set) var replyDeliveryMode: String
+
+    var isSegmentedReplyDelivery: Bool {
+        IOSChatReplyDeliveryMode(rawValue: replyDeliveryMode) == .segmentedBlocks
+    }
+
+    @ObservationIgnored private var defaultsObserver: NSObjectProtocol?
+
+    private init(defaults: UserDefaults = .standard) {
+        self.fontScale = Self.readDouble(from: defaults, key: IOSDisplayPreferenceKeys.fontScale, defaultValue: 1.0)
+        self.chatFont = defaults.string(forKey: IOSDisplayPreferenceKeys.chatFont) ?? IOSChatFont.default.rawValue
+        self.agentName = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.agentName, defaultValue: true)
+        self.appLanguage = defaults.string(forKey: IOSAppLanguagePreference.defaultsKey) ?? IOSAppLanguage.system.rawValue
+        self.followGeneration = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.followGeneration, defaultValue: true)
+        self.replyDeliveryMode = Self.normalizedReplyDeliveryMode(from: defaults)
+
+        self.defaultsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: nil,
+            queue: nil
+        ) { _ in
+            if Thread.isMainThread {
+                MainActor.assumeIsolated {
+                    IOSChatRenderPreferences.shared.syncFromDefaults()
+                }
+            } else {
+                Task { @MainActor in
+                    IOSChatRenderPreferences.shared.syncFromDefaults()
+                }
+            }
+        }
+    }
+
+    @MainActor
+    func syncFromDefaults(_ defaults: UserDefaults = .standard) {
+        let nextFontScale = Self.readDouble(from: defaults, key: IOSDisplayPreferenceKeys.fontScale, defaultValue: 1.0)
+        if _fontScale != nextFontScale {
+            fontScale = nextFontScale
+        }
+        let nextChatFont = defaults.string(forKey: IOSDisplayPreferenceKeys.chatFont) ?? IOSChatFont.default.rawValue
+        if _chatFont != nextChatFont {
+            chatFont = nextChatFont
+        }
+        let nextAgentName = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.agentName, defaultValue: true)
+        if _agentName != nextAgentName {
+            agentName = nextAgentName
+        }
+        let nextAppLanguage = defaults.string(forKey: IOSAppLanguagePreference.defaultsKey) ?? IOSAppLanguage.system.rawValue
+        if _appLanguage != nextAppLanguage {
+            appLanguage = nextAppLanguage
+        }
+        let nextFollowGeneration = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.followGeneration, defaultValue: true)
+        if _followGeneration != nextFollowGeneration {
+            followGeneration = nextFollowGeneration
+        }
+        let nextReplyDeliveryMode = Self.normalizedReplyDeliveryMode(from: defaults)
+        if _replyDeliveryMode != nextReplyDeliveryMode {
+            replyDeliveryMode = nextReplyDeliveryMode
+        }
+    }
+
+    private static func normalizedReplyDeliveryMode(from defaults: UserDefaults) -> String {
+        guard let raw = defaults.string(forKey: IOSDisplayPreferenceKeys.replyDeliveryMode),
+              let mode = IOSChatReplyDeliveryMode(rawValue: raw) else {
+            return IOSChatReplyDeliveryMode.default.rawValue
+        }
+        return mode.rawValue
+    }
+
+    private static func readDouble(from defaults: UserDefaults, key: String, defaultValue: Double) -> Double {
+        defaults.object(forKey: key) != nil ? defaults.double(forKey: key) : defaultValue
+    }
+
+    private static func readBool(from defaults: UserDefaults, key: String, defaultValue: Bool) -> Bool {
+        defaults.object(forKey: key) != nil ? defaults.bool(forKey: key) : defaultValue
+    }
 }
 
 enum IOSChatFont: String, CaseIterable, Identifiable {
     case `default`
     case serif
     case monospace
+
+    /// Canonical base body point size shared across Display Settings preview, user bubbles,
+    /// streaming/static assistant Markdown, and composer input.
+    static let defaultBodyPointSize: CGFloat = 16.0
+
+    static func clampedScale(_ raw: Double) -> Double {
+        min(max(raw, 0.88), 1.25)
+    }
 
     var id: String { rawValue }
 
@@ -912,6 +844,10 @@ enum IOSChatFont: String, CaseIterable, Identifiable {
         guard let bundledFontName else { return .system(size: size) }
         // Callers already apply Dynamic Type through @ScaledMetric.
         return .custom(bundledFontName, fixedSize: size)
+    }
+
+    func uiFont(size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
+        applying(to: UIFont.systemFont(ofSize: size, weight: weight))
     }
 
     func applying(to font: UIFont) -> UIFont {
@@ -954,7 +890,7 @@ extension UIColor {
     }
 }
 
-enum AmberHapticEvent {
+enum AmberHapticEvent: Equatable {
     case lightImpact
     case mediumImpact
     case rigidImpact
@@ -970,9 +906,33 @@ enum AmberHaptics {
     /// （用户曾报告完成时物理振动与代码振源不对应的未结之谜）。
     private static let logger = os.Logger(subsystem: "app.amber.ios", category: "amber-haptic")
 
+    /// 测试观测钩子：供单测验证触感实际触发与开关门控。
+    @MainActor
+    static var onTriggerForTesting: ((AmberHapticEvent) -> Void)?
+
+    /// 实时读取「显示与字体 → 生成完成振动」开关（默认开启 `true`）。
+    static func isCompletionHapticEnabled(defaults: UserDefaults = .standard) -> Bool {
+        let key = IOSDisplayPreferenceKeys.completionHaptic
+        guard defaults.object(forKey: key) != nil else { return true }
+        return defaults.bool(forKey: key)
+    }
+
+    /// 统一门控生成完成相关触感：开关关闭时所有生成完成路径均不触发，开启时保持原行为。
+    @MainActor
+    @discardableResult
+    static func triggerCompletion(
+        _ event: AmberHapticEvent = .rigidImpact,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        guard isCompletionHapticEnabled(defaults: defaults) else { return false }
+        trigger(event)
+        return true
+    }
+
     @MainActor
     static func trigger(_ event: AmberHapticEvent) {
         logger.info("haptic \(String(describing: event), privacy: .public)")
+        onTriggerForTesting?(event)
         switch event {
         case .lightImpact:
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -1381,5 +1341,221 @@ struct AmberFormRow: View {
         }
         .buttonStyle(AmberPressFeedbackStyle(pressedScale: action == nil ? 1 : 0.985, haptic: .selection))
         .disabled(action == nil)
+    }
+}
+
+// MARK: - Shared Floating Sheet / Panel Dismiss Smoothness Policy & Scroll Bridge
+
+/// Pure policy governing geometry isolation on `ChatView` while modal sheets or inline
+/// floating panels are presented/dismissed, preventing mid-swipe layout thrashing.
+enum ChatSheetDismissSmoothnessPolicy {
+    static let inlinePanelDismissTranslationThreshold: CGFloat = 56
+    static let inlinePanelDismissPredictedTranslationThreshold: CGFloat = 110
+
+    /// Prevents transient UIKit `UISheetPresentationController` card-recess geometry changes
+    /// (`safeAreaInsets.top` dropping to 0 and restoring mid-swipe) from mutating `@State var chatSize`
+    /// and invalidating `ChatView.body` during interactive sheet swipe-down.
+    static func shouldAcceptChatGeometryUpdate(
+        currentSize: CGSize,
+        proposedSize: CGSize,
+        safeAreaTop: CGFloat,
+        isModalSheetPresented: Bool
+    ) -> Bool {
+        guard !isModalSheetPresented else { return false }
+        guard proposedSize.width > 0, proposedSize.height > 0 else { return false }
+        if currentSize.width > 0,
+           currentSize.height > 0,
+           proposedSize.height > proposedSize.width,
+           safeAreaTop <= 0.5 {
+            return false
+        }
+        return abs(currentSize.width - proposedSize.width) > 0.5
+            || abs(currentSize.height - proposedSize.height) > 0.5
+    }
+
+    /// Prevents `composerState.approvalContainerHeight` from mutating mid-swipe when UIKit
+    /// toggles `safeAreaInsets.top` on the presenting view controller during sheet drag.
+    static func shouldAcceptApprovalContainerHeightUpdate(
+        currentHeight: CGFloat, proposedHeight: CGFloat, safeAreaTop: CGFloat, isModalSheetPresented: Bool
+    ) -> Bool {
+        guard !isModalSheetPresented, proposedHeight > 0 else { return false }
+        if currentHeight > 0, safeAreaTop <= 0.5 { return false }
+        return abs(currentHeight - proposedHeight) > 0.5
+    }
+
+    /// Short-circuits `.frame(in: .global)` geometry observers to `.null` whenever the top-bar
+    /// popover panel is closed or a modal sheet is presented, avoiding 60–120Hz action callbacks
+    /// while `UISheetPresentationController` scales/translates the presenting view.
+    static func effectiveGlobalTapFrame(
+        _ rawFrame: @autoclosure () -> CGRect, isPanelOpen: Bool, isModalSheetPresented: Bool
+    ) -> CGRect {
+        guard isPanelOpen, !isModalSheetPresented else { return .null }
+        return rawFrame()
+    }
+
+    /// Suppresses background timeline viewport-change re-anchoring while a modal sheet covers `ChatView`.
+    static func shouldIgnoreTimelineViewportMetrics(isCoveredByPresentedModal: Bool) -> Bool {
+        isCoveredByPresentedModal
+    }
+
+    /// Uses global window space so `.offset(y: inlineDuetPanelDragOffsetY)` never feeds back into `DragGesture.Value`.
+    static var inlinePanelDragCoordinateSpace: CoordinateSpace { .global }
+
+    static func updatedInlineDuetPanelDragOffsetY(currentOffsetY: CGFloat, translation: CGSize) -> CGFloat {
+        guard currentOffsetY > 0 || abs(translation.height) > abs(translation.width) else { return currentOffsetY }
+        return max(0, translation.height)
+    }
+
+    /// Determines whether an inline Duet floating panel (`任务` / `中心`) should dismiss to `.chat`
+    /// at the end of a downward drag gesture or spring back on mid-drag reversal.
+    static func shouldDismissInlineDuetPanel(
+        translationY: CGFloat,
+        predictedEndTranslationY: CGFloat
+    ) -> Bool {
+        translationY >= inlinePanelDismissTranslationThreshold
+            || predictedEndTranslationY >= inlinePanelDismissPredictedTranslationThreshold
+    }
+}
+
+/// Bridges a SwiftUI `ScrollView` inside a modal sheet to `UIViewController.setContentScrollView(_:for: .top)`
+/// so `UISheetPresentationController` coordinates scroll-to-dismiss handoff from frame 0 without
+/// a top rubber-band + snap stutter.
+struct AmberSheetScrollDismissBridge: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = SheetScrollProbeView(frame: .zero)
+        view.isHidden = true
+        view.isUserInteractionEnabled = false
+        view.onAttach = { [weak view] in
+            guard let view else { return }
+            Self.attachIfPossible(from: view)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        Self.attachIfPossible(from: uiView)
+    }
+
+    @MainActor
+    static func attachIfPossible(from probeView: UIView) {
+        guard let scrollView = probeView.amberAncestorScrollView() else { return }
+        scrollView.alwaysBounceVertical = true
+        if scrollView.keyboardDismissMode == .none {
+            scrollView.keyboardDismissMode = .interactive
+        }
+        guard let viewController = probeView.amberOwningViewController() else { return }
+        bindTopContentScrollView(scrollView, to: viewController)
+    }
+
+    @MainActor
+    static func bindTopContentScrollView(_ scrollView: UIScrollView, to viewController: UIViewController) {
+        if viewController.contentScrollView(for: .top) !== scrollView {
+            viewController.setContentScrollView(scrollView, for: .top)
+        }
+        if let nav = viewController.navigationController {
+            if nav.topViewController === viewController,
+               nav.contentScrollView(for: .top) !== scrollView {
+                nav.setContentScrollView(scrollView, for: .top)
+            }
+        }
+    }
+
+    private final class SheetScrollProbeView: UIView {
+        var onAttach: (() -> Void)?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil else { return }
+            onAttach?()
+            DispatchQueue.main.async { [weak self] in
+                self?.onAttach?()
+            }
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            onAttach?()
+        }
+    }
+}
+
+private extension UIView {
+    func amberAncestorScrollView() -> UIScrollView? {
+        var current = superview
+        while let view = current {
+            if let scrollView = view as? UIScrollView {
+                return scrollView
+            }
+            current = view.superview
+        }
+        return nil
+    }
+
+    func amberOwningViewController() -> UIViewController? {
+        var current: UIResponder? = next
+        while let responder = current {
+            if let viewController = responder as? UIViewController {
+                return viewController
+            }
+            current = responder.next
+        }
+        return nil
+    }
+}
+
+extension View {
+    /// Registers the enclosing sheet's `ScrollView` as the primary top content scroll view
+    /// for `UISheetPresentationController` so downward swipe dismissal hands off seamlessly.
+    func amberSmoothSheetScrollDismiss() -> some View {
+        background {
+            AmberSheetScrollDismissBridge()
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
+// MARK: - Shared Floating Sheet Presentation & Underlying Canvas Quiescence
+
+private struct AmberUnderlyingSheetPresentedKey: EnvironmentKey {
+    static let defaultValue: Bool = false
+}
+
+extension EnvironmentValues {
+    /// True on the presenting surface (e.g. `ChatView`) while a modal floating sheet is presented over it.
+    /// Used to pause background periodic `TimelineView`s and skip per-frame `.global` geometry updates
+    /// during `UISheetPresentationController` pull-down card zoom transitions.
+    var amberIsUnderlyingSheetPresented: Bool {
+        get { self[AmberUnderlyingSheetPresentedKey.self] }
+        set { self[AmberUnderlyingSheetPresentedKey.self] = newValue }
+    }
+}
+
+/// Shared floating sheet presentation modifier across Amber sheets (`AgentEmbodimentHomeSheet`,
+/// `AmberDuetWorkspaceDrawerSheet`, `AmberDuetTaskCenterSheet`, `ComposerModelSheet`, etc.).
+/// Unifies corner radius, drag indicator, detents, and `.scrollBounceBehavior(.basedOnSize)` so
+/// sheets whose content fits or rests at the top hand off downward pan gestures directly to
+/// `UISheetPresentationController` without tug-of-war against `UIScrollView` rubber-band bounce.
+struct AmberFloatingSheetModifier: ViewModifier {
+    let detents: Set<PresentationDetent>
+    var cornerRadius: CGFloat = 28
+
+    func body(content: Content) -> some View {
+        content
+            .scrollBounceBehavior(.basedOnSize)
+            .presentationDetents(detents)
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(cornerRadius)
+            .environment(\.amberIsUnderlyingSheetPresented, false)
+    }
+}
+
+extension View {
+    func amberFloatingSheet(
+        detents: Set<PresentationDetent> = [.large],
+        cornerRadius: CGFloat = 28
+    ) -> some View {
+        modifier(AmberFloatingSheetModifier(detents: detents, cornerRadius: cornerRadius))
     }
 }

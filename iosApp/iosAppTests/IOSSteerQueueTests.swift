@@ -82,10 +82,10 @@ final class IOSSteerQueueTests: XCTestCase {
         viewModel.inputText = "继续搜索"
         XCTAssertTrue(viewModel.sendMessage())
 
-        // 入队：不直接发，messages 无新增 user 节点。
+        // 入队当帧投影用户消息，推理边界才消费。
         XCTAssertEqual(viewModel.steerQueue.count, 1)
         XCTAssertEqual(viewModel.steerQueue.first?.text, "继续搜索")
-        XCTAssertEqual(viewModel.messages.filter { $0.role == MessageRole.user }.count, 0)
+        XCTAssertEqual(viewModel.messages.filter { $0.role == MessageRole.user }.count, 1)
         XCTAssertTrue(viewModel.inputText.isEmpty, "发送后输入框应清空")
 
         // 发送按钮不再被 generationActive 拦截（队列条可见状态由 steerQueue 驱动）。
@@ -223,7 +223,7 @@ final class IOSSteerQueueTests: XCTestCase {
         XCTAssertTrue(viewModel.inputText.isEmpty)
         XCTAssertEqual(
             viewModel.messages.filter { $0.role == MessageRole.user }.map { $0.toText() },
-            ["先排队的一条"]
+            ["先排队的一条", "再排队的一条"]
         )
         XCTAssertEqual(viewModel.steerQueue.map(\.text), ["再排队的一条"])
     }
@@ -251,7 +251,7 @@ final class IOSSteerQueueTests: XCTestCase {
         XCTAssertTrue(viewModel.steerQueue.isEmpty)
         XCTAssertEqual(
             viewModel.messages.filter { $0.role == MessageRole.user }.count,
-            0
+            2
         )
     }
 
@@ -271,8 +271,8 @@ final class IOSSteerQueueTests: XCTestCase {
         XCTAssertEqual(viewModel.steerQueue.count, 1)
         XCTAssertEqual(
             viewModel.messages.filter { $0.role == MessageRole.user }.count,
-            0,
-            "无工具边界的 run 不消费队列"
+            1,
+            "无工具边界的 run 仍展示已接收的消息"
         )
     }
 
@@ -324,8 +324,8 @@ final class IOSSteerQueueTests: XCTestCase {
         XCTAssertEqual(viewModel.steerQueue.map(\.text), ["被杀前的排队消息"])
         XCTAssertEqual(
             viewModel.messages.filter { $0.role == MessageRole.user }.count,
-            0,
-            "恢复只进队列 UI，不自动发送"
+            1,
+            "恢复投影已接收消息，不自动启动模型"
         )
     }
 
@@ -379,8 +379,8 @@ final class IOSSteerQueueTests: XCTestCase {
         XCTAssertTrue(viewModel.pendingImages.isEmpty, "入队后应清空 composer 附件")
         XCTAssertEqual(
             viewModel.messages.filter { $0.role == MessageRole.user }.count,
-            0,
-            "入队不上屏"
+            1,
+            "入队当帧展示已接收消息"
         )
 
         // sidecar 往返保留图片。
@@ -522,7 +522,7 @@ final class IOSSteerQueueTests: XCTestCase {
         XCTAssertTrue(viewModel.inputText.isEmpty)
         XCTAssertEqual(
             viewModel.messages.filter { $0.role == MessageRole.user }.map { $0.toText() },
-            ["纯文本插话"]
+            ["纯文本插话", "带图插话\n"]
         )
         XCTAssertEqual(viewModel.steerQueue.count, 1)
         XCTAssertTrue(viewModel.steerQueue[0].hasAttachments)
@@ -548,7 +548,7 @@ final class IOSSteerQueueTests: XCTestCase {
         try Data().write(to: conversations)
         let failed = await viewModel.drainSteerQueue(conversationId: id)
         XCTAssertTrue(failed.isEmpty)
-        XCTAssertTrue(viewModel.messages.isEmpty)
+        XCTAssertEqual(viewModel.messages.map { $0.toText() }, [entry.text])
         XCTAssertEqual(IOSSteerQueueStore(directoryURL: queueDirectory).load(conversationId: id), [entry])
         XCTAssertNotNil(store.lastIOError)
 
@@ -716,7 +716,7 @@ final class IOSSteerQueueTests: XCTestCase {
         viewModel.handleSteerQueueAtRunTerminal(for: id, autoContinue: true)
         await viewModel.currentRun.state.steerQueueAutoContinueTask?.value
         XCTAssertEqual(viewModel.steerQueue.map(\.text), ["continue only after commit"])
-        XCTAssertTrue(viewModel.messages.isEmpty)
+        XCTAssertEqual(viewModel.messages.map { $0.toText() }, ["continue only after commit"])
         XCTAssertFalse(viewModel.isGenerationActive)
     }
 

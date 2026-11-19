@@ -1,7 +1,8 @@
 import XCTest
 @testable import iosApp
 
-/// iPhone Duo 合上 / 展开时，RouterPath 在单栏栈与双栏（聊天为详情根）之间搬运路由。
+/// 单栏 / 双栏（iPhone Duo 合上、展开）之间搬运路由：两种布局的根都是聊天页，
+/// 路径里只保留被 push 的页面，`.chat` / `.chatMessage` 永远被根吸收。
 @MainActor
 final class RouterPathAdaptiveLayoutTests: XCTestCase {
 
@@ -9,51 +10,37 @@ final class RouterPathAdaptiveLayoutTests: XCTestCase {
         ChatMessageAnchor(conversationID: "c1", messageID: "m1", toolCallID: "t1")
     }
 
-    func testCompactLayoutKeepsChatOnStack() {
+    func testCompactRootKeepsChatAndNeverStacksIt() {
         let router = RouterPath()
         router.navigate(to: .chat)
-        XCTAssertEqual(router.path, [.chat])
+        XCTAssertEqual(router.path, [])
         XCTAssertTrue(router.isShowingChat)
     }
 
-    func testUnfoldingAbsorbsChatRootAndKeepsPushedPages() {
+    func testPushedPagesStayAboveChatRoot() {
         let router = RouterPath()
         router.path = [.chat, .settings]
-        router.chatIsDetailRoot = true
         XCTAssertEqual(router.path, [.settings])
         XCTAssertFalse(router.isShowingChat)
     }
 
-    func testFoldingRestoresChatUnderneath() {
+    func testNavigateToChatPopsPushedPagesInsteadOfPushing() {
         let router = RouterPath()
-        router.chatIsDetailRoot = true
-        router.path = [.settings]
-        router.chatIsDetailRoot = false
-        XCTAssertEqual(router.path, [.chat, .settings])
-    }
-
-    func testFoldingRestoresMessageAnchor() {
-        let router = RouterPath()
-        router.chatIsDetailRoot = true
-        router.navigate(to: .chatMessage(anchor: anchor()))
-        XCTAssertEqual(router.path, [])
-        XCTAssertEqual(router.detailChatAnchor, anchor())
-        router.chatIsDetailRoot = false
-        XCTAssertEqual(router.path, [.chatMessage(anchor: anchor())])
-    }
-
-    func testSplitNavigateToChatPopsDetailStackInsteadOfPushing() {
-        let router = RouterPath()
-        router.chatIsDetailRoot = true
         router.path = [.settings, .appearance]
         router.navigate(to: .chat)
         XCTAssertEqual(router.path, [])
         XCTAssertTrue(router.isShowingChat)
     }
 
-    func testSplitDeepLinkAssignmentDropsLeadingChat() {
+    func testChatMessageRouteIsAbsorbedIntoRootAnchor() {
         let router = RouterPath()
-        router.chatIsDetailRoot = true
+        router.navigate(to: .chatMessage(anchor: anchor()))
+        XCTAssertEqual(router.path, [])
+        XCTAssertEqual(router.detailChatAnchor, anchor())
+    }
+
+    func testDeepLinkAssignmentDropsLeadingChat() {
+        let router = RouterPath()
         router.path = [.chat]
         XCTAssertEqual(router.path, [])
         router.path = [.settings, .weather]
@@ -62,7 +49,7 @@ final class RouterPathAdaptiveLayoutTests: XCTestCase {
 
     func testSplitBackAtRootTogglesSidebar() {
         let router = RouterPath()
-        router.chatIsDetailRoot = true
+        router.showsSidebarControl = true
         XCTAssertTrue(router.showsSidebar)
         router.goBack()
         XCTAssertFalse(router.showsSidebar)
@@ -79,7 +66,6 @@ final class RouterPathAdaptiveLayoutTests: XCTestCase {
 
     func testOverlaySidebarCollapsesWhenConversationOpens() {
         let router = RouterPath()
-        router.chatIsDetailRoot = true
         router.sidebarOverlaysDetail = true
         router.navigate(to: .chat)
         XCTAssertFalse(router.showsSidebar)
@@ -87,7 +73,6 @@ final class RouterPathAdaptiveLayoutTests: XCTestCase {
 
     func testOverlaySidebarCollapsesForDeepLinkIntoChat() {
         let router = RouterPath()
-        router.chatIsDetailRoot = true
         router.sidebarOverlaysDetail = true
         router.path = [.chat]
         XCTAssertFalse(router.showsSidebar)
@@ -95,7 +80,6 @@ final class RouterPathAdaptiveLayoutTests: XCTestCase {
 
     func testOverlaySidebarKeepsOpenForNonChatDeepLink() {
         let router = RouterPath()
-        router.chatIsDetailRoot = true
         router.sidebarOverlaysDetail = true
         router.path = [.settings, .weather]
         XCTAssertTrue(router.showsSidebar)
@@ -103,7 +87,6 @@ final class RouterPathAdaptiveLayoutTests: XCTestCase {
 
     func testTiledSidebarStaysWhenConversationOpens() {
         let router = RouterPath()
-        router.chatIsDetailRoot = true
         router.sidebarOverlaysDetail = false
         router.navigate(to: .chat)
         XCTAssertTrue(router.showsSidebar)

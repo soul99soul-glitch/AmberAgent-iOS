@@ -12,8 +12,13 @@ struct DisplayFontSettingsView: View {
     @AppStorage(IOSDisplayPreferenceKeys.followGeneration) private var followGeneration = true
     @AppStorage(IOSDisplayPreferenceKeys.activityIslandEdgeGlow) private var activityIslandEdgeGlow = false
     @AppStorage(IOSDisplayPreferenceKeys.completionHaptic) private var completionHaptic = true
+    @AppStorage(IOSDisplayPreferenceKeys.replyDeliveryMode) private var replyDeliveryMode = IOSChatReplyDeliveryMode.default.rawValue
     private var selectedFont: IOSChatFont {
         IOSChatFont(rawValue: chatFont) ?? .default
+    }
+
+    private var selectedReplyDeliveryMode: IOSChatReplyDeliveryMode {
+        IOSChatReplyDeliveryMode(rawValue: replyDeliveryMode) ?? .default
     }
 
     private var fontScaleLabel: String {
@@ -145,6 +150,18 @@ struct DisplayFontSettingsView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "消息显示")
             AmberFormGroup {
+                Menu {
+                    ForEach(IOSChatReplyDeliveryMode.allCases) { mode in
+                        Button(mode.title) {
+                            replyDeliveryMode = mode.rawValue
+                        }
+                    }
+                } label: {
+                    DisplayValueRow(title: "回复呈现方式", value: selectedReplyDeliveryMode.title)
+                }
+
+                DisplayDivider()
+
                 DisplayToggleRow(title: "显示 Agent 名字", isOn: agentName) { agentName.toggle() }
 
                 DisplayDivider()
@@ -165,6 +182,9 @@ struct DisplayFontSettingsView: View {
                     isOn: completionHaptic
                 ) {
                     completionHaptic.toggle()
+                    Task {
+                        try? await IOSLocalNotificationService.shared.refreshTaskCompletionSound()
+                    }
                 }
             }
         }
@@ -208,7 +228,11 @@ private struct DisplayDivider: View {
 private struct FontPreviewCard: View {
     let font: IOSChatFont
     let scale: Double
-    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = 17
+    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
+
+    private var boundedScale: Double {
+        IOSChatFont.clampedScale(scale)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -216,9 +240,9 @@ private struct FontPreviewCard: View {
             Text(verbatim: "Aa Bb Cc · 0123456789")
                 .foregroundStyle(AmberTheme.muted)
         }
-            .font(font.font(size: scaledBodyPointSize * scale))
+            .font(font.font(size: scaledBodyPointSize * boundedScale))
             .foregroundStyle(AmberTheme.foreground2)
-            .lineSpacing(3 * scale)
+            .lineSpacing(3.2 * boundedScale)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(15)
             .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))

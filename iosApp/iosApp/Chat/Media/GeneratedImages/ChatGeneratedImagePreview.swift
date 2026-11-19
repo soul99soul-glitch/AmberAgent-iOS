@@ -17,11 +17,12 @@ struct ChatGeneratedImagePreview: View {
     private var url: URL? { IOSImageGenerationRepository.resolvedImageURL(from: urlString) }
 
     var body: some View {
+        let resolvedURL = isDataURL ? nil : url
         ZStack(alignment: .topTrailing) {
             Color.black
                 .ignoresSafeArea()
 
-            imageContent
+            imageContent(resolvedURL: resolvedURL)
                 .padding(.horizontal, 12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .offset(y: dragOffset)
@@ -45,7 +46,7 @@ struct ChatGeneratedImagePreview: View {
                 )
 
             HStack(spacing: 12) {
-                previewShareButton
+                previewShareButton(resolvedURL: resolvedURL)
 
                 Button {
                     dismiss()
@@ -70,7 +71,7 @@ struct ChatGeneratedImagePreview: View {
     }
 
     @ViewBuilder
-    private var previewShareButton: some View {
+    private func previewShareButton(resolvedURL: URL?) -> some View {
         if case .success(let image) = dataImageState {
             let sharedImage = Image(uiImage: image)
             ShareLink(item: sharedImage, preview: SharePreview("生成的图片", image: sharedImage)) {
@@ -78,8 +79,8 @@ struct ChatGeneratedImagePreview: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("分享图片")
-        } else if !isDataURL, let url {
-            ShareLink(item: url) {
+        } else if let resolvedURL {
+            ShareLink(item: resolvedURL) {
                 previewControlLabel(systemImage: "square.and.arrow.up")
             }
             .buttonStyle(.plain)
@@ -98,7 +99,7 @@ struct ChatGeneratedImagePreview: View {
     }
 
     @ViewBuilder
-    private var imageContent: some View {
+    private func imageContent(resolvedURL: URL?) -> some View {
         if isDataURL {
             switch dataImageState {
             case .success(let decodedDataImage):
@@ -113,8 +114,8 @@ struct ChatGeneratedImagePreview: View {
                     .font(.system(size: 28, weight: .semibold))
                     .foregroundStyle(.white)
             }
-        } else if let url {
-            AsyncImage(url: url) { phase in
+        } else if let resolvedURL {
+            AsyncImage(url: resolvedURL) { phase in
                 switch phase {
                 case .success(let image):
                     image

@@ -6,8 +6,6 @@ struct AppShell: View {
 
     let settingsStore: SettingsStore
 
-    @State private var selectedTab: AppTab = .chat
-    @State private var tabRouter = TabRouter()
     @State private var permissionStore: IOSPermissionStore
     @State private var documentAccessStore: DocumentAccessStore
     @State private var workspaceStore: IOSWorkspaceStore
@@ -21,10 +19,6 @@ struct AppShell: View {
     @State private var conversationActivityCenter: ConversationActivityCenter
     @State private var councilChatViewModel: CouncilChatViewModel
     @State private var storeCoordinator = IOSStoreCoordinator()
-    @State private var novelCreationViewModel: NovelCreationViewModel?
-    @State private var novelSessionViewModel: NovelSessionViewModel?
-    @State private var novelLifecycleCoordinator: NovelWorkspaceLifecycleCoordinator
-    @State private var novelCreationErrorMessage: String?
     @State private var rootRouter = RouterPath()
     @State private var pendingAgentActivityTarget: AgentActivityDeepLink.Target?
     @State private var pendingAgentActivityURL: URL?
@@ -87,24 +81,8 @@ struct AppShell: View {
             sharedSettings: sharedSettingsStore,
             providerRegistry: providerRegistry,
             permissionStore: permissionStore,
-            durableRunStore: IOSDurableRunStore()
+            durableRunStore: chatViewModel.runStore
         )
-        let novelCreationViewModel: NovelCreationViewModel?
-        let novelSessionViewModel: NovelSessionViewModel?
-        let novelCreationErrorMessage: String?
-        do {
-            let workspace = try NovelCreationComposition.makeViewModel(
-                sharedSettings: sharedSettingsStore,
-                toolRuntime: backgroundToolRuntime
-            )
-            novelCreationViewModel = workspace
-            novelSessionViewModel = NovelSessionViewModel(workspace: workspace)
-            novelCreationErrorMessage = nil
-        } catch {
-            novelCreationViewModel = nil
-            novelSessionViewModel = nil
-            novelCreationErrorMessage = error.localizedDescription
-        }
         self.settingsStore = effectiveSettingsStore
         self._permissionStore = State(initialValue: permissionStore)
         self._documentAccessStore = State(initialValue: documentAccessStore)
@@ -115,16 +93,14 @@ struct AppShell: View {
         self._sharedSettings = State(initialValue: sharedSettingsStore)
         self._mcpConfigStore = State(initialValue: .shared)
         self._conversationStore = State(initialValue: conversationStore)
-        self._conversationActivityCenter = State(initialValue: ConversationActivityCenter(conversationStore: conversationStore))
+        self._conversationActivityCenter = State(
+            initialValue: ConversationActivityCenter(
+                conversationStore: conversationStore,
+                dao: chatViewModel.agentRuntimeDao
+            )
+        )
         self._chatViewModel = State(initialValue: chatViewModel)
         self._councilChatViewModel = State(initialValue: councilChatViewModel)
-        self._novelCreationViewModel = State(initialValue: novelCreationViewModel)
-        self._novelSessionViewModel = State(initialValue: novelSessionViewModel)
-        self._novelLifecycleCoordinator = State(
-            initialValue: NovelWorkspaceLifecycleCoordinator()
-        )
-        self._novelCreationErrorMessage = State(initialValue: novelCreationErrorMessage)
-        IOSDeepReadBackgroundCoordinator.shared.configure(sharedSettings: sharedSettingsStore)
         IOSChatBackgroundGenerationCoordinator.shared.configure(
             conversationStore: conversationStore,
             toolRuntime: backgroundToolRuntime,
@@ -136,7 +112,6 @@ struct AppShell: View {
                 )
             }
         )
-        IOSDeepReadRecoveryOnce.run()
         // Load before ChatViewModel can prepare its first provider request.
         // AppShell is MainActor-isolated, so this synchronous file read cannot
         // race the first view render or an early memory mutation.
@@ -152,7 +127,7 @@ struct AppShell: View {
             }
         )
         IOSMemoryConsolidationCoordinator.shared.configure(
-            settings: sharedSettingsStore,
+            settings: sharedSettingsStore, conversations: conversationStore,
             writesEnabled: {
                 guard let policy = localToolExecutor.permissionPolicy(capabilityId: "ios.agent.memory_write") else { return false }
                 return policy != .disabled
@@ -162,12 +137,6 @@ struct AppShell: View {
 
     var body: some View {
         rootNavigation
-        .onChange(of: usesSplitLayout, initial: true) { _, split in
-            rootRouter.chatIsDetailRoot = split
-        }
-        .sheet(item: Binding(get: { rootRouter.presentedSheet }, set: { rootRouter.presentedSheet = $0 })) { sheet in
-            sheetView(sheet)
-        }
         .environment(rootRouter)
         .environment(conversationStore)
         .environment(chatViewModel)
@@ -235,6 +204,7 @@ struct AppShell: View {
                 }
                 IOSMemoryExtractionCoordinator.shared.resume()
                 IOSMemoryConsolidationCoordinator.shared.resume()
+                Task { await MacGatewayStore.shared.handleForegroundBecameActive() }
             }
         }
         .onChange(of: sharedSettings.revision) { _, _ in
@@ -295,6 +265,10 @@ struct AppShell: View {
         // 重启时把本进程正在运行的前台 run 改写为 interrupted。
         if !didRunStartupRecovery {
             didRunStartupRecovery = true
+            // 会话引导是首帧内容的唯一前置：先于其它恢复任务加载摘要并选中
+            // 最近会话，根聊天页才能不等整条 recovery 链就能落位。
+            await conversationStore.bootstrap()
+            didBootstrapConversations = true
             let interruptedCouncilTaskIds = IOSAdvancedTaskStore.shared.markInterruptedCouncilTasks()
             IOSAdvancedTaskStore.shared.markInterruptedRemoteCommandTasks()
             IOSAdvancedTaskStore.shared.markInterruptedEmbeddedIshTasks()
@@ -305,15 +279,15 @@ struct AppShell: View {
             let backgroundRunIds = IOSChatBackgroundGenerationCoordinator.shared.restorableRunIds
             let backgroundRecoveryExclusions = IOSChatBackgroundGenerationCoordinator.shared
                 .startupRecoveryExclusionRunIds
+            let runStore = chatViewModel.runStore
             let recoveredPendingApprovals = await IOSRunRecovery.recoverPendingApprovalDescriptors(
-                excludingRunIds: backgroundRecoveryExclusions
+                excludingRunIds: backgroundRecoveryExclusions,
+                runStore: runStore
             )
-            let startupRecoverableRuns = try? await IOSDurableRunStore().recoverableRuns()
+            let startupRecoverableRuns = try? await runStore.recoverableRuns()
             let startupCandidateRunIds = Set(startupRecoverableRuns?.map(\.runId) ?? [])
-            await conversationStore.bootstrap()
             IOSBuiltinSkills.installIfMissing(enableWith: sharedSettings)
             await chatViewModel.reconcilePendingMiniAppMutationsAfterConversationBootstrap()
-            didBootstrapConversations = true
 
             // A failed approval-owner query makes it unsafe to classify any
             // unfinished run: an awaiting approval could otherwise be swept
@@ -324,7 +298,8 @@ struct AppShell: View {
                 let excludedFromInterrupted = backgroundRecoveryExclusions.union(pendingApprovalRunIds)
                 if let interruptedRunConversationPairs = await IOSRunRecovery.unfinishedRunConversationPairs(
                     candidateRunIds: startupCandidateRunIds,
-                    excludingRunIds: excludedFromInterrupted
+                    excludingRunIds: excludedFromInterrupted,
+                    runStore: runStore
                 ) {
                     let recoveryResult = await chatViewModel.applyToolCallLedgerRecovery(
                         forInterruptedRuns: interruptedRunConversationPairs
@@ -338,11 +313,12 @@ struct AppShell: View {
                         candidateRunIds: startupCandidateRunIds,
                         excludingRunIds: excludedFromInterrupted
                             .union(unreconciledRunIds)
-                            .union(recoveryResult.outcomeUnknownRunIds)
+                            .union(recoveryResult.outcomeUnknownRunIds),
+                        runStore: runStore
                     )
                 }
             }
-            AgentLiveActivityController.shared.restoreExistingActivity(
+            await AgentLiveActivityController.shared.restoreExistingActivity(
                 ownedRunIds: backgroundRunIds
             )
             IOSAlarmService.shared.reconcileOnLaunch()
@@ -352,13 +328,6 @@ struct AppShell: View {
                     .resumeRecoverableJobsIfNeeded()
             }
             finalizeStaleBackgroundJobsIfNeeded()
-            if scenePhase == .active {
-                if let novelCreationViewModel {
-                    await novelCreationViewModel.resumeDetachedBackgroundGeneration()
-                    _ = await novelSessionViewModel?
-                        .resumeGhostwriteAfterBackgroundInterruptionIfNeeded()
-                }
-            }
         } else {
             await conversationStore.bootstrap()
             didBootstrapConversations = true
@@ -407,16 +376,8 @@ struct AppShell: View {
                         .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 400)
                 } detail: {
                     NavigationStack(path: pathBinding) {
-                        ChatView(
-                            settingsStore: settingsStore,
-                            sharedSettings: sharedSettings,
-                            localToolExecutor: localToolExecutor,
-                            documentStore: documentAccessStore,
-                            workspaceStore: workspaceStore,
-                            viewModel: chatViewModel,
-                            initialMessageAnchor: rootRouter.detailChatAnchor
-                        )
-                        .withAppDestinations(destinationDependencies)
+                        chatRoot
+                            .withAppDestinations(destinationDependencies)
                     }
                 }
                 // 不按宽度切换 style 类型：if/else 会重建 SplitView、丢掉详情栈状态。
@@ -424,22 +385,39 @@ struct AppShell: View {
                 .navigationSplitViewStyle(.automatic)
             } else {
                 NavigationStack(path: pathBinding) {
-                    conversationsList
+                    // 单一根路由真相：两种布局的根都是对话工作区。旧首页只能在
+                    // 会话管理入口（.home）打开，不再参与启动首帧，也不再被异步 push。
+                    chatRoot
                         .withAppDestinations(destinationDependencies)
                 }
             }
+        }
+        .onChange(of: usesSplitLayout, initial: true) { _, split in
+            rootRouter.showsSidebarControl = split
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
             rootRouter.sidebarOverlaysDetail = width < Self.tiledSidebarMinimumWidth
         }
     }
 
+    /// 根聊天页。双栏时它已经是详情栏根，无需额外的栈入口。
+    private var chatRoot: some View {
+        ChatView(
+            settingsStore: settingsStore,
+            sharedSettings: sharedSettings,
+            localToolExecutor: localToolExecutor,
+            documentStore: documentAccessStore,
+            workspaceStore: workspaceStore,
+            viewModel: chatViewModel,
+            initialMessageAnchor: rootRouter.detailChatAnchor
+        )
+    }
+
     private var conversationsList: some View {
         ConversationsView(
             sharedSettings: sharedSettings,
             chatViewModel: chatViewModel,
-            councilChatViewModel: councilChatViewModel,
-            novelCreationViewModel: novelCreationViewModel
+            councilChatViewModel: councilChatViewModel
         )
     }
 
@@ -457,9 +435,6 @@ struct AppShell: View {
             localToolExecutor: localToolExecutor,
             chatViewModel: chatViewModel,
             councilChatViewModel: councilChatViewModel,
-            novelCreationViewModel: novelCreationViewModel,
-            novelSessionViewModel: novelSessionViewModel,
-            novelCreationErrorMessage: novelCreationErrorMessage,
             storeCoordinator: storeCoordinator,
             router: rootRouter
         )
@@ -523,24 +498,10 @@ struct AppShell: View {
             councilChatViewModel.runtimeWillEnterBackground()
             // 握着后台执行权就别交接，让正在跑的流自己跑完。
             _ = chatViewModel.handoffGenerationToBackgroundIfNeeded(honorKeepAliveLease: true)
-            guard let novelCreationViewModel else { return }
-            novelLifecycleCoordinator.enterBackground(
-                waitForCompletion: {
-                    await novelCreationViewModel.waitForBackgroundGeneration()
-                },
-                interrupt: { deadline in
-                    await novelCreationViewModel.interruptSessionForBackground(deadline: deadline)
-                }
-            )
         case .active:
-            novelLifecycleCoordinator.enterForeground()
-            if let novelCreationViewModel {
-                Task {
-                    await novelCreationViewModel.resumeDetachedBackgroundGeneration()
-                    _ = await novelSessionViewModel?
-                        .resumeGhostwriteAfterBackgroundInterruptionIfNeeded()
-                }
-            }
+            _ = chatViewModel.reconcileForegroundRunsAfterSystemSuspensionIfNeeded(
+                hasValidKeepAliveLease: !BackgroundGenerationKeepAlive.shared.activeLeaseIds.isEmpty
+            )
             IOSChatBackgroundGenerationCoordinator.shared.resumeDetachedResponsesIfNeeded()
             IOSChatBackgroundGenerationCoordinator.shared.resumeRecoverableJobsIfNeeded()
             finalizeStaleBackgroundJobsIfNeeded()
@@ -671,9 +632,19 @@ struct AppShell: View {
             rootRouter.path = [.chat]
 
         case .agentPrompt(let handoffID):
-            guard await chatViewModel.startNewConversation(
-                commitIf: { pendingAppDeepLinkDestination == destination }
-            ) else { return }
+            if let actionID = IOSDeepLinkInbox.shared.phoneAutomationID(forPromptHandoff: handoffID) {
+                let title = sharedSettings.savedQuickActions().first { $0.id == actionID }?.title ?? "手机自动化"
+                guard await chatViewModel.preparePhoneAutomationConversation(
+                    actionID: actionID, title: title,
+                    commitIf: { pendingAppDeepLinkDestination == destination }
+                ) else { return }
+                MacGatewayStore.shared.setCloudMainDialogueSelected(false)
+                rootRouter.phoneAutomationChatPresentationRevision &+= 1
+            } else {
+                guard await chatViewModel.startNewConversation(
+                    commitIf: { pendingAppDeepLinkDestination == destination }
+                ) else { return }
+            }
             guard pendingAppDeepLinkDestination == destination else { return }
             guard let prompt = IOSDeepLinkInbox.shared.consumePromptHandoff(id: handoffID) else {
                 conversationStore.publishUserVisibleError(IOSUserVisibleError(
@@ -717,6 +688,8 @@ struct AppShell: View {
             rootRouter.path = [.settings, .weather]
         case .appleIntegrations:
             rootRouter.path = [.settings, .appleIntegrations]
+        case .phoneControl:
+            rootRouter.path = [.settings, .phoneControl]
         case .wakeTasks:
             rootRouter.path = [.settings, .appleIntegrations]
         case .wakeDueTasks:
@@ -749,8 +722,12 @@ struct AppShell: View {
             rootRouter.path = [.settings, .macGateway]
         case .macTasks:
             rootRouter.path = [.macTasks]
-        case .deepReadTask(let id):
-            rootRouter.path = [.board, .deepReadTask(id: id)]
+        case .cloudTask(let workItemId):
+            MacGatewayStore.shared.pendingCloudTaskWorkItemId = workItemId
+            rootRouter.path = [.macTasks]
+            Task { @MainActor in
+                _ = await MacGatewayStore.shared.ensureCloudTaskLoaded(workItemId: workItemId)
+            }
         case .agentActivity(let target):
             pendingAgentActivityTarget = target
             pendingAgentActivityURL = nil
@@ -834,124 +811,6 @@ struct AppShell: View {
         pendingAgentActivityTarget = nil
         pendingAgentActivityURL = nil
     }
-
-    @ViewBuilder
-    private func sheetView(_ sheet: SheetDestination) -> some View {
-        switch sheet {
-        case .modelPicker:
-            NavigationStack {
-                PlaceholderListView(
-                    title: "Models",
-                    systemImage: "cpu",
-                    rows: [
-                        "Provider families",
-                        "Capability filters",
-                        "Context and reasoning presets"
-                    ]
-                )
-            }
-        case .toolPermissions:
-            NavigationStack {
-                ToolPermissionsView(
-                    permissionStore: permissionStore,
-                    documentStore: documentAccessStore,
-                    systemPermissionCoordinator: systemPermissionCoordinator,
-                    localToolExecutor: localToolExecutor
-                )
-            }
-        }
-    }
-}
-
-enum AppTab: String, CaseIterable, Identifiable {
-    case chat
-    case workspace
-    case assistants
-    case settings
-
-    var id: String { rawValue }
-
-    @MainActor
-    @ViewBuilder
-    func rootView(
-        settingsStore: SettingsStore,
-        sharedSettings: IOSSharedSettingsStore,
-        localToolExecutor: IOSLocalToolExecutor,
-        documentStore: DocumentAccessStore? = nil,
-        workspaceStore: IOSWorkspaceStore = .shared,
-        chatViewModel: ChatViewModel? = nil
-    ) -> some View {
-        switch self {
-        case .chat:
-            ChatView(
-                settingsStore: settingsStore,
-                sharedSettings: sharedSettings,
-                localToolExecutor: localToolExecutor,
-                documentStore: documentStore,
-                workspaceStore: workspaceStore,
-                viewModel: chatViewModel
-            )
-        case .workspace:
-            if sharedSettings.isCapabilityGateEnabled(.workspace) {
-                WorkspaceView(workspaceStore: workspaceStore)
-            } else {
-                CapabilityGateLockedView(gate: .workspace)
-            }
-        case .assistants:
-            if sharedSettings.isCapabilityGateEnabled(.workspace) {
-                AssistantsView()
-            } else {
-                CapabilityGateLockedView(gate: .workspace)
-            }
-        case .settings:
-            SettingsHomeView(settingsStore: settingsStore, sharedSettings: sharedSettings)
-        }
-    }
-
-    @ViewBuilder
-    var label: some View {
-        switch self {
-        case .chat:
-            Label("Chat", systemImage: "bubble.left.and.bubble.right")
-        case .workspace:
-            Label("Workspace", systemImage: "square.grid.2x2")
-        case .assistants:
-            Label("Amber", systemImage: "sparkles")
-        case .settings:
-            Label("Settings", systemImage: "gearshape")
-        }
-    }
-}
-
-@MainActor
-@Observable
-final class TabRouter {
-    private var routers: [AppTab: RouterPath] = [:]
-
-    func router(for tab: AppTab) -> RouterPath {
-        if let router = routers[tab] {
-            return router
-        }
-        let router = RouterPath()
-        routers[tab] = router
-        return router
-    }
-
-    func binding(for tab: AppTab) -> Binding<[Route]> {
-        let router = router(for: tab)
-        return Binding(
-            get: { router.path },
-            set: { router.path = $0 }
-        )
-    }
-
-    func sheetBinding(for tab: AppTab) -> Binding<SheetDestination?> {
-        let router = router(for: tab)
-        return Binding(
-            get: { router.presentedSheet },
-            set: { router.presentedSheet = $0 }
-        )
-    }
 }
 
 /// `withAppDestinations` 的依赖包：单栏栈与双栏的侧栏/详情栈各挂一次，共用同一份。
@@ -969,9 +828,6 @@ struct AppDestinationDependencies {
     let localToolExecutor: IOSLocalToolExecutor
     let chatViewModel: ChatViewModel
     let councilChatViewModel: CouncilChatViewModel
-    let novelCreationViewModel: NovelCreationViewModel?
-    let novelSessionViewModel: NovelSessionViewModel?
-    let novelCreationErrorMessage: String?
     let storeCoordinator: IOSStoreCoordinator
     let router: RouterPath
 }
@@ -991,9 +847,6 @@ private extension View {
             localToolExecutor: deps.localToolExecutor,
             chatViewModel: deps.chatViewModel,
             councilChatViewModel: deps.councilChatViewModel,
-            novelCreationViewModel: deps.novelCreationViewModel,
-            novelSessionViewModel: deps.novelSessionViewModel,
-            novelCreationErrorMessage: deps.novelCreationErrorMessage,
             storeCoordinator: deps.storeCoordinator,
             router: deps.router
         )
@@ -1012,14 +865,17 @@ private extension View {
         localToolExecutor: IOSLocalToolExecutor,
         chatViewModel: ChatViewModel,
         councilChatViewModel: CouncilChatViewModel,
-        novelCreationViewModel: NovelCreationViewModel?,
-        novelSessionViewModel: NovelSessionViewModel?,
-        novelCreationErrorMessage: String?,
         storeCoordinator: IOSStoreCoordinator,
         router: RouterPath
     ) -> some View {
         navigationDestination(for: Route.self) { route in
             switch route {
+            case .home:
+                ConversationsView(
+                    sharedSettings: sharedSettings,
+                    chatViewModel: chatViewModel,
+                    councilChatViewModel: councilChatViewModel
+                )
             case .chat:
                 ChatView(
                     settingsStore: settingsStore,
@@ -1083,6 +939,8 @@ private extension View {
                 MacTasksBoardView()
             case .phoneControl:
                 IOSPhoneControlSettingsView()
+            case .phoneAutomations:
+                IOSPhoneAutomationLinesView(conversationStore: conversationStore)
             case .phoneSavedTasks:
                 IOSPhoneControlSavedTasksView(sharedSettings: sharedSettings)
             case .subscription:
@@ -1186,21 +1044,6 @@ private extension View {
                 CloudConfigSettingsView(sharedSettings: sharedSettings)
             case .ttsSettings:
                 TTSSettingsView(sharedSettings: sharedSettings)
-            case .board:
-                BoardView(settingsStore: settingsStore, sharedSettings: sharedSettings, providerRegistry: providerRegistry)
-            case .boardSettings:
-                BoardSettingsView(
-                    settingsStore: settingsStore,
-                    sharedSettings: sharedSettings,
-                    providerRegistry: providerRegistry
-                )
-            case .deepReadTask(let id):
-                IOSDeepReadTaskDetailView(
-                    taskId: id,
-                    settingsStore: settingsStore,
-                    sharedSettings: sharedSettings,
-                    providerRegistry: providerRegistry
-                )
             case .miniApps:
                 MiniAppListView()
             case .miniAppSettings:
@@ -1212,57 +1055,6 @@ private extension View {
                     sharedSettings: sharedSettings,
                     chatViewModel: chatViewModel
                 )
-            case .novelCreation:
-                if let novelCreationViewModel {
-                    NovelProjectListView(
-                        viewModel: novelCreationViewModel,
-                        onOpen: { projectID in
-                            router.navigate(to: .novelProject(id: projectID))
-                        },
-                        onOpenSettings: {
-                            router.navigate(to: .novelCreationSettings)
-                        }
-                    )
-                    .novelCreationErrorAlert(viewModel: novelCreationViewModel)
-                } else {
-                    ContentUnavailableView(
-                        "小说创作暂不可用",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(novelCreationErrorMessage ?? "无法打开项目存储。")
-                    )
-                }
-            case .novelCreationSettings:
-                if let novelCreationViewModel {
-                    NovelCreationSettingsView(
-                        sharedSettings: sharedSettings,
-                        viewModel: novelCreationViewModel
-                    )
-                    .novelCreationErrorAlert(viewModel: novelCreationViewModel)
-                } else {
-                    NovelCreationSettingsView(
-                        sharedSettings: sharedSettings,
-                        viewModel: nil
-                    )
-                }
-            case .novelProject(let projectID):
-                if let novelCreationViewModel, let novelSessionViewModel {
-                    NovelProjectWorkspaceView(
-                        viewModel: novelCreationViewModel,
-                        sessionViewModel: novelSessionViewModel,
-                        sharedSettings: sharedSettings,
-                        projectID: projectID,
-                        onOpenSettings: {
-                            router.navigate(to: .novelCreationSettings)
-                        }
-                    )
-                    .novelCreationErrorAlert(viewModel: novelCreationViewModel)
-                } else {
-                    ContentUnavailableView(
-                        "小说创作暂不可用",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(novelCreationErrorMessage ?? "无法打开项目存储。")
-                    )
-                }
             case .webMount:
                 WebMountView()
             case .webMountSite(let site):
@@ -1308,8 +1100,6 @@ private extension View {
                 } else {
                     CapabilityGateLockedView(gate: .remoteRuntime)
                 }
-            case .conversation(let id):
-                PlaceholderDetailView(title: "Conversation", subtitle: id, systemImage: "text.bubble")
             case .subAgentConversation(let id):
                 SubAgentConversationView(
                     conversationId: id,
@@ -1317,24 +1107,8 @@ private extension View {
                     workspaceStore: workspaceStore,
                     chatViewModel: chatViewModel
                 )
-            case .assistant:
-                PlaceholderDetailView(
-                    title: "Amber Assistant",
-                    subtitle: "iOS 只保留一个 Amber Assistant。",
-                    systemImage: "sparkles"
-                )
-            case .workspaceItem(let id):
-                if sharedSettings.isCapabilityGateEnabled(.workspace) {
-                    WorkspaceView(workspaceStore: workspaceStore, focusedItemId: id)
-                } else {
-                    CapabilityGateLockedView(gate: .workspace)
-                }
-            case .settingsPlaceholder(let title, let subtitle, let systemImage):
-                PlaceholderDetailView(title: title, subtitle: subtitle, systemImage: systemImage)
             case .toolPermissions:
                 PermissionsApprovalView(permissionStore: permissionStore)
-            case .promptInjection:
-                PromptInjectionEditorView(sharedSettings: sharedSettings)
             }
         }
     }

@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import Shared
 import SwiftStreamingMarkdown
 
@@ -33,8 +34,12 @@ struct ChatStreamingBlockMarkdownView: View {
         ChatStreamingMarkdownBlockListView(
             controller: controller,
             config: config,
+            liveStreaming: liveStreaming,
             renderCacheNamespace: renderCacheNamespace
         )
+            // Keep old blocks pending until the final cumulative snapshot is parsed.
+            .modifier(ChatStreamingRevealProgressModifier(progress: .init(
+                hasPendingReveal: controller.parsedText != text)))
             .task(id: ChatStreamingMarkdownBlockParseKey(
                 text: text,
                 includeTrailingPartialTableRow: !liveStreaming
@@ -50,19 +55,32 @@ struct ChatStreamingBlockMarkdownView: View {
 private struct ChatStreamingMarkdownBlockListView: View {
     @ObservedObject var controller: ChatStreamingMarkdownBlockController
     let config: SwiftStreamingMarkdown.MarkdownRenderConfig
+    let liveStreaming: Bool
     let renderCacheNamespace: String?
+    @Environment(\.chatPacesStreamingTextBlocks) private var pacesTextBlocks
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: config.blockSpacing) {
+            let lastBlockID = controller.blocks.last?.id
             ForEach(controller.blocks) { block in
                 switch block.kind {
                 case .text(let content):
-                    ChatStableStreamingMarkdownView(
-                        text: content,
-                        config: config,
-                        cacheIdentity: renderCacheNamespace.map { "\($0):\(block.id)" }
-                    )
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if pacesTextBlocks {
+                        let isLastBlock = block.id == lastBlockID
+                        let initialRevealed = controller.initiallyRevealedTextLength(for: block)
+                        ChatStreamingRevealPacer(
+                            text: content,
+                            isStreaming: isLastBlock && liveStreaming,
+                            reduceMotion: reduceMotion,
+                            initiallyRevealedUTF16Count: initialRevealed,
+                            pacePendingText: initialRevealed < content.utf16.count
+                        ) { revealedText, isPacingReveal in
+                            textBlock(revealedText, id: block.id, isPacingReveal: isPacingReveal)
+                        }
+                    } else {
+                        textBlock(content, id: block.id, isPacingReveal: false)
+                    }
                 case .table(let table):
                     // 用 vendor 的真实 Markdown 表格渲染，保留 inline 样式、链接与
                     // shouldAnimateText 淡入；块解析只负责隐藏尚未闭合的尾行。
@@ -77,6 +95,18 @@ private struct ChatStreamingMarkdownBlockListView: View {
             }
         }
     }
+
+    private func textBlock(_ text: String, id: String, isPacingReveal: Bool) -> some View {
+        let effectiveConfig = (!config.shouldAnimateText && isPacingReveal && !reduceMotion)
+            ? config.withShouldAnimateText(value: true).withAnimatesAppendedTailAsUnit(value: true)
+            : config
+        return ChatStableStreamingMarkdownView(
+            text: text,
+            config: effectiveConfig,
+            cacheIdentity: renderCacheNamespace.map { "\($0):\(id)" }
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }
 
 private struct ChatStreamingMarkdownBlockParseKey: Equatable {
@@ -87,18 +117,52 @@ private struct ChatStreamingMarkdownBlockParseKey: Equatable {
 @MainActor
 final class ChatStreamingMarkdownBlockController: ObservableObject {
     @Published private(set) var blocks: [ChatStreamingMarkdownBlock]
+    private(set) var parsedText: String
 
+    private var settledAtInitBlockIDs: Set<String>
+    private var tableDetector: ChatStreamingTableDetectionState
     private var pendingParse: (text: String, includeTrailingPartialTableRow: Bool)?
     private var parseTask: Task<Void, Never>?
     private var lastPublishAt = Date.distantPast
 
     init(text: String, includeTrailingPartialTableRow: Bool) {
-        blocks = ChatPerfTrace.measure("MarkdownBlockSplitInitial", count: { text.utf16.count }) {
-            ChatStreamingMarkdownBlockParser.blocks(
+        let detector = ChatStreamingTableDetectionState(text: text)
+        let initialBlocks = ChatPerfTrace.measure("MarkdownBlockSplitInitial", count: { text.utf16.count }) {
+            if !detector.containsTable, !detector.containsCarriageReturn {
+                return detector.hasNonWhitespace
+                    ? [ChatStreamingMarkdownBlock(id: "text-0", kind: .text(text))]
+                    : []
+            }
+            return ChatStreamingMarkdownBlockParser.blocks(
                 in: text,
                 includeTrailingPartialTableRow: includeTrailingPartialTableRow
             )
         }
+        blocks = initialBlocks
+        parsedText = text
+        tableDetector = detector
+        if initialBlocks.count > 1 {
+            settledAtInitBlockIDs = Set(initialBlocks.dropLast().map(\.id))
+        } else {
+            settledAtInitBlockIDs = []
+        }
+    }
+
+    func initiallyRevealedTextLength(for block: ChatStreamingMarkdownBlock) -> Int {
+        guard case .text(let content) = block.kind else { return 0 }
+        // 挂载时已处于后续块之前的非尾块（如流式中途重挂载/LOD 解冻的历史章节），
+        // 以及首个表格出现前已由外层 pacer 推进过的介绍正文，均不再从 0 重播。
+        if settledAtInitBlockIDs.contains(block.id) {
+            return content.utf16.count
+        }
+        if let index = blocks.firstIndex(where: { $0.id == block.id }),
+           !blocks[..<index].contains(where: { preceding in
+               if case .table = preceding.kind { return true }
+               return false
+           }) {
+            return content.utf16.count
+        }
+        return 0
     }
 
     deinit {
@@ -147,6 +211,17 @@ final class ChatStreamingMarkdownBlockController: ObservableObject {
                 let target = pendingParse ?? next
                 pendingParse = nil
 
+                tableDetector.update(with: target.text)
+                if !tableDetector.containsTable, !tableDetector.containsCarriageReturn {
+                    let parsed: [ChatStreamingMarkdownBlock] = tableDetector.hasNonWhitespace
+                        ? [ChatStreamingMarkdownBlock(id: "text-0", kind: .text(target.text))]
+                        : []
+                    lastPublishAt = Date()
+                    publishPreservingSettledBlocks(parsed, text: target.text,
+                        isFinal: target.includeTrailingPartialTableRow)
+                    continue
+                }
+
                 let parsed = await Task.detached(priority: .userInitiated) {
                     ChatPerfTrace.measure("MarkdownBlockSplit", count: { target.text.utf16.count }) {
                         ChatStreamingMarkdownBlockParser.blocks(
@@ -160,7 +235,8 @@ final class ChatStreamingMarkdownBlockController: ObservableObject {
                 // 解析期间又来了 delta，也先发布这次前缀再继续消费最新 pending；
                 // 否则长内容解析慢于 chunk 间隔时会永久没有任何结果能发布。
                 lastPublishAt = Date()
-                publishPreservingSettledBlocks(parsed)
+                publishPreservingSettledBlocks(parsed, text: target.text,
+                    isFinal: target.includeTrailingPartialTableRow)
             }
         }
     }
@@ -169,7 +245,7 @@ final class ChatStreamingMarkdownBlockController: ObservableObject {
     /// (包括其中的 String 存储)。这样 ForEach 里已定块的子视图输入按位与上一帧
     /// 完全一致,SwiftUI 直接短路整棵子树;真正重新求值/布局的只有变化中的尾部块。
     /// 全部相等时不发布,避免无效的 objectWillChange。
-    private func publishPreservingSettledBlocks(_ parsed: [ChatStreamingMarkdownBlock]) {
+    private func publishPreservingSettledBlocks(_ parsed: [ChatStreamingMarkdownBlock], text: String, isFinal: Bool) {
         var merged = parsed
         var changed = merged.count != blocks.count
         for index in merged.indices {
@@ -179,8 +255,14 @@ final class ChatStreamingMarkdownBlockController: ObservableObject {
                 changed = true
             }
         }
+        // Partial rows that do not change the visible blocks stay silent. Only the
+        // final snapshot needs a parse acknowledgement when its blocks are unchanged.
+        guard changed || (isFinal && parsedText != text) else { return }
+        parsedText = text
         if changed {
             blocks = merged
+        } else {
+            objectWillChange.send()
         }
     }
 }

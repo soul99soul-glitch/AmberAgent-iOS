@@ -42,20 +42,18 @@ final class ChatKernelRunHost {
 
     /// 与 CGC :832-851 同配方的 tool runtime(prepared 候选按 toolCallId
     /// 挂在其实例上,kernel run 独占一个实例,不与 CGC 共享)。
-    private lazy var toolRuntime: ChatToolRuntime = {
-        ChatToolRuntime(
-            settingsStore: dependencies.settingsStore,
-            sharedSettings: dependencies.sharedSettings,
-            localToolExecutor: dependencies.localToolExecutor,
-            searchTransport: dependencies.searchTransport,
-            mcpManager: dependencies.mcpManager,
-            orchestrationToolService: dependencies.orchestrationToolService,
-            memoryPollutionMarker: dependencies.memoryPollutionMarker,
-            conversationStoreProvider: dependencies.conversationStoreProvider,
-            ledger: toolLedger,
-            wakeScheduler: wakeScheduler
-        )
-    }()
+    private lazy var toolRuntime = ChatToolRuntime(
+        settingsStore: dependencies.settingsStore,
+        sharedSettings: dependencies.sharedSettings,
+        localToolExecutor: dependencies.localToolExecutor,
+        searchTransport: dependencies.searchTransport,
+        mcpManager: dependencies.mcpManager,
+        orchestrationToolService: dependencies.orchestrationToolService,
+        memoryPollutionMarker: dependencies.memoryPollutionMarker,
+        conversationStoreProvider: dependencies.conversationStoreProvider,
+        ledger: toolLedger,
+        wakeScheduler: wakeScheduler, agentSoulStore: dependencies.agentSoulStore
+    )
 #if DEBUG
     var toolRuntimeForTesting: ChatToolRuntime { toolRuntime }
     func installDurableResponseSessionForTesting() {
@@ -95,9 +93,12 @@ final class ChatKernelRunHost {
 #endif
     private var citationTracker: IOSMemoryCitationTracker?
     private var streamClock = ChatGenerationSpeedClock()
+    private var lastReasoningSampleUptime: TimeInterval = 0
     private var progressPresentation: ChatRunProgressPresentation?
     private var keepaliveHeld = false
     private var externallyManagedBackgroundExecution = false
+    private var phoneControlClaimEligible = false
+    private var didAttemptPhoneControlClaim = false
     private var phoneAutomaticReasoning = false
     private var reportsPhoneWorkProgress: Bool { progressPresentation?.reportsPhoneWorkProgress ?? false }
     /// 适配器已进入 run()(决定 cancel 是否调用 adapter.cancel——进入前
@@ -209,6 +210,9 @@ final class ChatKernelRunHost {
 
         let startedAt = Int64(Date().timeIntervalSince1970 * 1000)
         currentRunId = runId
+        if phoneControlUserInitiated {
+            phoneControl.beginAutomationUserRequest(runID: runId, conversationID: conversationId?.toHexDashString())
+        }
         self.externallyManagedBackgroundExecution = externallyManagedBackgroundExecution
         currentStartedAt = startedAt
         WatchTaskCoordinator.shared.registerRun(runId: runId, startedAt: startedAt)
@@ -246,6 +250,7 @@ final class ChatKernelRunHost {
             toolExposureBridge: bridge,
             mcpEnabled: { [weak self] in self?.mcpEnabledForRun ?? false },
             bindings: bindings,
+            fastFirstRound: bindings.isForegroundRouterRun(),
             isCurrentRun: { [weak self] in self?.currentRunId == runId },
             onPreparedUpload: { [weak self] provider, effectiveParams, messages in
                 try self?.refreshBackgroundHandoff(
@@ -289,29 +294,23 @@ final class ChatKernelRunHost {
         )
         // 生成一开始就拿后台执行权(CG-C :1084-1104 同款纪律与注释语义)。
         beginKeepAlive(runId: runId, subtitle: params.model.displayName)
-        // Reserve this run's selected apps; only a phone tool may start the local test session.
-        // Keep the same owner across a foreground/background handoff.
+        // Defer claiming phoneControl until the first real phone_* tool executes so
+        // ordinary Q&A turns never occupy the global slot or enable unbounded heartbeats.
         let hasPhoneDeclarations = bridge.fullToolDeclarations().contains {
             IOSPhoneControlToolCatalog.isPhoneTool(name: $0.name)
         }
-        let phoneControlClaimed = phoneControlUserInitiated && hasPhoneDeclarations
-            && phoneControl.claim(runID: runId, conversationID: conversationId?.toHexDashString()) { [weak self, weak phoneControl, backgroundCoordinator] in
-            guard phoneControl?.hasRequestedSession(runID: runId) == true else { return }
-            if self?.currentRunId == runId { self?.cancel(cause: .backgroundInterruption) }
-            _ = backgroundCoordinator.cancelJob(runId: runId)
-        }
+        phoneControlClaimEligible = phoneControlUserInitiated && hasPhoneDeclarations
+        let phoneControlClaimed = phoneControl.ownerRunID == runId
+        didAttemptPhoneControlClaim = phoneControlClaimed
         if phoneControlClaimed {
-            // Screenshots, actions and model thinking can each exceed the system's ~30s
-            // progress cadence; without a heartbeat the continued-processing task is
-            // marked stalled and reclaimed as soon as the app is backgrounded.
             backgroundExecution.enableLivenessHeartbeat(runId)
         }
         // Preserve the user's raw choice before AUTO is resolved to a model default.
         // Actual phone activity is checked by the engine at each request boundary.
-        phoneAutomaticReasoning = phoneControlClaimed
+        phoneAutomaticReasoning = (phoneControlClaimEligible || phoneControlClaimed)
             && runSettings?.getCurrentAssistant().reasoningLevel == .auto_
         progressPresentation?.activatePhoneProgress(phoneControlClaimed)
-        // Phone loops have no fixed number of turns; only actual work advances their progress.
+        // Phone loops switch to total=-1 upon lazy claim; ordinary turns keep the 4-stage bar.
         backgroundExecution.updateProgress(
             runId,
             completed: 0,
@@ -472,6 +471,7 @@ final class ChatKernelRunHost {
         runSettings = nil
         runExecutionPolicy = nil
         displayBaseline = bindings.getMessages()
+        uploadPreparation?.cancelRecallWarmup()
         uploadPreparation = nil
         backgroundHandoff = nil
         pendingBackgroundConversationStore = nil
@@ -572,6 +572,10 @@ final class ChatKernelRunHost {
             executionPolicy: runExecutionPolicy,
             phoneAutomaticReasoning: phoneAutomaticReasoning,
             phoneControl: phoneControl,
+            canClaimPhoneControl: phoneControlClaimEligible,
+            ensurePhoneControlClaimed: { [weak self] in
+                self?.ensurePhoneControlClaimedOnFirstUse(runId: runId) ?? false
+            },
             prepareUploadMessages: { [weak self] messages in
                 guard let self, self.currentRunId == runId,
                       let preparation = self.uploadPreparation else { return messages }
@@ -590,6 +594,40 @@ final class ChatKernelRunHost {
             initialMessages: initialMessages, toolExposureBridge: toolExposureBridge,
             recipeCatalogSnapshot: recipeCatalogSnapshot, citationTracker: citationTracker
         )
+    }
+
+    @discardableResult
+    func ensurePhoneControlClaimedOnFirstUse(runId: String) -> Bool {
+        guard currentRunId == runId, cancelCause == nil, !didFinalizeTerminal else { return false }
+        if phoneControl.ownerRunID == runId { return true }
+        guard phoneControlClaimEligible, !didAttemptPhoneControlClaim else { return false }
+        didAttemptPhoneControlClaim = true
+        let conversationId = currentConversationIdForRun
+        let claimed = phoneControlClaimEligible
+            && phoneControl.claim(runID: runId, conversationID: conversationId?.toHexDashString()) { [weak self, weak phoneControl, backgroundCoordinator] in
+            guard phoneControl?.hasRequestedSession(runID: runId) == true else { return }
+            if self?.currentRunId == runId { self?.cancel(cause: .backgroundInterruption) }
+            _ = backgroundCoordinator.cancelJob(runId: runId)
+        }
+        IOSBackgroundLifecycleLog.record(
+            "phoneControlLazyClaim",
+            detail: "run=\(runId.prefix(8)) claimed=\(claimed)"
+        )
+        guard claimed else { return false }
+        progressPresentation?.activatePhoneProgress(true)
+        if keepaliveHeld {
+            // Screenshots, actions and model thinking can each exceed the system's ~30s
+            // progress cadence; without a heartbeat the continued-processing task is
+            // marked stalled and reclaimed as soon as the app is backgrounded.
+            backgroundExecution.enableLivenessHeartbeat(runId)
+            backgroundExecution.updateProgress(
+                runId,
+                completed: 0,
+                total: -1,
+                subtitle: IOSAppLocalization.string("正在操作手机", defaultValue: "正在操作手机")
+            )
+        }
+        return true
     }
 
     private func runGenerativeUiRepairIfNeeded(
@@ -628,7 +666,7 @@ final class ChatKernelRunHost {
             terminalWireName = AgentRunStatus.failed.wireName
             return
         }
-        let request = makeRunRequest(
+        var request = makeRunRequest(
             adapterProvider: adapterProvider,
             providerSetting: provider,
             params: IOSGenerativeUiRequestPolicy.retryParams(params),
@@ -641,6 +679,7 @@ final class ChatKernelRunHost {
             recipeCatalogSnapshot: recipeCatalogSnapshot,
             citationTracker: tracker
         )
+        request.fastFirstReasoning = false
         _ = await repairAdapter.run(request)
         guard currentRunId == runId else { return }
         let hasUnresolvedToolCall = toolRuntime.hasUnresolvedToolCall(in: bindings.getMessages())
@@ -831,6 +870,7 @@ final class ChatKernelRunHost {
         keepaliveHeld = false
         bindings.setContextCompactState(.idle)
         bindings.setIsLoading(false)
+        bindings.abandonCompletionFeedback(runId)
         projection.clearAllApprovals()
         bindings.bumpMessageRevision(.generationHandedOffToBackground, 1)
         return true
@@ -893,6 +933,7 @@ final class ChatKernelRunHost {
         keepaliveHeld = false
         bindings.setContextCompactState(.idle)
         bindings.setIsLoading(false)
+        bindings.abandonCompletionFeedback(runId)
         projection.clearAllApprovals()
         bindings.bumpMessageRevision(.generationHandedOffToBackground, 1)
         backgroundCoordinator.resumeDetachedResponsesIfNeeded()
@@ -1142,6 +1183,7 @@ final class ChatKernelRunHost {
         callbacks.onProviderFailure = { [weak self] message in
             guard let self, self.currentRunId == runId else { return }
             self.lastFailureMessage = message
+            self.bindings.recordTaskActivity(.failed)
         }
         callbacks.onToolOutcomeUnknown = { [weak self] signal in
             guard let self, self.currentRunId == runId else { return }
@@ -1159,6 +1201,9 @@ final class ChatKernelRunHost {
         }
         callbacks.onAssistantTurnStarted = { [weak self] in
             guard let self, self.currentRunId == runId else { return }
+            self.lastReasoningSampleUptime = 0
+            self.bindings.recordTaskReasoning(nil)
+            self.bindings.recordTaskActivity(.preparing)
             self.progressPresentation?.recordModelStep()
             self.streamClock.resetRound()
             self.bindings.setMessages(
@@ -1212,14 +1257,21 @@ final class ChatKernelRunHost {
                 }
             }
         }
+        callbacks.onAssistantProgressPlan = { [weak self] stages in
+            guard let self, self.currentRunId == runId, self.cancelCause == nil else { return }
+            self.bindings.recordTaskProgressPlan(stages)
+        }
         callbacks.onToolExecutionStarted = { [weak self] toolName, input in
             guard let self, self.currentRunId == runId else { return }
+            self.bindings.recordTaskToolActivity(toolName, input)
+            self.bindings.recordTaskActivity(.runningTool)
             self.activeToolExecutionName = toolName
             self.activeToolEffectClass = IOSToolEffectClassMapping.forToolName(toolName, input: input)
             self.progressPresentation?.publishToolStarted(toolName: toolName, input: input)
         }
         callbacks.onAssistantStage = { [weak self] stage in
             guard let self, self.currentRunId == runId else { return }
+            self.bindings.recordTaskActivity(stage)
             self.progressPresentation?.publishAssistantStage(stage)
         }
         callbacks.onAssistantFirstVisibleDelta = { [weak self] in
@@ -1230,6 +1282,16 @@ final class ChatKernelRunHost {
         }
         callbacks.onAssistantMessageSnapshot = { [weak self] message in
             guard let self, self.currentRunId == runId else { return }
+            self.bindings.recordStreamHeartbeat()
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - self.lastReasoningSampleUptime >= 1.8,
+               let reasoning = message.parts.reversed().first(where: {
+                   guard let part = $0 as? UIMessagePart.Reasoning else { return false }
+                   return part.finishedAt == nil
+               }) as? UIMessagePart.Reasoning {
+                self.lastReasoningSampleUptime = now
+                self.bindings.recordTaskReasoning(reasoning.reasoning)
+            }
             if self.canReportPhoneWorkProgress(runId: runId) {
                 self.progressPresentation?.recordPhoneModelProgress(message)
             }
@@ -1301,6 +1363,7 @@ final class ChatKernelRunHost {
             uploadMessages: uploadMessages, displayMessages: bindings.getMessages(), displayBaseline: displayBaseline,
             toolExposureBridge: currentToolExposureBridge, dynamicSnapshot: currentDynamicToolSnapshot,
             executionPolicy: runExecutionPolicy, phoneAutomaticReasoning: phoneAutomaticReasoning,
+            canClaimPhoneControl: phoneControlClaimEligible,
             generativeUiRequirement: uploadPreparation?.requirement ?? .none,
             generativeUiFallbackAttempted: uploadPreparation?.fallbackAttempted ?? false
         )
@@ -1452,6 +1515,7 @@ final class ChatKernelRunHost {
         adapter = nil
         citationTracker = nil
         bindings.setIsLoading(false)
+        bindings.abandonCompletionFeedback(runId)
         bindings.setContextCompactState(.idle)
         projection.clearAllApprovals()
         bindings.bumpMessageRevision(.generationFailed, 1)
@@ -1470,6 +1534,8 @@ final class ChatKernelRunHost {
         currentDynamicToolSnapshot = nil
         runSettings = nil
         runExecutionPolicy = nil
+        phoneControlClaimEligible = false
+        didAttemptPhoneControlClaim = false
         phoneAutomaticReasoning = false
         displayBaseline = []
         uploadPreparation = nil

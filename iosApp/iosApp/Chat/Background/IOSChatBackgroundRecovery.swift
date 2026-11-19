@@ -297,14 +297,64 @@ extension IOSChatBackgroundGenerationCoordinator {
         backgroundInterruptedRequestIds.remove(requestId)
         activeRunStates.removeValue(forKey: requestId)
 
+        var finalJob = resumableJob
+        let hasPhoneSurface = finalJob.params.tools.contains { IOSPhoneControlToolCatalog.isPhoneTool(name: $0.name) }
+            || finalJob.fullToolNames.contains(where: IOSPhoneControlToolCatalog.isPhoneTool)
+        if hasPhoneSurface {
+            let runID = finalJob.runId
+            let reclaimed = IOSPhoneControlController.shared.claim(
+                runID: runID,
+                conversationID: finalJob.conversationId.toHexDashString()
+            ) { [weak self] in
+                guard IOSPhoneControlController.shared.hasRequestedSession(runID: runID) else { return }
+                _ = self?.cancelJob(runId: runID)
+            }
+            if !reclaimed {
+                let strippedParams = finalJob.params.replacingTools(
+                    finalJob.params.tools.filter { !IOSPhoneControlToolCatalog.isPhoneTool(name: $0.name) }
+                )
+                let strippedFullToolNames = finalJob.fullToolNames.filter {
+                    !IOSPhoneControlToolCatalog.isPhoneTool(name: $0)
+                }
+                let strippedHandoff = IOSChatBackgroundHandoff(
+                    runId: finalJob.runId,
+                    startedAt: finalJob.startedAt,
+                    inputDigest: finalJob.inputDigest,
+                    conversationId: finalJob.conversationId,
+                    providerId: finalJob.providerSetting.id.toHexDashString(),
+                    providerSetting: finalJob.providerSetting,
+                    params: strippedParams,
+                    uploadMessages: finalJob.uploadMessages,
+                    displayMessages: finalJob.displayMessages,
+                    mode: finalJob.mode,
+                    generativeUiRequirement: finalJob.generativeUiRequirement,
+                    generativeUiFallbackAttempted: finalJob.generativeUiFallbackAttempted,
+                    fullToolNames: strippedFullToolNames,
+                    dynamicToolSnapshot: finalJob.dynamicToolSnapshot,
+                    executionPolicy: finalJob.executionPolicy,
+                    subAgentTimeoutSeconds: finalJob.subAgentTimeoutSeconds,
+                    phoneAutomaticReasoning: false,
+                    runDisplayBaseline: finalJob.runDisplayBaseline
+                )
+                finalJob = runtimeJob(
+                    handoff: strippedHandoff,
+                    conversationStore: finalJob.conversationStore,
+                    toolRuntime: finalJob.toolRuntime,
+                    liveActivityController: finalJob.liveActivityController,
+                    saveMiniAppIfPresent: finalJob.saveMiniAppIfPresent
+                )
+                activeJobs[requestId] = finalJob
+            }
+        }
+
         automaticallyResumedRequestIds.insert(requestId)
         startLocalExecution(
             requestId: requestId,
-            subtitle: resumableJob.params.model.displayName
+            subtitle: finalJob.params.model.displayName
         )
-        publishStateEvent(for: resumableJob)
+        publishStateEvent(for: finalJob)
         IOSBackgroundLifecycleLog.record(
-            "bgTaskAutoResubmitted(run=\(resumableJob.runId.prefix(8)))",
+            "bgTaskAutoResubmitted(run=\(finalJob.runId.prefix(8)))",
             detail: lifecycleSnapshotDetail
         )
     }

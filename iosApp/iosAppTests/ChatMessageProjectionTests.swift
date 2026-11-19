@@ -9,6 +9,36 @@ import Shared
 @MainActor
 final class ChatMessageProjectionTests: ChatMessageProjectionTestCase {
 
+    func testNonTailConcurrentTaskKeepsLiveRenderingAndReleasesItOnCompletion() throws {
+        let a = UIMessage.companion.assistant(prompt: "A partial")
+        let b = UIMessage.companion.assistant(prompt: "B partial")
+        let messages = [UIMessage.companion.user(prompt: "A"), a,
+                        UIMessage.companion.user(prompt: "B"), b]
+        let idA = ChatMessageProjector.messageId(for: a)
+        let idB = ChatMessageProjector.messageId(for: b)
+        let cache = NativeTimelineProjectionCache()
+        let store = ChatRenderStateStore()
+        func project(live: Set<String>) -> NativeTimelineProjection {
+            cache.projection(messages: messages, event: .assistantStreamDelta, sourceRevision: 1,
+                startIndex: 0, configurationIssue: nil, isGenerationActive: true, isLoading: true,
+                isRecognizingImages: false, contextCompactState: .idle, contextCompactBoundaries: [],
+                viewportState: ChatViewportState(), displaySettingSignature: 0, generativeUiSettingSignature: 0,
+                renderStateRevision: 0, reasoningLevelLabel: nil, streamedMessageIDs: [idA, idB],
+                liveTaskTailIDs: live, renderStateStore: store, variantInfoProvider: { _ in nil },
+                contentHashProvider: { _, _ in 0 })
+        }
+        let active = project(live: [idA, idB])
+        let first = try XCTUnwrap(active.messageEntry(for: idA))
+        XCTAssertFalse(first.isLastMessage)
+        XCTAssertTrue(first.isTaskLive)
+        XCTAssertTrue(first.liveMarkdownRenderingEnabled)
+        let afterACompletes = project(live: [idB])
+        let finished = try XCTUnwrap(afterACompletes.messageEntry(for: idA))
+        XCTAssertFalse(finished.isTaskLive)
+        XCTAssertFalse(finished.liveMarkdownRenderingEnabled)
+        XCTAssertTrue(try XCTUnwrap(afterACompletes.messageEntry(for: idB)).isTaskLive)
+    }
+
     func testToolProjectionReusesHistoryAndRefreshesNonTailBackfills() throws {
         let cache = NativeTimelineProjectionCache()
         let hashes = ChatRowContentHashCache()
@@ -28,7 +58,7 @@ final class ChatMessageProjectionTests: ChatMessageProjectionTestCase {
                 startIndex: 0, configurationIssue: nil, isGenerationActive: true,
                 isLoading: false, isRecognizingImages: false, contextCompactState: .idle,
                 contextCompactBoundaries: [boundary], viewportState: ChatViewportState(),
-                displaySettingSignature: display, generativeUiSettingSignature: "",
+                displaySettingSignature: display.isEmpty ? 0 : display.hashValue, generativeUiSettingSignature: 0,
                 renderStateRevision: 0, reasoningLevelLabel: nil, streamedMessageIDs: streamed,
                 renderStateStore: renderStore, variantInfoProvider: { index in
                     requested.append(index); return nil
@@ -612,8 +642,8 @@ final class ChatMessageProjectionTests: ChatMessageProjectionTestCase {
         let projection = NativeTimelineProjector.build(
             messages: [user],
             event: .conversationLoaded,
-            displaySettingSignature: "display",
-            generativeUiSettingSignature: "generative",
+            displaySettingSignature: "display".hashValue,
+            generativeUiSettingSignature: "generative".hashValue,
             variantInfoProvider: { index in
                 index == 0
                     ? IOSConversationStore.VariantInfo(variantCount: 3, selectedIndex: 1)

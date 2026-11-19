@@ -68,6 +68,7 @@ struct IOSChatBackgroundRuntimeJob {
     let executionPolicy: IOSExecutionPolicySnapshot?
     let subAgentTimeoutSeconds: TimeInterval?
     let phoneAutomaticReasoning: Bool
+    let canClaimPhoneControl: Bool
     let conversationStore: IOSConversationStore
     let toolRuntime: ChatToolRuntime
     let liveActivityController: AgentLiveActivityController
@@ -157,6 +158,7 @@ struct IOSChatBackgroundHandoff {
     var subAgentTimeoutSeconds: TimeInterval? = nil
     /// Process-local eligibility only. Cold restoration cannot restore phone ownership.
     var phoneAutomaticReasoning: Bool = false
+    var canClaimPhoneControl: Bool = false
     /// Immutable conversation baseline for this run's merge and terminal report.
     /// Nil restores legacy payloads using their display checkpoint; an empty array is explicit.
     var runDisplayBaseline: [UIMessage]? = nil

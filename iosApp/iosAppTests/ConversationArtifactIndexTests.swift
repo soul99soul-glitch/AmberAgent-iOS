@@ -1,3 +1,5 @@
+import SwiftUI
+import UIKit
 import XCTest
 @preconcurrency import Shared
 @testable import iosApp
@@ -129,7 +131,8 @@ final class ConversationArtifactIndexTests: XCTestCase {
         XCTAssertEqual(index.webPages.map(\.title), ["Article", "Mounted page"])
         XCTAssertEqual(index.webPages.map(\.url), ["https://example.com/article?id=123", "https://example.com/page"])
         XCTAssertEqual(index.webPages.map(\.preview), ["Readable article text", "Visible page text"])
-        XCTAssertEqual(index.count, 2)
+        XCTAssertEqual(index.webPageGroups.count, 1)
+        XCTAssertEqual(index.count, 1, "同轮检索与打开的多个网页归为一个检索轮次组")
     }
 
     func testWebMountSessionCallsDeduplicateByURLAndKeepLatestSource() throws {
@@ -441,6 +444,240 @@ final class ConversationArtifactIndexTests: XCTestCase {
         XCTAssertEqual(anchor?.messageID, source.messageID)
         XCTAssertNil(anchor?.toolCallID)
         XCTAssertNil(ConversationArtifactIndex.anchor(for: source, conversationID: "c", messages: []))
+    }
+
+    func testMultiTurnWebSearchDeduplicatesCanonicalItemsGroupsByTurnAndPreservesDeliverablesAt54PlusScale() async throws {
+        var messages: [UIMessage] = []
+
+        // Turn 1: 20 scraped web pages (item-0 .. item-19) + 1 image with tracking/fragment query.
+        messages.append(userMessage(text: "第 1 轮：检索第一批架构资料"))
+        for idx in 0..<20 {
+            let rawURL = idx == 0
+                ? "https://Example.com/research/item-0/?utm_source=search&b=2&a=1#overview"
+                : "https://example.com/research/item-\(idx)?utm_medium=organic#section-\(idx)"
+            messages.append(toolMessage(
+                id: "t1-scrape-\(idx)",
+                name: "scrape_web",
+                input: #"{"url":"\#(rawURL)"}"#,
+                outputJSON: #"{"status":"ok","url":"\#(rawURL)","title":"资料条目 \#(idx)","content":"第 1 轮脱敏摘要 \#(idx)"}"#
+            ))
+        }
+        messages.append(message(
+            role: .assistant,
+            parts: [UIMessagePart.Text(
+                text: "![架构图](https://Images.Example.com/diagrams/arch.png?utm_campaign=v1#hero)",
+                metadata: nil
+            )]
+        ))
+
+        // Turn 2: re-scrapes item-0 with different scheme/port/query-order/tracking (canonical duplicate),
+        // plus 19 new pages (item-20 .. item-38), and writes a deliverable file.
+        messages.append(userMessage(text: "第 2 轮：补充核查并生成报告文件"))
+        let duplicateItem0URL = "http://example.com:80/research/item-0?a=1&b=2&spm=1001.20"
+        messages.append(toolMessage(
+            id: "t2-scrape-dup-0",
+            name: "scrape_web",
+            input: #"{"url":"\#(duplicateItem0URL)"}"#,
+            outputJSON: #"{"status":"ok","url":"\#(duplicateItem0URL)","title":"资料条目 0（二次核对）","content":""}"#
+        ))
+        for idx in 20..<39 {
+            let rawURL = "https://example.com/research/item-\(idx)/"
+            messages.append(toolMessage(
+                id: "t2-scrape-\(idx)",
+                name: "scrape_web",
+                input: #"{"url":"\#(rawURL)"}"#,
+                outputJSON: #"{"status":"ok","url":"\#(rawURL)","title":"资料条目 \#(idx)","content":"第 2 轮脱敏摘要 \#(idx)"}"#
+            ))
+        }
+        let reportContent = "# 最终核查报告\n\n这是用户显式要求生成的真实文件成果。"
+        messages.append(toolMessage(
+            id: "t2-write-report",
+            name: "workspace_file_write",
+            input: #"{"path":"reports/final-deliverable.md","content":\#(jsonLiteral(reportContent))}"#,
+            outputJSON: #"{"ok":true,"path":"/workspace/reports/final-deliverable.md","size_bytes":\#(reportContent.utf8.count)}"#
+        ))
+
+        // Turn 3: re-opens item-20 via wm_open with port/fragment/trailing-slash (canonical duplicate),
+        // plus 15 new pages (item-39 .. item-53), repeats the same image URL and identical file write,
+        // and user pins a key conclusion snippet.
+        messages.append(userMessage(text: "第 3 轮：深读剩余页面并沉淀结论"))
+        messages.append(toolMessage(
+            id: "t3-wm-dup-20",
+            name: "wm_open",
+            input: "{}",
+            outputJSON: #"{"ok":true,"page":{"url":"https://EXAMPLE.COM:443/research/item-20/#part2","title":"资料条目 20（深读）"},"visible_text":"第 3 轮深读正文 20"}"#
+        ))
+        for idx in 39..<54 {
+            let rawURL = "https://example.com/research/item-\(idx)?from=timeline"
+            messages.append(toolMessage(
+                id: "t3-scrape-\(idx)",
+                name: "scrape_web",
+                input: #"{"url":"\#(rawURL)"}"#,
+                outputJSON: #"{"status":"ok","url":"\#(rawURL)","title":"资料条目 \#(idx)","content":"第 3 轮脱敏摘要 \#(idx)"}"#
+            ))
+        }
+        messages.append(toolMessage(
+            id: "t3-write-report-identical",
+            name: "workspace_file_write",
+            input: #"{"path":"/workspace/reports/final-deliverable.md","content":\#(jsonLiteral(reportContent))}"#,
+            outputJSON: #"{"ok":true,"path":"/workspace/reports/final-deliverable.md","size_bytes":\#(reportContent.utf8.count)}"#
+        ))
+        let finalAssistant = message(
+            role: .assistant,
+            parts: [UIMessagePart.Text(
+                text: "已完成全部 54 篇资料核对，核心结论如下。\n\n![架构图复核](https://images.example.com/diagrams/arch.png)",
+                metadata: nil
+            )]
+        )
+        messages.append(finalAssistant)
+
+        let index = ConversationArtifactIndex.make(from: messages)
+
+        // 1. Canonical deduplication: 56 raw web calls -> 54 unique logical webPages;
+        //    2 canonical-equivalent images -> 1 image; 2 identical file writes -> 1 file version.
+        XCTAssertEqual(index.webPages.count, 54, "同规范 URL 跨轮检索必须去重为单个逻辑网页项")
+        let item0 = try XCTUnwrap(index.webPages.first { $0.url == "https://example.com/research/item-0?a=1&b=2" })
+        XCTAssertEqual(item0.title, "资料条目 0（二次核对）")
+        XCTAssertEqual(item0.preview, "第 1 轮脱敏摘要 0", "后一轮未返回摘要时应保留已提取的摘要内容")
+        XCTAssertEqual(item0.source.turn, 2)
+
+        let item20 = try XCTUnwrap(index.webPages.first { $0.url == "https://example.com/research/item-20" })
+        XCTAssertEqual(item20.title, "资料条目 20（深读）")
+        XCTAssertEqual(item20.source.turn, 3)
+
+        XCTAssertEqual(index.images.count, 1, "同一规范 URL 的图片跨轮出现只保留一项")
+        XCTAssertEqual(index.files.count, 1)
+        XCTAssertEqual(index.files[0].versions.count, 1, "完全相同内容的重复写入不产生冗余文件版本")
+
+        // 2. Turn grouping & shelf count: 54 web pages across 3 turns group into 3 turn groups (newest turn first).
+        XCTAssertEqual(index.webPageGroups.map(\.turn), [3, 2, 1])
+        XCTAssertEqual(index.webPageGroups.map { $0.pages.count }, [16, 19, 19])
+        XCTAssertEqual(
+            index.count,
+            5,
+            "产物架顶栏与标题计数应按逻辑成果计（1 图 + 1 文件 + 3 个检索轮次组 = 5），不能被 54 条原始检索链接撑到 56+"
+        )
+
+        // 3. Default collapsed old/raw web groups & on-demand expand access.
+        XCTAssertTrue(
+            ChatArtifactShelfPanel.visibleWebPages(in: index, expandedTurns: []).isEmpty,
+            "多轮/多条检索网页默认收起为轮次组卡片，不默认平铺展开 54 条原始链接"
+        )
+        let expandedTurn1Pages = ChatArtifactShelfPanel.visibleWebPages(in: index, expandedTurns: [1])
+        XCTAssertEqual(expandedTurn1Pages.count, 19, "展开旧轮次（第 1 轮）后可完整访问该轮保留的 19 条网页来源")
+        for page in expandedTurn1Pages {
+            let anchor = ConversationArtifactIndex.anchor(
+                for: page.source,
+                conversationID: "conv-54",
+                messages: messages
+            )
+            XCTAssertNotNil(anchor, "展开后的每条旧轮次网页来源都必须能定位回原消息与 toolCallID")
+            XCTAssertEqual(page.source.turn, 1)
+        }
+
+        // 4. Explicit user pins & real deliverables preserved; selection/delete/report/scroll work in 54+ scenario.
+        let storeDir = FileManager.default.temporaryDirectory.appendingPathComponent("Shelf54-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: storeDir) }
+        let store = IOSConversationArtifactStore(fileURL: storeDir.appendingPathComponent("shelf.json"))
+        let pinned = try XCTUnwrap(ChatArtifactPinning.snippet(
+            messageID: ChatMessageProjector.messageId(for: finalAssistant),
+            text: "已完成全部 54 篇资料核对，核心结论如下。",
+            kind: .message,
+            messages: messages
+        ))
+        try store.pin(pinned, for: "conv-54")
+        XCTAssertEqual(ChatArtifactPinning.visibleSnippets(store.snippets(for: "conv-54"), messages: messages), [pinned])
+
+        let report = ChatArtifactActions.reportMarkdown(
+            title: "检索综述",
+            index: index,
+            snippets: store.snippets(for: "conv-54"),
+            adoptedVersions: [:],
+            selectedIDs: [
+                ChatArtifactActions.selectionID(for: index.files[0]),
+                ChatArtifactActions.selectionID(for: pinned),
+                ChatArtifactActions.selectionID(for: item20)
+            ]
+        )
+        XCTAssertTrue(report.contains("reports/final-deliverable.md"))
+        XCTAssertTrue(report.contains("已完成全部 54 篇资料核对"))
+        XCTAssertTrue(report.contains("https://example.com/research/item-20"))
+        XCTAssertFalse(report.contains("https://example.com/research/item-1"))
+
+        try store.unpin(snippetID: pinned.id, for: "conv-54")
+        XCTAssertTrue(store.snippets(for: "conv-54").isEmpty, "取消收藏删除能力不回归")
+
+        // Hosted ChatArtifactShelfPanel verification for 54+ items: default collapsed scroll height vs expanded old turn.
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            window.windowScene = nil
+            previousWindow?.makeKey()
+        }
+
+        func findVerticalScrollView(in view: UIView) -> UIScrollView? {
+            if let scroll = view as? UIScrollView, scroll.alwaysBounceVertical || scroll.contentSize.height > scroll.bounds.height || scroll.bounds.height > 120 {
+                return scroll
+            }
+            for sub in view.subviews {
+                if let found = findVerticalScrollView(in: sub) { return found }
+            }
+            return nil
+        }
+
+        let collapsedHost = UIHostingController(rootView: ChatArtifactShelfPanel(
+            artifacts: index,
+            maxHeight: 468,
+            onLocate: { _ in },
+            onClose: {},
+            snippets: [pinned]
+        ).frame(width: 340))
+        window.rootViewController = collapsedHost
+        window.makeKeyAndVisible()
+        try await Task.sleep(for: .milliseconds(250))
+        collapsedHost.view.layoutIfNeeded()
+        let collapsedScroll = try XCTUnwrap(findVerticalScrollView(in: collapsedHost.view))
+        let collapsedContentHeight = collapsedScroll.contentSize.height
+        XCTAssertLessThan(collapsedContentHeight, 750, "默认收起 3 个检索轮次组时面板滚动内容高度应保持紧凑，不平铺 54 条网页")
+
+        let expandedHost = UIHostingController(rootView: ChatArtifactShelfPanel(
+            artifacts: index,
+            maxHeight: 468,
+            onLocate: { _ in },
+            onClose: {},
+            snippets: [pinned],
+            expandedWebGroupTurns: [1]
+        ).frame(width: 340))
+        window.rootViewController = expandedHost
+        try await Task.sleep(for: .milliseconds(250))
+        expandedHost.view.layoutIfNeeded()
+        let expandedScroll = try XCTUnwrap(findVerticalScrollView(in: expandedHost.view))
+        XCTAssertGreaterThan(
+            expandedScroll.contentSize.height,
+            collapsedContentHeight + 600,
+            "展开第 1 轮检索组后滚动内容高度应显著增长并支持完整滚动访问该轮 19 条网页"
+        )
+
+        // 5. Ordinary no-search conversation is unaffected.
+        let ordinaryMessages = [
+            userMessage(text: "帮我写一份配置"),
+            toolMessage(
+                id: "ordinary-write",
+                name: "workspace_file_write",
+                input: #"{"path":"config.json","content":"{}"}"#,
+                outputJSON: #"{"ok":true,"path":"/workspace/config.json","size_bytes":2}"#
+            ),
+            message(role: .assistant, parts: [UIMessagePart.Text(text: "已写入配置。", metadata: nil)])
+        ]
+        let ordinaryIndex = ConversationArtifactIndex.make(from: ordinaryMessages)
+        XCTAssertTrue(ordinaryIndex.webPages.isEmpty)
+        XCTAssertTrue(ordinaryIndex.webPageGroups.isEmpty)
+        XCTAssertEqual(ordinaryIndex.files.count, 1)
+        XCTAssertEqual(ordinaryIndex.count, 1)
     }
 
     private func jsonLiteral(_ value: String) -> String {

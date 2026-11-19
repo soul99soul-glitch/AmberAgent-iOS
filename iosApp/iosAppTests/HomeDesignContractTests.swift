@@ -228,149 +228,6 @@ final class HomeDesignContractTests: XCTestCase {
         )
     }
 
-    func testContinueModelChoosesLatestValidNovelDraft() throws {
-        let now = Date(timeIntervalSinceReferenceDate: 1_000_000)
-        let olderID = NovelProjectID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
-        let newerID = NovelProjectID(UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
-        let older = HomeNovelProjectRef(
-            id: olderID,
-            name: "旧项目",
-            updatedAt: now.addingTimeInterval(-3600),
-            isDegraded: false
-        )
-        let newer = HomeNovelProjectRef(
-            id: newerID,
-            name: "新项目",
-            updatedAt: now.addingTimeInterval(-60),
-            isDegraded: false
-        )
-        let resumed = try XCTUnwrap(HomeContinueCardModel.resolve(
-            novelProjects: [older, newer],
-            now: now
-        ))
-        XCTAssertEqual(resumed.title, "《\(newer.name)》", "首行标题应为最近项目的书名")
-        XCTAssertEqual(resumed.ctaTitle, "继续", "有项目时 CTA 应为继续")
-        XCTAssertEqual(resumed.destination, .resumeProject(newerID), "应选择最近更新的有效项目")
-        XCTAssertTrue(resumed.meta.hasPrefix("小说创作"), "副信息应标明所属功能")
-
-        let degraded = HomeNovelProjectRef(
-            id: NovelProjectID(UUID(uuidString: "00000000-0000-0000-0000-000000000003")!),
-            name: "损坏项目",
-            updatedAt: now.addingTimeInterval(60),
-            isDegraded: true
-        )
-        XCTAssertNil(
-            HomeContinueCardModel.resolve(novelProjects: [degraded], now: now),
-            "只有损坏项目时不应伪造可继续任务"
-        )
-
-        let mixed = try XCTUnwrap(HomeContinueCardModel.resolve(
-            novelProjects: [older, degraded],
-            now: now
-        ))
-        XCTAssertEqual(mixed.destination, .resumeProject(olderID), "更新更晚的损坏项目不能遮蔽有效项目")
-        XCTAssertEqual(mixed.title, "《\(older.name)》", "混合项目时首行必须指向有效项目")
-    }
-
-    func testContinueModelUsesStableCrossFeaturePriority() throws {
-        let now = Date(timeIntervalSinceReferenceDate: 1_000_000)
-        let novelID = NovelProjectID(UUID(uuidString: "00000000-0000-0000-0000-000000000010")!)
-        let novel = HomeNovelProjectRef(
-            id: novelID,
-            name: "雾城",
-            updatedAt: now,
-            isDegraded: false
-        )
-        let recoverableRead = HomeDeepReadTaskRef(
-            id: "read-failed",
-            title: "Agent 趋势",
-            status: .failed,
-            updatedAt: now.addingTimeInterval(-30),
-            workspaceSyncFailed: nil
-        )
-        let runningCouncil = HomeCouncilTaskRef(
-            id: "council-running",
-            title: "品牌定位讨论",
-            status: .running,
-            updatedAt: now.addingTimeInterval(-60),
-            canContinue: true
-        )
-        let syncBlockedRead = HomeDeepReadTaskRef(
-            id: "read-sync",
-            title: "年度报告",
-            status: .succeeded,
-            updatedAt: now.addingTimeInterval(-120),
-            workspaceSyncFailed: "Workspace 写入失败"
-        )
-
-        let selected = try XCTUnwrap(HomeContinueCardModel.resolve(
-            novelProjects: [novel],
-            councilTask: runningCouncil,
-            deepReadTasks: [recoverableRead, syncBlockedRead],
-            now: now
-        ))
-
-        XCTAssertEqual(selected.destination, .deepReadTask("read-sync"))
-        // db25ed1 起任务主题作首行，功能名进副信息。
-        XCTAssertEqual(selected.title, "年度报告")
-        XCTAssertTrue(selected.meta.contains("深度阅读"))
-        XCTAssertEqual(selected.ctaTitle, "处理", "等待用户处理的任务必须高于运行、重试和草稿")
-        XCTAssertTrue(selected.meta.contains("同步失败"))
-    }
-
-    func testNeedsYouMacTaskBeatsActiveDeepReadAndDraftNovel() throws {
-        let now = Date(timeIntervalSinceReferenceDate: 1_000_000)
-        let novel = HomeNovelProjectRef(
-            id: NovelProjectID(UUID(uuidString: "00000000-0000-0000-0000-000000000020")!),
-            name: "雾城",
-            updatedAt: now,
-            isDegraded: false
-        )
-        let runningRead = HomeDeepReadTaskRef(
-            id: "read-running",
-            title: "Agent 趋势",
-            status: .running,
-            updatedAt: now,
-            workspaceSyncFailed: nil
-        )
-        let approval = HomeMacTaskRef(
-            id: "run:1",
-            title: "每日汇总",
-            waitingForReply: false,
-            updatedAt: now.addingTimeInterval(-600)
-        )
-
-        let selected = try XCTUnwrap(HomeContinueCardModel.resolve(
-            novelProjects: [novel],
-            deepReadTasks: [runningRead],
-            macTasks: [approval],
-            now: now
-        ))
-        XCTAssertEqual(selected.feature, .macTask)
-        XCTAssertEqual(selected.destination, .macTasks)
-        XCTAssertEqual(selected.title, "每日汇总")
-        XCTAssertTrue(selected.meta.contains("Mac"))
-        XCTAssertTrue(selected.meta.contains("等你确认"))
-        XCTAssertFalse(selected.meta.contains("等你回复"))
-        XCTAssertEqual(selected.ctaTitle, "处理")
-
-        let reply = HomeMacTaskRef(
-            id: "session:abc",
-            title: "修复构建",
-            waitingForReply: true,
-            updatedAt: now.addingTimeInterval(-300)
-        )
-        let replySelected = try XCTUnwrap(HomeContinueCardModel.resolve(
-            novelProjects: [novel],
-            deepReadTasks: [runningRead],
-            macTasks: [reply],
-            now: now
-        ))
-        XCTAssertEqual(replySelected.title, "修复构建")
-        XCTAssertTrue(replySelected.meta.contains("等你回复"))
-        XCTAssertFalse(replySelected.meta.contains("等你确认"))
-    }
-
     func testCompletedImageResultBeatsDraftButNotRecoverableWork() throws {
         let now = Date(timeIntervalSinceReferenceDate: 1_000_000)
         let image = HomeImageGenerationRef(
@@ -382,14 +239,7 @@ final class HomeDesignContractTests: XCTestCase {
             state: .completed,
             updatedAt: now
         )
-        let novel = HomeNovelProjectRef(
-            id: NovelProjectID(UUID(uuidString: "00000000-0000-0000-0000-000000000011")!),
-            name: "雾城",
-            updatedAt: now.addingTimeInterval(60),
-            isDegraded: false
-        )
         let completedSelected = try XCTUnwrap(HomeContinueCardModel.resolve(
-            novelProjects: [novel],
             imageGeneration: image,
             now: now
         ))
@@ -408,21 +258,6 @@ final class HomeDesignContractTests: XCTestCase {
                 )
             )
         )
-
-        let recoverableRead = HomeDeepReadTaskRef(
-            id: "read-failed",
-            title: "Agent 趋势",
-            status: .failed,
-            updatedAt: now.addingTimeInterval(-60),
-            workspaceSyncFailed: nil
-        )
-        let recoverableSelected = try XCTUnwrap(HomeContinueCardModel.resolve(
-            novelProjects: [novel],
-            deepReadTasks: [recoverableRead],
-            imageGeneration: image,
-            now: now
-        ))
-        XCTAssertEqual(recoverableSelected.destination, .deepReadTask("read-failed"))
     }
 
     func testImageGenerationResumeProjectionUsesOwningMessageAndRejectsFalseSuccess() throws {
@@ -540,32 +375,6 @@ final class HomeDesignContractTests: XCTestCase {
         )
     }
 
-    func testContinueModelUsesNewestCandidateWithinSamePriority() throws {
-        let now = Date(timeIntervalSinceReferenceDate: 1_000_000)
-        let older = HomeDeepReadTaskRef(
-            id: "read-older",
-            title: "旧阅读",
-            status: .running,
-            updatedAt: now.addingTimeInterval(-120),
-            workspaceSyncFailed: nil
-        )
-        let newer = HomeDeepReadTaskRef(
-            id: "read-newer",
-            title: "新阅读",
-            status: .queued,
-            updatedAt: now.addingTimeInterval(-30),
-            workspaceSyncFailed: nil
-        )
-
-        let selected = try XCTUnwrap(HomeContinueCardModel.resolve(
-            deepReadTasks: [older, newer],
-            now: now
-        ))
-
-        XCTAssertEqual(selected.destination, .deepReadTask("read-newer"))
-        XCTAssertEqual(selected.ctaTitle, "查看")
-    }
-
     func testContinueModelOnlySurfacesTruthfulMiniAppAndCouncilWork() throws {
         let now = Date(timeIntervalSinceReferenceDate: 1_000_000)
         let alreadyOpened = HomeMiniAppRef(
@@ -607,48 +416,6 @@ final class HomeDesignContractTests: XCTestCase {
             ),
             "已完成议会和已经运行过的最新小应用版本都不能冒充未完成任务"
         )
-    }
-
-    func testNovelSummaryCarriesRunningStateIntoHomeCandidate() throws {
-        var document = try NovelTestFixtures.document()
-        let branch = try XCTUnwrap(document.branches.first)
-        let session = try XCTUnwrap(document.sessions.first)
-        document.activeRuns.append(NovelActiveRunRecord(
-            id: NovelRunID(),
-            operationID: NovelOperationID(),
-            requestPayloadSHA256: NovelTestFixtures.hashA,
-            branchID: branch.id,
-            sessionID: session.id,
-            kind: .discussion,
-            mode: .discussPlan,
-            granularity: nil,
-            userMessageID: NovelMessageID(),
-            messageID: NovelMessageID(),
-            candidateID: nil,
-            sourceChapterVersionID: nil,
-            contextualCharacterMention: nil,
-            baseCheckpointID: branch.headCheckpointID,
-            baseHeadRevision: branch.headRevision,
-            status: .running,
-            partialContent: "",
-            receiptID: NovelReceiptID(),
-            startedAt: document.project.updatedAt,
-            terminalAt: nil,
-            interruptionReason: nil,
-            terminalFailure: nil,
-            chapterPlanDigest: nil
-        ))
-
-        let summary = NovelProjectSummary(document: document)
-        let selected = try XCTUnwrap(HomeContinueCardModel.resolve(
-            novelProjects: [HomeNovelProjectRef(summary)],
-            now: document.project.updatedAt
-        ))
-
-        XCTAssertTrue(summary.hasRunningRun)
-        XCTAssertEqual(selected.destination, .resumeProject(document.project.id))
-        XCTAssertEqual(selected.ctaTitle, "查看")
-        XCTAssertTrue(selected.meta.contains("生成中"))
     }
 
     func testCurrentAvatarBreathIntensityMatchesPrototypeTiming() {

@@ -83,6 +83,10 @@ final class ChatKernelApprovalResolver {
         request: ChatRunKernelAdapter.RunRequest
     ) async -> ApprovalResolution {
         guard !Task.isCancelled else { return .failed }
+        var pending = pending
+        if pending.phoneControl == nil {
+            pending.phoneControl = request.phoneControl
+        }
         switch prompt {
         case .search, .webMount, .workspace, .ish, .mcp, .council:
             guard let allow = decision.boolValue else { return .failed }

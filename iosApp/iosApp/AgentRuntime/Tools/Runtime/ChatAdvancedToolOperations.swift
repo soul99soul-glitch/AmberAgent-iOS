@@ -12,7 +12,8 @@ extension ChatToolRuntime {
         baseMessages: [UIMessage] = [],
         nestedTools: IOSJsSandboxTools? = nil,
         toolExposureBridge: IosToolExposureBridge? = nil,
-        execStoreScope: IOSJsStoreScope? = nil
+        execStoreScope: IOSJsStoreScope? = nil,
+        phoneControlOverride: IOSPhoneControlController? = nil
     ) async -> String {
         guard isAdvancedToolEnabled(toolCall.toolName) else {
             return IOSWorkspaceStore.json([
@@ -25,6 +26,13 @@ extension ChatToolRuntime {
             ])
         }
         switch toolCall.toolName {
+        case "phone_add_app":
+            return await IOSPhoneControlToolExecutor(
+                runID: runId,
+                controller: phoneControlOverride ?? phoneControl
+            ).executeApprovedAddApp(arguments: toolCall.input)
+        case IOSPhoneControlToolCatalog.preflightToolName:
+            return IOSPhoneControlToolExecutor.preflightJSON(controller: phoneControlOverride ?? phoneControl)
         case let name where IOSShortcutAuthoringToolCatalog.toolNames.contains(name):
             return await IOSShortcutAuthoringToolExecutor.execute(input: toolCall.input)
         case let name where IOSWakeToolCatalog.toolNames.contains(name):
@@ -40,7 +48,7 @@ extension ChatToolRuntime {
         case IOSHealthAgentToolCatalog.toolName:
             return await IOSHealthAgentToolExecutor.execute(input: toolCall.input)
         case let name where IOSAppleAgentToolCatalog.eventKitToolNames.contains(name):
-            return await IOSEventKitAgentToolExecutor.execute(toolName: name, input: toolCall.input)
+            return await IOSEventKitAgentToolExecutor.execute(toolName: name, input: toolCall.input, runId: runId)
         case let name where IOSAppleAgentToolCatalog.notificationToolNames.contains(name):
             return await IOSNotificationAgentToolExecutor.execute(toolName: name, input: toolCall.input)
         case let name where IOSAppleAgentToolCatalog.alarmToolNames.contains(name):
@@ -197,7 +205,11 @@ extension ChatToolRuntime {
                     .flatMap { selectedPoolCandidate.supportedReasoning.contains($0) ? $0 : nil }
                     ?? subAgentModelPool.defaultReasoning(for: selectedPoolCandidate)
             } else {
+                let supported = sharedSettings.subAgentReasoningLevels(
+                    modelId: selectedModel?.id.toHexDashString() ?? params.model.id.toHexDashString()
+                )
                 effectiveReasoningOverride = roleOverride?.reasoningLevel
+                    ?? IOSSubAgentModelPool.preferredReasoning(in: supported, fallback: params.reasoningLevel)
             }
             let runParams: TextGenerationParams
             if let selectedModel, let selectedProvider,
@@ -215,7 +227,7 @@ extension ChatToolRuntime {
                     customBody: assistant.customBodies + selectedModel.customBodies
                 )
             } else {
-                runParams = params
+                runParams = effectiveReasoningOverride.map { params.replacingReasoningLevel($0) } ?? params
             }
             let modelReservation = selectedPoolCandidate.map { subAgentModelPool.reserve($0) }
             if let selectedPoolCandidate {
@@ -281,6 +293,13 @@ extension ChatToolRuntime {
             )
         case let name where isMcpCallTool(name):
             return await dispatchMcpToolOutput(toolCall).text
+        case let name where AgentSoulToolCatalog.toolNames.contains(name):
+            // 形象人设读写都在本机直通：读只回当前设定，写把旧版压进快照栈可回退；独立记忆沙箱禁止改写全局人设。
+            return AgentSoulToolService(
+                store: agentSoulStore ?? AgentSoulStore.shared,
+                conversationId: conversationId?.toHexDashString()
+            )
+            .execute(toolName: name, arguments: toolCall.input)
         case let name where IOSSkillToolCatalog.toolNames.contains(name)
             || IOSMcpManagementToolCatalog.toolNames.contains(name):
             return await skillMcpToolService.execute(

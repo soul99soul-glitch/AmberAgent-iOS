@@ -14,6 +14,7 @@ struct SubAgentConversationView: View {
     @Environment(RouterPath.self) private var router
     @State private var messages: [UIMessage] = []
     @State private var signal = ChatMessageUpdateSignal()
+    @State private var timelineUpdates: ChatTimelineUpdates
     @State private var isLoading = true
     @State private var isVisible = false
     @State private var loadError: String?
@@ -32,12 +33,14 @@ struct SubAgentConversationView: View {
         conversationId: String,
         sharedSettings: IOSSharedSettingsStore,
         workspaceStore: IOSWorkspaceStore,
-        chatViewModel: ChatViewModel? = nil
+        chatViewModel: ChatViewModel? = nil,
+        timelineUpdates: ChatTimelineUpdates = ChatTimelineUpdates()
     ) {
         self.conversationId = conversationId
         self.sharedSettings = sharedSettings
         self.workspaceStore = workspaceStore
         self.chatViewModel = chatViewModel
+        _timelineUpdates = State(initialValue: timelineUpdates)
     }
 
     private var summary: ConversationSummary? {
@@ -71,6 +74,7 @@ struct SubAgentConversationView: View {
             } else {
                 NativeChatTimelineView(
                     signal: signal,
+                    timelineUpdates: timelineUpdates,
                     configurationIssue: nil,
                     isGenerationActive: false,
                     isLoading: false,
@@ -252,9 +256,11 @@ struct SubAgentConversationView: View {
         let next = loaded.filter { $0.role != MessageRole.system }
         guard next != messages else { return }
         let initial = messages.isEmpty
+        let nextSignal = ChatMessageUpdateSignal(revision: signal.revision + 1,
+                                                 reason: initial ? .initialLoad : .toolResultAppended)
+        timelineUpdates.publish(nextSignal, messages: next)
         messages = next
-        signal = ChatMessageUpdateSignal(revision: signal.revision + 1,
-                                         reason: initial ? .initialLoad : .toolResultAppended)
+        signal = nextSignal
     }
 
     private func handleAction(_ action: ChatListAction) {

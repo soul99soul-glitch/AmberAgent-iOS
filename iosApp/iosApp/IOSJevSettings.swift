@@ -413,8 +413,8 @@ struct IOSJevPolicy: Codable, Equatable, Sendable {
         case .contextSelection: t2WaitBudgetMs
         case .modelRouting, .subagentIntent: t3WaitBudgetMs
         case .toolDiscovery: onDemandWaitBudgetMs
-        case .approvalTriage, .scriptJudgment, .toolResultRetention, .autoApprovalGate, .completionCheck, .phoneVerification: deadlineMs
-        case .webActions, .phoneActions: webActionsDeadlineMs
+        case .approvalTriage, .scriptJudgment, .toolResultRetention, .autoApprovalGate, .completionCheck: deadlineMs
+        case .webActions, .phoneActions, .phoneVerification: webActionsDeadlineMs
         }
     }
 }

@@ -13,6 +13,10 @@ extension ChatView {
         return viewModel.pendingWebMountApproval?.id == id
     }
 
+    var collapsesComposerForDuetPanel: Bool {
+        composerState.activeDuetTab != .chat
+    }
+
     func collapseSiteMemoryComposerIfNeeded() {
         guard let request = viewModel.pendingWebMountApproval, request.siteMemoryChanges != nil,
               composerState.collapsedSiteMemoryComposerRequestId == nil, composerState.approvalContainerHeight > 0,
@@ -51,8 +55,19 @@ extension ChatView {
         )
     }
 
+    private var inlineDuetPanelMaximumHeight: CGFloat? {
+        guard collapsesComposerForDuetPanel, composerState.approvalContainerHeight > 0 else { return nil }
+        let topChrome = ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight
+        return max(0, composerState.approvalContainerHeight - topChrome - composerState.subAgentActivityBarHeight)
+    }
+
     var inputBar: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        ChatComposerContent { inputBarContent }
+    }
+
+    private var inputBarContent: some View {
+        let _ = ChatRenderProbe.record("composer-body")
+        return VStack(alignment: .leading, spacing: 6) {
             Group {
                 if viewModel.hasPendingUserGate {
                     pendingUserGateCards
@@ -83,7 +98,8 @@ extension ChatView {
                             webMountController.sessionStore.hideCard(sessionId: record.id)
                             browserState.collapsedWebMountSessionId = nil
                             browserState.expandedWebMountSessionId = nil
-                        }
+                        },
+                        showsStatus: false
                     ) {
                         openWebMountSession(sessionId: record.id)
                     }
@@ -137,155 +153,360 @@ extension ChatView {
                         .transition(.scale(scale: 0.75, anchor: .bottomLeading).combined(with: .opacity))
                 }
 
-                if !viewModel.chatSuggestions.isEmpty, !viewModel.isGenerationActive {
+                if !viewModel.chatSuggestions.isEmpty, isCloudMainDialogueActive || !viewModel.isGenerationActive {
                     ChatSuggestionStrip(suggestions: viewModel.chatSuggestions) { suggestion in
                         viewModel.fillInputFromSuggestion(suggestion)
                         composerState.isInputFocused = true
                     }
+                    .onAppear { viewModel.suggestionDidAppear() }
+                    .onChange(of: viewModel.chatSuggestions) { _, _ in viewModel.suggestionDidAppear() }
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
-                VStack(spacing: 8) {
+                VStack(spacing: collapsesComposerForDuetPanel ? 0 : 8) {
                         // P1-a: 排队条与整行 dock 同宽（右缘对齐发送键），空队列零占位。
-                        if !viewModel.steerQueue.isEmpty {
+                        if !viewModel.steerQueue.isEmpty && !collapsesComposerForDuetPanel {
                             ChatSteerQueueStrip(
                                 entries: viewModel.steerQueue,
                                 onRemove: { viewModel.removeSteerMessage(id: $0) }
                             )
                         }
 
-                        VStack(spacing: 0) {
-                            // Apple Music dock：左侧输入胶囊 + 右侧发送键；底对齐。
-                            HStack(alignment: .bottom, spacing: 8) {
-                                HStack(alignment: .center, spacing: 6) {
-                                    ComposerAttachToggleButton(
-                                        isExpanded: composerState.isAttachExpanded,
-                                        isBusy: viewModel.isAttachingSelectedFile,
-                                        // 生成中允许加附件以便入队；识图中/审批中/读文件中仍禁用。
-                                        isDisabled: viewModel.isRecognizingImages
-                                            || viewModel.isAttachingSelectedFile
-                                            || hasPendingComposerGate
-                                            || viewModel.currentConversationIsOrchestratedChild
-                                    ) {
-                                        withAnimation(.bouncy(duration: 0.42, extraBounce: 0.14)) {
-                                            composerState.isAttachExpanded.toggle()
-                                        }
+                        // Inline Argon Panels (02 Tasks / 03 Hubs) when composer input is collapsed
+                        if collapsesComposerForDuetPanel {
+                            let availableHeight = chatSize.height > 0 ? chatSize.height : 778
+                            let topClearance = ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight + 28
+                            let panelHeight = min(
+                                max(360, availableHeight - topClearance),
+                                availableHeight * 0.78
+                            )
+                            let panelShape = UnevenRoundedRectangle(
+                                topLeadingRadius: 28,
+                                bottomLeadingRadius: 0,
+                                bottomTrailingRadius: 0,
+                                topTrailingRadius: 28,
+                                style: .continuous
+                            )
+                            let handlePanelDragTranslationChanged: (CGSize) -> Void = { translation in
+                                composerState.inlineDuetPanelDragOffsetY = ChatSheetDismissSmoothnessPolicy.updatedInlineDuetPanelDragOffsetY(
+                                    currentOffsetY: composerState.inlineDuetPanelDragOffsetY,
+                                    translation: translation
+                                )
+                            }
+                            let handlePanelDragTranslationEnded: (CGFloat, CGFloat) -> Void = { translationY, predictedEndTranslationY in
+                                let shouldDismiss = ChatSheetDismissSmoothnessPolicy.shouldDismissInlineDuetPanel(
+                                    translationY: translationY,
+                                    predictedEndTranslationY: predictedEndTranslationY
+                                )
+                                withAnimation(.snappy(duration: 0.22)) {
+                                    composerState.inlineDuetPanelDragOffsetY = 0
+                                    if shouldDismiss {
+                                        composerState.activeDuetTab = .chat
                                     }
-
-                                    ZStack(alignment: .leading) {
-                                        ComposerInputTextView(
-                                            text: $viewModel.inputText,
-                                            height: $composerState.composerInputHeight,
-                                            isFocused: inputFocusBinding,
-                                            isEnabled: !hasPendingComposerGate
-                                                && !viewModel.currentConversationIsOrchestratedChild,
-                                            sendOnEnter: sharedSettings.displaySetting.sendOnEnter,
-                                            controller: composerInputController,
-                                            onSubmit: sendComposerMessage
-                                        )
-                                        .frame(height: composerState.composerInputHeight)
-
-                                        if viewModel.inputText.isEmpty {
-                                            Text(inputPlaceholder)
-                                                .font(.body)
-                                                .foregroundStyle(AmberTheme.muted2)
-                                                .allowsHitTesting(false)
-                                        }
-                                    }
-                                    .frame(minHeight: 40)
                                 }
-                                .padding(.leading, 8)
-                                .padding(.trailing, 18)
-                                .padding(.vertical, 5)
-                                .composerDockGlass(cornerRadius: 27)
-
-                                ComposerDockSendButton(
-                                    isLoading: isComposerStopMode,
-                                    sendEnabled: sendEnabled,
-                                    diameter: 54,
-                                    onSend: sendComposerMessage,
-                                    onStop: {
-                                        if viewModel.isRecognizingImages {
-                                            viewModel.cancelVisionRecognition()
-                                        } else {
-                                            viewModel.cancelGeneration()
-                                        }
-                                    }
+                            }
+                            let handlePanelDragCancelled: () -> Void = {
+                                withAnimation(.snappy(duration: 0.22)) {
+                                    composerState.inlineDuetPanelDragOffsetY = 0
+                                }
+                            }
+                            let handleHeaderDragChanged: (DragGesture.Value) -> Void = { value in
+                                handlePanelDragTranslationChanged(value.translation)
+                            }
+                            let handleHeaderDragEnded: (DragGesture.Value) -> Void = { value in
+                                handlePanelDragTranslationEnded(
+                                    value.translation.height,
+                                    value.predictedEndTranslation.height
                                 )
                             }
 
-                                HStack {
-                                    Button {
-                                        openComposerModelSheet()
-                                    } label: {
-                                        Text(composerModelLabel)
-                                            .font(.caption.weight(.semibold))
-                                            .foregroundStyle(AmberTheme.foreground2)
-                                            .lineLimit(1)
-                                            .padding(.horizontal, 12)
-                                            .frame(height: 30)
-                                            .composerDockGlass(cornerRadius: 15)
-                                    }
-                                    .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
-                                    .frame(minHeight: 44)
-                                    .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-                                    .accessibilityLabel("切换模型，当前 \(composerModelLabel)")
-
-                                    Spacer()
-
-                                    HStack(spacing: 8) {
-                                        ComposerIconButton(
-                                            koboyo: .solidThoughtCloud,
-                                            accessibilityLabel: "设置思考等级",
-                                            size: 34,
-                                            symbolSize: 15
-                                        ) {
-                                            toggleComposerPanel(.thinking)
-                                        }
-                                        .accessibilityValue(reasoningAccessibilityValue)
-                                        .popover(isPresented: popoverBinding(for: .thinking), arrowEdge: .bottom) {
-                                            ComposerThinkingPanel(
-                                                selectedOption: selectedReasoningBinding,
-                                                options: availableReasoningOptions,
-                                                isAvailable: reasoningIsAvailable
-                                            ) { _ in composerState.activeComposerPanel = nil }
-                                            .presentationCompactAdaptation(.popover)
-                                        }
-
-                                        ChatContextControl(
-                                            viewModel: viewModel,
-                                            isPresented: popoverBinding(for: .context),
-                                            jevSummaryRunId: jevSummaryRunId,
-                                            onOpen: { toggleComposerPanel(.context) }
-                                        )
+                            VStack(alignment: .leading, spacing: 0) {
+                                if composerState.activeDuetTab == .tasks {
+                                    AmberDuetTaskCenterCard(
+                                        gateway: MacGatewayStore.shared,
+                                        subAgentStore: activityStore,
+                                        hubStore: AmberHubStore.shared,
+                                        onOpenFullTaskBoard: {
+                                            composerState.activeDuetTab = .chat
+                                            router.navigate(to: .macTasks)
+                                        },
+                                        onOpenTask: { task in
+                                            composerState.activeDuetTab = .chat
+                                            openUnifiedTask(task)
+                                        },
+                                        onFollowupTask: { task in
+                                            withAnimation(.snappy(duration: 0.22)) {
+                                                followupTaskInChat(task)
+                                            }
+                                        },
+                                        onDismissPanel: {
+                                            withAnimation(.snappy(duration: 0.22)) {
+                                                composerState.activeDuetTab = .chat
+                                            }
+                                        },
+                                        onHeaderDragChanged: handleHeaderDragChanged,
+                                        onHeaderDragEnded: handleHeaderDragEnded
+                                    )
+                                } else if composerState.activeDuetTab == .hubs {
+                                    AmberDuetHubsCard(
+                                        hubStore: AmberHubStore.shared,
+                                        conversationStore: conversationStore,
+                                        gateway: MacGatewayStore.shared,
+                                        subAgentStore: activityStore,
+                                        onSelectHub: { _ in
+                                            syncIslandPresentation()
+                                        },
+                                        onDismissPanel: {
+                                            withAnimation(.snappy(duration: 0.22)) {
+                                                composerState.activeDuetTab = .chat
+                                            }
+                                        },
+                                        onHeaderDragChanged: handleHeaderDragChanged,
+                                        onHeaderDragEnded: handleHeaderDragEnded
+                                    )
+                                }
+                            }
+                            .padding(.bottom, 64)
+                            .frame(maxWidth: .infinity)
+                            .frame(maxHeight: panelHeight, alignment: .top)
+                            .background {
+                                #if DEBUG
+                                if ChatTopBarLayout.onPanelFrameForTesting != nil {
+                                    Color.clear.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                                        ChatTopBarLayout.onPanelFrameForTesting?($0)
                                     }
                                 }
-                                .padding(.horizontal, 2)
-                                .padding(.top, 10)
-                                // 常驻布局、只折叠高度：收键盘时整个 dock 随键盘下移，被移除的视图
-                                // 不跟随这段位移，会停在原地/往上飞。顶对齐折叠让它贴着输入行一起下沉并渐隐。
-                                .frame(height: showsComposerMeta ? nil : 0, alignment: .top)
-                                .opacity(showsComposerMeta ? 1 : 0)
-                                .allowsHitTesting(showsComposerMeta)
-                                .accessibilityHidden(!showsComposerMeta)
+                                #endif
+                            }
+                            .clipShape(panelShape)
+                            .background(AmberTheme.background, in: panelShape)
+                            .overlay {
+                                // The dock continues into the safe area; its lower edge is open.
+                                panelShape.stroke(AmberTheme.border, lineWidth: 0.8)
+                                    .mask { Rectangle().padding(.bottom, 0.8) }
+                                    .allowsHitTesting(false)
+                            }
+                            .modifier(
+                                AmberInlinePanelDragCallbacksHost(
+                                    onChanged: handlePanelDragTranslationChanged,
+                                    onEnded: handlePanelDragTranslationEnded,
+                                    onCancelled: handlePanelDragCancelled
+                                )
+                            )
+                            .offset(y: max(0, composerState.inlineDuetPanelDragOffsetY))
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+
+                        VStack(spacing: 6) {
+                            if isCloudMainDialogueActive,
+                               MacGatewayStore.shared.selectedCloudDialogueWorkItemId != nil,
+                               !collapsesComposerForDuetPanel {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.turn.down.right")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(AmberTheme.accent)
+                                    Text(composerState.isSubmittingCloudDialogue ? "正在发送补充…" : "待补充 · 输入后点发送（尚未发送）")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(AmberTheme.foreground)
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Button {
+                                        MacGatewayStore.shared.selectedCloudDialogueWorkItemId = nil
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundStyle(AmberTheme.muted)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(AmberTheme.surface, in: Capsule(style: .continuous))
+                            }
+
+                            if isCloudMainDialogueActive,
+                               MacGatewayStore.shared.selectedCloudDialogueWorkItemId == nil,
+                               let notice = composerState.cloudDialogueTaskNotice,
+                               !collapsesComposerForDuetPanel {
+                                Text(verbatim: notice)
+                                    .font(.caption)
+                                    .foregroundStyle(AmberTheme.muted)
+                            }
+
+                            if isCloudMainDialogueActive,
+                               let cloudError = composerState.cloudDialogueErrorMessage,
+                               !collapsesComposerForDuetPanel {
+                                Text(verbatim: cloudError)
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                    .lineLimit(2)
+                            }
+
+                            // Apple Music dock：左侧输入胶囊 + 右侧发送键；
+                            // 打开「任务」或「中心」面板时折叠高度为 0，但保持 UITextView 挂载以完整保留草稿。
+                            // 独立成叶子 View，把高频变化的 inputText 与 composerInputHeight 观察范围锁死在行内，
+                            // 避免每敲一个字或换行都触发整页 ChatView（顶栏、时间轴、底栏）重算 body。
+                            ChatComposerInputDockRow(
+                                viewModel: viewModel,
+                                sharedSettings: sharedSettings,
+                                composerInputController: composerInputController,
+                                isAttachExpanded: composerState.isAttachExpanded,
+                                hasPendingComposerGate: hasPendingComposerGate,
+                                isRunActive: isCurrentConversationRunActive,
+                                isCloudMainDialogueActive: isCloudMainDialogueActive,
+                                isSubmittingCloudDialogue: composerState.isSubmittingCloudDialogue,
+                                collapsesComposerForDuetPanel: collapsesComposerForDuetPanel,
+                                inputPlaceholder: inputPlaceholder,
+                                isInputFocused: inputFocusBinding,
+                                onToggleAttach: {
+                                    withAnimation(.bouncy(duration: 0.42, extraBounce: 0.14)) {
+                                        composerState.isAttachExpanded.toggle()
+                                    }
+                                },
+                                onSendMessage: sendComposerMessage,
+                                onStopGeneration: {
+                                    if viewModel.isRecognizingImages {
+                                        viewModel.cancelVisionRecognition()
+                                    } else {
+                                        viewModel.cancelGeneration()
+                                    }
+                                }
+                            )
+                            .frame(height: collapsesComposerForDuetPanel ? 0 : nil, alignment: .top)
+                            .opacity(collapsesComposerForDuetPanel ? 0 : 1)
+                            .allowsHitTesting(!collapsesComposerForDuetPanel)
+                            .accessibilityHidden(collapsesComposerForDuetPanel)
+
+                            ZStack(alignment: .center) {
+                                if !collapsesComposerForDuetPanel {
+                                    AmberGlassGroup(spacing: 8) {
+                                        HStack {
+                                            Button {
+                                                openComposerModelSheet()
+                                            } label: {
+                                                Text(composerModelLabel)
+                                                    .font(.caption.weight(.semibold))
+                                                    .foregroundStyle(AmberTheme.foreground2)
+                                                    .lineLimit(1)
+                                                    .padding(.horizontal, 12)
+                                                    .frame(height: 30)
+                                                    .composerDockGlass(cornerRadius: 15)
+                                            }
+                                            .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
+                                            .frame(minHeight: 44)
+                                            .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+                                            .accessibilityLabel("切换模型，当前 \(composerModelLabel)")
+
+                                            Spacer()
+
+                                            HStack(spacing: 8) {
+                                                ComposerIconButton(
+                                                    koboyo: .solidThoughtCloud,
+                                                    accessibilityLabel: "设置思考等级",
+                                                    size: 34,
+                                                    symbolSize: 15
+                                                ) {
+                                                    toggleComposerPanel(.thinking)
+                                                }
+                                                .accessibilityValue(reasoningAccessibilityValue)
+                                                .popover(isPresented: popoverBinding(for: .thinking), arrowEdge: .bottom) {
+                                                    ComposerThinkingPanel(
+                                                        selectedOption: selectedReasoningBinding,
+                                                        options: availableReasoningOptions,
+                                                        isAvailable: reasoningIsAvailable
+                                                    ) { _ in composerState.activeComposerPanel = nil }
+                                                    .presentationCompactAdaptation(.popover)
+                                                }
+
+                                                ChatContextControl(
+                                                    viewModel: viewModel,
+                                                    isPresented: popoverBinding(for: .context),
+                                                    jevSummaryRunId: jevSummaryRunId,
+                                                    onOpen: { toggleComposerPanel(.context) }
+                                                )
+                                            }
+                                        }
+                                    }
+                                    .padding(.horizontal, 2)
+                                    .padding(.top, 10)
+                                    .opacity(showsComposerMeta ? 1 : 0)
+                                    .allowsHitTesting(showsComposerMeta)
+                                    .accessibilityHidden(!showsComposerMeta)
+                                    .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: showsComposerMeta)
+                                }
+
+                                AmberDuetBottomSwitcher(
+                                    selectedTab: composerState.activeDuetTab,
+                                    gateway: MacGatewayStore.shared,
+                                    subAgentStore: activityStore,
+                                    hubStore: AmberHubStore.shared,
+                                    onSelectTab: { tab in
+                                        withAnimation(.snappy(duration: 0.24)) {
+                                            selectDuetTab(tab)
+                                        }
+                                    },
+                                    onOpenTasks: {
+                                        withAnimation(.snappy(duration: 0.24)) {
+                                            selectDuetTab(.tasks)
+                                        }
+                                    },
+                                    onOpenWorkspace: {
+                                        withAnimation(.snappy(duration: 0.24)) {
+                                            selectDuetTab(.hubs)
+                                        }
+                                    },
+                                    onSelectHost: { useCloud in
+                                        withAnimation(.snappy(duration: 0.24)) {
+                                            selectMainDialogueHost(useCloud: useCloud)
+                                        }
+                                    },
+                                    onOpenCloudPairingSettings: {
+                                        isPresentingCloudGatewaySettings = true
+                                    }
+                                )
+                                .padding(.horizontal, collapsesComposerForDuetPanel ? 18 : 0)
+                                .padding(.top, 8)
+                                .padding(.bottom, collapsesComposerForDuetPanel ? 16 : 0)
+                                .opacity(!collapsesComposerForDuetPanel && showsComposerMeta ? 0 : 1)
+                                .allowsHitTesting(collapsesComposerForDuetPanel || !showsComposerMeta)
+                                .accessibilityHidden(!collapsesComposerForDuetPanel && showsComposerMeta)
+                                .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: showsComposerMeta)
+                            }
+                            .padding(.top, collapsesComposerForDuetPanel ? -66 : 0)
                         }
                 }
             }
             .fixedSize(horizontal: false, vertical: viewModel.pendingWebMountApproval?.siteMemoryChanges != nil)
             .frame(height: collapsesComposerForSiteMemoryApproval ? 0 : nil, alignment: .top)
-            // 只在折叠时贴边裁切；展开时外扩裁切框，避免削掉发送键/输入胶囊的玻璃边缘。
-            .clipShape(Rectangle().inset(by: collapsesComposerForSiteMemoryApproval ? 0 : -20))
+            // 只在折叠时贴边裁切；展开时不得加 .clipShape，否则父层 masksToBounds 会形成离屏组，导致后台恢复前台时 iOS 26 .glassEffect 失去 CABackdropLayer 采样约 1s。
+            .modifier(ComposerCollapseClipModifier(isCollapsed: collapsesComposerForSiteMemoryApproval))
             .opacity(collapsesComposerForSiteMemoryApproval ? 0 : 1)
             .allowsHitTesting(!collapsesComposerForSiteMemoryApproval)
             .accessibilityHidden(collapsesComposerForSiteMemoryApproval)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                guard viewModel.hasPendingUserGate else { return }
                 if abs(composerState.composerAuxiliaryHeight - height) > 0.5 { composerState.composerAuxiliaryHeight = height }
             }
         }
-        .padding(.horizontal, ChatLayout.contentHorizontalInset)
-        .padding(.top, composerState.isSubAgentBarVisible ? 4 : 8)
-        .padding(.bottom, 8)
-        .animation(.spring(response: 0.26, dampingFraction: 0.86), value: showsComposerMeta)
+        .padding(.horizontal, collapsesComposerForDuetPanel ? 0 : ChatLayout.contentHorizontalInset)
+        .padding(.top, collapsesComposerForDuetPanel ? 0 : (composerState.isSubAgentBarVisible ? 4 : 8))
+        .padding(.bottom, collapsesComposerForDuetPanel ? 0 : 16)
+        // Budget the panel and its mode bar together so the bottom inset cannot squeeze the top chrome.
+        .frame(maxHeight: inlineDuetPanelMaximumHeight, alignment: .bottom)
+        .background(alignment: .bottom) {
+            // Keep the same backdrop through the Home Indicator inset for every tab.
+            LinearGradient(
+                colors: [
+                    AmberTheme.background.opacity(0),
+                    AmberTheme.background.opacity(0.95),
+                    AmberTheme.background
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .padding(.top, -18)
+            .ignoresSafeArea(edges: .bottom)
+            .allowsHitTesting(false)
+        }
         // 完成瞬间建议条插入会让 composer 长高一截：旧实现里转场动画只管建议条
         // 自己，时间轴可用高度一帧被吃掉 → 底部锚定内容跳一下。给建议条显隐加
         // 布局动画，高度连续变化，滚动层逐帧重锚，内容平滑上移。
@@ -349,7 +570,80 @@ extension ChatView {
         sendEnabled(for: viewModel.inputText)
     }
 
+    var duetActiveTaskCount: Int {
+        unifiedTaskGroups.activeCount
+    }
+
+    var duetNeedsAttentionCount: Int {
+        unifiedTaskGroups.needsAttention.count
+    }
+
+    /// The panel's own aggregation, so the badge and the list can never disagree.
+    var unifiedTaskGroups: AmberUnifiedTaskBuilder.Groups {
+        AmberUnifiedTaskBuilder.buildTasks(
+            gateway: MacGatewayStore.shared,
+            subAgentStore: activityStore,
+            hubStore: AmberHubStore.shared
+        )
+    }
+
+    func currentConversationTaskSegments() -> [ChatTaskRunSegment] {
+        taskCountCache.taskSegments(messages: viewModel.messages, isGenerationActive: viewModel.isGenerationActive)
+    }
+
+    /// A task card always opens the surface that already owns that work: the
+    /// child transcript, the execution record, or the Mac board. Never a chat
+    /// invented for it.
+    @MainActor
+    func openUnifiedTask(_ task: AmberUnifiedTaskItem) {
+        switch task.destination {
+        case .subAgentConversation(let conversationId):
+            router.navigate(to: .subAgentConversation(id: conversationId))
+        case .wakeConversation(let conversationId):
+            if MacGatewayStore.shared.isCloudMainDialogueSelected {
+                MacGatewayStore.shared.setCloudMainDialogueSelected(false)
+            }
+            router.navigate(to: .chat)
+            Task { @MainActor in
+                _ = await openSubAgentSourceConversation(conversationId)
+            }
+        case .cloudDialogueWorkItem(let workItemId):
+            if let committed = composerInputController.committedText(), committed != viewModel.inputText {
+                viewModel.inputText = committed
+            }
+            if MacGatewayStore.shared.connection != nil {
+                let acceptsInput = MacGatewayStore.shared.prepareCloudDialogueTaskInput(workItemId: workItemId)
+                MacGatewayStore.shared.setCloudMainDialogueSelected(true)
+                composerState.activeDuetTab = .chat
+                composerState.isInputFocused = true
+                composerState.cloudDialogueTaskNotice = acceptsInput ? nil : "原任务已结束；填写说明后发送，将新建云端请求（尚未发送）"
+                if !acceptsInput, viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    viewModel.inputText = "请重新处理「\(task.title)」。"
+                }
+            }
+            router.navigate(to: .chat)
+        case .executionRecord(let recordId):
+            router.navigate(to: .executionTask(id: recordId))
+        case .macBoard:
+            router.navigate(to: .macTasks)
+        case .cloudTaskDetail(let requestId):
+            let resolvedId = MacGatewayStore.shared.cloudTasks.first(where: { $0.requestId == requestId })?.workItemId ?? requestId
+            MacGatewayStore.shared.pendingCloudTaskWorkItemId = resolvedId
+            router.navigate(to: .macTasks)
+        case .none:
+            break
+        }
+    }
+
+    var isCloudMainDialogueActive: Bool {
+        MacGatewayStore.shared.connection != nil && MacGatewayStore.shared.isCloudMainDialogueSelected
+    }
+
     private func sendEnabled(for text: String) -> Bool {
+        if isCloudMainDialogueActive {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !trimmed.isEmpty && !composerState.isSubmittingCloudDialogue
+        }
         _ = sharedSettings.revision
         return viewModel.composerSendBlockReason(for: text) == nil
     }
@@ -360,8 +654,62 @@ extension ChatView {
             viewModel.inputText = committedText
         }
         guard sendEnabled(for: committedText) else { return }
+        if isCloudMainDialogueActive {
+            sendCloudDialogueFromComposer(text: committedText)
+            return
+        }
         viewportState.followPaused = false
         viewModel.sendMessage(startsGenerationAfterInsertion: true)
+    }
+
+    private func sendCloudDialogueFromComposer(text: String) {
+        let store = MacGatewayStore.shared
+        let targetWorkItemId = store.selectedCloudDialogueWorkItemId
+        let submission = composerState.beginCloudDialogueSubmit(
+            text: text,
+            targetWorkItemId: targetWorkItemId
+        )
+        ChatUserSendEntranceGate.arm("cloud-user:\(submission.requestId)")
+        viewModel.suggestionDraftChanged(text)
+
+        Task { @MainActor in
+            let result: Result<MacGatewayCloudDialogueReceipt, Error>
+            if let targetWorkItemId {
+                result = await store.sendCloudWorkItemInput(
+                    workItemId: targetWorkItemId,
+                    text: text,
+                    requestId: submission.requestId
+                )
+            } else {
+                result = await store.sendCloudDialogueMessage(
+                    text: text,
+                    requestId: submission.requestId
+                )
+            }
+            var currentDraft = composerInputController.currentText() ?? viewModel.inputText
+            var selectedWorkItemId = store.selectedCloudDialogueWorkItemId
+            composerState.finishCloudDialogueSubmit(
+                generation: submission.generation,
+                submittedText: text,
+                submittedTargetWorkItemId: targetWorkItemId,
+                submittedFingerprint: submission.fingerprint,
+                currentInputText: &currentDraft,
+                selectedWorkItemId: &selectedWorkItemId,
+                result: result
+            )
+            if viewModel.inputText != currentDraft {
+                viewModel.inputText = currentDraft
+            }
+            if store.selectedCloudDialogueWorkItemId != selectedWorkItemId {
+                store.selectedCloudDialogueWorkItemId = selectedWorkItemId
+            }
+            if case .success = result {
+                composerState.cloudDialogueTaskNotice = nil
+                viewModel.suggestionMessageSubmitted(text)
+                _ = await store.pollCloudDialogueEvents()
+                viewModel.refreshCloudSuggestions(gateway: store)
+            }
+        }
     }
 
     private func openComposerModelSheet() {
@@ -383,6 +731,12 @@ extension ChatView {
     }
 
     private var inputPlaceholder: String {
+        if isCloudMainDialogueActive {
+            let cloudKey = MacGatewayStore.shared.selectedCloudDialogueWorkItemId == nil
+                ? "发消息给云端真身..."
+                : "向选中云端任务追加补充说明..."
+            return IOSAppLocalization.string(cloudKey, defaultValue: cloudKey)
+        }
         let key: String = switch configurationIssue {
         case .some(.missingAPIKey):
             "先添加 API Key"
@@ -461,8 +815,7 @@ extension ChatView {
     private var showsComposerMeta: Bool {
         composerState.isInputFocused ||
             composerState.activeComposerPanel != nil ||
-            composerState.isModelSheetPresented ||
-            configurationIssue != nil
+            composerState.isModelSheetPresented
     }
 
     private var composerModelLabel: String {
@@ -478,6 +831,21 @@ extension ChatView {
     var composerCurrentModelSelection: String {
         _ = sharedSettings.revision
         return sharedSettings.snapshot.getCurrentChatModel()?.id.description() ?? composerCurrentModelID
+    }
+
+    private var composerQuickModels: [ComposerModelOption] {
+        _ = sharedSettings.revision
+        return ComposerProviderGroup.currentConfiguration(
+            sharedSettings: sharedSettings,
+            currentModel: composerCurrentModelSelection
+        ).flatMap(\.models)
+    }
+
+    private func selectComposerQuickModel(_ model: ComposerModelOption) {
+        sharedSettings.setCurrentAssistantChatModelId(model.id)
+        sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
+        viewModel.reasoningLevel = sharedSettings.currentAssistantReasoningLevel()
+        viewModel.bumpMessageRevision(reason: .settingsRefresh)
     }
 
     private var selectedReasoningOption: ComposerReasoningOption {
@@ -534,4 +902,327 @@ extension ChatView {
         composerState.activeComposerPanel = composerState.activeComposerPanel == panel ? nil : panel
     }
 
+    // MARK: - Argon 3+1 Mode & Host Switcher Actions
+
+    func selectDuetTab(_ tab: AmberDuetModeTab) {
+        ChatRenderProbe.record("panel-select-tab")
+        ChatRenderProbe.measureUs("us:panel-select-tab") {
+            if let committed = composerInputController.committedText(), committed != viewModel.inputText {
+                viewModel.inputText = committed
+            }
+            if tab != .chat {
+                composerState.activeComposerPanel = nil
+                composerState.isAttachExpanded = false
+                dismissKeyboard()
+            }
+            composerState.activeDuetTab = tab
+        }
+    }
+
+    func selectMainDialogueHost(useCloud: Bool) {
+        let store = MacGatewayStore.shared
+        guard store.connection != nil || !useCloud else {
+            isPresentingCloudGatewaySettings = true
+            return
+        }
+        store.setCloudMainDialogueSelected(useCloud)
+        composerState.cloudDialogueErrorMessage = nil
+        if composerState.activeDuetTab != .chat {
+            composerState.activeDuetTab = .chat
+        }
+        syncIslandPresentation()
+        if useCloud {
+            Task { @MainActor in
+                await store.refresh()
+                _ = await store.pollCloudDialogueEvents()
+            }
+        }
+    }
+
+    func followupTaskInChat(_ followupTask: AmberUnifiedTaskItem) {
+        if let committed = composerInputController.committedText(), committed != viewModel.inputText {
+            viewModel.inputText = committed
+        }
+        composerState.exitBackgroundHandoffModePreservingDraft()
+        composerState.activeDuetTab = .chat
+        if viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if let actionTitle = followupTask.actionTitle {
+                viewModel.inputText = "请继续处理「\(followupTask.title)」（\(actionTitle)）："
+            } else {
+                viewModel.inputText = "跟进任务「\(followupTask.title)」："
+            }
+        }
+        composerState.isInputFocused = true
+    }
+}
+
+// Evaluate the composer after the parent page has returned its body. Building both
+// trees on the same call stack exhausts the physical device's main stack in Debug.
+private struct ChatComposerContent<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View { content() }
+}
+
+private struct ChatComposerInputDockRow: View {
+    let viewModel: ChatViewModel
+    let sharedSettings: IOSSharedSettingsStore
+    let composerInputController: ComposerInputController
+    let isAttachExpanded: Bool
+    let hasPendingComposerGate: Bool
+    let isRunActive: Bool
+    let isCloudMainDialogueActive: Bool
+    let isSubmittingCloudDialogue: Bool
+    let collapsesComposerForDuetPanel: Bool
+    let inputPlaceholder: String
+    @Binding var isInputFocused: Bool
+    let onToggleAttach: () -> Void
+    let onSendMessage: () -> Void
+    let onStopGeneration: () -> Void
+
+    @State private var composerInputHeight: CGFloat = 40
+
+    var body: some View {
+        @Bindable var bindableViewModel = viewModel
+        let currentInputText = viewModel.inputText
+        let trimmedNonEmpty = !currentInputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasSendableContent = trimmedNonEmpty
+            || (!isCloudMainDialogueActive && (!viewModel.pendingImages.isEmpty || viewModel.pendingSelectedFilePreview != nil))
+        let _ = sharedSettings.revision
+        let isSendEnabled = isCloudMainDialogueActive
+            ? (trimmedNonEmpty && !isSubmittingCloudDialogue)
+            : (viewModel.composerSendBlockReason(for: currentInputText) == nil)
+        let isStopMode = isCloudMainDialogueActive
+            ? false
+            : ChatView.composerSendButtonIsStopMode(
+                isRunActive: isRunActive,
+                isRecognizingImages: viewModel.isRecognizingImages,
+                hasSendableContent: hasSendableContent,
+                sendEnabled: isSendEnabled
+            )
+
+        AmberGlassGroup(spacing: 8) {
+            HStack(alignment: .bottom, spacing: 8) {
+                HStack(alignment: .center, spacing: 6) {
+                    ComposerAttachToggleButton(
+                        isExpanded: isAttachExpanded,
+                        isBusy: viewModel.isAttachingSelectedFile,
+                        // 生成中允许加附件以便入队；识图中/审批中/读文件中仍禁用。
+                        isDisabled: viewModel.isRecognizingImages
+                            || viewModel.isAttachingSelectedFile
+                            || hasPendingComposerGate
+                            || viewModel.currentConversationIsOrchestratedChild,
+                        action: onToggleAttach
+                    )
+
+                    ZStack(alignment: .leading) {
+                        ComposerInputTextView(
+                            text: $bindableViewModel.inputText,
+                            height: $composerInputHeight,
+                            isFocused: $isInputFocused,
+                            isEnabled: !hasPendingComposerGate
+                                && !viewModel.currentConversationIsOrchestratedChild
+                                && !collapsesComposerForDuetPanel,
+                            sendOnEnter: sharedSettings.displaySetting.sendOnEnter,
+                            controller: composerInputController,
+                            onSubmit: onSendMessage
+                        )
+                        .frame(height: composerInputHeight)
+
+                        if currentInputText.isEmpty {
+                            ComposerPlaceholderText(text: inputPlaceholder)
+                        }
+                    }
+                    .frame(minHeight: 40)
+                }
+                .padding(.leading, 8)
+                .padding(.trailing, 18)
+                .padding(.vertical, 5)
+                .composerDockGlass(cornerRadius: 27)
+
+                ComposerDockSendButton(
+                    isLoading: isStopMode,
+                    sendEnabled: isSendEnabled,
+                    diameter: 54,
+                    onSend: onSendMessage,
+                    onStop: onStopGeneration
+                )
+            }
+        }
+    }
+}
+
+
+private struct ComposerCollapseClipModifier: ViewModifier {
+    let isCollapsed: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isCollapsed {
+            content.clipped()
+        } else {
+            content
+        }
+    }
+}
+
+/// Reference-typed callback holder with identity equality so updating drag closures
+/// does not publish a new SwiftUI environment value on every drag frame.
+@MainActor
+final class AmberInlinePanelDragCallbacks: Equatable {
+    nonisolated static func == (lhs: AmberInlinePanelDragCallbacks, rhs: AmberInlinePanelDragCallbacks) -> Bool {
+        lhs === rhs
+    }
+
+    var onChanged: (@MainActor (CGSize) -> Void)?
+    var onEnded: (@MainActor (CGFloat, CGFloat) -> Void)?
+    var onCancelled: (@MainActor () -> Void)?
+}
+
+private struct AmberInlinePanelDragCallbacksKey: EnvironmentKey {
+    static let defaultValue: AmberInlinePanelDragCallbacks? = nil
+}
+
+extension EnvironmentValues {
+    var amberInlinePanelDragCallbacks: AmberInlinePanelDragCallbacks? {
+        get { self[AmberInlinePanelDragCallbacksKey.self] }
+        set { self[AmberInlinePanelDragCallbacksKey.self] = newValue }
+    }
+}
+
+private struct AmberInlinePanelDragCallbacksHost: ViewModifier {
+    let onChanged: @MainActor (CGSize) -> Void
+    let onEnded: @MainActor (CGFloat, CGFloat) -> Void
+    let onCancelled: @MainActor () -> Void
+    @State private var owner = AmberInlinePanelDragCallbacks()
+
+    func body(content: Content) -> some View {
+        owner.onChanged = onChanged
+        owner.onEnded = onEnded
+        owner.onCancelled = onCancelled
+        return content.environment(\.amberInlinePanelDragCallbacks, owner)
+    }
+}
+
+struct AmberInlinePanelScrollDismissBridge: UIViewRepresentable {
+    @Environment(\.amberInlinePanelDragCallbacks) private var callbacks
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(callbacks: callbacks)
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = InlinePanelScrollProbeView(frame: .zero)
+        view.isHidden = true
+        view.isUserInteractionEnabled = false
+        let coordinator = context.coordinator
+        view.onAttach = { [weak view] in
+            guard let view else { return }
+            coordinator.attachIfNeeded(from: view)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.callbacks = callbacks
+        context.coordinator.attachIfNeeded(from: uiView)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var callbacks: AmberInlinePanelDragCallbacks?
+        private weak var attachedScrollView: UIScrollView?
+        private var startedAtTop = true
+        private var isPullDismissing = false
+
+        init(callbacks: AmberInlinePanelDragCallbacks? = nil) {
+            self.callbacks = callbacks
+        }
+
+        func attach(to scrollView: UIScrollView) {
+            scrollView.alwaysBounceVertical = true
+            guard attachedScrollView !== scrollView else { return }
+            attachedScrollView?.panGestureRecognizer.removeTarget(self, action: #selector(handlePan(_:)))
+            attachedScrollView = scrollView
+            scrollView.panGestureRecognizer.addTarget(self, action: #selector(handlePan(_:)))
+        }
+
+        func attachIfNeeded(from probeView: UIView) {
+            var current = probeView.superview
+            var found: UIScrollView?
+            while let view = current {
+                if let sv = view as? UIScrollView {
+                    found = sv
+                    break
+                }
+                current = view.superview
+            }
+            guard let scrollView = found else { return }
+            attach(to: scrollView)
+        }
+
+        @objc func handlePan(_ pan: UIPanGestureRecognizer) {
+            guard let scrollView = attachedScrollView, let callbacks, callbacks.onChanged != nil else { return }
+            let referenceView = scrollView.window ?? scrollView
+            let translation = pan.translation(in: referenceView)
+            let topOffset = -scrollView.adjustedContentInset.top
+
+            switch pan.state {
+            case .began:
+                startedAtTop = scrollView.contentOffset.y <= topOffset + 0.5
+                isPullDismissing = false
+            case .changed:
+                if !isPullDismissing {
+                    if scrollView.contentOffset.y > topOffset + 0.5 || translation.y < -0.5 {
+                        startedAtTop = false
+                    } else if startedAtTop, translation.y > 0, abs(translation.y) > abs(translation.x) {
+                        isPullDismissing = true
+                    }
+                }
+                guard isPullDismissing else { return }
+                callbacks.onChanged?(CGSize(width: translation.x, height: max(0, translation.y)))
+            case .ended:
+                guard isPullDismissing else { return }
+                isPullDismissing = false
+                let velocityY = pan.velocity(in: referenceView).y
+                let predictedEndY = translation.y + velocityY * 0.18
+                callbacks.onEnded?(max(0, translation.y), predictedEndY)
+            case .cancelled, .failed:
+                guard isPullDismissing else { return }
+                isPullDismissing = false
+                callbacks.onCancelled?()
+            default:
+                break
+            }
+        }
+    }
+
+    private final class InlinePanelScrollProbeView: UIView {
+        var onAttach: (() -> Void)?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil else { return }
+            onAttach?()
+            DispatchQueue.main.async { [weak self] in
+                self?.onAttach?()
+            }
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            onAttach?()
+        }
+    }
+}
+
+extension View {
+    func amberInlinePanelScrollDismiss() -> some View {
+        background {
+            AmberInlinePanelScrollDismissBridge()
+                .frame(width: 0, height: 0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
 }

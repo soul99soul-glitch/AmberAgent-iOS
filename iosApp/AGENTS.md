@@ -8,7 +8,6 @@
 - UI、状态、持久化、provider 请求和 KMP 共享逻辑应各自保留清晰所有者；不要把补偿逻辑堆进 `ChatView` 或单个 ViewModel。
 - 修改 provider 时区分 KMP provider、iOS 配置桥、认证状态、请求构造和候选模型列表；沿真实调用链验证，不根据 UI 文案推断。
 - 修改 vendor 时保持默认值等于旧行为，只在 AmberAgent 调用点显式启用新行为，除非用户明确要求改变共享默认值。
-- 修改小说创作前继续读取 `iosApp/iosApp/NovelCreation/AGENTS.md`，遵守候选稿、项目状态、注入和生成终态的局部契约。
 
 ## Chat, Streaming, And Scrolling
 
@@ -56,7 +55,6 @@ xcodebuild -quiet -project iosApp/AmberAgent.xcodeproj -scheme iosApp \
 - `IOSConversationStoreBranchingTests`
 - `IOSParityRedLightTests`
 - `IOSAgentToolEngineTests`
-- `IOSDeepReadPipelineTests`
 
 触碰 KMP conversation storage 时，同时运行对应 Gradle 测试，不以 Swift 层测试代替共享层验证。
 

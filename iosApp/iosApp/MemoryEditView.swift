@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MemoryEditView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(IOSConversationStore.self) private var conversationStore
 
     private let recordId: Int?
 
@@ -19,6 +20,13 @@ struct MemoryEditView: View {
         self._text = State(initialValue: initialText)
         self._scope = State(initialValue: MemoryEditScope(title: initialScope))
         self._pinned = State(initialValue: initialPinned)
+    }
+
+    private var conversationTitles: [String: String] {
+        Dictionary(
+            conversationStore.summaries.map { ($0.id.toHexDashString(), $0.title) },
+            uniquingKeysWith: { first, _ in first }
+        )
     }
 
     var body: some View {
@@ -53,17 +61,17 @@ struct MemoryEditView: View {
 
     private var header: some View {
         HStack {
-            AmberGlassCircleButton(systemImage: "chevron.left", accessibilityLabel: "返回核心记忆", size: 44, symbolSize: 20) {
+            AmberGlassCircleButton(systemImage: "chevron.left", accessibilityLabel: "返回记忆列表", size: 44, symbolSize: 20) {
                 dismiss()
             }
 
             Spacer()
 
             VStack(spacing: 2) {
-                Text(isTopicRecord ? "主题" : (recordId == nil ? "新增记忆" : "编辑记忆"))
+                Text(isTopicRecord ? "话题详情" : (recordId == nil ? "新增记忆" : "编辑记忆"))
                     .font(.title2.weight(.bold))
                     .foregroundStyle(AmberTheme.foreground)
-                Text(recordId.map { "#\($0)" } ?? "本地保存")
+                Text(existingRecord.map { IOSMemoryLibrary.primaryTypeTitle(for: $0) } ?? "本地保存")
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(AmberTheme.muted)
             }
@@ -83,30 +91,34 @@ struct MemoryEditView: View {
     private var sourceSection: some View {
         if let existingRecord {
             VStack(spacing: 0) {
-                AmberSectionLabel(text: "来源")
+                AmberSectionLabel(text: "记忆信息")
                 AmberFormGroup {
+                    let typeLabel: String = {
+                        let primary = IOSMemoryLibrary.primaryTypeTitle(for: existingRecord)
+                        if let secondary = IOSMemoryLibrary.secondaryKindTitle(for: existingRecord) {
+                            return "\(primary) · \(secondary)"
+                        }
+                        return primary
+                    }()
+                    MemoryPreviewLine(label: "类型", value: typeLabel)
+                    MemoryEditDivider()
                     if isTopicRecord {
-                        MemoryPreviewLine(label: "来源", value: "由记忆整理自动维护")
+                        MemoryPreviewLine(label: "来源对话", value: "由记忆整理自动维护")
                         MemoryEditDivider()
-                        MemoryPreviewLine(label: "成员", value: "\(topicMembers.count) 条")
+                        MemoryPreviewLine(label: "聚合记忆", value: "\(topicMembers.count) 条")
                     } else {
-                        MemoryPreviewLine(label: "来源", value: IOSMemoryLibrary.sourceSummary(existingRecord))
+                        MemoryPreviewLine(
+                            label: "来源对话",
+                            value: IOSMemoryLibrary.sourceDisplay(for: existingRecord, conversationTitles: conversationTitles)
+                        )
                     }
                     MemoryEditDivider()
                     MemoryPreviewLine(
-                        label: "置信度",
-                        value: String(
-                            format: "%.2f",
-                            locale: IOSAppLanguagePreference.selected().resolvedLocale(),
-                            existingRecord.confidence
-                        )
+                        label: "最近被用到",
+                        value: existingRecord.lastUsedAt.map { dateText($0.int64Value) } ?? "尚未被引用"
                     )
                     MemoryEditDivider()
                     MemoryPreviewLine(label: "更新时间", value: dateText(existingRecord.updatedAt))
-                    if let lastUsedAt = existingRecord.lastUsedAt?.int64Value {
-                        MemoryEditDivider()
-                        MemoryPreviewLine(label: "最近使用", value: dateText(lastUsedAt))
-                    }
                     if let expiresAt = existingRecord.expiresAt?.int64Value {
                         MemoryEditDivider()
                         // expiresAt 是失效的那一刻（通常是次日 0 点），显示最后有效时刻。
@@ -258,48 +270,113 @@ struct MemoryEditView: View {
         }
     }
 
-    /// 底栏动作：保存 / 删除左右并列；无图标、文案短、文字居中（避免左顶头）。
+    /// 底栏动作：主按钮「保存」突出显示，次级提供「归档 / 恢复」与「删除」。
     private var actionsSection: some View {
-        HStack(spacing: 12) {
-            Button {
-                saveMemory()
-            } label: {
-                Text("保存")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(canSave ? AmberTheme.accent : AmberTheme.muted2)
-                    .frame(maxWidth: .infinity)
-                    .frame(minHeight: 52)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(!canSave)
-            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous)
-                    .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
-            }
-
-            if recordId != nil {
-                Button(role: .destructive) {
-                    showDeleteInfo = true
+        VStack(spacing: 10) {
+            if !isTopicRecord {
+                Button {
+                    saveMemory()
                 } label: {
-                    Text("删除")
+                    Text("保存")
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(AmberTheme.accentRed)
+                        .foregroundStyle(canSave ? AmberTheme.accentInk : AmberTheme.muted2)
                         .frame(maxWidth: .infinity)
-                        .frame(minHeight: 52)
+                        .frame(minHeight: 50)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))
+                .disabled(!canSave)
+                .background(
+                    canSave ? AmberTheme.accent : AmberTheme.surface,
+                    in: RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous)
+                )
                 .overlay {
                     RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous)
-                        .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
+                        .stroke(canSave ? AmberTheme.accent.opacity(0.2) : AmberTheme.borderSoft, lineWidth: 0.5)
+                }
+            }
+
+            if let existingRecord {
+                HStack(spacing: 12) {
+                    if !isTopicRecord {
+                        Button {
+                            toggleArchive(existingRecord)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: existingRecord.archived ? "arrow.uturn.backward" : "archivebox")
+                                    .font(.subheadline.weight(.semibold))
+                                Text(existingRecord.archived ? "恢复记忆" : "归档")
+                                    .font(.body.weight(.semibold))
+                            }
+                            .foregroundStyle(existingRecord.archived ? AmberTheme.accent : AmberTheme.foreground2)
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 48)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous)
+                                .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
+                        }
+                    }
+
+                    Button(role: .destructive) {
+                        showDeleteInfo = true
+                    } label: {
+                        Text("删除")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(AmberTheme.accentRed)
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 48)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous)
+                            .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
+                    }
                 }
             }
         }
         .padding(.horizontal, 16)
         .padding(.top, 20)
+    }
+
+    private func toggleArchive(_ record: MemoryRecord) {
+        saveError = nil
+        persistence.refresh()
+        guard let current = persistence.records.first(where: { $0.id == record.id }),
+              current.updatedAt == record.updatedAt else {
+            saveError = "操作失败：这条记忆已在其他地方更新，请返回后重新打开。"
+            return
+        }
+        let previousRecords = persistence.records
+        let now = nowMillis()
+        let updated: MemoryRecord?
+        if current.archived {
+            updated = IosMemoryFactory.shared.restoreMemory(id: current.id, now: now)
+        } else {
+            updated = IosMemoryFactory.shared.setArchived(id: current.id, archived: true)
+        }
+        guard let saved = updated else {
+            saveError = "操作失败：这条记忆不存在。"
+            return
+        }
+        guard persistence.persist(previousRecords: previousRecords) else {
+            saveError = persistence.lastErrorMessage ?? "操作失败：无法写入记忆。"
+            return
+        }
+        IOSMemoryWriteAuditStore.shared.record(
+            action: current.archived ? "restore" : "invalidate",
+            status: "user_saved",
+            memoryId: Int(saved.id),
+            scope: saved.scope.wireName,
+            kind: saved.kind.wireName,
+            contentPreview: IOSMemoryLibrary.preview(saved.content)
+        )
+        dismiss()
     }
 
     private var canSave: Bool {

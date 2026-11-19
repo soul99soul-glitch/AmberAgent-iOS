@@ -57,8 +57,15 @@ struct ChatTopBarView: View {
     var onRefreshRecap: () -> Void = {}
     var onLocateRecapNode: (ConversationRecap.Node) -> Bool = { _ in false }
     var onRecapNextStep: (String) -> Bool = { _ in false }
+    var backgroundRunningCount: Int = 0
+    var isModalSheetPresented: Bool = false
+    var onAvatarTap: (() -> Void)? = nil
+    var onAvatarFrameChange: ((CGRect) -> Void)? = nil
+
+    var dialogue: AnyView? = nil
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.amberIsUnderlyingSheetPresented) private var isUnderlyingSheetPresented
     @State private var pressedPresentation: ChatIslandPresentation?
     @State var panel: ChatTopBarPanel? = nil
     @State var arrivalState = ChatTopBarArrivalState()
@@ -85,103 +92,31 @@ struct ChatTopBarView: View {
     }
 
     private var dockState: ChatTopBarDockState {
-        .resolve(hasMessages: hasMessages || !snippets.isEmpty, notices: notices, artifactCount: artifacts.count + snippets.count)
+        .resolve(
+            hasMessages: hasMessages || !snippets.isEmpty || backgroundRunningCount > 0,
+            notices: notices,
+            artifactCount: artifacts.count + snippets.count + backgroundRunningCount
+        )
     }
 
     var body: some View {
+        let _ = ChatRenderProbe.record("top-bar-body")
         let activeArrival = arrivalState.arrival
-        return GeometryReader { geometry in
-            ZStack(alignment: .bottom) {
-                // 两侧玻璃与岛保持独立，避免系统合并玻璃后穿透正文。
-                HStack {
-                    if showsBackButton {
-                    ChatToolbarIconButton(
-                        systemImage: backSystemImage, accessibilityLabel: backAccessibilityLabel,
-                        size: ChatTopBarLayout.toolbarButtonDiameter, symbolSize: 18, action: onBack
-                    )
-                    .accessibilityIdentifier("topbar-back")
+        return Group {
+            if let dialogue {
+                dialogue
+                    .safeAreaBar(edge: .top, spacing: 0) {
+                        toolbarButtons
+                            .frame(height: ChatTopBarLayout.toolbarHeight, alignment: .top)
+                            .padding(.horizontal, ChatTopBarLayout.horizontalInset)
                     }
-                    Spacer()
-                    ChatTopBarTrailingDock(
-                        state: dockState, onTap: tapDock, onDismiss: onDismiss,
-                        onNewConversation: onNewConversation, loadPreview: loadPreview,
-                        previewRevision: previewRevision,
-                        onOpenShelf: { panel = .shelf },
-                        onExportConversation: onExportConversation
-                    )
-                    .scaleEffect(reduceMotion ? 1 : dockScale)
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.dock = $0 }
-                }
-
-                island(maxWidth: ChatTopBarLayout.availableIslandWidth(in: geometry.size.width))
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.island = $0 }
-
-                if flightVisible, !reduceMotion {
-                    Circle()
-                        .fill(arrivalState.arrival?.kind.tint ?? AmberTheme.accent)
-                        .frame(width: 5, height: 5)
-                        .shadow(color: arrivalState.arrival?.kind.tint ?? AmberTheme.accent, radius: 5)
-                        .position(
-                            x: geometry.size.width / 2 + (geometry.size.width / 2 - 22) * flightProgress,
-                            y: ChatTopBarLayout.controlsHeight - 22 - sin(flightProgress * .pi) * 12
-                        )
-                        .opacity(1 - flightProgress * 0.5)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                }
-            }
-            .frame(height: ChatTopBarLayout.controlsHeight, alignment: .bottom)
-            .overlay(alignment: .topTrailing) {
-                if panel == .shelf || panel == .notices {
-                    panelChrome(dockPanel)
-                        .frame(width: min(340, geometry.size.width - (44 - ChatTopBarLayout.toolbarButtonDiameter)))
-                        .frame(height: shelfHeight, alignment: .top)
-                        .padding(.trailing, (44 - ChatTopBarLayout.toolbarButtonDiameter) / 2)
-                        .padding(.top, ChatTopBarLayout.controlsHeight + 8)
-                        .transition(panelTransition(anchor: .topTrailing))
-                } else if panel == .shelfCollapsed {
-                    ChatArtifactShelfStrip(
-                        title: locatedArtifactTitle,
-                        onExpand: { panel = .shelf }, onClose: { panel = nil }
-                    )
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                        onShelfStripHeightChange(height)
+                    .overlay(alignment: .top) {
+                        chrome(includesToolbar: false)
                     }
-                    .onDisappear { onShelfStripHeightChange(0) }
-                    .frame(width: min(340, geometry.size.width - (44 - ChatTopBarLayout.toolbarButtonDiameter)))
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.panel = $0 }
-                    .padding(.trailing, (44 - ChatTopBarLayout.toolbarButtonDiameter) / 2)
-                    .padding(.top, ChatTopBarLayout.controlsHeight + 8)
-                    .transition(.opacity)
-                }
-            }
-            .overlay(alignment: .top) {
-                if panel == .recap {
-                    // 与停靠位面板同一套外观；左右与两侧按钮外缘对齐，从岛下方展开。
-                    panelChrome(recapPanel)
-                        .frame(width: geometry.size.width - (44 - ChatTopBarLayout.toolbarButtonDiameter))
-                        .frame(height: shelfHeight, alignment: .top)
-                        .padding(.top, ChatTopBarLayout.controlsHeight + 8)
-                        .transition(panelTransition(anchor: .top))
-                }
-            }
-            .overlay(alignment: .topTrailing) {
-                if artifactFlightVisible, !reduceMotion, let artifactArrival {
-                    Image(systemName: artifactArrival.systemImage)
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(AmberTheme.accent)
-                        .frame(width: 36, height: 36)
-                        .background(AmberTheme.background, in: RoundedRectangle(cornerRadius: AmberTheme.radiusMedium))
-                        .scaleEffect(1 - artifactFlightProgress * 0.55)
-                        .offset(x: -4 - (1 - artifactFlightProgress) * 32,
-                                y: 4 + (1 - artifactFlightProgress) * 84)
-                        .opacity(1 - artifactFlightProgress * 0.5)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                }
+            } else {
+                chrome(includesToolbar: true)
             }
         }
-        .padding(.horizontal, 18)
         .onChange(of: panel, initial: true) { _, panel in
             tapRegions.isPanelOpen = panel != nil
             if !tapRegions.isPanelOpen { tapRegions.panel = .null }
@@ -195,14 +130,15 @@ struct ChatTopBarView: View {
             }
             let arrived = withAnimation(.easeInOut(duration: 0.18)) { arrivalState.update(input) }
             guard let notice = arrived else { return }
-            if notice.kind == .awaitingUser {
-                UINotificationFeedbackGenerator().notificationOccurred(.warning)
-            } else if notice.kind == .completed {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            }
             if arrivalState.announcement != nil {
                 UIAccessibility.post(notification: .announcement,
                                      argument: "\(notice.title)，\(notice.kind.statusTitle)")
+            }
+            guard !input.isGenerating, notice.conversationId != input.conversationID else { return }
+            if notice.kind == .awaitingUser {
+                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            } else if notice.kind == .completed {
+                AmberHaptics.triggerCompletion(.lightImpact)
             }
         }
         .task(id: activeArrival.map(ChatTopBarArrivalState.Key.init)) {
@@ -296,12 +232,143 @@ struct ChatTopBarView: View {
         }
     }
 
+    private var toolbarButtons: some View {
+        HStack {
+            if showsBackButton {
+                ChatToolbarIconButton(
+                    systemImage: backSystemImage, accessibilityLabel: backAccessibilityLabel,
+                    size: ChatTopBarLayout.toolbarButtonDiameter, symbolSize: 18, action: onBack
+                )
+                .accessibilityIdentifier("topbar-back")
+            }
+            Spacer()
+            ChatTopBarTrailingDock(
+                state: dockState, onTap: tapDock, onDismiss: onDismiss,
+                onNewConversation: onNewConversation, loadPreview: loadPreview,
+                previewRevision: previewRevision,
+                onOpenShelf: { panel = .shelf },
+                onExportConversation: onExportConversation
+            )
+            .scaleEffect(reduceMotion ? 1 : dockScale)
+            .onGeometryChange(for: CGRect.self) {
+                ChatSheetDismissSmoothnessPolicy.effectiveGlobalTapFrame(
+                    $0.frame(in: .global),
+                    isPanelOpen: panel != nil,
+                    isModalSheetPresented: isUnderlyingSheetPresented || isModalSheetPresented
+                )
+            } action: { rect in
+                guard !rect.isNull else { return }
+                tapRegions.dock = rect
+            }
+        }
+        .padding(.top, ChatTopBarLayout.toolbarTopPadding)
+    }
+
+    private func chrome(includesToolbar: Bool) -> some View {
+        GeometryReader { geometry in
+            let width = max(0, geometry.size.width - 2 * ChatTopBarLayout.horizontalInset)
+            ZStack(alignment: .top) {
+                if includesToolbar {
+                    toolbarButtons
+                }
+                island(maxWidth: ChatTopBarLayout.availableIslandWidth(in: width))
+                    .padding(.top, ChatTopBarLayout.islandTopOffset)
+                    .onGeometryChange(for: CGRect.self) {
+                        ChatSheetDismissSmoothnessPolicy.effectiveGlobalTapFrame(
+                            $0.frame(in: .global),
+                            isPanelOpen: panel != nil,
+                            isModalSheetPresented: isUnderlyingSheetPresented || isModalSheetPresented
+                        )
+                    } action: { rect in
+                        guard !rect.isNull else { return }
+                        tapRegions.island = rect
+                    }
+
+                if flightVisible, !reduceMotion {
+                    Circle()
+                        .fill(arrivalState.arrival?.kind.tint ?? AmberTheme.accent)
+                        .frame(width: 5, height: 5)
+                        .shadow(color: arrivalState.arrival?.kind.tint ?? AmberTheme.accent, radius: 5)
+                        .position(
+                            x: width / 2 + (width / 2 - 22) * flightProgress,
+                            y: ChatTopBarLayout.controlsHeight - 22 - sin(flightProgress * .pi) * 12
+                        )
+                        .opacity(1 - flightProgress * 0.5)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .frame(width: width, height: ChatTopBarLayout.controlsHeight, alignment: .top)
+            .overlay(alignment: .topTrailing) {
+                if panel == .shelf || panel == .notices {
+                    panelChrome(dockPanel)
+                        .frame(width: min(340, width - (44 - ChatTopBarLayout.toolbarButtonDiameter)))
+                        .frame(height: shelfHeight, alignment: .top)
+                        .padding(.trailing, (44 - ChatTopBarLayout.toolbarButtonDiameter) / 2)
+                        .padding(.top, ChatTopBarLayout.controlsHeight + 8)
+                        .transition(panelTransition(anchor: .topTrailing))
+                } else if panel == .shelfCollapsed {
+                    ChatArtifactShelfStrip(
+                        title: locatedArtifactTitle,
+                        onExpand: { panel = .shelf }, onClose: { panel = nil }
+                    )
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                        onShelfStripHeightChange(height)
+                    }
+                    .onDisappear { onShelfStripHeightChange(0) }
+                    .frame(width: min(340, width - (44 - ChatTopBarLayout.toolbarButtonDiameter)))
+                    .onGeometryChange(for: CGRect.self) {
+                        ChatSheetDismissSmoothnessPolicy.effectiveGlobalTapFrame(
+                            $0.frame(in: .global),
+                            isPanelOpen: panel != nil,
+                            isModalSheetPresented: isUnderlyingSheetPresented || isModalSheetPresented
+                        )
+                    } action: { rect in
+                        guard !rect.isNull else { return }
+                        tapRegions.panel = rect
+                    }
+                    .padding(.trailing, (44 - ChatTopBarLayout.toolbarButtonDiameter) / 2)
+                    .padding(.top, ChatTopBarLayout.controlsHeight + 8)
+                    .transition(.opacity)
+                }
+            }
+            .overlay(alignment: .top) {
+                if panel == .recap {
+                    // 与停靠位面板同一套外观；左右与两侧按钮外缘对齐，从岛下方展开。
+                    panelChrome(recapPanel)
+                        .frame(width: width - (44 - ChatTopBarLayout.toolbarButtonDiameter))
+                        .frame(height: shelfHeight, alignment: .top)
+                        .padding(.top, ChatTopBarLayout.controlsHeight + 8)
+                        .transition(panelTransition(anchor: .top))
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if artifactFlightVisible, !reduceMotion, let artifactArrival {
+                    Image(systemName: artifactArrival.systemImage)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(AmberTheme.accent)
+                        .frame(width: 36, height: 36)
+                        .background(AmberTheme.background, in: RoundedRectangle(cornerRadius: AmberTheme.radiusMedium))
+                        .scaleEffect(1 - artifactFlightProgress * 0.55)
+                        .offset(x: -4 - (1 - artifactFlightProgress) * 32,
+                                y: 4 + (1 - artifactFlightProgress) * 84)
+                        .opacity(1 - artifactFlightProgress * 0.5)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .padding(.horizontal, ChatTopBarLayout.horizontalInset)
+        }
+    }
+
     private func island(maxWidth: CGFloat) -> some View {
         ChatActivityIslandView(presentation: arrivalState.islandPresentation(presentation), maxWidth: maxWidth,
-                               conversationKey: conversationID, announcement: announcement)
-            .frame(height: 44)
-            .contentShape(Capsule())
-            .scaleEffect(x: reduceMotion ? 1 : islandScale, y: 1)
+                               conversationKey: conversationID, announcement: announcement,
+                               backgroundRunningCount: backgroundRunningCount,
+                               capsuleScale: reduceMotion ? 1 : islandScale,
+                               onAvatarTap: onAvatarTap,
+                               onAvatarFrameChange: onAvatarFrameChange)
+            .frame(width: maxWidth, height: ChatTopBarLayout.islandHeight, alignment: .top)
             .onTapGesture {
                 let held = pressedPresentation
                 let announcedID = pressedAnnouncementID
@@ -322,6 +389,21 @@ struct ChatTopBarView: View {
                 onCancel()
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             })
+            .overlay(alignment: .top) {
+                if let onAvatarTap {
+                    Button(action: onAvatarTap) {
+                        Color.clear
+                            .frame(width: ChatTopBarLayout.avatarDiameter, height: ChatTopBarLayout.avatarDiameter)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: maxWidth, height: ChatTopBarLayout.avatarDiameter, alignment: .top)
+                    .transaction { $0.animation = nil }
+                    .accessibilityIdentifier("chat.topBar.personaAvatarButton")
+                    .accessibilityLabel("形象人设")
+                    .accessibilityHint("轻点查看或编辑形象人设、记忆与灵感")
+                }
+            }
             .accessibilityAddTraits(.isButton)
             .accessibilityIdentifier("topbar-island")
             .accessibilityHint(announcement != nil ? "轻点进入播报的对话"
@@ -332,6 +414,11 @@ struct ChatTopBarView: View {
                 else { tapIsland(presentation) }
             }
             .accessibilityActions {
+                if let onAvatarTap {
+                    Button("形象人设") {
+                        onAvatarTap()
+                    }
+                }
                 if isGenerating {
                     Button("停止生成") {
                         onCancel()
@@ -458,7 +545,16 @@ struct ChatTopBarView: View {
             .contentShape(shape)
             // Blank panel space must not activate the timeline underneath.
             .onTapGesture { }
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.panel = $0 }
+            .onGeometryChange(for: CGRect.self) {
+                ChatSheetDismissSmoothnessPolicy.effectiveGlobalTapFrame(
+                    $0.frame(in: .global),
+                    isPanelOpen: panel != nil,
+                    isModalSheetPresented: isUnderlyingSheetPresented || isModalSheetPresented
+                )
+            } action: { rect in
+                guard !rect.isNull else { return }
+                tapRegions.panel = rect
+            }
     }
 
     private func panelTransition(anchor: UnitPoint) -> AnyTransition {
@@ -488,8 +584,7 @@ struct ChatTopBarView: View {
             return
         }
         switch dockState {
-        case .hidden: break
-        case .shelf: panel = .shelf
+        case .hidden, .shelf: panel = .shelf
         case .satellite(let notice, let extraCount):
             if extraCount == 0 { open(notice.conversationId) }
             else { panel = .notices }

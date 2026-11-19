@@ -94,12 +94,17 @@ final class IOSWakeScheduler {
         fireAt: Date?,
         event: String?,
         requiresForeground: Bool,
-        requestID: String
+        requestID: String,
+        intervalMinutes: Int? = nil,
+        watchCondition: String? = nil,
+        stopWhenTriggered: Bool = true
     ) async throws -> IOSWakeTask {
         let task = try store.schedule(
             conversationID: conversationID, sourceRunID: sourceRunID, origin: origin,
             title: title, prompt: prompt, fireAt: fireAt, event: event,
-            requiresForeground: requiresForeground, requestID: requestID
+            requiresForeground: requiresForeground, requestID: requestID,
+            intervalMinutes: intervalMinutes, watchCondition: watchCondition,
+            stopWhenTriggered: stopWhenTriggered
         )
         await refreshScheduling()
         return task
@@ -234,7 +239,12 @@ final class IOSWakeScheduler {
         return report
     }
 
-    func recordRunTerminal(runID: String, status: String, result: String? = nil) async {
+    func recordRunTerminal(
+        runID: String,
+        status: String,
+        result: String? = nil,
+        conditionTriggered: Bool? = nil
+    ) async {
         settlingRunIDs.insert(runID)
         defer { settlingRunIDs.remove(runID) }
         let state: IOSWakeTask.Status
@@ -247,11 +257,21 @@ final class IOSWakeScheduler {
         do {
             if let task = try store.finish(
                 runID: runID, status: state,
-                message: state == .completed ? nil : "请查看原对话中的执行结果。", result: result
+                message: state == .completed ? nil : "请查看原对话中的执行结果。",
+                result: result,
+                conditionTriggered: conditionTriggered
             ) {
                 notifications?.removePendingRequests(identifiers: [reminderID(task.id)])
                 notifications?.removeDeliveredRequests(identifiers: [reminderID(task.id)])
-                if systemSchedulingEnabled && !isForeground() {
+                let silentRecurringRenewal = task.isRecurringWatch
+                    && state == .completed
+                    && task.status == .scheduled
+                    && !IOSWakeWatchMarkers.evaluate(
+                        result: result,
+                        message: nil,
+                        explicitTriggered: conditionTriggered
+                    ).conditionTriggered
+                if systemSchedulingEnabled && !isForeground() && !silentRecurringRenewal {
                     _ = try await IOSLocalNotificationService.shared.scheduleTaskCompletion(conversationID: task.conversationID)
                 }
             }

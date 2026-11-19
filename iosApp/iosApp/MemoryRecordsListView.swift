@@ -6,12 +6,21 @@ import SwiftUI
 struct MemoryRecordsListView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(RouterPath.self) private var router
+    @Environment(IOSConversationStore.self) private var conversationStore
 
     @State private var persistence = IOSMemoryPersistence.shared
     @State private var query = ""
     @State private var scopeFilter: IOSMemoryScopeFilter = .all
     @State private var pendingDeleteRecord: MemoryRecord?
+    @State private var recentlyArchivedRecord: MemoryRecord?
     @State private var operationError: String?
+
+    private var conversationTitles: [String: String] {
+        Dictionary(
+            conversationStore.summaries.map { ($0.id.toHexDashString(), $0.title) },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
 
     private var filteredRecords: [MemoryRecord] {
         IOSMemoryLibrary.filteredRecords(records: persistence.records, query: query, scopeFilter: scopeFilter)
@@ -26,6 +35,12 @@ struct MemoryRecordsListView: View {
                 VStack(spacing: 0) {
                     chrome
                     libraryToolbar
+
+                    if let archived = recentlyArchivedRecord {
+                        undoArchiveBanner(for: archived)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 12)
+                    }
 
                     if rows.isEmpty {
                         AmberFormGroup {
@@ -47,6 +62,7 @@ struct MemoryRecordsListView: View {
                                     memberCount: record.kind == .topic
                                         ? IOSMemoryLibrary.liveMemberCount(of: record, in: persistence.records)
                                         : 0,
+                                    conversationTitles: conversationTitles,
                                     onEdit: {
                                         router.navigate(to: .memoryEdit(
                                             recordId: Int(record.id),
@@ -54,6 +70,9 @@ struct MemoryRecordsListView: View {
                                             scope: IOSMemoryLibrary.scopeTitle(record.scope),
                                             pinned: record.pinned
                                         ))
+                                    },
+                                    onArchive: {
+                                        archive(record)
                                     },
                                     onDelete: {
                                         pendingDeleteRecord = record
@@ -100,7 +119,56 @@ struct MemoryRecordsListView: View {
             }
             Button("取消", role: .cancel) { pendingDeleteRecord = nil }
         } message: {
-            Text("删除后不可恢复。")
+            Text("删除后不可恢复。若只是暂时停用，建议改为归档。")
+        }
+    }
+
+    private func undoArchiveBanner(for record: MemoryRecord) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "archivebox.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(AmberTheme.accentAmber)
+                .accessibilityHidden(true)
+
+            Text("已归档「\(IOSMemoryLibrary.preview(record.content, limit: 22))」")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(AmberTheme.foreground)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                restore(record)
+                recentlyArchivedRecord = nil
+            } label: {
+                Text("撤销")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AmberTheme.accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(AmberTheme.accent.opacity(0.12), in: Capsule())
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                recentlyArchivedRecord = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(AmberTheme.muted)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("关闭提示")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            AmberTheme.surface,
+            in: RoundedRectangle(cornerRadius: AmberTheme.radiusLarge, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: AmberTheme.radiusLarge, style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.75)
         }
     }
 
@@ -196,10 +264,39 @@ struct MemoryRecordsListView: View {
         .padding(.bottom, 12)
     }
 
-    /// 恢复归档记录：与删除相同的陈旧检查，失败回滚并提示。
-    private func restore(_ record: MemoryRecord) {
+    /// 归档记录：支持一键撤销或切到「已归档」恢复。
+    private func archive(_ record: MemoryRecord) {
         guard persistence.records.contains(where: { $0.id == record.id && $0.updatedAt == record.updatedAt }) else {
             operationError = "这条记忆已在其他地方更新或删除，请重试。"
+            persistence.refresh()
+            return
+        }
+        let previousRecords = persistence.records
+        guard let archivedRecord = IosMemoryFactory.shared.setArchived(id: record.id, archived: true) else {
+            operationError = "这条记忆不存在，请重试。"
+            persistence.refresh()
+            return
+        }
+        guard persistence.persist(previousRecords: previousRecords) else {
+            operationError = persistence.lastErrorMessage ?? "无法写入记忆。"
+            return
+        }
+        IOSMemoryWriteAuditStore.shared.record(
+            action: "invalidate",
+            status: "user_saved",
+            memoryId: Int(record.id),
+            scope: record.scope.wireName,
+            kind: record.kind.wireName,
+            contentPreview: IOSMemoryLibrary.preview(record.content)
+        )
+        persistence.refresh()
+        recentlyArchivedRecord = archivedRecord
+    }
+
+    /// 恢复归档记录：与删除相同的陈旧检查，失败回滚并提示。
+    private func restore(_ record: MemoryRecord) {
+        guard persistence.records.contains(where: { $0.id == record.id }) else {
+            operationError = "这条记忆已在其他地方删除，请重试。"
             persistence.refresh()
             return
         }
@@ -223,6 +320,9 @@ struct MemoryRecordsListView: View {
             contentPreview: IOSMemoryLibrary.preview(record.content)
         )
         persistence.refresh()
+        if recentlyArchivedRecord?.id == record.id {
+            recentlyArchivedRecord = nil
+        }
     }
 
     private func delete(_ record: MemoryRecord) {
@@ -246,6 +346,9 @@ struct MemoryRecordsListView: View {
             contentPreview: IOSMemoryLibrary.preview(record.content)
         )
         persistence.refresh()
+        if recentlyArchivedRecord?.id == record.id {
+            recentlyArchivedRecord = nil
+        }
     }
 }
 
@@ -253,93 +356,38 @@ struct MemoryRecordRow: View {
     let record: MemoryRecord
     /// Live topic members (archived ones excluded); ignored for non-topic rows.
     let memberCount: Int
+    var conversationTitles: [String: String] = [:]
     let onEdit: () -> Void
+    var onArchive: (() -> Void)? = nil
     let onDelete: () -> Void
     let onRestore: () -> Void
 
     private var isTopic: Bool { record.kind == .topic }
 
+    private var primaryTypeText: String {
+        IOSMemoryLibrary.primaryTypeTitle(for: record)
+    }
+
+    private var primaryTypeTint: Color {
+        switch primaryTypeText {
+        case "核心": AmberTheme.accent
+        case "长期": AmberTheme.accentGreen
+        case "短期": AmberTheme.accentAmber
+        case "话题": AmberTheme.accent
+        case "经验": AmberTheme.accentAmber
+        default: AmberTheme.muted
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
-                if isTopic {
-                    // 主题记录由整理流程维护：点按进入只读详情，不提供编辑入口。
-                    Button(action: onEdit) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(record.topicTitle ?? record.content)
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(AmberTheme.foreground)
-                                .lineLimit(2)
-                            if record.topicTitle != nil, !record.content.isEmpty {
-                                Text(record.content)
-                                    .font(.subheadline)
-                                    .foregroundStyle(AmberTheme.foreground2)
-                                    .lineLimit(3)
-                            }
-                            Text("由记忆整理自动维护")
-                                .font(.caption)
-                                .foregroundStyle(AmberTheme.muted)
-                                .lineLimit(2)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("查看主题")
-                } else {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(record.content)
-                            .font(.body)
-                            .foregroundStyle(AmberTheme.foreground)
-                            .lineLimit(4)
-                        Text(IOSMemoryLibrary.sourceSummary(record))
-                            .font(.caption)
-                            .foregroundStyle(AmberTheme.muted)
-                            .lineLimit(2)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 6) {
+                // 主类型徽标（核心 / 长期 / 短期 / 话题 / 经验）
+                MemoryTag(text: primaryTypeText, tint: primaryTypeTint)
+
+                if let secondaryKind = IOSMemoryLibrary.secondaryKindTitle(for: record) {
+                    MemoryTag(text: secondaryKind)
                 }
-
-                HStack(spacing: 10) {
-                    if record.archived {
-                        // 归档记录只读：恢复后才能编辑。
-                        Button(action: onRestore) {
-                            Image(systemName: "arrow.uturn.backward")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(AmberTheme.accent)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("恢复记忆")
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                    } else if !isTopic {
-                        Button(action: onEdit) {
-                            Image(systemName: "pencil")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(AmberTheme.accent)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("编辑记忆")
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                    }
-
-                    Button(role: .destructive, action: onDelete) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(AmberTheme.accentRed)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("删除记忆")
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-                }
-            }
-
-            HStack(spacing: 6) {
-                // 不对用户暴露内部 id / 召回候选等控制台语义。
-                MemoryTag(text: IOSMemoryLibrary.scopeTitle(record.scope))
-                MemoryTag(text: IOSMemoryLibrary.kindTitle(record.kind))
                 if isTopic, memberCount > 0 {
                     MemoryTag(text: "含 \(memberCount) 条", tint: AmberTheme.accent)
                 }
@@ -349,8 +397,110 @@ struct MemoryRecordRow: View {
                 if record.archived {
                     MemoryTag(text: "已归档")
                 }
+
                 Spacer(minLength: 0)
+
+                HStack(spacing: 4) {
+                    if record.archived {
+                        Button(action: onRestore) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.uturn.backward")
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text("恢复")
+                                    .font(.caption.weight(.semibold))
+                            }
+                            .foregroundStyle(AmberTheme.accent)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(AmberTheme.accent.opacity(0.12), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("恢复记忆")
+                    } else {
+                        if !isTopic {
+                            Button(action: onEdit) {
+                                Image(systemName: "pencil")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(AmberTheme.accent)
+                                    .frame(width: 34, height: 34)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("编辑记忆")
+                        }
+
+                        if let onArchive, !isTopic {
+                            Button(action: onArchive) {
+                                Image(systemName: "archivebox")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(AmberTheme.foreground2)
+                                    .frame(width: 34, height: 34)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("归档记忆")
+                        }
+                    }
+
+                    Button(role: .destructive, action: onDelete) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(AmberTheme.accentRed)
+                            .frame(width: 34, height: 34)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("删除记忆")
+                }
             }
+
+            Button(action: onEdit) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if isTopic {
+                        Text(record.topicTitle ?? record.content)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(AmberTheme.foreground)
+                            .lineLimit(2)
+                        if record.topicTitle != nil, !record.content.isEmpty {
+                            Text(record.content)
+                                .font(.subheadline)
+                                .foregroundStyle(AmberTheme.foreground2)
+                                .lineLimit(3)
+                        }
+                    } else {
+                        Text(record.content)
+                            .font(.body)
+                            .foregroundStyle(AmberTheme.foreground)
+                            .lineLimit(4)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    let lastUsed = IOSMemoryLibrary.lastUsedDisplay(for: record)
+                    HStack(spacing: 8) {
+                        Label(
+                            IOSMemoryLibrary.sourceDisplay(for: record, conversationTitles: conversationTitles),
+                            systemImage: "bubble.left.and.bubble.right"
+                        )
+                        .lineLimit(1)
+
+                        Text("·")
+                            .foregroundStyle(AmberTheme.muted2)
+
+                        Label(
+                            lastUsed.text,
+                            systemImage: lastUsed.hasBeenUsed ? "clock.arrow.circlepath" : "clock"
+                        )
+                        .lineLimit(1)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(record.archived && !isTopic)
+            .accessibilityLabel(isTopic ? "查看主题" : "编辑记忆")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)

@@ -59,52 +59,6 @@ struct MiniAppSettingPatch {
     }
 }
 
-struct TodayBoardSettingPatch {
-    var boardModelId: String?
-    var clearBoardModelId: Bool
-    var hotListRefreshIntervalMinutes: Int?
-    var hotListWifiOnly: Bool?
-    var hotListEnabledSources: [String]?
-    var hotListFocusKeywords: [String]?
-    var hotListFilterModeWireName: String?
-    var boardReadingFontModeWireName: String?
-    var boardReadingFontPackId: String?
-    var clearBoardReadingFontPackId: Bool
-    var deepReadFontScale: Float?
-    var deepReadTemplateId: String?
-    var hotListTranslateToChinese: Bool?
-
-    init(
-        boardModelId: String? = nil,
-        clearBoardModelId: Bool = false,
-        hotListRefreshIntervalMinutes: Int? = nil,
-        hotListWifiOnly: Bool? = nil,
-        hotListEnabledSources: [String]? = nil,
-        hotListFocusKeywords: [String]? = nil,
-        hotListFilterModeWireName: String? = nil,
-        boardReadingFontModeWireName: String? = nil,
-        boardReadingFontPackId: String? = nil,
-        clearBoardReadingFontPackId: Bool = false,
-        deepReadFontScale: Float? = nil,
-        deepReadTemplateId: String? = nil,
-        hotListTranslateToChinese: Bool? = nil
-    ) {
-        self.boardModelId = boardModelId
-        self.clearBoardModelId = clearBoardModelId
-        self.hotListRefreshIntervalMinutes = hotListRefreshIntervalMinutes
-        self.hotListWifiOnly = hotListWifiOnly
-        self.hotListEnabledSources = hotListEnabledSources
-        self.hotListFocusKeywords = hotListFocusKeywords
-        self.hotListFilterModeWireName = hotListFilterModeWireName
-        self.boardReadingFontModeWireName = boardReadingFontModeWireName
-        self.boardReadingFontPackId = boardReadingFontPackId
-        self.clearBoardReadingFontPackId = clearBoardReadingFontPackId
-        self.deepReadFontScale = deepReadFontScale
-        self.deepReadTemplateId = deepReadTemplateId
-        self.hotListTranslateToChinese = hotListTranslateToChinese
-    }
-}
-
 struct IOSRemoteSyncStatus: Codable, Equatable {
     var lastUploadAt: Int64 = 0
     var lastDownloadAt: Int64 = 0

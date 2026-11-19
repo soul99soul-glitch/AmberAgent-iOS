@@ -19,8 +19,7 @@ final class IOSSettingsWiringTests: XCTestCase {
 
         let settings = try source("iosApp/DisplayFontSettingsView.swift")
         let bubble = try source("iosApp/Chat/Message/MessageBubbleView.swift")
-        let novel = try source("iosApp/NovelCreation/NovelSessionBubble.swift")
-        for text in [settings, bubble, novel] {
+        for text in [settings, bubble] {
             XCTAssertTrue(text.contains("@AppStorage(IOSDisplayPreferenceKeys.autoExpandThinking) private var autoExpandThinking = true"))
         }
         let section = try XCTUnwrap(settings.range(of: "private var messageSection"))
@@ -28,7 +27,6 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(settings[section.lowerBound..<nextSection.lowerBound].contains("自动展开思考内容"))
         XCTAssertTrue(settings.contains("autoExpandThinking.toggle()"))
         XCTAssertEqual(bubble.components(separatedBy: "autoExpandThinking: autoExpandThinking").count - 1, 2)
-        XCTAssertTrue(novel.contains("autoExpandThinking: autoExpandThinking"))
     }
 
     @MainActor
@@ -164,31 +162,15 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(host.contains("dependencies.settingsStore.chatMaxToolResumeCount"))
     }
 
-    func testAudioKeepAliveCoversNovelCouncilDeepReadAndChatBackground() throws {
-        let novelRunBridge = try source("iosApp/NovelCreation/NovelRunBridgeViewModel.swift")
-        let novelStateSync = try source("iosApp/NovelCreation/NovelStateSyncViewModel.swift")
-        let novelContinuity = try source("iosApp/NovelCreation/NovelContinuityViewModel.swift")
-        let sessionGhostwrite = try source("iosApp/NovelCreation/Session/NovelSessionGhostwriteRecovery.swift")
-        let novelGenerationStream = try source("iosApp/NovelCreation/NovelGenerationStream.swift")
+    func testAudioKeepAliveCoversCouncilAndChatBackground() throws {
         let council = try source("iosApp/Council/CouncilChatViewModel.swift")
-        let deepRead = try source("iosApp/DeepReadCreateView.swift")
         let chatBackground = try source("iosApp/IOSChatBackgroundGenerationCoordinator.swift")
         let chatHost = try source("iosApp/Chat/Generation/Kernel/ChatRunProgressPresentation.swift")
         let miniApp = try source("iosApp/MiniAppRunnerView.swift")
         let keepAlive = try source("iosApp/BackgroundGenerationKeepAlive.swift")
 
-        XCTAssertTrue(novelRunBridge.contains("beginBackgroundGeneration(for: request)"))
-        XCTAssertTrue(novelRunBridge.contains("BackgroundGenerationKeepAlive.shared.begin("))
-        XCTAssertTrue(novelStateSync.contains("beginStateSyncBackgroundLease("))
-        XCTAssertTrue(novelStateSync.contains("BackgroundGenerationKeepAlive.shared.begin("))
-        XCTAssertTrue(novelContinuity.contains("beginContinuityBackgroundLease("))
-        XCTAssertTrue(novelContinuity.contains("BackgroundGenerationKeepAlive.shared.begin("))
-        XCTAssertTrue(sessionGhostwrite.contains("beginGhostwriteBackgroundLease("))
-        XCTAssertTrue(sessionGhostwrite.contains("BackgroundGenerationKeepAlive.shared.begin("))
-        XCTAssertTrue(novelGenerationStream.contains("BackgroundGenerationKeepAlive.shared.begin("))
         XCTAssertTrue(council.contains("beginBackgroundKeepAlive(for: discussionID)"))
         XCTAssertTrue(council.contains("beginMaterialsKeepAlive()"))
-        XCTAssertTrue(deepRead.contains("BackgroundGenerationKeepAlive.shared.begin("))
         XCTAssertTrue(chatHost.contains("backgroundExecution.begin("))
         XCTAssertTrue(chatBackground.contains("beginChatBackgroundKeepAlive("))
         XCTAssertTrue(chatBackground.contains("submitSystemFallback: true"))
@@ -287,29 +269,114 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(activityIsland.contains("if activityIslandEdgeGlow,"))
     }
 
-    /// 生成完成触觉：设置页开关（默认开）→ iOS 本地偏好 key → ChatViewModel
-    /// 完成回调消费，三点齐备。刻意不复用 KMP enableMessageGenerationHapticEffect
-    /// （Android-only 接线且默认关），避免改变 Android 默认行为。
-    func testCompletionHapticToggleIsWiredWithDefaultOn() throws {
+    /// 生成完成触觉：「显示与字体 → 生成完成振动」默认开启，off 时所有完成路径零触发，on 时正常触发，
+    /// 等待子代理的前台分段让出及子代理会话不误触发，且按钮/安全审批独立触感保持不变。
+    @MainActor
+    func testCompletionHapticToggleGatesCompletionPathsForOffAndOn() throws {
         let keys = try source("iosApp/AmberDesignSystem.swift")
         let settings = try source("iosApp/DisplayFontSettingsView.swift")
-        let viewModel = try source("iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift")
+        let chatAux = try source("iosApp/Chat/Generation/ChatAuxiliaryGeneration.swift")
+        let completionFeedback = try source("iosApp/Chat/Generation/ChatCompletionFeedback.swift")
+        let topBar = try source("iosApp/ChatTopBarView.swift")
         let storageDeclaration =
             "@AppStorage(IOSDisplayPreferenceKeys.completionHaptic)" +
             " private var completionHaptic = true"
 
-        XCTAssertTrue(
-            keys.contains(
-                "static let completionHaptic = \"app.amber.ios.display.completionHaptic\""
-            )
-        )
-        XCTAssertTrue(keys.contains("case rigidImpact"))
-        XCTAssertTrue(keys.contains("UIImpactFeedbackGenerator(style: .rigid).impactOccurred()"))
+        XCTAssertEqual(IOSDisplayPreferenceKeys.completionHaptic, "app.amber.ios.display.completionHaptic")
+        XCTAssertTrue(keys.contains("static func isCompletionHapticEnabled"))
+        XCTAssertTrue(keys.contains("static func triggerCompletion"))
         XCTAssertTrue(settings.contains(storageDeclaration))
         XCTAssertTrue(settings.contains("生成完成振动"))
         XCTAssertTrue(settings.contains("completionHaptic.toggle()"))
-        XCTAssertTrue(viewModel.contains("IOSDisplayPreferenceKeys.completionHaptic"))
-        XCTAssertTrue(viewModel.contains("AmberHaptics.trigger(.rigidImpact)"))
+        XCTAssertTrue(completionFeedback.contains("AmberHaptics.triggerCompletion(.rigidImpact)"))
+        XCTAssertTrue(chatAux.contains("state.completionFeedback.complete("))
+        XCTAssertFalse(chatAux.contains("AmberHaptics.trigger(.rigidImpact)"))
+        XCTAssertTrue(topBar.contains("AmberHaptics.triggerCompletion(.lightImpact)"))
+        XCTAssertFalse(topBar.contains("else if notice.kind == .completed {\n                UIImpactFeedbackGenerator"))
+        XCTAssertTrue(topBar.contains("if notice.kind == .awaitingUser {\n                UINotificationFeedbackGenerator().notificationOccurred(.warning)"))
+
+        let standard = UserDefaults.standard
+        let key = IOSDisplayPreferenceKeys.completionHaptic
+        let previousValue = standard.object(forKey: key)
+        var recordedEvents: [AmberHapticEvent] = []
+        AmberHaptics.onTriggerForTesting = { recordedEvents.append($0) }
+        defer {
+            AmberHaptics.onTriggerForTesting = nil
+            if let previousValue {
+                standard.set(previousValue, forKey: key)
+            } else {
+                standard.removeObject(forKey: key)
+            }
+        }
+
+        let suiteName = "CompletionHapticRuntime-\(UUID().uuidString)"
+        let vmDefaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { vmDefaults.removePersistentDomain(forName: suiteName) }
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(userDefaults: vmDefaults),
+            sharedSettings: IOSSharedSettingsStore(userDefaults: vmDefaults),
+            autoGenerateResponses: false
+        )
+        let state = ChatConversationRunState(conversationId: nil)
+        state.messages = [
+            UIMessage.companion.user(prompt: "你好"),
+            UIMessage.companion.assistant(prompt: "你好，这是最终回复。")
+        ]
+        let reply = try XCTUnwrap(state.messages.last)
+        let feedback = state.completionFeedback
+        feedback.setForegroundVisible(true)
+        func finish(_ runID: String) {
+            viewModel.onGenerationCompleted(state: state)
+            viewModel.finishCompletionFeedback(state: state, runID: runID, succeeded: true, messages: state.messages)
+        }
+        func drain(_ runID: String) {
+            feedback.didDrain(runID: runID, messageID: reply.id.toHexDashString(), partIndex: 0, text: reply.toText())
+        }
+
+        // 1. 默认值（未写入 key）为 true，前台完成与后台提醒到达均正常触发
+        standard.removeObject(forKey: key)
+        XCTAssertTrue(AmberHaptics.isCompletionHapticEnabled(defaults: standard))
+        feedback.begin(runID: "default")
+        finish("default")
+        XCTAssertTrue(recordedEvents.isEmpty, "provider terminal 不应先于可见正文排空触发")
+        drain("default")
+        XCTAssertTrue(AmberHaptics.triggerCompletion(.lightImpact, defaults: standard))
+        XCTAssertEqual(recordedEvents, [.rigidImpact, .lightImpact])
+
+        // 2. 开关置为 off（false）：前台完成、后台完成提醒均零触发；独立控件触感仍保留
+        recordedEvents.removeAll()
+        standard.set(false, forKey: key)
+        XCTAssertFalse(AmberHaptics.isCompletionHapticEnabled(defaults: standard))
+        feedback.begin(runID: "off")
+        finish("off")
+        drain("off")
+        XCTAssertFalse(AmberHaptics.triggerCompletion(.lightImpact, defaults: standard))
+        XCTAssertFalse(AmberHaptics.triggerCompletion(.rigidImpact, defaults: standard))
+        XCTAssertTrue(recordedEvents.isEmpty, "生成完成振动关闭时所有完成路径必须零触发")
+        AmberHaptics.trigger(.selection)
+        XCTAssertEqual(recordedEvents, [.selection], "按钮/选择器独立触感不得被生成完成开关误伤")
+
+        // 3. 开关实时切回 on（true）：恢复触发；分段等待子代理让出或子代理会话不触发
+        recordedEvents.removeAll()
+        standard.set(true, forKey: key)
+        state.waitingForChildRunId = "run-yielded"
+        feedback.begin(runID: "yielded")
+        finish("yielded")
+        drain("yielded")
+        XCTAssertTrue(recordedEvents.isEmpty, "前台让出等待子代理期间不应提前触发完成振动")
+
+        state.waitingForChildRunId = nil
+        state.isOrchestratedChild = true
+        feedback.begin(runID: "child")
+        finish("child")
+        drain("child")
+        XCTAssertTrue(recordedEvents.isEmpty, "后台子代理会话不应直接触发前台完成振动")
+
+        state.isOrchestratedChild = false
+        feedback.begin(runID: "main")
+        finish("main")
+        drain("main")
+        XCTAssertEqual(recordedEvents, [.rigidImpact], "主会话最终完成且开关开启时应触发一次刚性轻触")
     }
 
     func testBackgroundToolEnginePublishesLiveActivityStagesAtExecutionBoundaries() throws {
@@ -768,7 +835,7 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(runtime.contains("IOSCouncilModelConnectivityTester"))
     }
 
-    func testGrokWebPayloadDefaultsToChatAndSupportsIsolatedNovelRequests() {
+    func testGrokWebPayloadDefaultsToChat() {
         let wireModel = IOSGrokWebWireModel(
             modelName: "grok-420",
             modelMode: "MODEL_MODE_FAST"
@@ -780,16 +847,8 @@ final class IOSSettingsWiringTests: XCTestCase {
         )
         XCTAssertEqual(chatPayload["disableSearch"] as? Bool, false)
         XCTAssertEqual(chatPayload["disableMemory"] as? Bool, false)
-
-        let novelPayload = IOSGrokWebPayloadBuilder.makePayload(
-            prompt: "novel prompt",
-            wireModel: wireModel,
-            options: .novel
-        )
-        XCTAssertEqual(novelPayload["disableSearch"] as? Bool, true)
-        XCTAssertEqual(novelPayload["disableMemory"] as? Bool, true)
-        XCTAssertEqual(novelPayload["message"] as? String, "novel prompt")
-        XCTAssertEqual(novelPayload["modelName"] as? String, "grok-420")
+        XCTAssertEqual(chatPayload["message"] as? String, "chat prompt")
+        XCTAssertEqual(chatPayload["modelName"] as? String, "grok-420")
     }
 
     func testProviderEndpointPolicyAllowsHTTPOnlyForIPAddressHosts() {

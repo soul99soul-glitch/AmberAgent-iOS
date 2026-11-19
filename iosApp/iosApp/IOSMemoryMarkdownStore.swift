@@ -27,12 +27,14 @@ final class IOSMemoryMarkdownStore {
     private let defaults: UserDefaults
     private let signatureKey: String
     private let now: () -> Date
+    let wikiNotes: IOSMemoryWikiNotes
 
     init(
         directory: URL,
         defaults: UserDefaults = .standard,
         signatureKey: String? = nil,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        wikiNotes: IOSMemoryWikiNotes? = nil
     ) {
         self.directory = directory
         self.defaults = defaults
@@ -41,6 +43,7 @@ final class IOSMemoryMarkdownStore {
         self.signatureKey = signatureKey
             ?? "app.amber.ios.memoryMarkdown.signature.v2.\(directory.standardizedFileURL.path)"
         self.now = now
+        self.wikiNotes = wikiNotes ?? IOSMemoryWikiNotes(directory: directory)
     }
 
     /// Rewrite the documents only when the projected state changed.
@@ -49,7 +52,7 @@ final class IOSMemoryMarkdownStore {
         let liveProfile = profile.flatMap {
             $0.coveredRecords(in: records, now: Int64(now().timeIntervalSince1970 * 1_000)) == nil ? nil : $0
         }
-        let signature = Self.signature(of: records, profile: liveProfile)
+        let signature = Self.signature(of: records, profile: liveProfile) + wikiNotes.signature
         guard signature != defaults.string(forKey: signatureKey) else { return }
         do {
             try write(records: records, profile: liveProfile)
@@ -64,17 +67,17 @@ final class IOSMemoryMarkdownStore {
     /// Snapshot of the generated documents: index.md first, then topic files
     /// sorted by their numeric id prefix. Missing directories simply yield [].
     func listDocuments() -> [IOSMemoryMarkdownDocument] {
-        let topicsDir = directory.appendingPathComponent("topics", isDirectory: true)
         var docs: [IOSMemoryMarkdownDocument] = []
         if let doc = describe(at: directory.appendingPathComponent("index.md"), relativePath: "index.md") {
             docs.append(doc)
         }
-        let topicFiles = (try? FileManager.default.contentsOfDirectory(atPath: topicsDir.path)) ?? []
-        let topicDocs = topicFiles
-            .filter { $0.hasSuffix(".md") }
-            .compactMap { describe(at: topicsDir.appendingPathComponent($0), relativePath: "topics/\($0)") }
-            .sorted { $0.fileName.localizedStandardCompare($1.fileName) == .orderedAscending }
-        docs.append(contentsOf: topicDocs)
+        for folder in ["topics", "notes"] {
+            let dir = directory.appendingPathComponent(folder)
+            let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+            docs += files.filter { $0.hasSuffix(".md") }
+                .compactMap { describe(at: dir.appendingPathComponent($0), relativePath: "\(folder)/\($0)") }
+                .sorted { $0.fileName.localizedStandardCompare($1.fileName) == .orderedAscending }
+        }
         return docs
     }
 
@@ -152,29 +155,40 @@ final class IOSMemoryMarkdownStore {
     }
 
     private func write(records: [MemoryRecord], profile: IOSMemoryProfile?) throws {
-        let topicsDir = directory.appendingPathComponent("topics", isDirectory: true)
-        try FileManager.default.createDirectory(at: topicsDir, withIntermediateDirectories: true)
-
-        let live = records.filter { !$0.archived }
-        if live.isEmpty {
-            // An empty store gets no documents at all so the UI can show its
-            // empty state instead of a stub index.
-            try? FileManager.default.removeItem(at: directory.appendingPathComponent("index.md"))
-            for file in (try? FileManager.default.contentsOfDirectory(atPath: topicsDir.path)) ?? []
-            where file.hasSuffix(".md") {
-                try? FileManager.default.removeItem(at: topicsDir.appendingPathComponent(file))
-            }
-            return
+        let pages = pageContents(records: records, profile: profile)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for (path, text) in pages {
+            let url = directory.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try writeIfChanged(text, to: url)
         }
+        // These are derived documents; editable notes and their history live separately.
+        for folder in ["topics", "notes"] {
+            let dir = directory.appendingPathComponent(folder)
+            for name in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+            where name.hasSuffix(".md") && pages["\(folder)/\(name)"] == nil {
+                try FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+            }
+        }
+        if pages["index.md"] == nil {
+            let index = directory.appendingPathComponent("index.md")
+            if FileManager.default.fileExists(atPath: index.path) { try FileManager.default.removeItem(at: index) }
+        }
+    }
+
+    /// Pure projection also serves tools, allowing runtime scope filters to be
+    /// applied before any page text is exposed to the agent.
+    func pageContents(records: [MemoryRecord], profile: IOSMemoryProfile? = nil, includeNotes: Bool = true) -> [String: String] {
+        var pages: [String: String] = [:]
+        let live = records.filter { !$0.archived }
+        if live.isEmpty { return includeNotes ? wikiNotes.merging(into: [:]) : [:] }
         let topics = live
             .filter { $0.kind == .topic }
             .sorted { $0.id < $1.id }
         let byId = Dictionary(uniqueKeysWithValues: records.map { (Int($0.id), $0) })
 
-        var expectedFiles = Set<String>()
         for topic in topics {
             let fileName = "\(topic.id)-\(Self.slug(topic.topicTitle ?? "topic")).md"
-            expectedFiles.insert(fileName)
             let members = topic.memberIds
                 .map { Int(truncating: $0) }
                 .compactMap { byId[$0] }
@@ -191,14 +205,8 @@ final class IOSMemoryMarkdownStore {
                     body += Self.memberLine(member)
                 }
             }
-            try writeIfChanged(body, to: topicsDir.appendingPathComponent(fileName))
-        }
-
-        // Stale topic documents are removed so the folder always mirrors the
-        // current topic set.
-        for file in try FileManager.default.contentsOfDirectory(atPath: topicsDir.path)
-        where file.hasSuffix(".md") && !expectedFiles.contains(file) {
-            try? FileManager.default.removeItem(at: topicsDir.appendingPathComponent(file))
+            body += "\n[返回索引](../index.md)\n"
+            pages["topics/\(fileName)"] = body
         }
 
         // Coverage counts resolved members only — dangling or archived
@@ -212,7 +220,7 @@ final class IOSMemoryMarkdownStore {
         let ungrouped = live
             .filter { $0.kind != .topic && !groupedIds.contains(Int($0.id)) }
             .sorted { $0.updatedAt > $1.updatedAt }
-        var index = "# Amber 记忆索引\n\n<!-- generated \(ISO8601DateFormatter().string(from: now())); do not edit -->\n\n"
+        var index = "# Amber 记忆索引\n\n<!-- generated \(ISO8601DateFormatter().string(from: now())); record projection; notes are versioned separately -->\n\n"
         // 概览行放最前——打开索引先看到总量，而不是先翻主题列表。
         index += "共 \(groupedIds.count + ungrouped.count) 条记忆 · \(topics.count) 个主题 · \(ungrouped.count) 条未归类\n\n"
         if let profile {
@@ -244,7 +252,8 @@ final class IOSMemoryMarkdownStore {
                 index += Self.memberLine(record)
             }
         }
-        try writeIfChanged(index, to: directory.appendingPathComponent("index.md"))
+        pages["index.md"] = index
+        return includeNotes ? wikiNotes.merging(into: pages) : pages
     }
 
     private static func signature(of records: [MemoryRecord], profile: IOSMemoryProfile?) -> String {

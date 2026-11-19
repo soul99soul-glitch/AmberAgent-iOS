@@ -7,28 +7,35 @@ extension View {
     /// HDR 高光/透镜响应。低于 iOS 26 时回退到 `.thinMaterial`。
     /// 内部可见(非 private),以便模型议会等其他页面复用同一套原生输入胶囊样式。
     ///
-    /// `glassChrome.quieter` / `.solid` 时垫一层与首页同源的弱底，避免 appWide 网格在
-    /// 输入条下折射发脏；`.standard` 不垫，保持经典包体观感。
+    /// 垫一层与首页同源的轻量半透材质底（`.ultraThinMaterial` + `homeGlassTop`），
+    /// 既防止网格/深色画布折射发脏，也保证从后台切回前台首帧（`CABackdropLayer` 异步重绑窗口期）
+    /// 玻璃胶囊与边框始终连续可见，不出现约 1 秒的无材质空窗。
     @ViewBuilder
     func composerDockGlass(cornerRadius: CGFloat) -> some View {
         let cornerRadius = AmberTheme.controlRadius(cornerRadius)
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        // Matches home `HomeGlassControlModifier`; 0 keeps classic packs unchanged.
         let pad: Double = {
             switch AmberThemeRuntime.shared.glassChrome {
-            case .standard: 0
-            case .quieter: 0.18
+            case .standard: 0.24
+            case .quieter: 0.20
             case .solid: 0.52
             }
         }()
+        let borderWidth = max(0.5, AmberTheme.designBorderWidth)
         if #available(iOS 26.0, *) {
-            if pad > 0 {
-                background(AmberTheme.homeGlassTop.opacity(pad), in: shape)
-                    .glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
-                    .overlay { shape.strokeBorder(AmberTheme.border, lineWidth: AmberTheme.designBorderWidth).allowsHitTesting(false) }
-            } else {
-                glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
-                    .overlay { shape.strokeBorder(AmberTheme.border, lineWidth: AmberTheme.designBorderWidth).allowsHitTesting(false) }
+            // 输入框胶囊不启用 `.interactive()`，避免长按输入框时产生轻微放大形变并被父级边界裁切。
+            background {
+                shape
+                    .fill(.ultraThinMaterial)
+                    .overlay {
+                        shape.fill(AmberTheme.homeGlassTop.opacity(pad))
+                    }
+            }
+            .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+            .overlay {
+                shape
+                    .strokeBorder(AmberTheme.border.opacity(0.38), lineWidth: borderWidth)
+                    .allowsHitTesting(false)
             }
         } else {
             background(.thinMaterial, in: shape)
@@ -116,6 +123,88 @@ struct ComposerDockSendButton: View {
     }
 }
 
+/// Argon 04 后台交办原地变形胶囊按钮：`交办 ↗` / `提交中…` / `重试 ↻`
+struct ComposerDockHandoffButton: View {
+    var isSubmitting: Bool
+    var needsRetry: Bool
+    var isEnabled: Bool
+    var height: CGFloat = 54
+    let onSubmit: () -> Void
+
+    var body: some View {
+        Button {
+            guard !isSubmitting && isEnabled else { return }
+            onSubmit()
+        } label: {
+            HStack(spacing: 4) {
+                if isSubmitting {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.white)
+                    Text(IOSAppLocalization.string("提交中…", defaultValue: "提交中…"))
+                        .font(.system(size: 14, weight: .semibold))
+                } else if needsRetry {
+                    Text(IOSAppLocalization.string("重试", defaultValue: "重试"))
+                        .font(.system(size: 14, weight: .semibold))
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 12, weight: .semibold))
+                } else {
+                    Text(IOSAppLocalization.string("交办", defaultValue: "交办"))
+                        .font(.system(size: 14, weight: .semibold))
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+            }
+            .foregroundStyle(isEnabled ? Color.white : AmberTheme.muted)
+            .padding(.horizontal, 16)
+            .frame(height: height)
+            .modifier(ComposerDockCapsuleGlass(tint: isEnabled ? AmberTheme.accent : nil))
+        }
+        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.94, haptic: .lightImpact))
+        .disabled(!isEnabled || isSubmitting)
+        .accessibilityIdentifier("chat.duet.handoffSubmitButton")
+    }
+}
+
+struct ComposerDockCapsuleGlass: ViewModifier {
+    var tint: Color?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        let shape = Capsule(style: .continuous)
+        if #available(iOS 26.0, *) {
+            content
+                .background {
+                    shape
+                        .fill(tint.map { AnyShapeStyle($0.opacity(0.88)) } ?? AnyShapeStyle(.ultraThinMaterial))
+                        .overlay {
+                            if tint == nil {
+                                shape.fill(AmberTheme.glass.opacity(0.16))
+                            }
+                        }
+                }
+                .glassEffect(.regular.tint(tint).interactive(), in: shape)
+                .overlay {
+                    shape
+                        .strokeBorder(
+                            (tint ?? AmberTheme.border).opacity(tint == nil ? 0.36 : 0.48),
+                            lineWidth: 0.5
+                        )
+                        .allowsHitTesting(false)
+                }
+        } else {
+            content
+                .background {
+                    shape.fill(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.thinMaterial))
+                }
+                .overlay {
+                    shape.stroke(AmberTheme.border.opacity(0.42), lineWidth: 0.5)
+                }
+                .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
+        }
+    }
+}
+
 @MainActor
 final class ComposerInputController {
     weak var textView: UITextView?
@@ -129,6 +218,38 @@ final class ComposerInputController {
         textView.unmarkText()
         return textView.text
     }
+
+    @discardableResult
+    func resignFirstResponderIfNeeded() -> Bool {
+        ChatRenderProbe.record("keyboard-resign")
+        return ChatRenderProbe.measureUs("us:keyboard-resign") {
+            if let textView, textView.isFirstResponder {
+                return textView.resignFirstResponder()
+            }
+            return UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil
+            )
+        }
+    }
+}
+
+struct ComposerPlaceholderText: View {
+    let text: String
+    private var fontScale: Double { IOSChatRenderPreferences.shared.fontScale }
+    private var chatFont: String { IOSChatRenderPreferences.shared.chatFont }
+    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
+
+    private var selectedFont: IOSChatFont {
+        IOSChatFont(rawValue: chatFont) ?? .default
+    }
+
+    var body: some View {
+        Text(text)
+            .font(selectedFont.font(size: scaledBodyPointSize * IOSChatFont.clampedScale(fontScale)))
+            .foregroundStyle(AmberTheme.muted2)
+            .lineLimit(1)
+            .allowsHitTesting(false)
+    }
 }
 
 struct ComposerInputTextView: UIViewRepresentable {
@@ -140,15 +261,25 @@ struct ComposerInputTextView: UIViewRepresentable {
     var controller: ComposerInputController
     var onSubmit: () -> Void
 
+    private var fontScale: Double { IOSChatRenderPreferences.shared.fontScale }
+    private var chatFont: String { IOSChatRenderPreferences.shared.chatFont }
+
     private let minHeight: CGFloat = 40
     private let maxLines: CGFloat = 5
+
+    private var resolvedUIFont: UIFont {
+        let baseScaled = UIFontMetrics(forTextStyle: .body).scaledValue(for: IOSChatFont.defaultBodyPointSize)
+        let pointSize = baseScaled * IOSChatFont.clampedScale(fontScale)
+        let selectedFont = IOSChatFont(rawValue: chatFont) ?? .default
+        return selectedFont.uiFont(size: pointSize, weight: .regular)
+    }
 
     func makeUIView(context: Context) -> UITextView {
         let textView = UITextView()
         controller.textView = textView
         textView.delegate = context.coordinator
         textView.backgroundColor = .clear
-        textView.font = .preferredFont(forTextStyle: .body)
+        textView.font = resolvedUIFont
         textView.adjustsFontForContentSizeCategory = true
         textView.textColor = .label
         textView.tintColor = UIColor(AmberTheme.accent)
@@ -163,6 +294,10 @@ struct ComposerInputTextView: UIViewRepresentable {
     func updateUIView(_ textView: UITextView, context: Context) {
         context.coordinator.parent = self
         controller.textView = textView
+        let targetFont = resolvedUIFont
+        if textView.font != targetFont {
+            textView.font = targetFont
+        }
         if textView.markedTextRange == nil, textView.text != text {
             textView.text = text
         }
@@ -199,11 +334,19 @@ struct ComposerInputTextView: UIViewRepresentable {
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
-            parent.isFocused.wrappedValue = true
+            ChatRenderProbe.record("keyboard:begin-editing")
+            ChatRenderProbe.beginScene("keyboard-show", ttlSeconds: 2.5, restart: false)
+            ChatRenderProbe.measureUs("us:keyboard-editing-delegate") {
+                parent.isFocused.wrappedValue = true
+            }
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
-            parent.isFocused.wrappedValue = false
+            ChatRenderProbe.record("keyboard:end-editing")
+            ChatRenderProbe.beginScene("keyboard-hide", ttlSeconds: 2.5, restart: false)
+            ChatRenderProbe.measureUs("us:keyboard-editing-delegate") {
+                parent.isFocused.wrappedValue = false
+            }
         }
 
         func textViewDidChange(_ textView: UITextView) {
@@ -228,7 +371,7 @@ struct ComposerInputTextView: UIViewRepresentable {
 
         func updateFocus(for textView: UITextView) {
             let needsFocus = parent.isEnabled && parent.isFocused.wrappedValue && !textView.isFirstResponder
-            let needsResign = !parent.isEnabled && textView.isFirstResponder
+            let needsResign = (!parent.isEnabled || !parent.isFocused.wrappedValue) && textView.isFirstResponder
             guard needsFocus || needsResign, !focusUpdateScheduled else { return }
             focusUpdateScheduled = true
             // UIKit changes the responder chain synchronously. Doing that inside
@@ -238,11 +381,17 @@ struct ComposerInputTextView: UIViewRepresentable {
                 self.focusUpdateScheduled = false
                 guard let textView, self.controller.textView === textView,
                       textView.window != nil else { return }
-                if !self.parent.isEnabled, textView.isFirstResponder {
-                    textView.resignFirstResponder()
+                if (!self.parent.isEnabled || !self.parent.isFocused.wrappedValue), textView.isFirstResponder {
+                    ChatRenderProbe.record("keyboard-resign")
+                    _ = ChatRenderProbe.measureUs("us:keyboard-resign") {
+                        textView.resignFirstResponder()
+                    }
                 } else if self.parent.isEnabled, self.parent.isFocused.wrappedValue,
                           !textView.isFirstResponder {
-                    textView.becomeFirstResponder()
+                    ChatRenderProbe.record("keyboard-become")
+                    _ = ChatRenderProbe.measureUs("us:keyboard-become") {
+                        textView.becomeFirstResponder()
+                    }
                 }
             }
         }
@@ -288,9 +437,26 @@ struct ComposerDockCircleGlass: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             // 单一 glassEffect 调用 —— 只让可空的 tint 参数在 accent ↔ nil 间变化,保持视图身份
-            // 不变。若按 tint 有无拆成两条分支,SwiftUI 会移除/插入两个不同身份的玻璃视图并做
-            // 交叉淡入,删字回到清玻璃时会闪过一帧发白。
-            content.glassEffect(.regular.tint(tint).interactive(), in: Circle())
+            // 不变。垫上轻量材质底与细边,保证后台回前台首帧(CABackdropLayer 重连前)玻璃圆钮持续可见。
+            content
+                .background {
+                    Circle()
+                        .fill(tint.map { AnyShapeStyle($0.opacity(0.86)) } ?? AnyShapeStyle(.ultraThinMaterial))
+                        .overlay {
+                            if tint == nil {
+                                Circle().fill(AmberTheme.glass.opacity(0.16))
+                            }
+                        }
+                }
+                .glassEffect(.regular.tint(tint).interactive(), in: Circle())
+                .overlay {
+                    Circle()
+                        .strokeBorder(
+                            (tint ?? AmberTheme.border).opacity(tint == nil ? 0.36 : 0.48),
+                            lineWidth: 0.5
+                        )
+                        .allowsHitTesting(false)
+                }
         } else {
             content
                 .background {
@@ -370,16 +536,13 @@ struct ContextRingButton: View {
 
 struct ComposerContextPanel: View {
     let snapshot: ChatContextSnapshot
-    let novelInjection: NovelInjectionPanelModel?
     let jevRunSummary: IOSJevRunSummary?
 
     init(
         snapshot: ChatContextSnapshot,
-        novelInjection: NovelInjectionPanelModel? = nil,
         jevRunSummary: IOSJevRunSummary? = nil
     ) {
         self.snapshot = snapshot
-        self.novelInjection = novelInjection
         self.jevRunSummary = jevRunSummary
     }
 
@@ -409,12 +572,6 @@ struct ComposerContextPanel: View {
                             label: "总消息数",
                             value: "\(snapshot.messageCount)"
                         )
-                        if let novelInjection, novelInjection.hasReceipt {
-                            ComposerContextCompactStatRow(
-                                label: "本次注入",
-                                value: "\(ChatContextSnapshot.formatTokenCount(novelInjection.estimatedInputTokens)) / \(ChatContextSnapshot.formatTokenCount(novelInjection.maxEstimatedInputTokens))"
-                            )
-                        }
                         ComposerContextCompactStatRow(
                             label: "上下文",
                             value: snapshot.occupancyText
@@ -423,11 +580,6 @@ struct ComposerContextPanel: View {
                         ComposerContextCompactStatRow(label: "缓存命中率", value: snapshot.cacheHitRateText)
                     }
                     .frame(maxWidth: .infinity)
-                }
-
-                if let novelInjection {
-                    Divider()
-                    NovelInjectionPanelDetails(model: novelInjection)
                 }
 
                 if let jevRunSummary, jevRunSummary.decisions > 0 {
@@ -441,7 +593,7 @@ struct ComposerContextPanel: View {
     }
 
     private var popoverWidth: CGFloat {
-        novelInjection != nil || (jevRunSummary?.decisions ?? 0) > 0 ? 300 : 248
+        (jevRunSummary?.decisions ?? 0) > 0 ? 300 : 248
     }
 }
 
@@ -492,78 +644,6 @@ private struct ComposerJevRunSummaryDetails: View {
     private func formattedCount(_ count: Int, unit: String) -> String {
         let number = NumberFormatter.localizedString(from: NSNumber(value: count), number: .decimal)
         return "\(number) \(IOSAppLocalization.string(unit, defaultValue: unit))"
-    }
-}
-
-private struct NovelInjectionPanelDetails: View {
-    let model: NovelInjectionPanelModel
-
-    var body: some View {
-        if model.hasReceipt {
-            VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("设定条目")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AmberTheme.foreground)
-
-                    if model.materials.isEmpty {
-                        Text("本次未注入设定条目")
-                            .font(.caption)
-                            .foregroundStyle(AmberTheme.muted)
-                    } else {
-                        ForEach(model.materials) { material in
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                Image(systemName: "book.closed")
-                                    .font(.caption2)
-                                    .foregroundStyle(AmberTheme.accent)
-                                Text(material.title)
-                                    .font(.caption)
-                                    .foregroundStyle(AmberTheme.foreground)
-                                    .lineLimit(2)
-                                Spacer(minLength: 8)
-                                Text(material.kindTitle)
-                                    .font(.caption2)
-                                    .foregroundStyle(AmberTheme.muted)
-                                    .lineLimit(1)
-                            }
-                        }
-                    }
-                }
-
-                VStack(spacing: 8) {
-                    ComposerContextCompactStatRow(
-                        label: "剧情状态",
-                        value: IOSAppLocalization.string(
-                            model.includesPlotState ? "已携带" : "未携带",
-                            defaultValue: model.includesPlotState ? "已携带" : "未携带"
-                        )
-                    )
-                    ComposerContextCompactStatRow(
-                        label: "会话窗口",
-                        value: IOSAppLocalization.formatted(
-                            "%lld 轮",
-                            defaultValue: "%lld 轮",
-                            arguments: [Int64(model.recentMessageRoundCount)]
-                        )
-                    )
-                    if model.budgetExcludedItemCount > 0 {
-                        ComposerContextCompactStatRow(
-                            label: "预算未纳入",
-                            value: IOSAppLocalization.formatted(
-                                "%lld 项",
-                                defaultValue: "%lld 项",
-                                arguments: [Int64(model.budgetExcludedItemCount)]
-                            )
-                        )
-                    }
-                }
-            }
-        } else {
-            Text("尚无生成上下文记录")
-                .font(.caption)
-                .foregroundStyle(AmberTheme.muted)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
     }
 }
 

@@ -53,6 +53,9 @@ struct ChatToolDetailSheet: View {
     var onOpenSubagentConversation: ((String) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+    @Environment(\.chatToolUndoHandler) private var undoHandler
+    @State private var undoNotice: String?
 
     private var isSubAgent: Bool {
         tool.toolName.contains("subagent_dispatch")
@@ -144,6 +147,37 @@ struct ChatToolDetailSheet: View {
                             .buttonStyle(.bordered)
                             .accessibilityIdentifier("tool.openSubagentConversation")
                         }
+                    }
+                    if let request = undoHandler?.request(for: tool) {
+                        Button(request.buttonTitle) {
+                            undoNotice = undoHandler?.perform(tool: tool)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("tool.undoMutation")
+                    }
+                    if let undoNotice {
+                        Text(undoNotice)
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.foreground2)
+                    }
+                    if tool.toolName == IOSPhoneControlToolCatalog.preflightToolName,
+                       let payload = ChatToolStepModel.firstJSONObject(in: tool.output),
+                       let rawURL = payload["settings_deep_link"] as? String,
+                       let url = URL(string: rawURL),
+                       payload["ready"] as? Bool != true {
+                        Button {
+                            dismiss()
+                            openURL(url)
+                        } label: {
+                            HStack {
+                                Label("前往手机控制设置", systemImage: "gearshape")
+                                Spacer()
+                                Image(systemName: "arrow.up.forward")
+                            }
+                            .frame(minHeight: 44)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("tool.openPhoneControlSettings")
                     }
                     if isSubAgent {
                         subAgentSections
@@ -579,7 +613,8 @@ struct ChatToolDetailSheet: View {
     }
 
     private var friendlyName: String {
-        if IOSPhoneControlToolCatalog.isPhoneTool(name: tool.toolName) {
+        if IOSPhoneControlToolCatalog.isPhoneTool(name: tool.toolName)
+            || tool.toolName == IOSPhoneControlToolCatalog.preflightToolName {
             return ChatToolStepModel.friendlyToolTitle(tool.toolName, executed: executed)
         }
         if ["spawn_agent", "followup_task", "send_message", "list_agents", "interrupt_agent", "wait_agent"].contains(tool.toolName) {

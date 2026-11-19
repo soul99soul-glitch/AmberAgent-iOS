@@ -75,7 +75,7 @@ final class IOSChatDetachedResponseTerminalTests: XCTestCase {
         let coordinator = IOSChatBackgroundGenerationCoordinator(keepAlive: keepAlive, provider: UnusedProvider())
         let activity = AgentLiveActivityController(
             fetchSystemSnapshot: { .init(enabled: false, activities: []) },
-            requestSystemCard: { _, _, _, _, _ in nil }
+            requestSystemCard: { _, _, _, _ in nil }
         )
         // Durable resume snapshots use the display baseline. Keep upload longer
         // to catch accidental use of the ordinary engine's upload-prefix count.

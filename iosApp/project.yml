@@ -60,14 +60,13 @@ targets:
     sources:
       - path: iosApp
         excludes:
-          - NovelCreation/AGENTS.md
           - AmberSubscriptions.storekit
       - path: PhoneControlRuntime
       - path: SharedWatch
       - path: WatchApp/WatchLocalStore.swift
       - path: WatchApp/WatchTaskViewModel.swift
       - path: AlarmKitResources
-      # Deep Read editorial reader fonts owned by the iOS app and bundled as resources.
+      # Shared editorial fonts owned by the iOS app and bundled as resources.
       - path: Resources/Fonts/noto_serif_sc.otf
         buildPhase: resources
       - path: Resources/Fonts/jetbrains_mono.ttf
@@ -442,7 +441,6 @@ targets:
     sources:
       - path: iosApp
         excludes:
-          - NovelCreation/AGENTS.md
           - AmberSubscriptions.storekit
           - Info.plist
       - path: PhoneControlRuntime
@@ -598,7 +596,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "$(AMBER_EXPERIMENTAL_BUNDLE_IDENTIFIER)"
-        AMBER_WATCH_APP_GROUP_IDENTIFIER: "group.app.amber.ios.experimental-gpl.watchkit"
+        AMBER_WATCH_APP_GROUP_IDENTIFIER: "group.$(AMBER_EXPERIMENTAL_BUNDLE_IDENTIFIER).watchkit"
         AMBER_WATCH_URL_SCHEME: amber-watch-experimental
         AGENT_ACTIVITY_URL_SCHEME: amber-experimental
         INFOPLIST_FILE: "$(DERIVED_FILE_DIR)/AmberExperimental-Info.plist"

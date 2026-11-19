@@ -568,6 +568,7 @@ internal val IOS_RESIDENT_TOOL_NAMES: Set<String> = setOf(
     "model_council_run",
     "file_read_selected",
     "history_search", "history_fetch",
+    "agent_soul_get", "agent_soul_update",
 )
 
 internal fun iosResidentToolPolicy(name: String, category: String?): Boolean =

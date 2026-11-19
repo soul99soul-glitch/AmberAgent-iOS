@@ -20,13 +20,20 @@ import Shared
 /// 的 reducer 纯单测锁定。
 @MainActor
 class ChatNativeTimelineReplayTestCase: XCTestCase {
+    @MainActor
     final class HarnessModel: ObservableObject {
+        @Published var activity: ChatTimelineActivity?
+        @Published var pausesDecorativeTimelines = false
         @Published var signal = ChatMessageUpdateSignal(revision: 0, reason: .initialLoad)
         @Published var isGenerationActive = false
+        @Published var usesIndependentTasks = false
         @Published var followGeneration = true
         @Published var scrollToBottomTrigger = 0
         @Published var messageAnchor: ChatMessageAnchor?
         @Published var currentConversationID: String?
+        let timelineUpdates = ChatTimelineUpdates()
+        private var messageRevision = 0
+        var completionFeedback: ChatCompletionFeedback?
         var messages: [UIMessage] = []
         var requestedVariantIndices: Set<Int> = []
         private(set) var viewportHistory: [ChatViewportState] = []
@@ -40,11 +47,13 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
         }
 
         func send(_ reason: ChatMessageUpdateReason, lagAllowance: CGFloat = 1) {
-            signal = ChatMessageUpdateSignal(
-                revision: signal.revision + 1,
+            messageRevision = max(messageRevision, signal.revision) + 1
+            let next = ChatMessageUpdateSignal(
+                revision: messageRevision,
                 reason: reason,
                 lagAllowance: lagAllowance
             )
+            if timelineUpdates.publish(next, messages: messages) { signal = next }
         }
     }
 
@@ -57,8 +66,11 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
         var body: some View {
             NativeChatTimelineView(
                 signal: model.signal,
+                timelineUpdates: model.timelineUpdates,
                 configurationIssue: nil,
                 isGenerationActive: model.isGenerationActive,
+                usesIndependentTasks: model.usesIndependentTasks,
+                activity: model.activity,
                 isLoading: false,
                 isRecognizingImages: false,
                 contextCompactState: .idle,
@@ -80,6 +92,8 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
                 onViewportStateChange: { [weak model] state in model?.recordViewport(state) },
                 onDismissKeyboard: {}
             )
+            .environment(\.amberIsUnderlyingSheetPresented, model.pausesDecorativeTimelines)
+            .environment(\.chatCompletionFeedback, model.completionFeedback)
         }
     }
 
@@ -87,6 +101,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
         let model: HarnessModel
         let window: UIWindow
         let host: UIHostingController<Harness>
+        var restoreWindow: (() -> Void)? = nil
 
         var scrollView: UIScrollView? {
             Self.findScrollView(in: host.view)
@@ -101,6 +116,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
         }
 
         func tearDown() {
+            if let restoreWindow { restoreWindow(); return }
             window.isHidden = true
             window.rootViewController = nil
         }
@@ -140,6 +156,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
             let distanceToBottom: CGFloat
             let contentOffsetX: CGFloat
             let contentOffsetY: CGFloat
+            let presentationAnchorY: CGFloat?
             let paragraphHeight: CGFloat?
             let paragraphLength: Int?
             let paragraphUsesTextKit1: Bool?
@@ -157,6 +174,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
 
         private weak var scrollView: UIScrollView?
         private weak var rootView: UIView?
+        private weak var presentationAnchor: UIView?
         private var displayLink: CADisplayLink?
         private let capturesAfterDisplayLinkCallbacks: Bool
         private var postCallbackSamplePending = false
@@ -166,10 +184,12 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
         init(
             scrollView: UIScrollView,
             rootView: UIView,
+            presentationAnchor: UIView? = nil,
             capturesAfterDisplayLinkCallbacks: Bool = false
         ) {
             self.scrollView = scrollView
             self.rootView = rootView
+            self.presentationAnchor = presentationAnchor
             self.capturesAfterDisplayLinkCallbacks = capturesAfterDisplayLinkCallbacks
         }
 
@@ -218,6 +238,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
                 distanceToBottom: max(0, scrollView.contentSize.height - visibleBottom),
                 contentOffsetX: scrollView.contentOffset.x,
                 contentOffsetY: scrollView.contentOffset.y,
+                presentationAnchorY: presentationAnchor.flatMap(Self.presentationY),
                 paragraphHeight: paragraph?.frame.height,
                 paragraphLength: paragraph.flatMap(Self.streamingTextLength(in:)),
                 paragraphUsesTextKit1: paragraph?.usesTextKit1,
@@ -226,6 +247,14 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
                 tableIdentity: table.map(ObjectIdentifier.init),
                 rawMarkdownVisible: rootView.map(Self.hasRawMarkdown(in:))
             ))
+        }
+
+        /// Read the actual layer tree. A render-only timeline translation leaves
+        /// contentOffset unchanged but still moves this stable historical glyph.
+        static func presentationY(_ view: UIView) -> CGFloat? {
+            guard let window = view.window, let layer = view.layer.presentation(),
+                  let windowLayer = window.layer.presentation() else { return nil }
+            return layer.convert(.zero, to: windowLayer).y
         }
 
         /// 「未渲染 markdown 原文」判定：正文段落里出现字面结构标记。
@@ -315,6 +344,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
     }
 
     func makeFixture(
+        exclusiveWindow: Bool = false,
         configure: (HarnessModel) -> Void = { _ in }
     ) -> Fixture {
         let sharedSettings = IOSSharedSettingsStore(
@@ -326,6 +356,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
         )
         let model = HarnessModel()
         configure(model)
+        model.timelineUpdates.publish(model.signal, messages: model.messages)
         let host = UIHostingController(rootView: Harness(
             model: model,
             displaySetting: sharedSettings.displaySetting,
@@ -333,9 +364,17 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
             workspaceStore: workspaceStore
         ))
         let window: UIWindow
+        var restoreWindow: (() -> Void)?
         if let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene }).first {
-            window = UIWindow(windowScene: scene)
+            if exclusiveWindow, let existing = scene.windows.first(where: \.isKeyWindow) {
+                let root = existing.rootViewController
+                let frame = existing.frame
+                window = existing
+                restoreWindow = { existing.rootViewController = root; existing.frame = frame }
+            } else {
+                window = UIWindow(windowScene: scene)
+            }
             window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
         } else {
             window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
@@ -343,7 +382,7 @@ class ChatNativeTimelineReplayTestCase: XCTestCase {
         window.rootViewController = host
         window.makeKeyAndVisible()
         window.layoutIfNeeded()
-        return Fixture(model: model, window: window, host: host)
+        return Fixture(model: model, window: window, host: host, restoreWindow: restoreWindow)
     }
 
     // MARK: - Fixture content

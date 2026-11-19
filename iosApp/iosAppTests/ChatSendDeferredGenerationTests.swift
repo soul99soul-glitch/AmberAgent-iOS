@@ -309,4 +309,92 @@ final class ChatSendDeferredGenerationTests: XCTestCase {
         let started = await waitForCondition(timeoutSeconds: 10) { provider.callCount >= 1 }
         XCTAssertTrue(started)
     }
+
+    // MARK: - 5) Switching to an existing conversation during the deferred window pulls generation forward
+
+    func testPrepareForConversationChangeToExistingChatPullsDeferredGenerationForward() async throws {
+        let provider = RecordingTextProvider()
+        let (viewModel, store, directory) = try await makeReadyViewModel(provider: provider)
+        _ = store
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let conversationA = try XCTUnwrap(store.currentConversation?.id)
+        viewModel.inputText = "seed A"
+        XCTAssertTrue(viewModel.sendMessage())
+        let aSeedFinished = await waitForCondition(timeoutSeconds: 10) {
+            !viewModel.isLoading && viewModel.messages.last?.toText() == "assistant reply"
+        }
+        XCTAssertTrue(aSeedFinished)
+
+        let didStartB = await viewModel.startNewConversation()
+        XCTAssertTrue(didStartB)
+        let conversationB = try XCTUnwrap(store.currentConversation?.id)
+        XCTAssertNotEqual(conversationA, conversationB)
+        viewModel.inputText = "seed B"
+        XCTAssertTrue(viewModel.sendMessage())
+        let bFinished = await waitForCondition(timeoutSeconds: 10) {
+            !viewModel.isLoading && viewModel.messages.last?.toText() == "assistant reply"
+        }
+        XCTAssertTrue(bFinished)
+
+        XCTAssertTrue(viewModel.prepareForConversationChange(to: conversationA))
+        await store.selectConversation(id: conversationA)
+        viewModel.reloadFromStore()
+        XCTAssertEqual(store.currentConversation?.id, conversationA)
+
+        provider.replyText = "reply for A"
+        let callsBeforeSendA = provider.callCount
+        viewModel.inputText = "switch away during spring"
+        XCTAssertTrue(viewModel.sendMessage(startsGenerationAfterInsertion: true))
+        XCTAssertNil(viewModel.currentConversationRunId, "still inside deferred 0.34s window")
+
+        // Immediately switch from A -> existing conversation B before the 0.34s timer fires.
+        XCTAssertTrue(viewModel.prepareForConversationChange(to: conversationB))
+        await store.selectConversation(id: conversationB)
+        viewModel.reloadFromStore()
+        XCTAssertEqual(store.currentConversation?.id, conversationB)
+
+        let aStarted = await waitForCondition(timeoutSeconds: 1.5) {
+            provider.callCount > callsBeforeSendA
+        }
+        XCTAssertTrue(aStarted, "switching to an existing conversation must pull deferred generation forward instead of dropping it")
+
+        let aCompleted = await waitForCondition(timeoutSeconds: 3) {
+            !viewModel.isGenerationActive(conversationId: conversationA)
+        }
+        XCTAssertTrue(aCompleted)
+        let rawMessagesA = await store.messages(for: conversationA)
+        let messagesA = try XCTUnwrap(rawMessagesA)
+        XCTAssertTrue(messagesA.contains { $0.toText() == "reply for A" })
+    }
+
+    // MARK: - 6) Background handoff clears ChatCompletionFeedback active state
+
+    func testBackgroundHandoffClearsCompletionFeedbackActiveState() async throws {
+        let provider = RecordingTextProvider()
+        provider.holdUntilReleased()
+        let (viewModel, store, directory) = try await makeReadyViewModel(provider: provider)
+        _ = store
+        defer {
+            provider.release()
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        viewModel.inputText = "handoff completion feedback"
+        XCTAssertTrue(viewModel.sendMessage())
+        let started = await waitForCondition(timeoutSeconds: 10) { provider.callCount >= 1 }
+        XCTAssertTrue(started)
+        XCTAssertTrue(viewModel.completionFeedback.hasActiveOrDrainingRun)
+
+        let runId = try XCTUnwrap(viewModel.currentConversationRunId)
+        let host = try XCTUnwrap(viewModel.host(runId: runId))
+        host.backgroundStartOverrideForTesting = { _, _ in true }
+
+        XCTAssertTrue(viewModel.handoffGenerationToBackgroundIfNeeded())
+        XCTAssertFalse(viewModel.isGenerationActive)
+        XCTAssertFalse(
+            viewModel.completionFeedback.hasActiveOrDrainingRun,
+            "background handoff exits foreground without onRunTerminal and must clear completionFeedback active state"
+        )
+    }
 }

@@ -142,19 +142,91 @@ public struct RenderableDocument: Equatable, Sendable {
   /// document; this only keeps stable SwiftUI/TextKit subtrees from receiving
   /// freshly allocated attributed strings on every streamed suffix.
   public func reusingUnchangedPrefix(from previous: RenderableDocument) -> RenderableDocument {
-    var merged = renderables
-    let sharedCount = min(merged.count, previous.renderables.count)
-    var index = 0
-    while index < sharedCount,
-          merged[index].id == previous.renderables[index].id,
-          merged[index] == previous.renderables[index] {
-      merged[index] = previous.renderables[index]
-      index += 1
-    }
-    if index == merged.count, merged.count == previous.renderables.count {
+    let (merged, reusedAll) = Self.reusingUnchangedPrefix(
+      in: renderables,
+      from: previous.renderables
+    )
+    if reusedAll {
       return previous
     }
     return RenderableDocument(renderables: merged)
+  }
+
+  private static func reusingUnchangedPrefix(
+    in current: [MarkdownRenderable],
+    from previous: [MarkdownRenderable]
+  ) -> (renderables: [MarkdownRenderable], reusedAll: Bool) {
+    var merged = current
+    let sharedCount = min(merged.count, previous.count)
+    var index = 0
+    while index < sharedCount,
+          merged[index].id == previous[index].id {
+      if merged[index] == previous[index] {
+        merged[index] = previous[index]
+        index += 1
+        continue
+      }
+      switch (merged[index], previous[index]) {
+      case let (.table(id, headers, rows, rawMarkdown), .table(_, prevHeaders, prevRows, _)):
+        let reusedHeaders = headers == prevHeaders ? prevHeaders : headers
+        var reusedRows = rows
+        let sharedRows = min(rows.count, prevRows.count)
+        for rowIndex in 0..<sharedRows where rows[rowIndex] == prevRows[rowIndex] {
+          reusedRows[rowIndex] = prevRows[rowIndex]
+        }
+        merged[index] = .table(
+          id: id,
+          headers: reusedHeaders,
+          rows: reusedRows,
+          rawMarkdown: rawMarkdown
+        )
+      case let (.orderedList(id, items), .orderedList(_, prevItems)):
+        merged[index] = .orderedList(
+          id: id,
+          items: reusingUnchangedListItems(in: items, from: prevItems)
+        )
+      case let (.unorderedList(id, items, nestedLevel), .unorderedList(_, prevItems, prevNestedLevel))
+        where nestedLevel == prevNestedLevel:
+        merged[index] = .unorderedList(
+          id: id,
+          items: reusingUnchangedListItems(in: items, from: prevItems),
+          nestedLevel: nestedLevel
+        )
+      default:
+        break
+      }
+      break
+    }
+    let reusedAll = index == merged.count && merged.count == previous.count
+    return (merged, reusedAll)
+  }
+
+  private static func reusingUnchangedListItems(
+    in current: [MarkdownListItem],
+    from previous: [MarkdownListItem]
+  ) -> [MarkdownListItem] {
+    var merged = current
+    let sharedCount = min(merged.count, previous.count)
+    var itemIndex = 0
+    while itemIndex < sharedCount {
+      if merged[itemIndex] == previous[itemIndex] {
+        merged[itemIndex] = previous[itemIndex]
+        itemIndex += 1
+        continue
+      }
+      if merged[itemIndex].startsWithBold == previous[itemIndex].startsWithBold {
+        let (reusedChildren, _) = reusingUnchangedPrefix(
+          in: merged[itemIndex].children,
+          from: previous[itemIndex].children
+        )
+        merged[itemIndex] = MarkdownListItem(
+          children: reusedChildren,
+          startsWithBold: merged[itemIndex].startsWithBold
+        )
+      }
+      break
+    }
+    return merged
   }
 
 }
@@ -163,9 +235,31 @@ extension RenderableDocument {
   var attributedStrings: [NSAttributedString] {
     return renderables.flatMap { $0.extractAttributedStrings() }
   }
+
+  /// Vendored addition (AmberAgent): trailing mutable attributed string backing
+  /// the last attachment-free `ParagraphUIView` in this document, or `nil` when
+  /// the document ends in a non-paragraph block (table, code block, blockquote,
+  /// math block, thematic break) or an attachment-bearing paragraph.
+  public var trailingAppendableAttributedContent: NSMutableAttributedString? {
+    renderables.last?.trailingAppendableAttributedContent
+  }
 }
 
 extension MarkdownRenderable {
+  var trailingAppendableAttributedContent: NSMutableAttributedString? {
+    switch self {
+    case .coalescedText(_, let content):
+      return content
+    case .paragraph(_, let content), .heading(_, _, let content):
+      let fullRange = NSRange(location: 0, length: content.length)
+      return content.containsAttachments(in: fullRange) ? nil : content
+    case .orderedList(_, let items), .unorderedList(_, let items, _):
+      return items.last?.children.last?.trailingAppendableAttributedContent
+    default:
+      return nil
+    }
+  }
+
   func extractAttributedStrings() -> [NSAttributedString] {
     switch self {
     case .paragraph(_, let str):

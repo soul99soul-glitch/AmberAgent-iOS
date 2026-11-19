@@ -3,6 +3,8 @@ import Shared
 import SwiftStreamingMarkdown
 
 enum ChatStreamingMarkdownTypography {
+    static let baseHeadingSizes: [CGFloat] = [22, 19.5, 17.5, 16.5, 15.5, 14.5]
+
     static func bodyFonts(chatFont: IOSChatFont, pointSize: CGFloat) -> SwiftStreamingMarkdown.TextFonts {
         let regular = UIFont.systemFont(ofSize: pointSize, weight: .regular)
         let semibold = UIFont.systemFont(ofSize: pointSize, weight: .semibold)
@@ -16,17 +18,37 @@ enum ChatStreamingMarkdownTypography {
         )
     }
 
+    static func headingFonts(chatFont: IOSChatFont, pointSize: CGFloat) -> SwiftStreamingMarkdown.TextFonts {
+        let bold = UIFont.systemFont(ofSize: pointSize, weight: .bold)
+        return SwiftStreamingMarkdown.TextFonts(
+            normal: applyingChatFont(chatFont, to: bold),
+            italic: applyingChatFont(chatFont, to: bold.withItalicTrait()),
+            bold: applyingChatFont(chatFont, to: bold),
+            boldItalic: applyingChatFont(chatFont, to: bold.withItalicTrait()),
+            preferredLetterSpacing: 0,
+            preferredLineHeight: nil
+        )
+    }
+
+    static func inlineCodeFont(pointSize: CGFloat) -> UIFont {
+        let codeSize = max(12, round(pointSize * 0.90 * 10) / 10)
+        return UIFont.monospacedSystemFont(ofSize: codeSize, weight: .regular)
+    }
+
     static func applyingChatFont(
         _ chatFont: IOSChatFont,
-        to style: SwiftStreamingMarkdown.MarkdownRenderConfig.MarkdownHeadingTextStyle
+        to style: SwiftStreamingMarkdown.MarkdownRenderConfig.MarkdownHeadingTextStyle,
+        pointSize: CGFloat = IOSChatFont.defaultBodyPointSize
     ) -> SwiftStreamingMarkdown.MarkdownRenderConfig.MarkdownHeadingTextStyle {
-        SwiftStreamingMarkdown.MarkdownRenderConfig.MarkdownHeadingTextStyle(
-            h1Font: applyingChatFont(chatFont, to: style.h1Font),
-            h2Font: applyingChatFont(chatFont, to: style.h2Font),
-            h3Font: applyingChatFont(chatFont, to: style.h3Font),
-            h4Font: applyingChatFont(chatFont, to: style.h4Font),
-            h5Font: applyingChatFont(chatFont, to: style.h5Font),
-            h6Font: applyingChatFont(chatFont, to: style.h6Font),
+        let ratio = max(0.75, pointSize / IOSChatFont.defaultBodyPointSize)
+        let scaled = baseHeadingSizes.map { headingFonts(chatFont: chatFont, pointSize: $0 * ratio) }
+        return SwiftStreamingMarkdown.MarkdownRenderConfig.MarkdownHeadingTextStyle(
+            h1Font: scaled[0],
+            h2Font: scaled[1],
+            h3Font: scaled[2],
+            h4Font: scaled[3],
+            h5Font: scaled[4],
+            h6Font: scaled[5],
             textColor: style.textColor
         )
     }

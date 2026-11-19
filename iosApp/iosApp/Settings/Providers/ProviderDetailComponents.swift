@@ -337,18 +337,22 @@ struct ProviderEditableTextFieldRow: View {
 
     @ViewBuilder
     private func textInput(alignment: TextAlignment) -> some View {
-        Group {
-            if isSecure {
-                SecureField(placeholder, text: $text)
-            } else {
-                TextField(placeholder, text: $text, axis: .vertical)
-            }
+        if isSecure {
+            AmberSecureKeyInput(
+                placeholder: placeholder,
+                text: $text,
+                font: monospace ? .monospacedSystemFont(ofSize: 13, weight: .regular) : .preferredFont(forTextStyle: .body),
+                textAlignment: alignment == .trailing ? .right : .left,
+                accessibilityLabel: title
+            )
+        } else {
+            TextField(placeholder, text: $text, axis: .vertical)
+                .font(monospace ? .system(size: 13, weight: .regular, design: .monospaced) : .body)
+                .foregroundStyle(AmberTheme.foreground)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .multilineTextAlignment(alignment)
         }
-        .font(monospace ? .system(size: 13, weight: .regular, design: .monospaced) : .body)
-        .foregroundStyle(AmberTheme.foreground)
-        .textInputAutocapitalization(.never)
-        .autocorrectionDisabled()
-        .multilineTextAlignment(alignment)
     }
 }
 

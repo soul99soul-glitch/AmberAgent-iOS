@@ -168,6 +168,76 @@ final class IOSMemoryLibraryTests: XCTestCase {
         XCTAssertTrue(IOSMemoryWriteAuditStore(userDefaults: defaults, key: "audit").records.isEmpty)
     }
 
+    func testWikiLinkResolverNavigatesBetweenIndexAndTopicsAndRejectsEscapes() throws {
+        let topicURL = try XCTUnwrap(MemoryWikiLinkResolver.encodeRelativeHref("topics/3-习惯.md"))
+        let resolvedFromIndex = try XCTUnwrap(
+            MemoryWikiLinkResolver.resolveTarget(from: topicURL, currentRelativePath: "index.md")
+        )
+        XCTAssertEqual(resolvedFromIndex.relativePath, "topics/3-习惯.md")
+        XCTAssertEqual(resolvedFromIndex.title, "习惯")
+
+        let backURL = try XCTUnwrap(MemoryWikiLinkResolver.encodeRelativeHref("../index.md"))
+        let resolvedFromTopic = try XCTUnwrap(
+            MemoryWikiLinkResolver.resolveTarget(from: backURL, currentRelativePath: "topics/3-习惯.md")
+        )
+        XCTAssertEqual(resolvedFromTopic.relativePath, "index.md")
+        XCTAssertEqual(resolvedFromTopic.title, "Amber 记忆索引")
+
+        XCTAssertNil(MemoryWikiLinkResolver.encodeRelativeHref("https://example.com"))
+        let escapeURL = try XCTUnwrap(URL(string: "amber-memory-doc://open?href=../../secret.md"))
+        XCTAssertNil(MemoryWikiLinkResolver.resolveTarget(from: escapeURL, currentRelativePath: "topics/3-习惯.md"))
+    }
+
+    func testPrimaryTypeSourceAndLastUsedDisplayAndExperienceExtensibility() {
+        let topic = memory(id: 1, content: "咖啡", scope: .longTerm, kind: .topic)
+        XCTAssertEqual(IOSMemoryLibrary.primaryTypeTitle(for: topic), "话题")
+        XCTAssertNil(IOSMemoryLibrary.secondaryKindTitle(for: topic))
+
+        let coreNote = memory(
+            id: 2,
+            content: "偏好简洁回答",
+            scope: .core,
+            kind: .feedback,
+            sourceConversationId: "conv-123"
+        )
+        XCTAssertEqual(IOSMemoryLibrary.primaryTypeTitle(for: coreNote), "核心")
+        XCTAssertEqual(IOSMemoryLibrary.secondaryKindTitle(for: coreNote), "反馈")
+        XCTAssertEqual(
+            IOSMemoryLibrary.sourceDisplay(for: coreNote, conversationTitles: ["conv-123": "iOS 记忆页设计"]),
+            "来自对话「iOS 记忆页设计」"
+        )
+        XCTAssertEqual(
+            IOSMemoryLibrary.sourceDisplay(for: coreNote, conversationTitles: [:]),
+            "来自聊天对话"
+        )
+        XCTAssertEqual(IOSMemoryLibrary.lastUsedDisplay(for: coreNote).text, "尚未被引用")
+        XCTAssertFalse(IOSMemoryLibrary.lastUsedDisplay(for: coreNote).hasBeenUsed)
+
+        XCTAssertEqual(IOSMemoryLibrary.kindDisplay("experience"), "经验")
+        XCTAssertEqual(IOSMemoryLibrary.kindDisplay("lesson"), "经验")
+        XCTAssertEqual(IOSMemoryLibrary.scopeDisplay("experience"), "经验")
+    }
+
+    func testHealthCheckSnapshotSupportsEmptyAndPopulatedValues() {
+        let empty = MemoryHealthCheckSnapshot.empty
+        XCTAssertFalse(empty.hasData)
+        XCTAssertEqual(empty.supersededRatioText, "—")
+        XCTAssertEqual(empty.citedRatioText, "—")
+        XCTAssertEqual(empty.residentCharsText, "—")
+
+        let populated = MemoryHealthCheckSnapshot(
+            supersededRatio: 0.15,
+            citedRatio: 0.625,
+            residentInjectedChars: 840,
+            maxPromptCharsBudget: 2400
+        )
+        XCTAssertTrue(populated.hasData)
+        XCTAssertEqual(populated.supersededRatioText, "15%")
+        XCTAssertEqual(populated.citedRatioText, "63%")
+        XCTAssertEqual(populated.residentCharsText, "840 字")
+        XCTAssertEqual(populated.residentBudgetText, "上限 2400 字")
+    }
+
     private func isolatedSettings() -> IOSSharedSettingsStore {
         let suiteName = "MemoryLibrary-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!

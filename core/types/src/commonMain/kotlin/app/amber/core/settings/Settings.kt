@@ -28,7 +28,6 @@ import app.amber.core.model.QuickMessage
 import app.amber.core.model.Tag
 import app.amber.core.sync.core.SyncSettings
 import app.amber.core.sync.s3.S3Config
-import app.amber.feature.board.TodayBoardSetting
 import app.amber.feature.live.LiveModeSetting
 import app.amber.feature.modelcouncil.ModelCouncilRuntimeSetting
 import app.amber.feature.office.FeishuOfficeEnhancementSetting
@@ -153,7 +152,6 @@ data class AgentRuntimeSetting(
     val terminalOutputTailChars: Int = 256 * 1024,
     val terminalInstallTimeoutMs: Long = 15 * 60_000L,
     val feishuOfficeEnhancement: FeishuOfficeEnhancementSetting = FeishuOfficeEnhancementSetting(),
-    val todayBoard: TodayBoardSetting = TodayBoardSetting(),
     val miniApp: MiniAppSetting = MiniAppSetting(),
     val contextCompaction: ContextCompactionSetting = ContextCompactionSetting(),
     val memoryRecall: MemoryRecallSetting = MemoryRecallSetting(),

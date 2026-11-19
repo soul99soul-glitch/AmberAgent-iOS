@@ -1,8 +1,46 @@
 import SwiftUI
+import Observation
 import Shared
 import SwiftStreamingMarkdown
 
+/// Tracks whether a segmented-delivery assistant message has finished parsing its
+/// first non-empty `RenderableDocument` block. Until this flips to `true`, the
+/// bubble container (`ChatAssistantStack` + `ChatAgentName()`) stays unpresented
+/// at zero height and the single-line task activity row remains visible, so the
+/// bubble container and first rendered block enter atomically on the exact same frame.
+@MainActor
+@Observable
+final class ChatSegmentedBubbleReadiness {
+    static let shared = ChatSegmentedBubbleReadiness()
+    private(set) var readyMessageIDs: Set<String> = []
+    #if DEBUG
+    static var prewarmGateForTesting: (@Sendable () async -> Void)?
+    #endif
+
+    func isReady(messageID: String?) -> Bool {
+        guard let messageID, !messageID.isEmpty else { return true }
+        return readyMessageIDs.contains(messageID)
+    }
+
+    func markReady(messageID: String?) {
+        guard let messageID, !messageID.isEmpty, !readyMessageIDs.contains(messageID) else { return }
+        readyMessageIDs.insert(messageID)
+    }
+
+    func reset(messageID: String?) {
+        guard let messageID, !messageID.isEmpty else { return }
+        readyMessageIDs.remove(messageID)
+    }
+
+    func resetAllForTesting() {
+        readyMessageIDs.removeAll()
+    }
+}
+
 struct ChatStableStreamingMarkdownView: View {
+    @Environment(\.chatStreamingTailCoordinator) private var tailCoordinator
+    @Environment(\.markdownSegmentedBlockEntrance) private var segmentedBlockEntrance
+    @Environment(\.markdownLayoutInvalidationID) private var layoutInvalidationID
     let text: String
     let config: SwiftStreamingMarkdown.MarkdownRenderConfig
     var cacheIdentity: String? = nil
@@ -10,9 +48,12 @@ struct ChatStableStreamingMarkdownView: View {
     @StateObject private var controller = ChatStableStreamingMarkdownController()
 
     var body: some View {
+        let _ = ChatTimelineRowLayoutInvalidation.markRowDirty(layoutInvalidationID)
+        let visualHash = ChatStableStreamingMarkdownController.cachedVisualConfigHash(for: config)
         let resolution = controller.resolution(
             for: text,
             config: config,
+            visualConfigHash: visualHash,
             cacheIdentity: cacheIdentity,
             preservesRenderedTable: preservesRenderedTable
         )
@@ -20,12 +61,14 @@ struct ChatStableStreamingMarkdownView: View {
         // blockSpacing 提供，使冷行首帧高度贴近异步解析后的真实高度，
         // 消除历史行首次实例化时"占位偏高→解析后整章收缩"的可见位移。
         let renderable = resolution.renderable
-            ?? SwiftStreamingMarkdown.RenderableDocument(
-                plainText: text,
-                id: "0",
-                config: config,
-                splittingParagraphsOnBlankLines: true
-            )
+            ?? ((segmentedBlockEntrance || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                ? SwiftStreamingMarkdown.RenderableDocument.empty
+                : SwiftStreamingMarkdown.RenderableDocument(
+                    plainText: text,
+                    id: "0",
+                    config: config,
+                    splittingParagraphsOnBlankLines: true
+                ))
         SwiftStreamingMarkdown.DocumentView(
             renderableDocument: renderable,
             config: config,
@@ -33,13 +76,23 @@ struct ChatStableStreamingMarkdownView: View {
             usesLayerBackedTableAnimation: config.shouldAnimateText,
             usesTextKit1ForAttachmentFreeText: true
         )
+            .environment(\.markdownStreamingTailSink, tailCoordinator != nil ? controller.tailSink : nil)
+            .modifier(ChatStreamingRevealProgressModifier(progress: .init(
+                hasPendingReveal: !controller.hasRendered(text))))
             .task(id: ChatStableStreamingMarkdownParseKey(
                 text: text,
                 animate: config.shouldAnimateText,
-                configHash: config.hashValue,
-                cacheIdentity: cacheIdentity
+                configHash: visualHash,
+                cacheIdentity: cacheIdentity,
+                hasTailCoordinator: tailCoordinator != nil
             )) {
-                controller.scheduleParse(text: text, config: config, cacheIdentity: cacheIdentity)
+                controller.scheduleParse(
+                    text: text,
+                    config: config,
+                    cacheIdentity: cacheIdentity,
+                    tailCoordinator: tailCoordinator,
+                    layoutInvalidationID: layoutInvalidationID
+                )
             }
     }
 }
@@ -49,6 +102,7 @@ private struct ChatStableStreamingMarkdownParseKey: Equatable {
     let animate: Bool
     let configHash: Int
     let cacheIdentity: String?
+    let hasTailCoordinator: Bool
 }
 
 @MainActor
@@ -84,8 +138,13 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
     // 重新淡入(闪烁)。64 会让靠前的段落在后续解析中被挤出 → 完成时重新淡入;提到 256
     // 让整篇已完成段落基本都能命中,消除完成瞬间的整屏闪烁。
     private static let identityCacheLimit = 256
+    private static var visualConfigHashCache: [SwiftStreamingMarkdown.MarkdownRenderConfig: Int] = [:]
+    private static let lightTraitCollection = UITraitCollection(userInterfaceStyle: .light)
 
     @Published private(set) var revision = 0
+    let tailSink = SwiftStreamingMarkdown.MarkdownStreamingTailSink()
+    private weak var tailCoordinator: ChatStreamingTailCoordinator?
+    private var layoutInvalidationID: String?
     private var renderedText: String?
     private var renderableDocument: SwiftStreamingMarkdown.RenderableDocument?
     private var renderedSignature: RenderSignature?
@@ -96,11 +155,19 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
         cacheIdentity: String?
     )?
     private var parseTask: Task<Void, Never>?
+    private var throttleSleepTask: Task<Void, Never>?
     private var parseTaskGeneration: UInt64 = 0
     private var lastLiveParseAt = Date.distantPast
+    private(set) var canceledInFlightParseCountForTesting = 0
 
     deinit {
+        throttleSleepTask?.cancel()
         parseTask?.cancel()
+    }
+
+    func hasRendered(_ text: String) -> Bool {
+        guard let renderedText, renderedText.utf16.count == text.utf16.count else { return false }
+        return renderedText == text
     }
 
     func renderable(
@@ -113,10 +180,14 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
     func resolution(
         for text: String,
         config: SwiftStreamingMarkdown.MarkdownRenderConfig,
+        visualConfigHash: Int? = nil,
         cacheIdentity: String?,
         preservesRenderedTable: Bool = false
     ) -> (renderable: SwiftStreamingMarkdown.RenderableDocument?, suppressesInitialFade: Bool) {
-        let signature = Self.renderSignature(for: config)
+        let signature = RenderSignature(
+            visualConfigHash: visualConfigHash ?? Self.cachedVisualConfigHash(for: config),
+            speculative: config.shouldAnimateText
+        )
         // 完全匹配:返回最新解析结果。utf16.count 先行短路,避免流式期每次
         // body 求值都对不等长文本做 O(n) 字符串比较。
         if let renderedSignature,
@@ -153,7 +224,7 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
            // Partial table rows contain synthetic closing pipes/empty cells. The
            // next delta rewrites that suffix, so it is not an append-only prefix.
            // Keep this table visible until its replacement has finished parsing.
-           preservesRenderedTable || (text.utf16.count >= renderedText.utf16.count && text.hasPrefix(renderedText)) {
+           preservesRenderedTable || Self.hasPrefixFast(text, prefix: renderedText) {
             return (renderableDocument, false)
         }
         if let cacheIdentity,
@@ -174,25 +245,67 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
     func scheduleParse(
         text: String,
         config: SwiftStreamingMarkdown.MarkdownRenderConfig,
-        cacheIdentity: String? = nil
+        cacheIdentity: String? = nil,
+        tailCoordinator: ChatStreamingTailCoordinator? = nil,
+        layoutInvalidationID: String? = nil
     ) {
-        if !config.shouldAnimateText {
-            pendingParse = nil
-            parseTaskGeneration &+= 1
-            let generation = parseTaskGeneration
-            parseTask?.cancel()
-            parseTask = Task { @MainActor [weak self] in
-                guard let self else { return }
-                await self.parseNow(text: text, config: config, cacheIdentity: cacheIdentity)
-                guard self.parseTaskGeneration == generation else { return }
-                self.parseTask = nil
-                self.startPendingAnimatedParseIfNeeded()
-            }
-            return
+        ChatRenderProbe.record("md-schedule")
+        self.tailCoordinator = tailCoordinator
+        if let layoutInvalidationID {
+            self.layoutInvalidationID = layoutInvalidationID
         }
-
+        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let cached = resolution(
+            for: text,
+            config: config,
+            cacheIdentity: cacheIdentity
+           ).renderable,
+           cached != SwiftStreamingMarkdown.RenderableDocument.empty {
+            ChatSegmentedBubbleReadiness.shared.markReady(messageID: self.layoutInvalidationID)
+        }
+        if let tailCoordinator {
+            tailCoordinator.bindSink(tailSink)
+            tailSink.updateStreamingConfig(
+                shouldAnimateText: config.shouldAnimateText,
+                appendsTailFadeAsUnit: config.animatesAppendedTailAsUnit,
+                gatesHeightByLineCount: config.shouldAnimateText
+            )
+        } else {
+            tailSink.configureTarget(
+                contents: nil,
+                shouldAnimateText: false,
+                appendsTailFadeAsUnit: false,
+                gatesHeightByLineCount: false
+            )
+        }
         pendingParse = (text, config, cacheIdentity)
+        if !config.shouldAnimateText {
+            // Wake any throttle sleep immediately when transitioning to non-animated
+            // final state, but never cancel an in-flight `parseNow` computation.
+            throttleSleepTask?.cancel()
+        }
         startPendingAnimatedParseIfNeeded()
+    }
+
+    private func syncStreamingTail(
+        text: String,
+        renderable: SwiftStreamingMarkdown.RenderableDocument,
+        config: SwiftStreamingMarkdown.MarkdownRenderConfig
+    ) {
+        let gatesHeight = tailCoordinator != nil && config.shouldAnimateText
+        let targetContents = tailCoordinator != nil ? renderable.trailingAppendableAttributedContent : nil
+        tailSink.configureTarget(
+            contents: targetContents,
+            shouldAnimateText: config.shouldAnimateText,
+            appendsTailFadeAsUnit: config.animatesAppendedTailAsUnit,
+            gatesHeightByLineCount: gatesHeight
+        )
+        if let tailCoordinator, targetContents != nil {
+            tailCoordinator.bindSink(tailSink)
+            tailCoordinator.didSyncRenderedText(text)
+        } else {
+            tailCoordinator?.invalidateSync()
+        }
     }
 
     private func startPendingAnimatedParseIfNeeded() {
@@ -211,23 +324,28 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
                 guard let next = self.pendingParse else { return }
                 self.pendingParse = nil
 
-                let elapsed = Date().timeIntervalSince(self.lastLiveParseAt)
-                let liveParseInterval = self.liveParseInterval(for: next.text)
-                if elapsed < liveParseInterval {
-                    let delay = UInt64((liveParseInterval - elapsed) * 1_000_000_000)
-                    do {
-                        try await Task.sleep(nanoseconds: delay)
-                    } catch {
-                        return
+                if next.config.shouldAnimateText {
+                    let elapsed = Date().timeIntervalSince(self.lastLiveParseAt)
+                    let liveParseInterval = self.liveParseInterval(for: next.text)
+                    if elapsed < liveParseInterval {
+                        let delay = UInt64((liveParseInterval - elapsed) * 1_000_000_000)
+                        let sleepTask = Task<Void, Never> {
+                            _ = try? await Task.sleep(nanoseconds: delay)
+                        }
+                        self.throttleSleepTask = sleepTask
+                        await sleepTask.value
+                        self.throttleSleepTask = nil
+                        guard !Task.isCancelled else { return }
                     }
-                    guard !Task.isCancelled else { return }
                 }
 
                 self.lastLiveParseAt = Date()
+                let target = self.pendingParse ?? next
+                self.pendingParse = nil
                 await self.parseNow(
-                    text: next.text,
-                    config: next.config,
-                    cacheIdentity: next.cacheIdentity
+                    text: target.text,
+                    config: target.config,
+                    cacheIdentity: target.cacheIdentity
                 )
             }
         }
@@ -260,6 +378,15 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
         return 0.5
     }
 
+    private static func parseDurationBucket(_ ms: Double) -> String {
+        if ms < 1.0 { return "md-parse-ms:<1" }
+        if ms < 4.0 { return "md-parse-ms:1-4" }
+        if ms < 8.0 { return "md-parse-ms:4-8" }
+        if ms < 16.0 { return "md-parse-ms:8-16" }
+        if ms < 32.0 { return "md-parse-ms:16-32" }
+        return "md-parse-ms:>=32"
+    }
+
     private func parseNow(
         text: String,
         config: SwiftStreamingMarkdown.MarkdownRenderConfig,
@@ -271,6 +398,9 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
         let animate = config.shouldAnimateText
         let signature = Self.renderSignature(for: config)
         if renderedSignature == signature, renderedText == text {
+            if let renderableDocument {
+                syncStreamingTail(text: text, renderable: renderableDocument, config: config)
+            }
             return
         }
         // Only remounts need a static lookup; an active stream already owns its
@@ -280,15 +410,23 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
             signature: signature,
             cacheIdentity: cacheIdentity
         ) : nil
-        let previousText = renderedText
         let previousRenderable = renderedSignature?.visualConfigHash == signature.visualConfigHash
             ? renderableDocument
             : nil
         let renderable: SwiftStreamingMarkdown.RenderableDocument
+        let parseStartWall = CACurrentMediaTime()
         if let cached {
             renderable = cached
             ChatPerfTrace.event("MarkdownCacheHit")
+            ChatRenderProbe.record("md-parse-ms:cache-hit")
         } else {
+            #if DEBUG
+            if !config.coalescesAdjacentTextBlocks,
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let gate = ChatSegmentedBubbleReadiness.prewarmGateForTesting {
+                await gate()
+            }
+            #endif
             renderable = await Task.detached(priority: .userInitiated) {
                 let parser = SwiftStreamingMarkdown.MarkdownParserImpl()
                 // repairsRejectedStrongEmphasis：修复 CommonMark flanking 拒绝的粗体
@@ -306,15 +444,20 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
                         config: config
                     )
                 }
-                guard let previousText,
-                      let previousRenderable,
-                      text.utf16.count >= previousText.utf16.count,
-                      text.hasPrefix(previousText) else { return converted }
+                guard let previousRenderable else { return converted }
                 return converted.reusingUnchangedPrefix(from: previousRenderable)
             }.value
+            let parseElapsedMs = (CACurrentMediaTime() - parseStartWall) * 1000.0
+            ChatRenderProbe.record(Self.parseDurationBucket(parseElapsedMs))
         }
         guard !Task.isCancelled else { return }
+        let hasNonEmptyRenderable = !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && renderable != SwiftStreamingMarkdown.RenderableDocument.empty
         guard renderedText != text || renderedSignature != signature || renderableDocument != renderable else {
+            if hasNonEmptyRenderable {
+                ChatSegmentedBubbleReadiness.shared.markReady(messageID: layoutInvalidationID)
+            }
+            syncStreamingTail(text: text, renderable: renderable, config: config)
             return
         }
         ChatPerfTrace.measure("MarkdownPublish", count: { text.utf16.count }) {
@@ -322,7 +465,6 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
             renderableDocument = renderable
             renderedSignature = signature
             restoredFromCache = cached != nil
-            Self.storeCachedRenderable(renderable, for: text, config: config)
             if let cacheIdentity {
                 Self.storeIdentityRenderable(
                     renderable,
@@ -330,6 +472,15 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
                     text: text,
                     signature: signature
                 )
+                if !config.shouldAnimateText {
+                    Self.storeCachedRenderable(renderable, for: text, config: config)
+                }
+            } else {
+                Self.storeCachedRenderable(renderable, for: text, config: config)
+            }
+            syncStreamingTail(text: text, renderable: renderable, config: config)
+            if hasNonEmptyRenderable {
+                ChatSegmentedBubbleReadiness.shared.markReady(messageID: layoutInvalidationID)
             }
             revision &+= 1
         }
@@ -447,9 +598,44 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
         for config: SwiftStreamingMarkdown.MarkdownRenderConfig
     ) -> RenderSignature {
         RenderSignature(
-            visualConfigHash: visualConfigHash(for: config),
+            visualConfigHash: cachedVisualConfigHash(for: config),
             speculative: config.shouldAnimateText
         )
+    }
+
+    static func cachedVisualConfigHash(for config: SwiftStreamingMarkdown.MarkdownRenderConfig) -> Int {
+        if let cached = visualConfigHashCache[config] {
+            return cached
+        }
+        let computed = visualConfigHash(for: config)
+        if visualConfigHashCache.count >= 16 {
+            visualConfigHashCache.removeAll(keepingCapacity: true)
+        }
+        visualConfigHashCache[config] = computed
+        return computed
+    }
+
+    static func hasPrefixFast(_ text: String, prefix: String) -> Bool {
+        let nsText = text as NSString
+        let nsPrefix = prefix as NSString
+        let prefixLen = nsPrefix.length
+        let textLen = nsText.length
+        guard textLen >= prefixLen else { return false }
+        guard prefixLen > 0 else { return true }
+        if prefixLen == textLen {
+            return text == prefix
+        }
+        let nextUnit = nsText.character(at: prefixLen)
+        let prevUnit = nsPrefix.character(at: prefixLen - 1)
+        if (nextUnit < 0x80 && !(prevUnit == 0x0D && nextUnit == 0x0A)) ||
+           (nextUnit >= 0x4E00 && nextUnit <= 0x9FFF && prevUnit != 0x200D) {
+            return nsText.compare(
+                prefix,
+                options: .literal,
+                range: NSRange(location: 0, length: prefixLen)
+            ) == .orderedSame
+        }
+        return text.hasPrefix(prefix)
     }
 
     private static func visualConfigHash(for config: SwiftStreamingMarkdown.MarkdownRenderConfig) -> Int {
@@ -511,7 +697,7 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
     /// 动态色按固定 trait 解析为静态色后哈希 RGBA 分量：同一主题任意构建
     /// 实例得到同一值（动态 UIColor 的 hashValue 是实例身份哈希，跨实例不稳）。
     private static func combineResolvedColor(_ color: UIColor, into hasher: inout Hasher) {
-        let resolved = color.resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
+        let resolved = color.resolvedColor(with: lightTraitCollection)
         var red: CGFloat = 0
         var green: CGFloat = 0
         var blue: CGFloat = 0
@@ -700,6 +886,18 @@ enum ChatStableStreamingMarkdownControllerTestSupport {
         )
 
         _ = await waitUntilRendered(updatedText, by: controller)
+        return controller.renderedTextForTesting
+    }
+
+    static func renderedTextAfterRapidNonAnimatedPrefixBurst() async -> String? {
+        let controller = ChatStableStreamingMarkdownController()
+        let config = SwiftStreamingMarkdown.MarkdownRenderConfig.default.withShouldAnimateText(value: false)
+        var prefix = "尾段排空起点"
+        for step in 1...12 {
+            prefix += "，第\(step)拍增量"
+            controller.scheduleParse(text: prefix, config: config)
+        }
+        _ = await waitUntilRendered(prefix, by: controller)
         return controller.renderedTextForTesting
     }
 

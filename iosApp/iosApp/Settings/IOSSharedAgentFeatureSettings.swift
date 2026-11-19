@@ -247,36 +247,6 @@ extension IOSSharedSettingsStore {
         restoreSnapshot(merged)
     }
 
-    // MARK: - Today Board / Deep Read write-back
-
-    var todayBoard: TodayBoardSetting {
-        snapshot.agentRuntime.todayBoard
-    }
-
-    func updateTodayBoard(_ transform: (TodayBoardSetting) -> TodayBoardSettingPatch) {
-        let board = snapshot.agentRuntime.todayBoard
-        let patch = transform(board)
-        let merged = IosSettingsMutations.shared.setTodayBoardOptions(
-            settings: snapshot,
-            boardModelId: patch.boardModelId ?? board.boardModelId,
-            clearBoardModelId: patch.clearBoardModelId,
-            hotListRefreshIntervalMinutes: Int32(
-                patch.hotListRefreshIntervalMinutes ?? Int(board.hotListRefreshIntervalMinutes)
-            ),
-            hotListWifiOnly: patch.hotListWifiOnly ?? board.hotListWifiOnly,
-            hotListEnabledSources: patch.hotListEnabledSources ?? Array(board.hotListEnabledSources),
-            hotListFocusKeywords: patch.hotListFocusKeywords ?? board.hotListFocusKeywords,
-            hotListFilterModeWireName: patch.hotListFilterModeWireName ?? board.hotListFilterMode.wireName,
-            boardReadingFontModeWireName: patch.boardReadingFontModeWireName ?? board.boardReadingFontMode.wireName,
-            boardReadingFontPackId: patch.boardReadingFontPackId ?? board.boardReadingFontPackId,
-            clearBoardReadingFontPackId: patch.clearBoardReadingFontPackId,
-            deepReadFontScale: patch.deepReadFontScale ?? board.deepReadFontScale,
-            deepReadTemplateId: patch.deepReadTemplateId ?? board.deepReadTemplateId,
-            hotListTranslateToChinese: patch.hotListTranslateToChinese ?? board.hotListTranslateToChinese
-        )
-        restoreSnapshot(merged)
-    }
-
     // MARK: - Real seeded collections (for UI display)
 
     /// Real KMP default TTS providers (DEFAULT_TTS_PROVIDERS), seeded + de-duplicated.

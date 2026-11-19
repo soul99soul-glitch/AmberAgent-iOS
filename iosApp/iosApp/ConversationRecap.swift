@@ -286,7 +286,7 @@ enum ConversationRecapLogic {
         branchID: String,
         generatedAt: Date = Date()
     ) throws -> ConversationRecap {
-        guard let objectJSON = IOSDeepReadDraftGenerator.extractJSONObject(raw),
+        guard let objectJSON = IOSJSONObjectExtractor.extractJSONObject(raw),
               let data = objectJSON.data(using: .utf8) else {
             throw ParseError.invalidJSON
         }

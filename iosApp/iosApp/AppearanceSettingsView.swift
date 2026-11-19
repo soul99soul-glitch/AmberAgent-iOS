@@ -44,11 +44,17 @@ struct AppearanceSettingsView: View {
 
                     section("主题") {
                         themePackGrid
-                        if matchingThemeId == nil {
+                        if matchingThemeId == nil && !AmberArquielThemePresets.all.contains(where: { $0.matches(runtime: runtime) }) {
                             Text("当前为自定义组合")
                                 .font(.caption)
                                 .foregroundStyle(AmberTheme.muted)
                                 .padding(.top, 4)
+                        }
+                    }
+
+                    if !isManagingThemes {
+                        section("Arquiel Design 经典配色") {
+                            arquielPresetGrid
                         }
                     }
 
@@ -242,6 +248,52 @@ struct AppearanceSettingsView: View {
                 installedThemePackCard(document)
             }
         }
+    }
+
+    private var arquielPresetGrid: some View {
+        LazyVGrid(
+            columns: [GridItem(.flexible(), spacing: 12, alignment: .top), GridItem(.flexible(), spacing: 12, alignment: .top)],
+            spacing: 12
+        ) {
+            ForEach(AmberArquielThemePresets.all, id: \.id) { preset in
+                arquielPresetCard(preset)
+            }
+        }
+    }
+
+    private func arquielPresetCard(_ document: AmberThemePackDocument) -> some View {
+        let isActive = document.matches(runtime: runtime)
+        let paper = AmberThemeRuntime.Paper(rawValue: document.paper) ?? .neutral
+        let basePalette = colorScheme == .dark ? paper.darkPalette : paper.lightPalette
+        let palette = document.design.map { design in
+            (colorScheme == .dark ? design.dark : design.light)?.resolving(basePalette) ?? basePalette
+        } ?? basePalette
+        let accent = (try? AmberThemePackTransfer.parseHex(document.accentHex)) ?? AmberAccentOption.amberGold.accentHex
+        let canvas = AmberCanvasStyle(rawValue: document.canvasStyle) ?? .flat
+        let brand = AmberBrandMarkStyle(rawValue: document.brandMark) ?? .systemWordmark
+        return Button {
+            applyTakingOverTryOn {
+                try runtime.apply(document)
+            }
+        } label: {
+            themeCardChrome(
+                isSelected: isActive,
+                footerTitle: document.displayName,
+                footerBackground: Color(hex: palette.surface),
+                footerForeground: Color(hex: palette.foreground),
+                accessibilityLabel: "主题：\(document.displayName)" + (isActive ? "，已选中" : "")
+            ) {
+                AmberThemePackMiniPreview(
+                    palette: palette,
+                    accent: Color(hex: accent),
+                    canvasStyle: canvas,
+                    paintBrandHint: brand == .paintAMBER,
+                    serifBrandHint: brand == .serifWordmark,
+                    design: document.design
+                )
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private func themePackCard(_ pack: AmberThemePack) -> some View {

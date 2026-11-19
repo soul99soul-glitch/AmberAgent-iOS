@@ -440,7 +440,10 @@ final class IOSChatBackgroundGenerationCoordinator {
         )
         activeBackgroundTasks[requestId] = execution
         beginChatBackgroundKeepAlive(
-            requestId: requestId, subtitle: subtitle, submitSystemFallback: true,
+            requestId: requestId,
+            subtitle: subtitle,
+            submitSystemFallback: true,
+            allowsAudioLeg: activeJobs[requestId].map { Self.allowsAudioLeg(for: $0) } ?? true,
             onExpire: { [weak self, weak execution] in
                 guard let self, let execution,
                       self.activeBackgroundTasks[requestId] === execution else { return }
@@ -925,10 +928,9 @@ final class IOSChatBackgroundGenerationCoordinator {
         let bridge: IosToolExposureBridge
         if !fullToolNames.isEmpty {
             var rebuilt = ToolKt.iosToolDeclarations(names: fullToolNames)
-            // Native Swift declarations have no KMP name-only factory. Restore
-            // their exact schema without widening this run's frozen catalog.
-            rebuilt += IOSWakeToolCatalog.declarations.filter { fullToolNames.contains($0.name) }
-            rebuilt += IOSShortcutAuthoringToolCatalog.declarations.filter { fullToolNames.contains($0.name) }
+            // Restore declarations outside KMP iosToolDeclarations without widening the frozen catalog.
+            let extra = IOSWakeToolCatalog.declarations + IOSShortcutAuthoringToolCatalog.declarations + AgentSoulToolDeclarationsKt.createAgentSoulToolDeclarations()
+            rebuilt += extra.filter { fullToolNames.contains($0.name) }
             let rebuiltNames = Set(rebuilt.map(\.name))
             // P0-b: dynamic `mcp__*` declarations cannot be rebuilt from a
             // name (the payload has no server/tool directory), so exclude them
@@ -1022,6 +1024,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             executionPolicy: handoff.executionPolicy,
             subAgentTimeoutSeconds: handoff.subAgentTimeoutSeconds,
             phoneAutomaticReasoning: handoff.phoneAutomaticReasoning,
+            canClaimPhoneControl: handoff.canClaimPhoneControl,
             conversationStore: conversationStore,
             toolRuntime: toolRuntime,
             liveActivityController: liveActivityController,
@@ -1068,12 +1071,17 @@ final class IOSChatBackgroundGenerationCoordinator {
     static func routingPhoneActivity(
         executors: [String: any IOSToolExecutor],
         runID: String,
-        events: AsyncStream<AgentActivityPresentation>.Continuation
+        events: AsyncStream<AgentActivityPresentation>.Continuation,
+        ensureClaimedOnFirstUse: (@MainActor () -> Bool)? = nil
     ) -> [String: any IOSToolExecutor] {
         var routed = executors
-        let phoneExecutor = IOSPhoneControlToolExecutor(runID: runID, reportActivity: { phase in
-            events.yield(.phoneControl(phase))
-        })
+        let phoneExecutor = IOSPhoneControlToolExecutor(
+            runID: runID,
+            reportActivity: { phase in
+                events.yield(.phoneControl(phase))
+            },
+            ensureClaimedOnFirstUse: ensureClaimedOnFirstUse
+        )
         for name in IOSPhoneControlToolCatalog.toolNames where routed[name] != nil {
             routed[name] = phoneExecutor
         }
@@ -1472,6 +1480,17 @@ final class IOSChatBackgroundGenerationCoordinator {
         "chat-bg-\(requestId)"
     }
 
+    /// Local non-OpenAI-remote-resume tasks may hold the audio leg; OpenAI
+    /// detached response resume does not hold local audio keep-alive.
+    static func allowsAudioLeg(for job: IOSChatBackgroundRuntimeJob) -> Bool {
+        if job.mode == .resumeResponse,
+           job.providerSetting is ProviderSetting.OpenAI,
+           job.responseId != nil {
+            return false
+        }
+        return job.mode != .resumeResponse
+    }
+
     /// New local runs and detached responses use the shared assertion owner.
     /// Legacy .chat handlers already have a system assertion and only borrow
     /// the UIKit/audio lease while persisting their terminal state.
@@ -1479,6 +1498,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         requestId: String,
         subtitle: String,
         submitSystemFallback: Bool = false,
+        allowsAudioLeg: Bool = false,
         onExpire: (() -> Void)? = nil
     ) {
         keepAlive.begin(
@@ -1489,7 +1509,8 @@ final class IOSChatBackgroundGenerationCoordinator {
             ),
             subtitle: subtitle,
             onExpire: onExpire,
-            submitSystemTask: submitSystemFallback
+            submitSystemTask: submitSystemFallback,
+            allowsAudioLeg: allowsAudioLeg
         )
     }
 

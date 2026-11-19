@@ -14,6 +14,7 @@ struct ChatMessageRowModel: Identifiable {
     let canAnimateInsertion: Bool
 
     var isAssistantContinuation: Bool = false
+    var displayTexts: [Int: String] = [:]
 
     var id: String { rowId }
 }
@@ -53,6 +54,7 @@ struct ChatTimelineMessageEntry: Equatable {
     let renderToken: String
 
     var isAssistantContinuation: Bool = false
+    var displayTexts: [Int: String] = [:]
 
     var rowModel: ChatMessageRowModel {
         ChatMessageRowModel(
@@ -66,7 +68,8 @@ struct ChatTimelineMessageEntry: Equatable {
             isStreaming: isStreaming,
             hasEverStreamed: hasEverStreamed,
             canAnimateInsertion: canAnimateInsertion,
-            isAssistantContinuation: isAssistantContinuation
+            isAssistantContinuation: isAssistantContinuation,
+            displayTexts: displayTexts
         )
     }
 }
@@ -122,15 +125,24 @@ enum ChatTimelinePlanner {
         )
     }
 
-    static func messageEntry(for row: ChatMessageRowModel, includeRenderToken: Bool = true) -> ChatTimelineMessageEntry {
+    static func messageEntry(
+        for row: ChatMessageRowModel,
+        partTokensBody: String? = nil,
+        includeRenderToken: Bool = true
+    ) -> ChatTimelineMessageEntry {
         ChatTimelineMessageEntry(
             id: messageEntryIDPrefix + row.messageId, messageId: row.messageId,
             message: row.message, role: row.role, index: row.index,
             isLast: row.isLast, isStreaming: row.isStreaming, hasEverStreamed: row.hasEverStreamed,
             canAnimateInsertion: row.canAnimateInsertion, renderer: rendererKind(for: row),
-            renderToken: includeRenderToken ? renderToken(for: row) : "",
-            isAssistantContinuation: row.isAssistantContinuation
+            renderToken: includeRenderToken ? renderToken(for: row, partTokensBody: partTokensBody) : "",
+            isAssistantContinuation: row.isAssistantContinuation,
+            displayTexts: row.displayTexts
         )
+    }
+
+    static func partTokensBody(for parts: [UIMessagePart]) -> String {
+        parts.map { compactRenderToken(for: $0) }.joined(separator: "|")
     }
 
     private static func rendererKind(for row: ChatMessageRowModel) -> ChatTimelineRendererKind {
@@ -151,8 +163,8 @@ enum ChatTimelinePlanner {
         return "\(rows.count):\(row.messageId):\(renderToken(for: row)):\(includePendingAssistant)"
     }
 
-    private static func renderToken(for row: ChatMessageRowModel) -> String {
-        let partTokens = row.parts.map { compactRenderToken(for: $0) }.joined(separator: "|")
+    private static func renderToken(for row: ChatMessageRowModel, partTokensBody: String? = nil) -> String {
+        let partTokens = partTokensBody ?? Self.partTokensBody(for: row.parts)
         return "\(row.messageId):\(row.role.name):\(row.isStreaming):\(row.hasEverStreamed):\(row.isAssistantContinuation):\(partTokens)"
     }
 
@@ -246,7 +258,8 @@ enum ChatMessageProjector {
             role: isResult ? MessageRole.assistant : message.role, parts: message.parts, index: index,
             isLast: isLast, isStreaming: isStreaming, hasEverStreamed: hasEverStreamed,
             canAnimateInsertion: canAnimateInsertion,
-            isAssistantContinuation: isAssistantContinuation(at: index, in: messages)
+            isAssistantContinuation: isAssistantContinuation(at: index, in: messages),
+            displayTexts: IOSSubAgentOutputProjection.unpreparedDisplayTexts(in: message)
         )
     }
 

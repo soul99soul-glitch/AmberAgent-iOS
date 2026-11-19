@@ -232,6 +232,18 @@ final class IOSPhoneGoalLoop {
         var noProgress = 0
         var ineffective = carry?.ineffective ?? []
         var withheld: [String] = []
+        var trackedPageAnchor: PhoneObservationNode? = nil
+
+        func checkPageAnchor(_ observation: PhoneObservation) -> Bool {
+            guard carry == nil, let target = request.pageAnchor else { return true }
+            let matches = IOSPhoneGoalVerification.matchingNodes(target: target, in: observation)
+            guard matches.count == 1, let anchor = matches.first else { return false }
+            if let prior = trackedPageAnchor {
+                return prior.label == anchor.label && prior.value == anchor.value && prior.type == anchor.type
+            }
+            trackedPageAnchor = anchor
+            return true
+        }
 
         func result(_ status: Result.Status, _ reason: String, code: ReasonCode, screenshot: Bool = false,
                     unknown: PhoneControlProblem? = nil) -> Result {
@@ -343,6 +355,10 @@ final class IOSPhoneGoalLoop {
                     }
                     return result(.completed, "最新界面满足指定的验收条件。", code: .completed)
                 }
+                guard checkPageAnchor(observation) else {
+                    return result(.handback, "当前页面或题目锚点已变化，交回主模型重新理解。",
+                                  code: .pageChanged, screenshot: true)
+                }
                 guard actionCount < request.maxSteps else {
                     return result(.handback, "已达到动作数量上限；请根据最新观察继续规划。", code: .stepBudgetExhausted)
                 }
@@ -414,7 +430,7 @@ final class IOSPhoneGoalLoop {
                 // Shadow may inspect this one observation but must never wait/act its
                 // way into a second screen. A setting change also closes execution.
                 guard deps.mode() == .active else {
-                    return result(.handback, "当前为观察模式或快速操作已关闭，未执行候选动作。", code: inactiveCode())
+                    return result(.handback, "当前为观察模式或快速操作已关闭，未执行候选动作；确定性多步序列可改用 phone_run_flow，单步操作使用 phone_act。", code: inactiveCode())
                 }
                 switch selection {
                 case .handback(let reason):
@@ -441,12 +457,12 @@ final class IOSPhoneGoalLoop {
                     }
                     return result(.handback, reason, code: hasAlert ? .unexpectedAlert : .decisionHandback,
                                   screenshot: hasAlert || IOSJevPhoneControlService.isRetryableHandback(reason))
-                case .needsScreenshot, .wait:
+                case .needsScreenshot:
+                    return result(.handback, "界面文字不足以判断下一步，需要截图交给主模型定位。", code: .screenshotRequired, screenshot: true)
+                case .wait:
                     noProgress += 1
                     guard noProgress < Self.noProgressLimit else {
-                        return selection == .wait
-                            ? result(.handback, "多次等待后界面仍未变化，交回主模型。", code: .waitBudgetExhausted, screenshot: true)
-                            : result(.handback, "界面文字不足以判断下一步，需要截图交给主模型定位。", code: .screenshotRequired, screenshot: true)
+                        return result(.handback, "多次等待后界面仍未变化，交回主模型。", code: .waitBudgetExhausted, screenshot: true)
                     }
                     guard try await reread(waiting: true) else {
                         return result(.handback, "等待界面期间控制任务已停止。", code: stopCode() ?? .taskStopped)
@@ -500,6 +516,10 @@ final class IOSPhoneGoalLoop {
                     verification = checked
                     if checked.status == .satisfied {
                         return result(.completed, "最新界面满足指定的验收条件。", code: .completed)
+                    }
+                    guard checkPageAnchor(after) else {
+                        return result(.handback, "当前页面或题目锚点已变化，交回主模型重新理解。",
+                                      code: .pageChanged, screenshot: true)
                     }
                     guard IOSPhoneGoalVerification.hasMeaningfulChange(before: observation, after: after) else {
                         // Never repeat the same ineffective action on this screen; let the
@@ -866,6 +886,7 @@ final class IOSPhoneGoalLoop {
             liveTapTypes.contains(node.type) && node.enabled && node.ref?.isEmpty == false
                 && IOSPhoneGoalVerification.hasVisibleFrame(node, within: bounds)
                 && displayName(node) != nil
+                && !isSystemScrollIndicator(node)
         }
         var seen = Set<String>()
         var taps: [(candidate: Candidate, index: Int, priority: Int)] = []
@@ -1141,8 +1162,8 @@ final class IOSPhoneGoalLoop {
 
     static func jevMessage(_ reason: String, code: ReasonCode) -> String {
         code == .jevUnavailable
-            ? "Jev 当前不可用（\(reason)），未执行候选动作；请主模型根据最新观察用 phone_act 继续。"
-            : "Jev 判断请求失败（\(reason)），未执行候选动作；请主模型根据最新观察用 phone_act 继续。"
+            ? "Jev 当前不可用（\(reason)），未执行候选动作；请主模型根据最新观察改用 phone_run_flow 或 phone_act 继续。"
+            : "Jev 判断请求失败（\(reason)），未执行候选动作；请主模型根据最新观察改用 phone_run_flow 或 phone_act 继续。"
     }
 
     /// System permission prompts are never answered by the loop, in either direction.
@@ -1203,6 +1224,17 @@ final class IOSPhoneGoalLoop {
     private static func displayName(_ node: PhoneObservationNode) -> String? {
         [node.label, node.identifier].lazy.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty }
+    }
+
+    private static func isSystemScrollIndicator(_ node: PhoneObservationNode) -> Bool {
+        guard node.type == "XCUIElementTypeOther",
+              (node.identifier ?? "").isEmpty,
+              let label = node.label?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let value = node.value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              value.hasSuffix("%") else { return false }
+        let lower = label.lowercased()
+        return label.hasPrefix("水平滚动条") || label.hasPrefix("垂直滚动条")
+            || lower.hasPrefix("horizontal scroll bar") || lower.hasPrefix("vertical scroll bar")
     }
 
     private static func nameDescription(_ node: PhoneObservationNode) -> String {

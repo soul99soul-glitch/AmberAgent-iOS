@@ -48,18 +48,46 @@ extension ChatViewModel {
             }
             return false
         }
-        // 生成中：图/附件整包入队，OCR 在下一轮上传前统一补齐。
-        // 仅硬拦超张数，避免无模型时误杀入队。
         if isGenerationActive {
-            if hasImages, pendingImages.count > Self.maxImagesPerMessage {
-                selectedFileContextError = IOSAppLocalization.formatted(
-                    "一次最多发送 %lld 张图片",
-                    defaultValue: "一次最多发送 %lld 张图片",
-                    arguments: [Int64(Self.maxImagesPerMessage)]
-                )
+            if let selected = selectedFollowupRunId,
+               currentRun.slot(forRunId: selected)?.isActiveOrQueued != true {
+                configurationError = "所选任务已结束，请重新选择任务或发送为新需求。"
                 return false
             }
-            return enqueueSteerMessage(text: text)
+            let route = ChatInboundTurnTriage.route(text: text,
+                hasAttachments: hasImages || pendingSelectedFilePreview != nil,
+                hasExplicitTarget: selectedFollowupRunId != nil)
+            if handleInboundControl(route, text: text) { return true }
+            if route != .independent {
+                if hasImages, pendingImages.count > Self.maxImagesPerMessage {
+                    selectedFileContextError = "一次最多发送 \(Self.maxImagesPerMessage) 张图片"
+                    return false
+                }
+                let target = focusedActiveTask
+                guard enqueueSteerMessage(text: prompt, targetRunId: target?.runId) else { return false }
+                if route == .ambiguous, let target,
+                   sharedSettings.jevSettings.effectiveMode(for: .subagentIntent) != .off,
+                   let entry = currentRun.state.steerQueue.last {
+                    let state = currentRun.state
+                    state.routingEntryIds.insert(entry.id)
+                    Task { @MainActor [weak self] in
+                        let resolved = await ChatInboundTurnTriage.resolve(text: prompt,
+                            taskText: target.baselineMessages.last(where: { $0.role == MessageRole.user })?.toText() ?? "",
+                            runId: target.runId)
+                        state.routingEntryIds.remove(entry.id)
+                        guard let self, let index = state.steerQueue.firstIndex(where: { $0.id == entry.id }),
+                              state.steerQueue[index].status == .received else { return }
+                        if resolved == .independent, self.isCurrentConversation(state.conversationId) {
+                            self.projectQueuedEntry(entry, receipt: "applied", state: state)
+                            state.steerQueue.remove(at: index)
+                            self.inboxIO.persistQueue(state.steerQueue, for: state.conversationId)
+                            self.generateResponse(inputDigest: chatInputDigest(for: prompt),
+                                conversationId: state.conversationId, anchorUserMessageId: entry.messageId)
+                        }
+                    }
+                }
+                return true
+            }
         }
         // 空闲发送：按模型视觉能力判断（对齐安卓 ImageAttachmentValidator）：
         // ready→直接发；fallback→先用视觉模型识别成文字再发；blocked→拦下提示，绝不静默丢弃。
@@ -353,17 +381,23 @@ extension ChatViewModel {
         consumesComposer: Bool = true,
         persistsImmediately: Bool = true
     ) -> (digest: String, conversationId: KotlinUuid?, messageId: String) {
+        if consumesComposer { suggestionMessageSubmitted(text) }
         currentRun.state.clearChildResultWait()
+        let nowMillis = Int64(Date().timeIntervalSince1970 * 1_000.0)
+        _ = sealActiveEpisodeForIdleGapIfNeeded(incomingTimestampMillis: nowMillis)
         let prompt = Self.promptText(userText: text, selectedFilePreview: consumesComposer ? pendingSelectedFilePreview : nil)
         let digest = chatInputDigest(for: prompt.isEmpty ? "[image]" : prompt)
         let userMsg = makeUserMessage(prompt: prompt, images: images, metadata: metadata)
+        let messageId = ChatMessageProjector.messageId(for: userMsg)
+        recordEpisodeMessageTimestamp(userMsg, conversationId: currentConversationId, timestampMillis: nowMillis)
         pendingAssistantRegeneration = nil
-        // iMessage 式上屏:仅把这条用户消息的插入放进动画事务,驱动消息行的入场 transition。
-        // 批量加载/切换会话走 `messages = store.currentMessages`(不在事务内),不会逐条动画。
-        withAnimation(.spring(Self.userMessageSendSpring)) {
-            messages.append(userMsg)
-            bumpMessageRevision(reason: .userAppend)
+        // iMessage 式上屏：仅显式前台发送在渲染层门控一次气泡入场，不把整棵时间线包裹进全局弹簧事务，
+        // 避免底部锚点与状态占位行继承弹性位移，同时解决新分块（index % 10 == 0）首条消息丢 transition 的问题。
+        if !isStartingWatchQuestion {
+            ChatUserSendEntranceGate.arm("local-user:\(messageId)")
         }
+        messages.append(userMsg)
+        bumpMessageRevision(reason: .userAppend)
         invalidateSuggestionRequest()
         chatSuggestions = []
         if consumesComposer {
@@ -379,7 +413,7 @@ extension ChatViewModel {
                 _ = await self?.persistMessages(conversationId: runConversationId)
             }
         }
-        return (digest, runConversationId, ChatMessageProjector.messageId(for: userMsg))
+        return (digest, runConversationId, messageId)
     }
 
     /// Sends the user message and kicks off generation. For non-vision models the image
@@ -392,18 +426,24 @@ extension ChatViewModel {
         startsGenerationAfterInsertion: Bool = false
     ) {
         guard startsGenerationAfterInsertion, autoGenerateResponses else {
-            let (digest, conversationId, _) = appendUserMessage(text: text, images: images, metadata: metadata)
+            let (digest, conversationId, messageId) = appendUserMessage(text: text, images: images, metadata: metadata)
             guard autoGenerateResponses else { return }
-            generateResponse(inputDigest: digest, conversationId: conversationId, phoneControlUserInitiated: true)
+            generateResponse(
+                inputDigest: digest,
+                conversationId: conversationId,
+                phoneControlUserInitiated: true,
+                anchorUserMessageId: messageId
+            )
             return
         }
         let token = UUID()
-        let (digest, conversationId, _) = appendUserMessage(text: text, images: images, metadata: metadata)
+        let (digest, conversationId, messageId) = appendUserMessage(text: text, images: images, metadata: metadata)
         deferredGenerationStart = DeferredGenerationStart(
             token: token,
             run: currentRun,
             inputDigest: digest,
-            conversationId: conversationId
+            conversationId: conversationId,
+            anchorUserMessageId: messageId
         )
         // 停止键与思考占位仍在发送当帧出现，只有启动工作后移。
         isLoading = true
@@ -427,15 +467,20 @@ extension ChatViewModel {
         deferredGenerationStart = nil
         guard currentRun === pending.run else {
             // 动画期间已离开该会话：当前消息与配置不再属于它，不能代为启动。
-            pending.run.state.isLoading = false
+            pending.run.state.isLoading = pending.run.hasActiveOrQueuedTask
             NSLog("[ChatViewModel] deferred generation dropped after conversation switch")
             return
         }
-        generateResponse(inputDigest: pending.inputDigest, conversationId: pending.conversationId, phoneControlUserInitiated: true)
+        generateResponse(
+            inputDigest: pending.inputDigest,
+            conversationId: pending.conversationId,
+            phoneControlUserInitiated: true,
+            anchorUserMessageId: pending.anchorUserMessageId
+        )
     }
 
-    /// 需要 run 已存在的入口（再次发送、停止、新建会话、Watch 提问）先立即启动。
-    private func startDeferredGenerationNow() {
+    /// 需要 run 已存在的入口（再次发送、停止、新建会话、会话切换、Watch 提问）先立即启动。
+    func startDeferredGenerationNow() {
         guard let token = deferredGenerationStart?.token else { return }
         startDeferredGeneration(token: token)
     }
@@ -497,17 +542,17 @@ extension ChatViewModel {
     }
 
     func isShowingThemeTryOnApproval(_ approval: AmberThemeTryOnApproval) -> Bool {
-        currentRun.host?.currentRunId == approval.runId
+        currentRun.host(forRunId: approval.runId) != nil
             && pendingMcpApproval?.id == approval.requestId
             && pendingMcpApproval?.toolName == "theme_pack_import"
     }
 
     @discardableResult
     func resolveThemeTryOnApproval(_ approval: AmberThemeTryOnApproval, allow: Bool) -> Bool {
-        guard let run = runRegistry.allRuns.first(where: { $0.host?.currentRunId == approval.runId }),
+        guard let run = runRegistry.allRuns.first(where: { $0.host(forRunId: approval.runId) != nil }),
               run.state.pendingMcpApproval?.id == approval.requestId,
               run.state.pendingMcpApproval?.toolName == "theme_pack_import",
-              let host = run.host else { return false }
+              let host = run.host(forRunId: approval.runId) else { return false }
         return allow
             ? host.approvePendingMcpTool(requestId: approval.requestId)
             : host.denyPendingMcpTool(requestId: approval.requestId)
@@ -588,6 +633,10 @@ extension ChatViewModel {
     func cancelGeneration() {
         startDeferredGenerationNow()
         currentRun.state.clearChildResultWait()
+        if let activeSlot = currentRun.orderedSlots.last(where: \.isActiveOrQueued) {
+            _ = cancelGeneration(runId: activeSlot.runId)
+            return
+        }
         // cancel() itself publishes the cancelled watch snapshot; do not clear first.
         if kernelRunHost.isRunning {
             kernelRunHost.cancel()
@@ -601,7 +650,33 @@ extension ChatViewModel {
 
     @discardableResult
     func cancelGeneration(runId: String) -> Bool {
+        if let (run, slot) = runRegistry.findSlot(runId: runId) {
+            cancelUnconsumedFollowups(for: slot, state: run.state)
+            if slot.isQueuedForConcurrencySlot {
+                runRegistry.removePendingTask(slotId: slot.slotId)
+                slot.isQueuedForConcurrencySlot = false
+                if let placeholderId = slot.queuedPlaceholderMessageId {
+                    slot.queuedPlaceholderMessageId = nil
+                    run.state.messages.removeAll {
+                        ChatMessageProjector.messageId(for: $0) == placeholderId
+                    }
+                }
+                slot.isTerminal = true
+                refreshLiveTaskMessageIds(in: run)
+                if isCurrentConversation(run.state.conversationId) {
+                    bumpMessageRevision(reason: .generationCancelled)
+                }
+                runActivityRevision &+= 1
+                return true
+            }
+            if let host = slot.host,
+               host.cancel(runId: slot.runId) || host.cancel(runId: runId) {
+                markTaskSlotTerminal(slot, in: run)
+                return true
+            }
+        }
         if host(runId: runId)?.cancel(runId: runId) == true {
+            dequeueNextPendingTasksIfPossible()
             return true
         }
         return IOSChatBackgroundGenerationCoordinator.shared.cancelJob(runId: runId)
@@ -609,7 +684,7 @@ extension ChatViewModel {
 
     @discardableResult
     func handoffGenerationToBackgroundIfNeeded(honorKeepAliveLease: Bool = false) -> Bool {
-        let hosts = runRegistry.allRuns.compactMap(\.host).filter(\.isRunning)
+        let hosts = runRegistry.allRuns.flatMap(\.allActiveHosts)
         var didHandoffAll = true
         for host in hosts {
             if !host.handoffCurrentGenerationToBackground(
@@ -632,7 +707,7 @@ extension ChatViewModel {
     /// the Store still sees an empty current document; force a new ID instead of
     /// reusing the conversation that already has a visible, unsaved message.
     @discardableResult
-    func startNewConversation(commitIf: () -> Bool = { true }) async -> Bool {
+    func startNewConversation(automationLines: IOSPhoneAutomationLines = .shared, commitIf: () -> Bool = { true }) async -> Bool {
         guard let store = conversationStore, commitIf() else { return false }
         startDeferredGenerationNow()
         guard !store.isImportingConversationDocuments else {
@@ -644,8 +719,9 @@ extension ChatViewModel {
             return false
         }
         let sourceConversationId = currentConversationId
-        let mustCreateNewConversation = sourceConversationId == store.currentConversation?.id &&
-            !messages.isEmpty && store.currentMessages.isEmpty
+        let sourceIsAutomation = sourceConversationId.map { automationLines.isDedicated(conversationID: $0.toHexDashString()) } ?? false
+        let mustCreateNewConversation = sourceIsAutomation || (sourceConversationId == store.currentConversation?.id &&
+            !messages.isEmpty && store.currentMessages.isEmpty)
         guard prepareForConversationChange() else { return false }
         if mustCreateNewConversation {
             return await store.newConversation(commitIf: {
@@ -741,7 +817,8 @@ extension ChatViewModel {
             let digest = chatInputDigest(for: regenerateDigestSeed())
             generateResponse(inputDigest: digest, conversationId: conversation.id, phoneControlUserInitiated: true)
         }
-        let didStart = host(for: conversationId)?.isRunning == true
+        let didStart = (runRegistry.run(for: conversationId)?.hasActiveOrQueuedTask == true)
+            || (host(for: conversationId)?.isRunning == true)
         if !didStart {
             state.pendingAssistantRegeneration = nil
             if targetNode.role != MessageRole.user,
@@ -857,6 +934,7 @@ extension ChatViewModel {
             return false
         }
         state.messages = store.currentMessages
+        retireOrphanedTaskSlotsAfterBranchChange(in: runRegistry.current(for: conversationId))
         refreshIntelligentUIReceipts(messages: state.messages, conversationID: conversationId.toHexDashString())
         bumpMessageRevision(reason: .branchChange)
         return true

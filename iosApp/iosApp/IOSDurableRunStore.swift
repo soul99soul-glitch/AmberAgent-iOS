@@ -15,10 +15,8 @@ final class IOSDurableRunStore: @unchecked Sendable {
         static let chat = "chat"
         static let chatVersion = "1"
         static let chatRecoveryAliases = ["chat", "chat_turn"]
-        static let novelGeneration = "novel_generation"
         static let miniAppAI = "miniapp_ai"
         static let council = "council"
-        static let deepRead = "deep_read"
         static let version = "1"
     }
 

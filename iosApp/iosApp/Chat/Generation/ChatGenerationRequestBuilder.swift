@@ -7,8 +7,12 @@ import SwiftUI
 
 extension ChatViewModel {
 
-    func generateResponse(inputDigest: String, conversationId: KotlinUuid?,
-                                  phoneControlUserInitiated: Bool = false) {
+    func generateResponse(
+        inputDigest: String,
+        conversationId: KotlinUuid?,
+        phoneControlUserInitiated: Bool = false,
+        anchorUserMessageId: String? = nil
+    ) {
         // generateResponse 本身完全同步（kernelRunHost.start 内部再起 Task），
         // 用 begin/defer-end 包住整个函数体即测到主线程被占用的时长。
         var kickoffInterval = ChatPerfTrace.begin("GenerationKickoff")
@@ -17,36 +21,68 @@ extension ChatViewModel {
             configurationError = "正在恢复会话，请等待完成后再生成。"
             return
         }
-        if let conversationId {
-            guard !isGenerationActive(conversationId: conversationId) else { return }
-        } else {
-            guard !isGenerationActive else { return }
+        let targetConversationId = conversationId ?? currentConversationId
+#if DEBUG
+        if generationActiveOverrideForTesting?(targetConversationId) == true {
+            return
         }
-        isLoading = true
+#endif
+        if let targetConversationId,
+           IOSChatBackgroundGenerationCoordinator.shared.hasActiveJob(conversationId: targetConversationId) {
+            return
+        }
+        let targetRun = runRegistry.current(for: targetConversationId)
+        targetRun.state.isLoading = true
 
         let providerSetting = makeProviderSetting()
-        let params = makeTextGenerationParams(includePhoneControlTools: phoneControlUserInitiated && !currentRun.state.isOrchestratedChild)
+        let allowPhoneControl = phoneControlUserInitiated && !targetRun.state.isOrchestratedChild
+        let params = makeTextGenerationParams(includePhoneControlTools: allowPhoneControl)
 
         guard let resolvedProvider = providerSetting else {
-            isLoading = false
+            targetRun.state.isLoading = targetRun.hasActiveOrQueuedTask
             configurationError = configurationIssue?.message ?? ChatConfigurationIssue.missingProvider.message
             return
         }
 
-        // P0-2:所有前台文本 run 都进入唯一 Kernel。CGC 只保留非 agent 的
-        // one-shot 能力与兼容终态入口，不再拥有第二套模型—工具循环。
-        currentRun.state.generationConfiguration = (resolvedProvider, params, lastAssembledDynamicToolSnapshot)
-        kernelRunHost.start(
+        // P0-2:所有前台文本 run 都进入唯一 Kernel。每个用户问题分配独立 ChatAsyncTaskSlot，
+        // 复用现有 ChatConversationRunState / ChatKernelRunHost，按任务锚点隔离消息与追问。
+        targetRun.state.generationConfiguration = (resolvedProvider, params, lastAssembledDynamicToolSnapshot)
+        let resolvedAnchorId: String?
+        if targetRun.state.pendingAssistantRegeneration != nil {
+            resolvedAnchorId = anchorUserMessageId
+        } else {
+            resolvedAnchorId = anchorUserMessageId ?? targetRun.state.messages
+                .last(where: { $0.role == MessageRole.user })
+                .map { ChatMessageProjector.messageId(for: $0) }
+        }
+        let baselineMessages = buildTaskBaselineMessages(
+            in: targetRun,
+            anchorUserMessageId: resolvedAnchorId
+        )
+        let slot = ChatAsyncTaskSlot(
+            conversationId: targetConversationId,
+            inputDigest: inputDigest,
+            anchorUserMessageId: resolvedAnchorId,
+            phoneControlUserInitiated: allowPhoneControl,
             providerSetting: resolvedProvider,
             params: params,
-            inputDigest: inputDigest,
-            conversationId: conversationId,
-            uploadMessages: messages,
             toolExposureBridge: lastAssembledToolExposureBridge,
             recipeCatalogSnapshot: lastAssembledDynamicToolSnapshot,
-            phoneControlUserInitiated: phoneControlUserInitiated && !currentRun.state.isOrchestratedChild
+            baselineMessages: baselineMessages
         )
+        _ = startOrEnqueueTaskSlot(slot, in: targetRun)
     }
+
+    static let managerDelegationContractPrompt = """
+    【AI 经理并发派工契约（秘书班子领班）】
+    你在前台主对话中扮演“AI 经理（秘书班子领班）”角色：前台只负责与用户自然对话、理清意图、拆解任务，并将重度执行交由后台子代理（spawn_agent）并发完成，使对话与执行彻底解耦，绝不在主会话里同步死磕长耗时任务打断聊天节奏。
+    - 任务分流准则：
+      1. 随手单步查询（如简短问答、查改单条日程/设置、切换形象人设、一次轻量检索即可作答）：在主对话当轮直接轻量完成。
+      2. 多维调研 / 潜在客户摸排 / 赛道对比 / 批量分析 / 复杂多步任务：前台仅用 1 句自然利落的口语接单回应，同轮直接拆解并调用 `spawn_agent` 派发给后台子代理并发干活，不要在主会话里自己连续多轮搜索或长篇憋字。
+    - 多事项并发拆单：当用户在一段话里同时交办多件独立事项（例如同时让找潜在客户、做赛道调研、对比竞品方案）时，在同一轮或连续轮次拆成多个独立的 `spawn_agent` 任务并发执行（后台支持最高 4 路子代理同时并行）；派发后立即结束当前前台轮次释放输入框，供用户继续闲聊或随时补充新意图，不要在主会话同步轮询死等。
+    - 结构化交办参数：调用 `spawn_agent` 时，除清晰的 `task_name`（短小写英文名）与 `message` 外，可按需指定 `deliverable_hint`（期望交付物格式，如“潜在客户清单与联系方式”、“赛道对比结论与核心依据”）与 `checkpoint_policy`（`"none"` 表示全程执行到底；`"pause_for_decision"` 表示完成前序摸排/初筛后先暂停并回传结构化候选供用户拍板下一步），复杂任务可指定 `reasoning_level: "high"`。若其余编排工具（如 `followup_task`、`send_message`、`interrupt_agent`、`list_agents`）未暴露，先通过 `tool_search` 检索精确名称后直接调用，严禁使用 `mcp_call` 包装。
+    - 本机前台专属边界：涉及当前 iPhone 屏幕与 App 自控的工具（`phone_*`）绑定当前主对话唯一设备租约，必须在当前前台主会话内直接执行，严禁通过 `spawn_agent` 委派给子代理。
+    """
 
     /// P1 管线闭环：参与线程树的会话注入的 mailbox 语义说明（仅在
     /// currentConversationHasOrchestrationLinks 为真时出现在上传上下文）。
@@ -66,6 +102,33 @@ extension ChatViewModel {
         // makeTextGenerationParams() before this runs — messages are only
         // injected inside a started run, after the bridge exists.
         var uploadableWithGuidance = uploadableMessages
+        if !state.isOrchestratedChild {
+            if let latestUserIndex = uploadableMessages.lastIndex(where: { $0.role == MessageRole.user }) {
+                let latestUserMessage = uploadableMessages[latestUserIndex]
+                let rawUserText = latestUserMessage.toText().trimmingCharacters(in: .whitespacesAndNewlines)
+                if !rawUserText.isEmpty, !rawUserText.hasPrefix("[mailbox ") {
+                    let currentTurnToolNames = Set(
+                        uploadableMessages[(latestUserIndex + 1)...]
+                            .filter { $0.role == MessageRole.assistant }
+                            .flatMap { $0.getTools().map(\.toolName) }
+                    )
+                    AmberIntentInboxStore.shared.captureFromUserMessage(
+                        rawUserText,
+                        conversationId: state.conversationId?.toHexDashString(),
+                        sourceMessageId: ChatMessageProjector.messageId(for: latestUserMessage),
+                        triggeredToolNames: currentTurnToolNames
+                    )
+                }
+            }
+        uploadableWithGuidance = [PromptTranscript.shared.sectionMessage(
+            name: "conversationalProgress",
+            text: """
+            无需调用工具的闲聊、寒暄或可直接回答的问题，在同一轮直接自然作答，不要拆成“先应一声、再答一遍”的两段。凡是需要调用工具或多步处理的请求（如修改角色设定、查日程、搜索、读写数据、执行操作等），要调用工具时在同轮调用，绝不能在首轮静默只发 tool_calls：首轮发出 tool_calls 的同时，必须先输出简短自然的一句口语回应（严格控制在 1 句以内），按你当前的形象人设（Soul）性格与称呼（默认则以亲切利落的朋友口吻）顺手把事应下来；严禁复读用户原话，严禁“收到您的请求”“正在为您处理”“好的，我将为您……”等客服腔或汇报体。后续第 2 轮起的连续工具调用轮次：同一阶段内的常规工具调用直接静默发出 tool_calls（界面已有单行状态实时显示工具进度），不要每次调用工具或几字一句都冒泡；只有出现阶段变化、关键实际发现、方向调整、遇到阻塞或需要用户拍板决定等有意义节点时，才把同一阶段的说明聚合成完整意思输出一条中途正文。工具执行完毕给出最终答复时，在新一轮直接自然交付结果与正文，不要重复开场寒暄或再来一遍客套汇报；若刚通过 agent_soul_update 切换了角色设定，立即以新身份和口吻说话。若纯文本问题确实需要分步深入展开，可在首轮简短给出核心判断并在末尾附上 <amber-continue>阶段1|阶段2|阶段3</amber-continue>（写出 3 个与具体话题相关、各 6～14 字的思考方向，例如“梳理二人的交往|比较彼此的经历|分析他们的情谊”；不要声称尚未发生的搜索或工具操作，无工具时随后结束本轮，有工具时仍须同轮调用）。编排复杂后台子线程时，如目标模型支持，可为 spawn_agent 指定 reasoning_level: "high"。只陈述真实进展，不要声称尚未完成的操作已完成。仅在用户明确要求记住、修改或忘掉时使用 memory_tool 写入用户事实；日常对话流露的信息由后台按原话证据规则提炼。需要历史上下文时可主动使用 wiki_read/wiki_search 并沿相对链接读取；wiki_edit/wiki_revert 只修改带版本来源的 Agent 笔记，不能替代用户确认置顶或核心记忆。
+
+            \(Self.managerDelegationContractPrompt)
+            """
+        )] + uploadableWithGuidance
+        }
         uploadableWithGuidance = [PromptTranscript.shared.sectionMessage(
             name: "scheduledWake", text: Self.scheduledWakeContextPrompt
         )] + uploadableWithGuidance
@@ -88,7 +151,10 @@ extension ChatViewModel {
                 ? mcpManager.tools
                 : [],
             miniAppRepository: miniAppRepository,
-            miniAppRuntimeEnabled: isMiniAppRuntimeEnabled
+            miniAppRuntimeEnabled: isMiniAppRuntimeEnabled,
+            soulStore: agentSoulStore,
+            conversationId: state.conversationId?.toHexDashString(),
+            isOrchestratedChild: state.isOrchestratedChild
         ).injectingRuntimeContext(
             into: uploadableWithGuidance,
             coalesceSystemMessages: false,
@@ -99,26 +165,29 @@ extension ChatViewModel {
 
     func memoryRecordIdsForRuntimeContext(
         _ messages: [UIMessage],
-        override: ChatMemoryContextBuilder.RecallResult? = nil
+        override: ChatMemoryContextBuilder.RecallResult? = nil,
+        state: ChatConversationRunState? = nil
     ) -> [Int32] {
         let uploadableMessages = messages.filter { !Self.isLocalGenerationError($0) }
         return ChatRuntimeContextBuilder(
             sharedSettings: sharedSettings,
             mcpTools: mcpManager.tools,
             miniAppRepository: miniAppRepository,
-            miniAppRuntimeEnabled: isMiniAppRuntimeEnabled
+            miniAppRuntimeEnabled: isMiniAppRuntimeEnabled,
+            conversationId: (state ?? currentRun.state).conversationId?.toHexDashString()
         ).memoryRecallResult(for: uploadableMessages, override: override).ids
     }
 
     /// P3a：Jev 关闭/未提供覆盖时的兜底记忆召回结果，供 `ChatKernelRunHost`
     /// 在一次请求准备内计算一次并复用（见 `memoryRecallResultForRun` 绑定）。
-    func memoryRecallResultForRun(_ messages: [UIMessage]) -> ChatMemoryContextBuilder.RecallResult {
+    func memoryRecallResultForRun(_ messages: [UIMessage], state: ChatConversationRunState? = nil) -> ChatMemoryContextBuilder.RecallResult {
         let uploadableMessages = messages.filter { !Self.isLocalGenerationError($0) }
         return ChatRuntimeContextBuilder(
             sharedSettings: sharedSettings,
             mcpTools: mcpManager.tools,
             miniAppRepository: miniAppRepository,
-            miniAppRuntimeEnabled: isMiniAppRuntimeEnabled
+            miniAppRuntimeEnabled: isMiniAppRuntimeEnabled,
+            conversationId: (state ?? currentRun.state).conversationId?.toHexDashString()
         ).memoryRecallResult(for: uploadableMessages)
     }
 
@@ -128,15 +197,19 @@ extension ChatViewModel {
     /// 返回本轮的统一选中集合（nil = off/shadow/失败回退）。
     func prepareJevMemoryRecallSelection(
         _ messages: [UIMessage],
-        runId: String?
+        runId: String?,
+        state: ChatConversationRunState? = nil
     ) async -> ChatMemoryContextBuilder.RecallResult? {
         let uploadableMessages = messages.filter { !Self.isLocalGenerationError($0) }
-        return await IOSJevMemoryRecallService.shared.prepareTurnSelection(
+        let conversationId = (state ?? currentRun.state).conversationId?.toHexDashString()
+        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else { return nil }
+        let result = await IOSJevMemoryRecallService.shared.prepareTurnSelection(
             messages: uploadableMessages,
             records: IosMemoryFactory.shared.getAllRecords(),
             runtime: sharedSettings.agentRuntime,
             identity: IOSJevMemoryRecallService.RunIdentity(runId: runId)
         )
+        return AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) ? result : nil
     }
 
     func recordMemoryUsage(_ ids: [Int32], force: Bool = false, state: ChatConversationRunState) {
@@ -144,6 +217,7 @@ extension ChatViewModel {
         // 原会话的 state 持有本 run 的去抖；切会话后仍绑定该 state 的 host。
         // P2-c 修复 2：模型显式引用（citation flush）传 force: true，绕过
         // 同集去抖——引用是模型信号，与召回标记语义不同，应始终生效。
+        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: state.conversationId?.toHexDashString()) else { return }
         let ownerKey = state.conversationId?.toHexDashString() ?? ""
         state.recordMemoryUsage(
             ids: Set(ids), runId: runRegistry.run(forHex: ownerKey)?.host?.currentRunId, force: force
@@ -277,7 +351,12 @@ extension ChatViewModel {
     ) -> TextGenerationParams {
         let state = state ?? currentRun.state
         let messages = state.messages
-        let includesPhoneTools = includePhoneControlTools && phoneControl.enabled
+        let includesPhoneTools = includePhoneControlTools
+            && phoneControl.enabled
+            && !phoneControl.isOccupied
+            && !phoneControl.isPreparingConnection
+            && !phoneControl.isUpdatingPairing
+            && !phoneControl.isLoadingApplications
         let modelId = currentModelId
         let modelAbilities = currentModelAbilities
         let searchEnabled = sharedSettings.snapshot.enableWebSearch
@@ -367,8 +446,9 @@ extension ChatViewModel {
             toolDeclarations.append(ToolKt.createSearchWebToolDeclaration())
             toolDeclarations.append(ToolKt.createScrapeWebToolDeclaration())
         }
-        if IOSMemoryToolExecutor.isEnabled(runtime: sharedSettings.agentRuntime) {
-            toolDeclarations.append(ToolKt.createMemoryToolDeclaration())
+        if AmberHubStore.shared.allowsGlobalMemory(conversationId: state.conversationId?.toHexDashString()),
+           IOSMemoryToolExecutor.isEnabled(runtime: sharedSettings.agentRuntime) {
+            toolDeclarations.append(MemoryWikiToolKt.createMemoryWikiEnabledToolDeclaration())
         }
         if imageGenerationConfigured {
             toolDeclarations.append(ToolKt.createImageGenToolDeclaration())
@@ -392,6 +472,8 @@ extension ChatViewModel {
             names: Array(IOSSkillToolCatalog.toolNames).sorted()
         ))
         toolDeclarations.append(ToolKt.createSoulImportToolDeclaration())
+        // Agent 形象人设（Soul）：读免审批；写按产品决定直通，旧版自动进快照栈可回退。
+        toolDeclarations.append(contentsOf: AgentSoulToolDeclarationsKt.createAgentSoulToolDeclarations())
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: Array(IOSRecipeToolCatalog.toolNames).sorted()
         ))
@@ -399,12 +481,14 @@ extension ChatViewModel {
             names: Array(IOSPluginToolCatalog.toolNames).sorted()
         ))
         // Apple device capabilities are default-deferred. They enter the full
-        // bridge catalog so tool_search can expose them only when relevant.
+        // bridge catalog so tool_search can expose them only when relevant,
+        // excluding capabilities disabled by policy or missing required entitlements.
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
-            names: Array(IOSAppleAgentToolCatalog.toolNames).sorted()
+            names: enabledModelToolNames(IOSAppleAgentToolCatalog.toolNames)
         ))
         toolDeclarations.append(contentsOf: IOSWakeToolCatalog.declarations)
         toolDeclarations.append(contentsOf: IOSShortcutAuthoringToolCatalog.declarations)
+        toolDeclarations.append(IOSPhoneControlToolCatalog.preflightDeclaration)
         if includesPhoneTools {
             toolDeclarations.append(contentsOf: IOSPhoneControlToolCatalog.declarations)
         }
@@ -439,11 +523,14 @@ extension ChatViewModel {
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: ["session_search", "session_read"]
         ))
-        // 当前会话原始历史检索（history_search/history_fetch）。常驻：压缩后
-        // 模型必须能立刻回查原文，不能先依赖 tool_search 的额外一轮。
+        // 当前会话原始历史检索（history_search/history_fetch）与归档话题召回（episode_recall）。
+        // 常驻：分段归档或压缩后模型必须能立刻回查原文，不能先依赖 tool_search 的额外一轮。
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: ["history_search", "history_fetch"]
         ))
+        if !state.isOrchestratedChild {
+            toolDeclarations.append(ChatEpisodeRecallTool.declaration)
+        }
         // Agent 自配置 provider/model：非常驻 deferred；写密钥仅前台 + 审批。
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: Array(IOSProviderConfigToolCatalog.toolNames).sorted()
@@ -502,8 +589,20 @@ extension ChatViewModel {
         // bridge instance is handed to the run coordinator, which owns it for
         // the whole run so hits become callable on the NEXT round.
         let exposureBridge = IosToolExposureBridge(tools: toolDeclarations, recipeSearchInfo: recipeSearchInfo)
+        exposureBridge.exposeToolNames(names: Array(AgentSoulToolCatalog.toolNames).sorted())
+        if !state.isOrchestratedChild {
+            exposureBridge.exposeToolNames(names: [ChatEpisodeRecallTool.name, "spawn_agent"])
+        }
         if includesPhoneTools {
             exposureBridge.exposeToolNames(names: Array(IOSPhoneControlToolCatalog.toolNames).sorted())
+        }
+        let availableToolNames = Set(toolDeclarations.map(\.name))
+        let passthroughNames = Self.firstRoundPassthroughToolNames(
+            for: messages,
+            availableToolNames: availableToolNames
+        )
+        if !passthroughNames.isEmpty {
+            exposureBridge.exposeToolNames(names: passthroughNames)
         }
         exposureBridge.restoreExecutedTools(tools: recentToolsForExposure(in: messages))
         if let provider = makeProviderSetting(),
@@ -531,6 +630,71 @@ extension ChatViewModel {
 
     func currentToolDeclarationNames() -> [String] {
         makeTextGenerationParams().tools.map(\.name)
+    }
+
+    static let maxFirstRoundPassthroughTools = 6
+
+    /// Picks up to 6 intent-matched tools from the already capability- and
+    /// entitlement-filtered declaration catalog so Round 0 avoids unnecessary
+    /// `tool_search` hops while keeping approvals untouched.
+    static func firstRoundPassthroughToolNames(
+        for messages: [UIMessage],
+        availableToolNames: Set<String>
+    ) -> [String] {
+        let rawPrompt = messages
+            .last(where: { $0.role == MessageRole.user })?
+            .toText()
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !rawPrompt.isEmpty else { return [] }
+        let lower = rawPrompt.lowercased()
+
+        let intentBuckets: [(keywords: [String], tools: [String])] = [
+            (["日程", "日历", "会议", "约会", "安排", "calendar", "schedule", "meeting", "event"],
+             [IOSAppleAgentToolCatalog.calendarEventsList,
+              IOSAppleAgentToolCatalog.calendarEventCreate,
+              IOSAppleAgentToolCatalog.calendarEventUpdate]),
+            (["提醒", "待办", "reminder", "todo", "task"],
+             [IOSAppleAgentToolCatalog.remindersList,
+              IOSAppleAgentToolCatalog.reminderCreate,
+              IOSAppleAgentToolCatalog.reminderComplete]),
+            (["天气", "温度", "降雨", "预报", "weather", "forecast"],
+             [IOSWeatherToolCatalog.toolName]),
+            (["健康", "步数", "心率", "睡眠", "运动", "锻炼", "health", "steps", "sleep", "workout"],
+             [IOSHealthAgentToolCatalog.toolName,
+              IOSAppleAgentToolCatalog.workoutPlanPreview]),
+            (["通知", "闹钟", "notification", "alarm"],
+             [IOSAppleAgentToolCatalog.notificationSchedule,
+              IOSAppleAgentToolCatalog.alarmSchedule,
+              IOSAppleAgentToolCatalog.alarmsList]),
+            (["手机控制", "点手机", "操作手机", "自动点击", "phone control", "phone automation"],
+             [IOSPhoneControlToolCatalog.preflightToolName]),
+            (["工作区", "文件", "保存文档", "workspace", "artifact"],
+             ["workspace_list", "workspace_read", "workspace_search"]),
+            (["快捷指令", "shortcut"],
+             [IOSShortcutAuthoringToolCatalog.compose]),
+        ]
+
+        let matchedBuckets = intentBuckets
+            .filter { bucket in bucket.keywords.contains { lower.contains($0) } }
+            .map { $0.tools.filter { availableToolNames.contains($0) } }
+            .filter { !$0.isEmpty }
+        guard !matchedBuckets.isEmpty else { return [] }
+
+        var selected: [String] = []
+        var seen: Set<String> = []
+        let maxDepth = matchedBuckets.map(\.count).max() ?? 0
+        for depth in 0..<maxDepth {
+            for bucketTools in matchedBuckets where depth < bucketTools.count {
+                let toolName = bucketTools[depth]
+                if seen.insert(toolName).inserted {
+                    selected.append(toolName)
+                    if selected.count >= maxFirstRoundPassthroughTools {
+                        return selected
+                    }
+                }
+            }
+        }
+        return selected
     }
 
     private func workspaceToolNamesForCurrentTurn() -> [String] {
@@ -691,6 +855,8 @@ extension ChatViewModel {
         case "mcp_list", "mcp_import_from_skill",
              "skills_list", "use_skill", "skill_validate", "skill_import", "soul_import", "skill_enable", "skill_disable":
             true
+        case let name where AgentSoulToolCatalog.toolNames.contains(name):
+            true
         case let name where IOSRecipeToolCatalog.toolNames.contains(name):
             true
         case let name where IOSPluginToolCatalog.toolNames.contains(name):
@@ -711,12 +877,22 @@ extension ChatViewModel {
         return localToolExecutor.permissionPolicy(capabilityId: capabilityId) != .disabled
     }
 
-    private func enabledModelToolNames(_ names: Set<String>) -> [String] {
-        guard let localToolExecutor else { return Array(names).sorted() }
-        return names.filter { toolName in
-            guard let capability = IOSCapabilityRegistry.capabilities.first(where: { $0.modelToolNames.contains(toolName) }) else {
+    func enabledModelToolNames(
+        _ names: Set<String>,
+        bundleIdentifier: String? = Bundle.main.bundleIdentifier,
+        infoDictionary: [String: Any]? = Bundle.main.infoDictionary
+    ) -> [String] {
+        names.filter { toolName in
+            guard let capability = IOSCapabilityRegistry.capabilities.first(where: { $0.modelToolNames.contains(toolName) }),
+                  capability.status != .unsupported,
+                  IOSSystemPermissionCoordinator.missingEntitlements(
+                      for: capability,
+                      bundleIdentifier: bundleIdentifier,
+                      infoDictionary: infoDictionary
+                  ).isEmpty else {
                 return false
             }
+            guard let localToolExecutor else { return true }
             return localToolExecutor.permissionPolicy(capabilityId: capability.id) != .disabled
         }
         .sorted()

@@ -5,10 +5,16 @@ enum NativeTimelineScrollReturnPolicy {
     static func returnedToBottom(
         liveDistanceToBottom: CGFloat?,
         cachedNearBottom: Bool,
-        threshold: CGFloat
+        threshold: CGFloat,
+        draggedAwayFromBottom: Bool = false
     ) -> Bool {
         guard let liveDistanceToBottom, liveDistanceToBottom.isFinite else {
             return cachedNearBottom
+        }
+        // A short history drag can end inside the return tolerance. Distance
+        // alone must not turn that deliberate movement into a return to bottom.
+        if draggedAwayFromBottom, liveDistanceToBottom > NativeTimelineScrollCore.arrivalEpsilon {
+            return false
         }
         return liveDistanceToBottom <= threshold
     }
@@ -75,6 +81,7 @@ struct NativeTimelineScrollGeometry: Equatable {
     var adjustedInsetBottom: CGFloat
     var distanceToBottom: CGFloat
     var userInteracting: Bool
+    var wasNearBottomBeforeViewportChange: Bool = false
 
     var bottomTarget: CGFloat {
         max(
@@ -138,9 +145,9 @@ enum NativeTimelineScrollCore {
     ) -> (state: NativeTimelineScrollState, actions: [NativeTimelineScrollAction]) {
         if geometry.userInteracting {
             switch intent {
-            case .explicitBottom,
-                 .userDragEnded,
-                 .conversationReset:
+            case let .explicitBottom(source, _, _) where source != .composerFocus:
+                break
+            case .userDragEnded, .conversationReset:
                 break
             default:
                 return (.pausedForUser, stopFrameDriverIfNeeded(from: state))
@@ -149,6 +156,9 @@ enum NativeTimelineScrollCore {
 
         switch intent {
         case let .explicitBottom(source, animated, keyboardToken):
+            if source == .composerFocus, state == .pausedForUser {
+                return (.pausedForUser, [])
+            }
             let nextState: NativeTimelineScrollState
             if source == .composerFocus {
                 nextState = .keyboardFocus(
@@ -175,43 +185,50 @@ enum NativeTimelineScrollCore {
             switch state {
             case .pausedForUser:
                 return (state, [])
-            case let .followingBottom(virtualOffset, target, _, _, velocity):
+            case let .followingBottom(_, target, _, _, _):
+                // 流式贴底由 SwiftUI 的 .sizeChanges 底错在【布局阶段】完成：
+                // 内容长高与滚动偏移在同一布局帧内抵消，既不平滑延迟也不硬跳。
+                // driver 这里只同步跟随状态，绝不能再去 writeOffsetY / layoutIfNeeded，
+                // 否则会与布局锚点争夺 offset，表现为逐段生硬跳变。
+                let pinnedTarget = clampedTarget(current: target, incoming: geometry.bottomTarget)
                 return (
                     .followingBottom(
-                        virtualOffset: virtualOffset,
-                        target: clampedTarget(current: target, incoming: geometry.bottomTarget),
+                        virtualOffset: pinnedTarget,
+                        target: pinnedTarget,
                         lastFollowRequestAt: now,
                         lagAllowance: lagAllowance,
-                        velocity: velocity
+                        velocity: 0
                     ),
-                    [.startFrameDriver]
+                    []
                 )
             case .keyboardFocus:
                 return (
                     state,
                     [.requestBottomAnchor(animated: false, source: .streamGrowth)]
                 )
-            case let .settlingAfterTerminal(virtualOffset, _, _):
+            case .settlingAfterTerminal:
+                // 终态收口：同样交给布局锚点，等终态重测完成后由 settle 收口。
                 return (
                     .settlingAfterTerminal(
-                        virtualOffset: min(virtualOffset, geometry.bottomTarget),
+                        virtualOffset: geometry.bottomTarget,
                         target: geometry.bottomTarget,
                         lastLayoutAt: now
                     ),
-                    [.startFrameDriver]
+                    []
                 )
             case .idle:
                 guard geometry.isNearBottom else {
                     return (state, [])
                 }
+                // 从 idle 接管流式：仅建立跟随状态，贴底交给布局锚点。
                 return (
                     .followingBottom(
-                        virtualOffset: geometry.offsetY,
+                        virtualOffset: geometry.bottomTarget,
                         target: geometry.bottomTarget,
                         lastFollowRequestAt: now,
                         lagAllowance: lagAllowance
                     ),
-                    [.startFrameDriver]
+                    []
                 )
             }
 
@@ -251,9 +268,14 @@ enum NativeTimelineScrollCore {
                 )
             case .idle:
                 // 终态 settle 交还所有权后，晚到的布局（终态重测二 pass、渲染态
-                // 延迟刷新）仍可能移动底部；近底时重新收锚一次，收敛后照常交还
-                // 所有权。远底（用户在阅读历史）不打扰。
-                guard geometry.isNearBottom else { return (state, []) }
+                // 延迟刷新）或键盘弹起/收起仍可能移动底部；近底或视口缩放前原本近底时
+                // 重新收锚，远底（用户在阅读历史）不打扰。
+                guard geometry.isNearBottom || geometry.wasNearBottomBeforeViewportChange else {
+                    return (state, [])
+                }
+                guard abs(geometry.offsetY - geometry.bottomTarget) >= arrivalEpsilon else {
+                    return (.idle, [])
+                }
                 return (
                     .settlingAfterTerminal(
                         virtualOffset: min(geometry.offsetY, geometry.bottomTarget),

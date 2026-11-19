@@ -1,1 +1,5 @@
 iosApp/IshRuntimeResources/fs/** -text -diff
+
+# Review patches carry a single space on blank unified-diff context lines.
+docs/reviews/2026-11-08-ios-group-a-integrated-delta.patch whitespace=-blank-at-eol
+docs/reviews/2026-11-08-ios-group-a-three-patches-only.patch whitespace=-blank-at-eol

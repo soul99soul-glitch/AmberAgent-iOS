@@ -423,6 +423,9 @@ class IOSChatKernelRunHostTestCase: XCTestCase {
                    params: F.makeParams(toolNames: [], tools: bridge.visibleTools()),
                    inputDigest: "phone-progress", conversationId: harness.conversationId,
                    uploadMessages: harness.messages, toolExposureBridge: bridge, phoneControlUserInitiated: true)
+        if let runID = host.currentRunId {
+            _ = host.ensurePhoneControlClaimedOnFirstUse(runId: runID)
+        }
         return (host, harness, provider, phoneControl, defaults, suite)
     }
 

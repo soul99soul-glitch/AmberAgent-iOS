@@ -34,6 +34,7 @@ struct TableView: View {
   @Environment(\.markdownAnimateInitialText) var animateInitialText
   @Environment(\.markdownController) var controller: MarkdownController?
   @Environment(\.markdownUsesLayerBackedTableAnimation) var usesLayerBackedTableAnimation
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   let headings: [AttributedString]
   let rows: [[RowContent]]
@@ -66,26 +67,38 @@ struct TableView: View {
     return rows.count
   }
 
+  private var a11yTotalRowCount: Int {
+    config.shouldAnimateText ? 0 : (numOfRows + 1)
+  }
+
   private func headerView(colIdx: Int) -> some View {
-    TableCellTextView(
+    TableHeaderCellView(
       attributedString: headings[colIdx],
       foregroundColor: config.tableStyle.headerTextColor,
+      headerBackgroundColor: config.tableStyle.headerBackgroundColor,
+      borderColor: config.tableStyle.borderColor,
+      horizontalPadding: config.tableCellHorizontalPadding,
+      verticalPadding: config.tableCellVerticalPadding,
+      colIdx: colIdx,
+      colCount: headings.count,
+      a11yTotalRowCount: a11yTotalRowCount,
       shouldAnimate: shouldAnimateTableText(headings[colIdx]),
       usesLayerBackedAnimation: usesLayerBackedTableAnimation
     )
-      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-      .accessibilityValue(String.itemPositionInTable(rowIndex: 1, totalRow: numOfRows + 1, columnIndex: colIdx + 1, totalColumn: headings.count))
-      .padding(.horizontal, config.tableCellHorizontalPadding)
-      .padding(.vertical, config.tableCellVerticalPadding)
-      .id("\(colIdx)-heading")
-      .background(Color(config.tableStyle.headerBackgroundColor))
-      .applyHeaderBorder(colIndex: colIdx, colCount: headings.count, color: Color(config.tableStyle.borderColor))
+    .equatable()
   }
 
   @ViewBuilder
   var gridView: some View {
     VStack(alignment: .leading, spacing: 0) {
-      TableLayout(columnCount: headings.count, columnMaxWidths: self.actualColumnMaxWidths()) {
+      TableLayout(
+        columnCount: headings.count,
+        columnMaxWidths: self.actualColumnMaxWidths(),
+        headings: headings,
+        rows: rows,
+        cellPadding: CGSize(width: config.tableCellHorizontalPadding, height: config.tableCellVerticalPadding),
+        dynamicTypeSize: dynamicTypeSize
+      ) {
         ForEach(0..<headings.count, id: \.self) { colIdx in
           headerView(colIdx: colIdx)
         }
@@ -119,26 +132,32 @@ struct TableView: View {
       // width expand the cell/column the same way chat paragraphs used to.
       ParagraphView(contents: applyTypographyThemingAndGetContent(nsAttributedString))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .accessibilityValue(String.itemPositionInTable(rowIndex: rowIdx + 2, totalRow: numOfRows + 1, columnIndex: colIdx + 1, totalColumn: headings.count))
+        .accessibilityValue(
+          a11yTotalRowCount > 0
+            ? String.itemPositionInTable(rowIndex: rowIdx + 2, totalRow: a11yTotalRowCount, columnIndex: colIdx + 1, totalColumn: headings.count)
+            : ""
+        )
         .frame(maxHeight: .infinity)
         .padding(.horizontal, config.tableCellHorizontalPadding)
         .padding(.vertical, config.tableCellVerticalPadding)
         .id("\(colIdx)-\(rowIdx)")
         .applyCellBorder(colIndex: colIdx, colCount: headings.count, rowIndex: rowIdx, rowCount: numOfRows, color: Color(config.tableStyle.borderColor))
     case .text(let attributedString):
-      TableCellTextView(
+      TableRegularCellView(
         attributedString: attributedString,
         foregroundColor: config.tableStyle.regularTextColor,
+        borderColor: config.tableStyle.borderColor,
+        horizontalPadding: config.tableCellHorizontalPadding,
+        verticalPadding: config.tableCellVerticalPadding,
+        colIdx: colIdx,
+        rowIdx: rowIdx,
+        colCount: headings.count,
+        hasBottomBorder: rowIdx < numOfRows - 1,
+        a11yTotalRowCount: a11yTotalRowCount,
         shouldAnimate: shouldAnimateTableText(attributedString),
         usesLayerBackedAnimation: usesLayerBackedTableAnimation
       )
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .accessibilityValue(String.itemPositionInTable(rowIndex: rowIdx + 2, totalRow: numOfRows + 1, columnIndex: colIdx + 1, totalColumn: headings.count))
-        .frame(maxHeight: .infinity)
-        .padding(.horizontal, config.tableCellHorizontalPadding)
-        .padding(.vertical, config.tableCellVerticalPadding)
-        .id("\(colIdx)-\(rowIdx)")
-        .applyCellBorder(colIndex: colIdx, colCount: headings.count, rowIndex: rowIdx, rowCount: numOfRows, color: Color(config.tableStyle.borderColor))
+      .equatable()
     }
   }
 
@@ -171,7 +190,7 @@ struct TableView: View {
       configShouldAnimateText: config.shouldAnimateText && animateInitialText,
       headingCount: headings.count,
       rowCount: numOfRows,
-      characterCount: attributedString.characters.count
+      characterCount: 0
     )
   }
 
@@ -185,17 +204,23 @@ struct TableView: View {
         )
         .cornerRadius(12)
         .onWidthChange { newWidth in
-          scrollWidth = newWidth
+          if scrollWidth != newWidth {
+            scrollWidth = newWidth
+          }
         }
     }
     .background {
       GeometryReader { geo in
         Color.clear
           .onAppear {
-            scrollWidth = geo.size.width
+            if scrollWidth != geo.size.width {
+              scrollWidth = geo.size.width
+            }
           }
           .onChange(of: geo.size.width) { newValue in
-            scrollWidth = newValue
+            if scrollWidth != newValue {
+              scrollWidth = newValue
+            }
           }
       }
     }
@@ -249,6 +274,82 @@ struct TableView: View {
     })
     .frame(width: 32, height: 32)
     .contentShape(Rectangle())
+  }
+}
+
+private struct TableHeaderCellView: View, Equatable {
+  let attributedString: AttributedString
+  let foregroundColor: UIColor
+  let headerBackgroundColor: UIColor
+  let borderColor: UIColor
+  let horizontalPadding: CGFloat
+  let verticalPadding: CGFloat
+  let colIdx: Int
+  let colCount: Int
+  let a11yTotalRowCount: Int
+  let shouldAnimate: Bool
+  let usesLayerBackedAnimation: Bool
+
+  var body: some View {
+    TableCellTextView(
+      attributedString: attributedString,
+      foregroundColor: foregroundColor,
+      shouldAnimate: shouldAnimate,
+      usesLayerBackedAnimation: usesLayerBackedAnimation
+    )
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+      .accessibilityValue(
+        a11yTotalRowCount > 0
+          ? String.itemPositionInTable(rowIndex: 1, totalRow: a11yTotalRowCount, columnIndex: colIdx + 1, totalColumn: colCount)
+          : ""
+      )
+      .padding(.horizontal, horizontalPadding)
+      .padding(.vertical, verticalPadding)
+      .id("\(colIdx)-heading")
+      .background(Color(headerBackgroundColor))
+      .applyHeaderBorder(colIndex: colIdx, colCount: colCount, color: Color(borderColor))
+  }
+}
+
+private struct TableRegularCellView: View, Equatable {
+  let attributedString: AttributedString
+  let foregroundColor: UIColor
+  let borderColor: UIColor
+  let horizontalPadding: CGFloat
+  let verticalPadding: CGFloat
+  let colIdx: Int
+  let rowIdx: Int
+  let colCount: Int
+  let hasBottomBorder: Bool
+  let a11yTotalRowCount: Int
+  let shouldAnimate: Bool
+  let usesLayerBackedAnimation: Bool
+
+  var body: some View {
+    var edges: [Edge] = []
+    if hasBottomBorder {
+      edges.append(.bottom)
+    }
+    if colIdx < colCount - 1 {
+      edges.append(.trailing)
+    }
+    return TableCellTextView(
+      attributedString: attributedString,
+      foregroundColor: foregroundColor,
+      shouldAnimate: shouldAnimate,
+      usesLayerBackedAnimation: usesLayerBackedAnimation
+    )
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      .accessibilityValue(
+        a11yTotalRowCount > 0
+          ? String.itemPositionInTable(rowIndex: rowIdx + 2, totalRow: a11yTotalRowCount, columnIndex: colIdx + 1, totalColumn: colCount)
+          : ""
+      )
+      .frame(maxHeight: .infinity)
+      .padding(.horizontal, horizontalPadding)
+      .padding(.vertical, verticalPadding)
+      .id("\(colIdx)-\(rowIdx)")
+      .border(width: 1, edges: edges, color: Color(borderColor))
   }
 }
 
@@ -311,7 +412,10 @@ private struct TableTextEntranceOverlay: UIViewRepresentable {
   }
 
   func updateUIView(_ uiView: TableTextEntranceLabel, context: Context) {
-    uiView.attributedText = themedAttributedString()
+    let themed = themedAttributedString()
+    if uiView.attributedText?.isEqual(to: themed) != true {
+      uiView.attributedText = themed
+    }
   }
 
   func sizeThatFits(
@@ -441,30 +545,110 @@ extension View {
 
 struct TableLayout: Layout {
   struct CacheData {
-    let columnWidths: [CGFloat]
-    let rowHeights: [CGFloat]
+    var columnCount: Int = 0
+    var columnMaxWidths: [CGFloat] = []
+    var headings: [AttributedString] = []
+    var rows: [[RowContent]] = []
+    var cellPadding: CGSize = .zero
+    var dynamicTypeSize: DynamicTypeSize = .large
+    var cellUnconstrainedWidths: [CGFloat] = []
+    var columnWidths: [CGFloat] = []
+    var rowHeights: [CGFloat] = []
   }
 
   let columnCount: Int
   let columnMaxWidths: [CGFloat]
+  let headings: [AttributedString]
+  let rows: [[RowContent]]
+  let cellPadding: CGSize
+  let dynamicTypeSize: DynamicTypeSize
 
   private let defaultRowHeight: CGFloat = 44
 
   func makeCache(subviews: Subviews) -> CacheData {
-    guard columnCount > 0 else { return CacheData(columnWidths: [], rowHeights: []) }
-    let rowCount = subviews.count / columnCount
+    var cache = CacheData()
+    updateCache(&cache, subviews: subviews)
+    return cache
+  }
 
-    var columnWidths = Array(repeating: CGFloat(0), count: columnCount)
-    for row in 0..<rowCount {
+  func updateCache(_ cache: inout CacheData, subviews: Subviews) {
+    guard columnCount > 0, columnMaxWidths.count >= columnCount else {
+      cache = CacheData()
+      return
+    }
+    let rowCount = subviews.count / columnCount
+    let totalCells = rowCount * columnCount
+    let previousRowCount = cache.rowHeights.count
+
+    let canReuseMeasurements = cache.columnCount == columnCount
+      && cache.columnMaxWidths == columnMaxWidths
+      && cache.cellPadding == cellPadding
+      && cache.dynamicTypeSize == dynamicTypeSize
+      && previousRowCount > 0
+      && cache.headings.count == columnCount
+      && cache.rows.count == previousRowCount - 1
+      && cache.cellUnconstrainedWidths.count == previousRowCount * columnCount
+
+    // A partial trailing row can grow without adding a row. Reuse only the
+    // equal content prefix, including attributed fonts, rather than row counts.
+    var preservedRowCount = 0
+    if canReuseMeasurements, cache.headings == headings {
+      if rowCount == previousRowCount, cache.rows == rows {
+        return
+      }
+      preservedRowCount = 1
+      let sharedDataRowCount = min(cache.rows.count, rows.count)
+      var dataRow = 0
+      while dataRow < sharedDataRowCount,
+            cache.rows[dataRow] == rows[dataRow] {
+        preservedRowCount += 1
+        dataRow += 1
+      }
+      if preservedRowCount == rowCount, rowCount == previousRowCount {
+        return
+      }
+    }
+    let preservedCellCount = preservedRowCount * columnCount
+
+    var cellUnconstrainedWidths: [CGFloat]
+    if preservedCellCount > 0 {
+      cellUnconstrainedWidths = Array(cache.cellUnconstrainedWidths.prefix(preservedCellCount))
+      cellUnconstrainedWidths.reserveCapacity(totalCells)
+    } else {
+      cellUnconstrainedWidths = []
+      cellUnconstrainedWidths.reserveCapacity(totalCells)
+    }
+
+    for row in preservedRowCount..<rowCount {
       for col in 0..<columnCount {
         let index = row * columnCount + col
         let size = subviews[index].sizeThatFits(.unspecified)
-        columnWidths[col] = min(max(columnWidths[col], size.width), columnMaxWidths[col])
+        cellUnconstrainedWidths.append(size.width)
       }
     }
 
-    var rowHeights = Array(repeating: CGFloat(0), count: rowCount)
+    var columnWidths = Array(repeating: CGFloat(0), count: columnCount)
     for row in 0..<rowCount {
+      let rowBase = row * columnCount
+      for col in 0..<columnCount {
+        let width = cellUnconstrainedWidths[rowBase + col]
+        columnWidths[col] = min(max(columnWidths[col], width), columnMaxWidths[col])
+      }
+    }
+
+    let columnsChanged = !canReuseMeasurements || columnWidths != cache.columnWidths
+    let heightStartRow = columnsChanged ? 0 : preservedRowCount
+
+    var rowHeights: [CGFloat]
+    if heightStartRow > 0 {
+      rowHeights = Array(cache.rowHeights.prefix(heightStartRow))
+      rowHeights.reserveCapacity(rowCount)
+    } else {
+      rowHeights = []
+      rowHeights.reserveCapacity(rowCount)
+    }
+
+    for row in heightStartRow..<rowCount {
       var rowHeight: CGFloat = 0
       for col in 0..<columnCount {
         let index = row * columnCount + col
@@ -472,10 +656,18 @@ struct TableLayout: Layout {
         let cellHeight = height.isFinite ? height : defaultRowHeight
         rowHeight = max(rowHeight, cellHeight)
       }
-      rowHeights[row] = rowHeight
+      rowHeights.append(rowHeight)
     }
 
-    return CacheData(columnWidths: columnWidths, rowHeights: rowHeights)
+    cache.columnCount = columnCount
+    cache.columnMaxWidths = columnMaxWidths
+    cache.headings = headings
+    cache.rows = rows
+    cache.cellPadding = cellPadding
+    cache.dynamicTypeSize = dynamicTypeSize
+    cache.cellUnconstrainedWidths = cellUnconstrainedWidths
+    cache.columnWidths = columnWidths
+    cache.rowHeights = rowHeights
   }
 
   func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout CacheData) -> CGSize {

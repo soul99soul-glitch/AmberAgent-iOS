@@ -926,10 +926,6 @@ struct WebMountSiteView: View {
                         onChat: {
                             IOSWebMountContentHandoffStore.shared.prepareChat(contentHandoff)
                             router.navigate(to: .chat)
-                        },
-                        onDeepRead: {
-                            IOSWebMountContentHandoffStore.shared.prepareDeepRead(contentHandoff)
-                            router.navigate(to: .board)
                         }
                     )
                     WebMountDivider()

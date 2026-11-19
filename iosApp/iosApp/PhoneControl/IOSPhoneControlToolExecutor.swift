@@ -23,6 +23,7 @@ enum IOSPhoneControlReturnPreference {
 final class IOSPhoneControlToolExecutor: IOSToolExecutor {
     private let runID: String
     private let controller: IOSPhoneControlController
+    private let ensureClaimedOnFirstUse: (@MainActor () -> Bool)?
     private let reportActivity: @MainActor (AgentPhoneControlActivityPhase) async -> Void
     private let jev: IOSJevPhoneControlService
     struct ClipboardAccess {
@@ -43,14 +44,59 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
     }
     private let clipboard: ClipboardAccess
 
+    static func preflightJSON(controller: IOSPhoneControlController) -> String {
+        let enabled = controller.enabled
+        let hasPairing = controller.hasPreparedPairing
+        let connectionPrepared = controller.isConnectionPrepared
+        let selectedAppsCount = controller.selectedBundleIDs.count
+        let occupied = controller.isOccupied
+        let blocker: String
+        let summary: String
+        if !enabled {
+            blocker = "disabled"
+            summary = "手机控制总开关未开启，请前往设置启用。"
+        } else if !hasPairing {
+            blocker = "missing_pairing"
+            summary = "尚未保存本机配对文件，请前往手机控制设置完成配对。"
+        } else if !connectionPrepared {
+            blocker = "connection_unprepared"
+            summary = "尚未准备本机控制连接，请前往手机控制设置启用。"
+        } else if occupied {
+            blocker = "occupied"
+            summary = "当前已有手机控制任务正在运行或收尾，请稍后再试。"
+        } else if selectedAppsCount == 0 {
+            blocker = "no_scope"
+            summary = "控制连接已准备，但尚未选择允许控制的应用（可用 phone_apps 查询并 phone_add_app 添加，或在设置中添加）。"
+        } else {
+            blocker = "none"
+            summary = "手机控制准备就绪，可执行授权操作。"
+        }
+        let deepLink = IOSAppDeepLink.url(for: .phoneControl)?.absoluteString ?? "amber://settings/phone-control"
+        return json([
+            "ok": true,
+            "tool": IOSPhoneControlToolCatalog.preflightToolName,
+            "ready": blocker == "none",
+            "blocker": blocker,
+            "enabled": enabled,
+            "has_pairing": hasPairing,
+            "connection_prepared": connectionPrepared,
+            "selected_apps_count": selectedAppsCount,
+            "occupied": occupied,
+            "settings_deep_link": deepLink,
+            "summary": summary,
+        ])
+    }
+
     init(runID: String, controller: IOSPhoneControlController = .shared,
          jev: IOSJevPhoneControlService = .shared,
          clipboard: ClipboardAccess = .system,
-         reportActivity: (@MainActor (AgentPhoneControlActivityPhase) async -> Void)? = nil) {
+         reportActivity: (@MainActor (AgentPhoneControlActivityPhase) async -> Void)? = nil,
+         ensureClaimedOnFirstUse: (@MainActor () -> Bool)? = nil) {
         self.runID = runID
         self.controller = controller
         self.jev = jev
         self.clipboard = clipboard
+        self.ensureClaimedOnFirstUse = ensureClaimedOnFirstUse
         self.reportActivity = reportActivity ?? { phase in
             // Each phone phase is real work: it keeps the run's liveness heartbeat beating
             // through long goal/flow tool calls that report no model or tool-result progress.
@@ -73,8 +119,13 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
 
         let outcome: IOSAgentToolOutcome
         switch request {
-        case .status, .stop: outcome = await perform(request)
-        default: outcome = await performWithHandoff(request)
+        case .status:
+            if controller.ownerRunID != runID { _ = ensureClaimedOnFirstUse?() }
+            outcome = await perform(request)
+        case .stop:
+            outcome = await perform(request)
+        default:
+            outcome = await performWithHandoff(request)
         }
         let completion = Self.completionActivity(request: request, outcome: outcome)
         // Cancellation after dispatch must not hide an unknown action outcome.
@@ -83,6 +134,9 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
     }
 
     private func performWithHandoff(_ request: Request) async -> IOSAgentToolOutcome {
+        if controller.ownerRunID != runID {
+            _ = ensureClaimedOnFirstUse?()
+        }
         let lease: IOSPhoneControlToolLease
         do { lease = try controller.beginPhoneTool(runID: runID) }
         catch { return .denied(Self.denial(error)) }
@@ -485,7 +539,7 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                 return .filled(Self.json([
                     "status": "handback", "outcome": "not_sent", "retry_safe": true,
                     "reason_code": "mode_off",
-                    "reason": "Jev 手机快速操作未启用或数据范围未开放；可继续使用 phone_observe / phone_act。",
+                    "reason": "Jev 手机快速操作未启用或数据范围未开放；确定性多步序列请改用 phone_run_flow，单步操作或观察使用 phone_observe / phone_act。",
                 ]))
             }
             switch await prepareRunner() {
@@ -496,9 +550,11 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                     act: { await self.dispatch($0, pageAnchorRef: $1, pageAnchorRegion: $2,
                                                requireUnchangedObservation: $3, runner: runner) },
                     choose: { [jev, runID] goal, observation, candidates, recent, expectation in
-                        await jev.chooseAction(goal: goal, observation: observation, candidates: candidates,
-                                               recentSteps: recent, expectation: expectation, runID: runID,
-                                               screenshotProvider: { try await runner.screenshotObservation() })
+                        await Self.chooseGoalAction(
+                            jev: jev, goal: goal, observation: observation, candidates: candidates,
+                            recentSteps: recent, expectation: expectation, runID: runID,
+                            screenshotProvider: { try await runner.screenshotObservation() }
+                        )
                     },
                     advise: { [jev, runID] goal, expectation, before, after, verification in
                         await jev.adviseAfterAction(goal: goal, expectation: expectation, before: before,
@@ -518,11 +574,14 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                         max(1, min(64, IOSSharedSettingsStore.loadPersistedJevSettings().policy.maxCandidates) - 3)
                     }
                 ))
-                let priorPath = PhoneRecipeStore.lastPath(bundleID: request.bundleID)
+                let priorRecipes = PhoneRecipeStore.candidates(bundleID: request.bundleID, goal: request.goal)
+                let priorPath = priorRecipes.first?.steps
                 let result = await loop.run(request)
-                // 沉淀成功路径：下一轮同一 App 的任务会把上次的做法还给模型参考。
+                // 沉淀成功路径：下一轮同一 App 的任务只将其作为提示词参考。
                 if result.status == .completed {
                     PhoneRecipeStore.save(bundleID: request.bundleID, goal: request.goal, steps: result.steps)
+                } else if result.status == .handback || result.stepVerification != nil {
+                    PhoneRecipeStore.markNeedsReverify(bundleID: request.bundleID, goal: request.goal)
                 }
                 var fields: [String: Any] = [
                     "status": result.status.rawValue,
@@ -541,6 +600,16 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
                 }
                 if let continuedFrom = result.continuedFrom { fields["continued_from"] = continuedFrom.rawValue }
                 if let priorPath { fields["last_successful_path"] = priorPath }
+                if !priorRecipes.isEmpty {
+                    fields["recipe_candidates"] = priorRecipes.map { entry in
+                        [
+                            "goal": entry.goal,
+                            "steps": entry.steps,
+                            "success_count": entry.successCount,
+                            "needs_reverify": entry.needsReverify,
+                        ] as [String: Any]
+                    }
+                }
                 if let jevReason = result.jevReason { fields["jev_reason"] = jevReason }
                 if request.steps != nil {
                     fields["verified_step_count"] = result.verifiedStepCount
@@ -703,7 +772,110 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         }
     }
 
-    private static func phoneActionMode() -> IOSJevMode {
+    static func chooseGoalAction(
+        jev: IOSJevPhoneControlService,
+        goal: String,
+        observation: PhoneObservation,
+        candidates: [IOSJevPhoneControlService.Candidate],
+        recentSteps: [String],
+        expectation: IOSPhoneGoalExpectation?,
+        runID: String,
+        screenshotProvider: (() async throws -> PhoneScreenshot)?
+    ) async -> IOSJevPhoneControlService.Selection {
+        let textChoice = await jev.chooseAction(
+            goal: goal, observation: observation, candidates: candidates,
+            recentSteps: recentSteps, expectation: expectation, runID: runID,
+            recentStepLimit: 12,
+            screenshotProvider: nil
+        )
+        guard textChoice == .needsScreenshot,
+              screenshotProvider != nil,
+              jev.canSendActionScreenshots else {
+            return textChoice
+        }
+        return await jev.chooseAction(
+            goal: goal, observation: observation, candidates: candidates,
+            recentSteps: recentSteps, expectation: expectation, runID: runID,
+            recentStepLimit: 12,
+            screenshotProvider: screenshotProvider
+        )
+    }
+
+    enum AddAppApprovalPreparation {
+        case requiresApproval(bundleID: String, appName: String?)
+        case immediate(IOSAgentToolOutcome)
+    }
+
+    func prepareAddAppApproval(arguments: String) async -> AddAppApprovalPreparation {
+        let parsed: Request
+        do {
+            parsed = try Self.request(name: "phone_add_app", arguments: arguments)
+        } catch {
+            return .immediate(await execute(name: "phone_add_app", arguments: arguments, isUserInitiated: false))
+        }
+        guard case .addApp(let bundleID) = parsed else {
+            return .immediate(await execute(name: "phone_add_app", arguments: arguments, isUserInitiated: false))
+        }
+        if controller.selectedBundleIDs.contains(bundleID) {
+            return .immediate(await execute(name: "phone_add_app", arguments: arguments, isUserInitiated: false))
+        }
+        let lease: IOSPhoneControlToolLease
+        do {
+            lease = try controller.beginPhoneTool(runID: runID)
+        } catch {
+            await reportActivity(.failed)
+            return .immediate(.denied(Self.denial(error)))
+        }
+        do {
+            if try controller.requiresFreshObservation(lease) {
+                controller.endPhoneTool(lease)
+                return .immediate(await returnAfterHumanControl(lease, prior: nil))
+            }
+            let app = try await controller.previewInstalledApplicationForApproval(bundleID: bundleID, runID: runID)
+            controller.endPhoneTool(lease)
+            return .requiresApproval(bundleID: app.bundleID, appName: app.name)
+        } catch {
+            controller.endPhoneTool(lease)
+            let outcome = Self.applicationFailure(error)
+            await reportActivity(.failed)
+            return .immediate(outcome)
+        }
+    }
+
+    func executeApprovedAddApp(arguments: String) async -> String {
+        switch await execute(name: "phone_add_app", arguments: arguments, isUserInitiated: true) {
+        case .filled(let text), .failed(let text), .denied(let text), .durabilityFailure(let text), .needsApproval(let text):
+            return text
+        case .filledParts(let parts), .replanRequired(let parts), .outcomeUnknown(let parts):
+            return parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined()
+        }
+    }
+
+    static func requiresBackgroundAddAppDenial(
+        arguments: String,
+        controller: IOSPhoneControlController
+    ) -> Bool {
+        guard let parsed = try? request(name: "phone_add_app", arguments: arguments),
+              case .addApp(let bundleID) = parsed else {
+            return false
+        }
+        return !controller.selectedBundleIDs.contains(bundleID)
+    }
+
+    nonisolated static func backgroundAddAppDenialJSON() -> String {
+        json([
+            "outcome": "not_sent",
+            "retry_safe": true,
+            "code": "approval_required_in_foreground",
+            "message": "后台阶段不能静默扩展可控应用范围；请回到 Amber 前台确认添加该应用后再继续。",
+        ])
+    }
+
+    nonisolated static func isGoalPlanningActive() -> Bool {
+        phoneActionMode() == .active
+    }
+
+    nonisolated private static func phoneActionMode() -> IOSJevMode {
         let settings = IOSSharedSettingsStore.loadPersistedJevSettings()
         return settings.canSend(useCase: .phoneActions, required: [.selectedTaskText, .phoneContent])
             ? settings.effectiveMode(for: .phoneActions) : .off
@@ -879,13 +1051,19 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
             guard IOSPhoneControlController.validBundleID(request.bundleID) else { throw InvalidArguments("bundle_id 无效。") }
             return .runFlow(request)
         case "phone_run_goal":
-            guard Set(object.keys).isSubset(of: ["goal", "bundle_id", "actions", "steps", "completion", "max_steps"]) else {
+            guard Set(object.keys).isSubset(of: ["goal", "bundle_id", "page_anchor", "actions", "steps", "completion", "max_steps"]) else {
                 throw InvalidArguments("phone_run_goal 包含未知参数。")
             }
             guard object["actions"] == nil || object["steps"] == nil else {
                 throw InvalidArguments("phone_run_goal 只能提供 actions 或 steps 其中一个。")
             }
+            guard object["page_anchor"] == nil || object["steps"] == nil else {
+                throw InvalidArguments("phone_run_goal 的根级 page_anchor 不能与 steps 同时使用。")
+            }
             try validateExpectationObject(object["completion"])
+            if let pageAnchor = object["page_anchor"] {
+                try validateTargetObject(pageAnchor)
+            }
             if let actions = object["actions"] {
                 try validateGoalActionsObject(actions)
             }
@@ -1142,7 +1320,7 @@ final class IOSPhoneControlToolExecutor: IOSToolExecutor {
         return value
     }
 
-    private static func json(_ value: [String: Any]) -> String {
+    nonisolated private static func json(_ value: [String: Any]) -> String {
         // All result fields are primitives, so serialization cannot fail.
         let data = try! JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self)

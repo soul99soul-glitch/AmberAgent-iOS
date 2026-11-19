@@ -35,40 +35,6 @@ struct IOSSessionSearchHit {
 }
 
 extension IOSConversationStore {
-    func currentConversationDeepReadSource(maxMessages: Int = 12) throws -> IOSDeepReadSource {
-        let messages = currentMessages.suffix(max(maxMessages, 1)).compactMap { message -> String? in
-            let text = message.toText().trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return nil }
-            return "\(Self.boardRoleName(message.role)): \(String(text.prefix(1_200)))"
-        }
-        let title = currentConversation?.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            ? currentConversation?.title ?? "当前会话"
-            : "当前会话"
-        return try IOSDeepReadSourceNormalizer.conversationSource(
-            title: title,
-            messages: messages
-        )
-    }
-
-    @discardableResult
-    func appendDeepReadResultToCurrentConversation(_ task: IOSDeepReadTask) async -> Bool {
-        guard let conversation = currentConversation else { return false }
-        let markdown = task.resultMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !markdown.isEmpty else { return false }
-
-        var nextMessages = currentMessages
-        let message = UIMessage.companion.assistant(
-            prompt: """
-            已保存深度阅读结果：\(task.title)
-
-            \(markdown)
-            """
-        )
-        nextMessages.append(message)
-        await save(messages: nextMessages, to: conversation.id)
-        return true
-    }
-
     /// Global search over persisted conversation titles and message text.
     ///
     /// Read-only by design: it does not switch current conversation, bump revision,
@@ -166,53 +132,7 @@ extension IOSConversationStore {
         return hits
     }
 
-    /// Read-only export for iOS Board chat-history collection.
-    ///
-    /// This does not switch `currentConversation`, bump `currentRevision`, mutate metadata,
-    /// or write back to disk. It loads recent conversations by summary id and returns a
-    /// compact tail window for the Board collector's local heuristics.
-    func boardSignalCandidates(limit: Int = 30) async -> [IOSBoardConversationCandidate] {
-        let sourceSummaries = await visibleSummariesForListing()
-
-        var candidates: [IOSBoardConversationCandidate] = []
-        for summary in sourceSummaries.prefix(max(limit, 0)) {
-            guard let conversation = try? await storage.loadConversation(id: summary.id) else { continue }
-            let title = conversation.title.isEmpty ? summary.title : conversation.title
-            let tailNodes = Array(conversation.messageNodes.suffix(6))
-            let tailTexts = tailNodes.flatMap { node in
-                node.messages.compactMap { message -> String? in
-                    let text = message.toText().trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !text.isEmpty else { return nil }
-                    return "\(Self.boardRoleName(message.role)): \(String(text.prefix(500)))"
-                }
-            }
-
-            let fallbackTexts = conversation.currentMessages.compactMap { message -> String? in
-                let text = message.toText().trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else { return nil }
-                return "\(Self.boardRoleName(message.role)): \(String(text.prefix(500)))"
-            }
-
-            candidates.append(IOSBoardConversationCandidate(
-                id: String(describing: conversation.id),
-                title: title.isEmpty ? "未命名对话" : title,
-                updateAt: conversation.updateAt.toEpochMilliseconds(),
-                nodeCount: conversation.messageNodes.count,
-                tailTexts: tailTexts.isEmpty ? fallbackTexts : tailTexts
-            ))
-        }
-        return candidates
-    }
-
     // MARK: - Private helpers
-
-    private static func boardRoleName(_ role: MessageRole) -> String {
-        if role == MessageRole.user { return "user" }
-        if role == MessageRole.assistant { return "assistant" }
-        if role == MessageRole.system { return "system" }
-        if role == MessageRole.tool { return "tool" }
-        return String(describing: role).lowercased()
-    }
 
     static func searchableMessages(in conversation: Conversation) -> [UIMessage] {
         let nodeMessages = conversation.messageNodes.flatMap { node in

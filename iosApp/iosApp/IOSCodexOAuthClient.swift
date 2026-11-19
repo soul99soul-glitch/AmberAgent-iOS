@@ -70,6 +70,7 @@ enum IOSCodexAuthStore {
     }
 
     private static let mutationLock = NSLock()
+    nonisolated(unsafe) private static var decodedCache: [String: (raw: String, tokens: IOSCodexAuthTokens)] = [:]
 
     static func credentialKey(providerId: String) -> String { "codex.\(providerId).tokens" }
 
@@ -84,7 +85,13 @@ enum IOSCodexAuthStore {
         guard let raw = encoded(tokens) else { return false }
         mutationLock.lock()
         defer { mutationLock.unlock() }
-        return IOSCredentialSideTable.store(key: credentialKey(providerId: providerId), value: raw)
+        let saved = IOSCredentialSideTable.store(key: credentialKey(providerId: providerId), value: raw)
+        if saved {
+            decodedCache[providerId] = (raw, tokens)
+        } else {
+            decodedCache.removeValue(forKey: providerId)
+        }
+        return saved
     }
 
     /// Atomically commits a refresh only while the credential used to request
@@ -101,23 +108,36 @@ enum IOSCodexAuthStore {
         guard loadLocked(providerId: providerId) == expected else {
             return .credentialsChanged
         }
-        return IOSCredentialSideTable.store(key: credentialKey(providerId: providerId), value: raw)
-            ? .saved
-            : .storeFailed
+        let saved = IOSCredentialSideTable.store(key: credentialKey(providerId: providerId), value: raw)
+        if saved {
+            decodedCache[providerId] = (raw, refreshed)
+            return .saved
+        }
+        decodedCache.removeValue(forKey: providerId)
+        return .storeFailed
     }
 
     static func clear(providerId: String) {
         mutationLock.lock()
         defer { mutationLock.unlock() }
+        decodedCache.removeValue(forKey: providerId)
         IOSCredentialSideTable.delete(key: credentialKey(providerId: providerId))
     }
 
     private static func loadLocked(providerId: String) -> IOSCodexAuthTokens? {
-        guard let raw = IOSCredentialSideTable.load(key: credentialKey(providerId: providerId)),
-              let data = raw.data(using: .utf8),
-              let tokens = try? JSONDecoder().decode(IOSCodexAuthTokens.self, from: data) else {
+        guard let raw = IOSCredentialSideTable.load(key: credentialKey(providerId: providerId)) else {
+            decodedCache.removeValue(forKey: providerId)
             return nil
         }
+        if let cached = decodedCache[providerId], cached.raw == raw {
+            return cached.tokens
+        }
+        guard let data = raw.data(using: .utf8),
+              let tokens = try? JSONDecoder().decode(IOSCodexAuthTokens.self, from: data) else {
+            decodedCache.removeValue(forKey: providerId)
+            return nil
+        }
+        decodedCache[providerId] = (raw, tokens)
         return tokens
     }
 

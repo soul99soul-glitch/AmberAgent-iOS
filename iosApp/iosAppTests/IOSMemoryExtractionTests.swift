@@ -4,6 +4,165 @@ import XCTest
 
 @MainActor
 final class IOSMemoryExtractionTests: XCTestCase {
+    func testCompletedTaskLearnsExperienceWithoutTurningToolResultIntoUserFact() async throws {
+        try await withFixture { f in
+            let user = UIMessage.companion.user(prompt: "检查 alpha 主机")
+            let observation = "alpha 主机需要指定端口 2222 才能连接。"
+            let tool = UIMessagePart.Tool(toolCallId: "ssh1", toolName: "terminal_execute", input: "alpha",
+                                          output: [UIMessagePart.Text(text: observation, metadata: nil)],
+                                          approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+            let base = UIMessage.companion.assistant(prompt: "")
+            let result = base.doCopy(id: base.id, role: base.role, parts: [tool], annotations: base.annotations,
+                                     createdAt: base.createdAt, finishedAt: base.finishedAt,
+                                     modelId: base.modelId, usage: base.usage, translation: base.translation)
+            let answer = UIMessage.companion.assistant(prompt: "检查完成。")
+            let completed = [user, result, answer]
+            _ = await f.store.saveCurrent(messages: completed)
+            let id = try XCTUnwrap(f.store.currentConversation?.id)
+            let provider = StubProvider { prompt, _ in
+                XCTAssertTrue(prompt.contains("task_evidence"))
+                return #"{"memories":[],"experiences":[{"content":"alpha 主机需要指定端口 2222 才能连接。","toolCallId":"ssh1","quote":"alpha 主机需要指定端口 2222 才能连接。","context":"alpha","expiresInDays":30}]}"#
+            }
+            let coordinator = f.coordinator(provider: provider)
+            coordinator.enqueue(conversationId: id, baseline: [user], completed: completed)
+            await coordinator.processPending()
+            XCTAssertTrue(f.persistence.records.isEmpty)
+            XCTAssertEqual(f.persistence.experiences.records.count, 1)
+            XCTAssertEqual(f.persistence.experiences.records.first?.completionMessageId, answer.id.toHexDashString())
+        }
+    }
+
+    func testIsolatedHubSkipsQueuedExtractionAndGlobalWrites() async throws {
+        try await withFixture { f in
+            let user = UIMessage.companion.user(prompt: "我习惯用中文交流。")
+            _ = await f.store.saveCurrent(messages: [user])
+            let id = try XCTUnwrap(f.store.currentConversation?.id)
+            let hubs = AmberHubStore.shared
+            let old = hubs.hubs
+            defer { hubs.hubs = old }
+            hubs.hubs.append(AmberHubItem(title: "sandbox", memoryPolicy: .hubIsolated,
+                                         conversationIds: [id.toHexDashString()]))
+            let provider = StubProvider { _, _ in
+                XCTFail("isolated hub must not invoke global extraction provider")
+                return Self.output(content: "我习惯用中文交流。", source: user)
+            }
+            let coordinator = f.coordinator(provider: provider)
+            coordinator.enqueue(conversationId: id, baseline: [user], completed: [user])
+            await coordinator.processPending()
+            XCTAssertTrue(f.persistence.records.isEmpty)
+            XCTAssertEqual(coordinator.pendingCount, 0)
+        }
+    }
+
+    func testHubIsolationChangedDuringProviderCallPreventsWrite() async throws {
+        try await withFixture { f in
+            let user = UIMessage.companion.user(prompt: "我习惯用中文交流。")
+            _ = await f.store.saveCurrent(messages: [user])
+            let id = try XCTUnwrap(f.store.currentConversation?.id)
+            let hubs = AmberHubStore.shared
+            let old = hubs.hubs
+            defer { hubs.hubs = old }
+            let provider = StubProvider { _, _ in
+                hubs.hubs.append(AmberHubItem(title: "sandbox", memoryPolicy: .hubIsolated,
+                                             conversationIds: [id.toHexDashString()]))
+                return Self.output(content: "我习惯用中文交流。", source: user)
+            }
+            let coordinator = f.coordinator(provider: provider)
+            coordinator.enqueue(conversationId: id, baseline: [user], completed: [user])
+            await coordinator.processPending()
+            XCTAssertTrue(f.persistence.records.isEmpty)
+        }
+    }
+
+    func testForkedInheritedUserCannotBecomeFreshExtractionSource() async throws {
+        try await withFixture { f in
+            let user = UIMessage.companion.user(prompt: "我习惯用中文交流。")
+            _ = await f.store.saveCurrent(messages: [user])
+            let parent = try XCTUnwrap(f.store.currentConversation)
+            let child = ConversationForkKt.forkConversation(source: parent, newId: KotlinUuid.companion.random(),
+                                                            newTitle: "child", forkTurns: "all", assistantId: nil)
+            let saved = await f.store.saveForkedConversation(child)
+            XCTAssertTrue(saved)
+            let provider = StubProvider { _, _ in
+                XCTFail("inherited source must not invoke extraction")
+                return Self.output(content: "我习惯用中文交流。", source: user)
+            }
+            let coordinator = f.coordinator(provider: provider)
+            coordinator.enqueue(conversationId: child.id, baseline: child.currentMessages, completed: child.currentMessages)
+            await coordinator.processPending()
+            XCTAssertTrue(f.persistence.records.isEmpty)
+            XCTAssertEqual(coordinator.pendingCount, 0)
+        }
+    }
+
+    func testExperienceWriteFailureReportsCommittedFactsAndRetriesOnlyExperiences() async throws {
+        try await withFixture { f in
+            let user = UIMessage.companion.user(prompt: "我习惯用中文交流，也检查 alpha 主机。")
+            let observation = "alpha 主机需要指定端口 2222 才能连接。"
+            let tool = UIMessagePart.Tool(toolCallId: "t", toolName: "terminal_execute", input: "alpha",
+                                         output: [UIMessagePart.Text(text: observation, metadata: nil)],
+                                         approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+            let base = UIMessage.companion.assistant(prompt: "")
+            let result = base.doCopy(id: base.id, role: base.role, parts: [tool], annotations: base.annotations,
+                                     createdAt: base.createdAt, finishedAt: base.finishedAt, modelId: base.modelId,
+                                     usage: base.usage, translation: base.translation)
+            let completed = [user, result]
+            _ = await f.store.saveCurrent(messages: completed)
+            let id = try XCTUnwrap(f.store.currentConversation?.id)
+            let experienceFile = f.memoryURL.deletingLastPathComponent().appendingPathComponent("experiences.json")
+            try FileManager.default.createDirectory(at: experienceFile, withIntermediateDirectories: true)
+            var calls = 0
+            let provider = StubProvider { _, _ in
+                calls += 1
+                return """
+                {"memories":[{"content":"我习惯用中文交流。","evidence":"我习惯用中文交流","sourceMessageId":"\(user.id.toHexDashString())","scope":"long_term","kind":"user","sensitive":false}],"experiences":[{"content":"\(observation)","toolCallId":"t","quote":"\(observation)","context":"alpha"}]}
+                """
+            }
+            let coordinator = f.coordinator(provider: provider)
+            coordinator.enqueue(conversationId: id, baseline: [user], completed: completed)
+            await coordinator.processPending()
+            XCTAssertEqual(f.persistence.records.count, 1)
+            let saved = try XCTUnwrap(f.persistence.records.first)
+            XCTAssertTrue(coordinator.statusMessage.contains("已保存"))
+            XCTAssertTrue(coordinator.statusMessage.contains("经验"))
+            XCTAssertEqual(f.audit.records.first?.status, "partial")
+            XCTAssertEqual(coordinator.pendingCount, 1)
+            try FileManager.default.removeItem(at: experienceFile)
+            let reloaded = IOSMemoryPersistence(fileURL: f.memoryURL)
+            reloaded.load()
+            let restarted = IOSMemoryExtractionCoordinator(defaults: f.defaults, persistence: reloaded, audit: f.audit,
+                                                            provider: provider, environment: { (true, true, true) })
+            restarted.configure(settings: f.settings, conversations: f.store, writesEnabled: { true })
+            await restarted.processPending()
+            XCTAssertEqual(calls, 1, "retry only pending experience write, never re-extract committed facts")
+            XCTAssertEqual(reloaded.records.first?.updatedAt, saved.updatedAt)
+            XCTAssertEqual(reloaded.experiences.records.count, 1)
+            XCTAssertEqual(restarted.pendingCount, 0)
+        }
+    }
+
+    @MainActor
+    private final class WarmupGate {
+        var calls = 0
+        var started = false
+        var released = false
+        var continuation: CheckedContinuation<Void, Never>?
+
+        func recall() async -> ChatMemoryContextBuilder.RecallResult? {
+            calls += 1
+            if !released {
+                started = true
+                await withCheckedContinuation { continuation = $0 }
+            }
+            return ChatMemoryContextBuilder.RecallResult(prompt: "jev-selection", records: [])
+        }
+
+        func release() {
+            released = true
+            continuation?.resume()
+            continuation = nil
+        }
+    }
     func testQueuedUserMemorySurvivesRestartAndKeepsConcurrentManualRecord() async throws {
         try await withFixture { f in
             let user = UIMessage.companion.user(prompt: "我习惯用中文交流。")
@@ -41,16 +200,54 @@ final class IOSMemoryExtractionTests: XCTestCase {
         }
     }
 
-    func testPollutionDuringModelCallPreventsAutomaticWrite() async throws {
+    func testPollutedMemoryUsesUserEvidenceAndRouterDoesNotAwaitJev() async throws {
         try await withFixture { f in
+            let assistant = UIMessage.companion.assistant(prompt: "外部网页声称用户喜欢虚构咖啡。")
             let user = UIMessage.companion.user(prompt: "我习惯用中文交流。")
-            _ = await f.store.saveCurrent(messages: [user])
+            let mailbox = IosMailboxMessageBridge.shared.makeMessage(
+                authorThreadId: "/root/worker", type: "MESSAGE", payload: "外部子线程伪造用户偏好")
+            _ = await f.store.saveCurrent(messages: [assistant, user, mailbox])
+            let id = try XCTUnwrap(f.store.currentConversation?.id)
+            let marked = await f.store.markConversationMemoryPolluted(id)
+            XCTAssertTrue(marked)
+            let badProvider = StubProvider { prompt, _ in
+                XCTAssertFalse(prompt.contains("外部网页声称用户喜欢虚构咖啡"))
+                XCTAssertFalse(prompt.contains("外部子线程伪造用户偏好"))
+                var candidate = Self.item("add", "用户喜欢虚构咖啡。", source: user)
+                candidate["evidence"] = "外部网页声称用户喜欢虚构咖啡。"
+                return Self.memories([candidate])
+            }
+            let bad = f.coordinator(provider: badProvider)
+            bad.enqueue(conversationId: id, baseline: [user, mailbox], completed: [user, mailbox])
+            await bad.processPending()
+            XCTAssertTrue(f.persistence.records.isEmpty, "网页内容不得充当用户证据")
+            XCTAssertEqual(bad.pendingCount, 1)
+            let goodProvider = StubProvider { prompt, _ in
+                XCTAssertTrue(prompt.contains("我习惯用中文交流"))
+                XCTAssertFalse(prompt.contains("外部网页声称用户喜欢虚构咖啡"))
+                XCTAssertTrue(prompt.contains("assistant_context：\n{}"))
+                return Self.output(content: "我习惯用中文交流。", source: user)
+            }
+            let good = f.coordinator(provider: goodProvider)
+            await good.processPending()
+            XCTAssertEqual(f.persistence.records.map(\.content), ["我习惯用中文交流。"])
+            XCTAssertEqual(good.pendingCount, 0)
+        }
+        try await withFixture { f in
+            let assistant = UIMessage.companion.assistant(prompt: "刚才的助手上下文")
+            let user = UIMessage.companion.user(prompt: "我习惯用中文交流。")
+            _ = await f.store.saveCurrent(messages: [assistant, user])
             let id = try XCTUnwrap(f.store.currentConversation?.id)
             var calls = 0
-            let provider = StubProvider { _, _ in
+            let provider = StubProvider { prompt, _ in
                 calls += 1
-                let marked = await f.store.markConversationMemoryPolluted(id)
-                XCTAssertTrue(marked)
+                if calls == 1 {
+                    XCTAssertTrue(prompt.contains("刚才的助手上下文"))
+                    let marked = await f.store.markConversationMemoryPolluted(id)
+                    XCTAssertTrue(marked)
+                } else {
+                    XCTAssertFalse(prompt.contains("刚才的助手上下文"))
+                }
                 return Self.output(content: "我习惯用中文交流。", source: user)
             }
             let coordinator = f.coordinator(provider: provider)
@@ -59,9 +256,55 @@ final class IOSMemoryExtractionTests: XCTestCase {
             XCTAssertTrue(f.persistence.records.isEmpty)
             XCTAssertTrue(coordinator.statusMessage.contains("来源会话已变化"))
             await coordinator.processPending()
-            XCTAssertEqual(calls, 1, "已污染的会话不能再次进入模型提炼")
+            XCTAssertEqual(calls, 2, "状态变化后必须以仅用户原文重试")
+            XCTAssertEqual(f.persistence.records.map(\.content), ["我习惯用中文交流。"])
             XCTAssertEqual(coordinator.pendingCount, 0)
         }
+
+        let harness = IOSChatForegroundHarness(toolNames: [])
+        let gate = WarmupGate()
+        var injected: [String] = []
+        var preparedCount = 0
+        harness.bindings.prepareJevMemoryRecall = { _, _ in await gate.recall() }
+        harness.bindings.memoryRecallResultForRun = { _ in
+            ChatMemoryContextBuilder.RecallResult(prompt: "local-selection", records: [])
+        }
+        harness.bindings.messagesByInjectingRuntimeContextForRun = { messages, _, override in
+            injected.append(override?.prompt ?? "nil")
+            return messages
+        }
+        let preparation = ChatRunUploadPreparation(
+            runId: "router-prewarm", conversationId: nil, settings: harness.dependencies.sharedSettings.snapshot,
+            toolExposureBridge: harness.toolExposureBridge, mcpEnabled: { false }, bindings: harness.bindings,
+            fastFirstRound: true, isCurrentRun: { true }, onPreparedUpload: { _, _, _ in preparedCount += 1 }
+        )
+        var routerFinished = false
+        let first = Task { @MainActor in
+            do { _ = try await preparation.prepareUploadMessages(harness.messages, provider: harness.providerSetting, params: harness.params) }
+            catch { XCTFail("首轮准备失败：\(error)") }
+            routerFinished = true
+        }
+        for _ in 0..<200 where !routerFinished || !gate.started { try? await Task.sleep(nanoseconds: 10_000_000) }
+        if !routerFinished || !gate.started { gate.release() }
+        await first.value
+        XCTAssertTrue(routerFinished && gate.started, "Jev 尚未完成时首轮必须可返回")
+        XCTAssertFalse(gate.released, "首轮不应等待网络召回")
+        XCTAssertEqual(injected.last, "local-selection")
+        XCTAssertEqual(preparedCount, 1)
+        var workerFinished = false
+        let second = Task { @MainActor in
+            do { _ = try await preparation.prepareUploadMessages(harness.messages, provider: harness.providerSetting, params: harness.params) }
+            catch { XCTFail("Worker 准备失败：\(error)") }
+            workerFinished = true
+        }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertFalse(workerFinished, "同一用户轮的 Worker 应等待正在进行的预热")
+        gate.release()
+        await second.value
+        XCTAssertTrue(workerFinished)
+        XCTAssertEqual(injected.last, "jev-selection")
+        XCTAssertEqual(gate.calls, 2, "Worker 重新查缓存以验证输入和设置仍匹配")
+        preparation.cancelRecallWarmup()
     }
 
     func testChargingAndPermissionGatesThenRejectsUngroundedOutput() async throws {
@@ -504,6 +747,137 @@ final class IOSMemoryExtractionTests: XCTestCase {
         }
     }
 
+    // 根因复现：提炼请求不得硬编码 1600 maxTokens（推理模型在思考阶段耗尽 1600 预算后
+    // 只返回 Reasoning part、无 Text part，触发“提炼模型返回了空内容。”）；
+    // 同时当模型真实只返回思考/空白/空内容时，仍须诚实记录“提炼模型返回了空内容。”并保留待重试队列。
+    func testExtractionOmitsHardcodedMaxTokensBudgetAndFailsHonestlyOnEmptyOrReasoningOnlyResponse() async throws {
+        try await withFixture { f in
+            let user = UIMessage.companion.user(prompt: "我习惯用中文交流。")
+            _ = await f.store.saveCurrent(messages: [user])
+            let id = try XCTUnwrap(f.store.currentConversation?.id)
+
+            let instant = KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0)
+            let state = ExtractionModeBox()
+            let validJSON = Self.output(content: "我习惯用中文交流。", source: user)
+            let provider = ChunkStubProvider { maxTokens in
+                state.receivedMaxTokens.append(maxTokens)
+                return state.mode
+            } makeChunk: { maxTokens, currentMode, params in
+                switch currentMode {
+                case "budget_sensitive_reasoning":
+                    if let maxTokens, maxTokens <= 2_000 {
+                        // 模拟推理模型在 1600 token 上限内只产出思考、正文为空（finish_reason = length）
+                        let reasoningOnly = UIMessage(
+                            id: KotlinUuid.companion.random(),
+                            role: .assistant,
+                            parts: [UIMessagePart.Reasoning(reasoning: "正在核对 24 条已有记忆与用户原文证据…", createdAt: instant, finishedAt: nil, metadata: nil)],
+                            annotations: [],
+                            createdAt: chatNowLocalDateTime(),
+                            finishedAt: chatNowLocalDateTime(),
+                            modelId: params.model.id,
+                            usage: nil,
+                            translation: nil
+                        )
+                        return MessageChunk(
+                            id: "reasoning-truncated",
+                            model: params.model.modelId,
+                            choices: [UIMessageChoice(index: 0, delta: nil, message: reasoningOnly, finishReason: "length")],
+                            usage: nil
+                        )
+                    }
+                    let normal = UIMessage(
+                        id: KotlinUuid.companion.random(),
+                        role: .assistant,
+                        parts: [
+                            UIMessagePart.Reasoning(reasoning: "思考完成。", createdAt: instant, finishedAt: nil, metadata: nil),
+                            UIMessagePart.Text(text: validJSON, metadata: nil),
+                        ],
+                        annotations: [],
+                        createdAt: chatNowLocalDateTime(),
+                        finishedAt: chatNowLocalDateTime(),
+                        modelId: params.model.id,
+                        usage: nil,
+                        translation: nil
+                    )
+                    return MessageChunk(
+                        id: "reasoning-ok",
+                        model: params.model.modelId,
+                        choices: [UIMessageChoice(index: 0, delta: nil, message: normal, finishReason: "stop")],
+                        usage: nil
+                    )
+                case "multi_reasoning_empty_text":
+                    // 多段 Reasoning 拼接时 UIMessage.toText() 为 "\n"，仍须判定为空内容而非 JSON 解码失败
+                    let emptyWithMultipleReasoning = UIMessage(
+                        id: KotlinUuid.companion.random(),
+                        role: .assistant,
+                        parts: [
+                            UIMessagePart.Reasoning(reasoning: "第一段思考", createdAt: instant, finishedAt: nil, metadata: nil),
+                            UIMessagePart.Reasoning(reasoning: "第二段思考", createdAt: instant, finishedAt: nil, metadata: nil),
+                        ],
+                        annotations: [],
+                        createdAt: chatNowLocalDateTime(),
+                        finishedAt: chatNowLocalDateTime(),
+                        modelId: params.model.id,
+                        usage: nil,
+                        translation: nil
+                    )
+                    return MessageChunk(
+                        id: "empty-multi-reasoning",
+                        model: params.model.modelId,
+                        choices: [UIMessageChoice(index: 0, delta: nil, message: emptyWithMultipleReasoning, finishReason: "length")],
+                        usage: nil
+                    )
+                default:
+                    let blankText = UIMessage.companion.assistant(prompt: "   \n  ")
+                    return MessageChunk(
+                        id: "empty-blank",
+                        model: params.model.modelId,
+                        choices: [UIMessageChoice(index: 0, delta: nil, message: blankText, finishReason: "stop")],
+                        usage: nil
+                    )
+                }
+            }
+
+            let coordinator = f.coordinator(provider: provider)
+            coordinator.enqueue(conversationId: id, baseline: [user], completed: [user])
+            await coordinator.processPending()
+
+            XCTAssertEqual(state.receivedMaxTokens, [nil], "自动提炼请求不得写死 1600 maxTokens，应与整理/压缩路径一致置 nil")
+            XCTAssertEqual(f.persistence.records.map(\.content), ["我习惯用中文交流。"])
+            XCTAssertEqual(coordinator.pendingCount, 0)
+
+            // 验证真实空响应（多段思考无正文 / 纯空白）诚实失败且不静默成功、不自动无限重试
+            let user2 = UIMessage.companion.user(prompt: "我喜欢深色模式。")
+            _ = await f.store.saveCurrent(messages: [user, user2])
+            state.mode = "multi_reasoning_empty_text"
+            coordinator.enqueue(conversationId: id, baseline: [user, user2], completed: [user, user2])
+            await coordinator.processPending()
+
+            XCTAssertEqual(coordinator.statusMessage, "自动记忆提炼失败：提炼模型返回了空内容。")
+            XCTAssertEqual(f.audit.records.first?.action, "extract")
+            XCTAssertEqual(f.audit.records.first?.status, "failed")
+            XCTAssertEqual(f.audit.records.first?.reason, "自动记忆提炼失败：提炼模型返回了空内容。")
+            XCTAssertEqual(coordinator.pendingCount, 1, "失败后保留待提炼消息供显式重试")
+            XCTAssertEqual(f.persistence.records.map(\.content), ["我习惯用中文交流。"], "空响应不得写入新记忆")
+
+            await coordinator.processPending()
+            XCTAssertEqual(state.receivedMaxTokens.count, 2, "waitingForRetry 期间不自动重复调用模型")
+
+            state.mode = "blank_text"
+            let retried = f.coordinator(provider: provider)
+            await retried.processPending()
+            XCTAssertEqual(state.receivedMaxTokens.count, 3)
+            XCTAssertEqual(retried.statusMessage, "自动记忆提炼失败：提炼模型返回了空内容。")
+            XCTAssertEqual(retried.pendingCount, 1)
+        }
+    }
+
+    @MainActor
+    private final class ExtractionModeBox {
+        var receivedMaxTokens: [Int32?] = []
+        var mode = "budget_sensitive_reasoning"
+    }
+
     @MainActor
     private struct Fixture {
         let defaults: UserDefaults
@@ -542,7 +916,13 @@ final class IOSMemoryExtractionTests: XCTestCase {
         try FileManager.default.createDirectory(at: root.appendingPathComponent("conversations"), withIntermediateDirectories: true)
         let store = IOSConversationStore(baseDirectory: root.appendingPathComponent("conversations"))
         await store.bootstrap()
-        let settings = IOSSharedSettingsStore(userDefaults: defaults)
+        var credentials: [String: String] = [:]
+        let settings = IOSSharedSettingsStore(
+            userDefaults: defaults,
+            loadCredential: { credentials[$0] },
+            storeCredential: { credentials[$0] = $1; return true },
+            deleteCredential: { credentials.removeValue(forKey: $0); return true }
+        )
         let model = Model(
             modelId: "memory-test", displayName: "记忆测试", id: KotlinUuid.companion.random(),
             type: .chat, customHeaders: [], customBodies: [], inputModalities: [], outputModalities: [],
@@ -622,6 +1002,23 @@ final class IOSMemoryExtractionTests: XCTestCase {
             return MessageChunk(id: "memory-test", model: "memory-test", choices: [
                 UIMessageChoice(index: 0, delta: nil, message: UIMessage.companion.assistant(prompt: text), finishReason: "stop")
             ], usage: nil)
+        }
+    }
+
+    private final class ChunkStubProvider: IOSAgentTextProvider, @unchecked Sendable {
+        let inspect: @MainActor (Int32?) async throws -> String
+        let makeChunk: (Int32?, String, TextGenerationParams) -> MessageChunk
+        init(
+            _ inspect: @escaping @MainActor (Int32?) async throws -> String,
+            makeChunk: @escaping (Int32?, String, TextGenerationParams) -> MessageChunk
+        ) {
+            self.inspect = inspect
+            self.makeChunk = makeChunk
+        }
+        func generateText(providerSetting: ProviderSetting, messages: [UIMessage], params: TextGenerationParams) async throws -> MessageChunk {
+            let maxTokens = params.maxTokens?.int32Value
+            let mode = try await inspect(maxTokens)
+            return makeChunk(maxTokens, mode, params)
         }
     }
 }

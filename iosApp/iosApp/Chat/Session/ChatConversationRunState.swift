@@ -8,12 +8,40 @@ struct PendingAssistantRegeneration {
     let generatedMessageIndex: Int
 }
 
+struct ChatMessagePersistenceResult {
+    let saved: Bool
+    let acceptedBaselines: [IOSConversationWriteBaseline]
+    let after: IOSConversationWriteBaseline?
+}
+
 /// A live run keeps its presentation even while another conversation is on screen.
 /// The Host's bindings capture this state, never the currently selected conversation.
 @MainActor @Observable
 final class ChatConversationRunState {
     let conversationId: KotlinUuid?
-    var messages: [UIMessage] = []
+    @ObservationIgnored let completionFeedback = ChatCompletionFeedback()
+    @ObservationIgnored private var _messages: [UIMessage] = []
+    var messages: [UIMessage] {
+        get {
+            access(keyPath: \.messages)
+            return _messages
+        }
+        set {
+            withMutation(keyPath: \.messages) {
+                _messages = newValue
+            }
+        }
+        _modify {
+            access(keyPath: \.messages)
+            _$observationRegistrar.willSet(self, keyPath: \.messages)
+            defer { _$observationRegistrar.didSet(self, keyPath: \.messages) }
+            yield &_messages
+        }
+    }
+    /// 无 `@Observable` 依赖登记的只读入口，共享单一底层数组存储，不引入第二份 CoW 引用。
+    var untrackedMessages: [UIMessage] {
+        _messages
+    }
     var isLoading = false
     var pendingMemoryApproval: MemoryToolApprovalRequest?
     var pendingSearchApproval: SearchToolApprovalRequest?
@@ -40,6 +68,12 @@ final class ChatConversationRunState {
     }
     var steerQueueRevision = 0
     var steerQueueLoaded = true
+    var selectedFollowupRunId: String?
+    var liveTaskMessageIds: Set<String> = []
+    var liveTaskTailMessageIds: Set<String> = []
+    @ObservationIgnored var routingEntryIds: Set<String> = []
+    @ObservationIgnored var messagePersistencePendingCount = 0
+    @ObservationIgnored var messagePersistenceTail: Task<ChatMessagePersistenceResult, Never>?
     @ObservationIgnored var isCommittingSteerQueue = false
     @ObservationIgnored var restoreSteerQueueAfterCommit = false
     @ObservationIgnored var steerQueueAutoContinueTask: Task<Void, Never>?
@@ -68,7 +102,7 @@ final class ChatConversationRunState {
         if !force, let runId, runId == lastMemoryUsageRunId, ids == lastMarkedMemoryIds {
             return false
         }
-        guard persistence.markUsed(ids: ids, now: now, force: force) else { return false }
+        guard persistence.markUsed(ids: ids, now: now, force: force, runId: runId) else { return false }
         if let runId {
             lastMemoryUsageRunId = runId
             lastMarkedMemoryIds = ids

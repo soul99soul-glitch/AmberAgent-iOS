@@ -46,17 +46,44 @@ class ParagraphUIView: UITextView {
   }
 
   private(set) var paragraphContents: NSMutableAttributedString = NSMutableAttributedString()
+  private(set) var baseParagraphContents: NSMutableAttributedString?
+  private(set) var directAppendLayoutRevision: UInt64 = 0
+  var hasDirectAppendedTail: Bool {
+    baseParagraphContents != nil && paragraphContents !== baseParagraphContents
+  }
+  private(set) var gatesStreamingHeightByLineCount = false
+  private var lineGatedFittingSize: CachedParagraphUIViewSize?
+  private var lineGatedLineCount: Int?
   private(set) var lineSpacing: CGFloat?
   // `private(set)` (rather than fully private) so the vendored regression tests
   // can assert that stale word fades never survive a full content replacement.
   private(set) var activeAnimations: [FadeAnimationData] = []
   private var fadeAnimationDisplayLink: CADisplayLink?
+  private var rendersFadeAsGlyphs = false
+  private weak var glyphFadeLayoutManager: ParagraphFadeLayoutManager?
+  #if DEBUG
+  var fadeFrameRateForTesting: CAFrameRateRange? { fadeAnimationDisplayLink?.preferredFrameRateRange }
+  #endif
   private var cachedSize: CachedParagraphUIViewSize?
+  private var lastReportedFittingSize: CachedParagraphUIViewSize?
+  private var intrinsicContentSizeSuppressionDepth = 0
+  var layoutInvalidationID: String?
   /// Bounds width seen by the last layout pass. `cachedSize` is populated only
   /// by `intrinsicContentSize`; SwiftUI's `UIViewRepresentable.sizeThatFits`
   /// path can leave it nil even after a stable layout, so it cannot be used as
   /// the per-pass invalidation sentinel.
   private var lastLaidOutWidth: CGFloat?
+  private var customAccessibilityLabel: String?
+
+  override var accessibilityLabel: String? {
+    get {
+      customAccessibilityLabel ?? textStorage.string
+    }
+    set {
+      customAccessibilityLabel = newValue
+      super.accessibilityLabel = newValue
+    }
+  }
 
   var textContextMenu: TextContextMenu?
   var markdownController: MarkdownController?
@@ -73,11 +100,12 @@ class ParagraphUIView: UITextView {
 
   static func makeTextKit1View() -> ParagraphUIView {
     let storage = NSTextStorage()
-    let layoutManager = NSLayoutManager()
+    let layoutManager = ParagraphFadeLayoutManager()
     let textContainer = NSTextContainer(size: .zero)
     storage.addLayoutManager(layoutManager)
     layoutManager.addTextContainer(textContainer)
     let view = ParagraphUIView(frame: .zero, textContainer: textContainer)
+    view.glyphFadeLayoutManager = layoutManager
     // Height must not track the view's current bounds: a tracked container is
     // resized on every measurement pass, which discards TextKit 1's layout
     // cache and forces streaming paragraphs to re-lay-out their full length on
@@ -173,11 +201,27 @@ class ParagraphUIView: UITextView {
     return roundedUpSize
   }
 
+  var isSuppressingIntrinsicContentSizeInvalidation: Bool {
+    intrinsicContentSizeSuppressionDepth > 0
+  }
+
+  override func invalidateIntrinsicContentSize() {
+    guard !isSuppressingIntrinsicContentSizeInvalidation else { return }
+    #if DEBUG
+    ParagraphUIViewLiveProbe.onRecord?("para-intrinsic-invalidate")
+    #endif
+    ParagraphLayoutInvalidationHook.onInvalidate?(layoutInvalidationID)
+    invalidateCachedSize()
+    super.invalidateIntrinsicContentSize()
+  }
+
   override func layoutSubviews() {
     super.layoutSubviews()
     var needsIntrinsicSizeInvalidation = false
     if lastLaidOutWidth != bounds.width {
       invalidateCachedSize()
+      lineGatedFittingSize = nil
+      lineGatedLineCount = nil
       lastLaidOutWidth = bounds.width
       needsIntrinsicSizeInvalidation = true
     }
@@ -201,8 +245,16 @@ class ParagraphUIView: UITextView {
           forCharacterRange: NSRange(location: 0, length: textStorage.length),
           actualCharacterRange: nil
         )
+        lineGatedFittingSize = nil
+        lineGatedLineCount = nil
         setNeedsDisplay()
         needsIntrinsicSizeInvalidation = true
+      } else if textContainer.size.height != ParagraphUIView.unboundedMeasuringHeight {
+        textContainer.heightTracksTextView = false
+        textContainer.size = CGSize(
+          width: textContainer.size.width,
+          height: ParagraphUIView.unboundedMeasuringHeight
+        )
       }
     }
     // Invalidating intrinsic size from every layout pass schedules another
@@ -217,6 +269,9 @@ class ParagraphUIView: UITextView {
   }
 
   override func sizeThatFits(_ size: CGSize) -> CGSize {
+    #if DEBUG
+    ParagraphUIViewLiveProbe.onRecord?("para-size")
+    #endif
     guard usesTextKit1, size.width > 0, size.width.isFinite else {
       return super.sizeThatFits(size)
     }
@@ -249,6 +304,11 @@ class ParagraphUIView: UITextView {
     let heightDiffers = textContainer.size.height != ParagraphUIView.unboundedMeasuringHeight
     let shouldRelayout = boundsInvalid || widthDiffers || heightDiffers
     if shouldRelayout {
+      #if DEBUG
+      if widthDiffers { ParagraphUIViewLiveProbe.onRecord?("para-relayout-width") }
+      if heightDiffers { ParagraphUIViewLiveProbe.onRecord?("para-relayout-height") }
+      if boundsInvalid { ParagraphUIViewLiveProbe.onRecord?("para-relayout-initial") }
+      #endif
       let previousContainerWidth = textContainer.size.width
       textContainer.size = measuringSize
       // A real width transition must re-lay the fragments at the proposed
@@ -267,6 +327,9 @@ class ParagraphUIView: UITextView {
       )
       _ = layoutManager.glyphRange(for: textContainer)
       let used = Self.laidOutBounds(layoutManager: layoutManager, textContainer: textContainer)
+      let relayoutLineCount = gatesStreamingHeightByLineCount
+        ? Self.laidOutLineCount(layoutManager: layoutManager, textContainer: textContainer)
+        : nil
       // Restore the width so no transient measurement width survives the call
       // (single-writer contract: `layoutSubviews` owns the container width).
       // The height stays at the unbounded sentinel — restoring a view-height
@@ -276,10 +339,17 @@ class ParagraphUIView: UITextView {
         height: ParagraphUIView.unboundedMeasuringHeight
       )
       let measuredWidth = (used.width + textContainerInset.left + textContainerInset.right).rounded(.up)
-      return CGSize(
+      let fittedSize = CGSize(
         width: min(measuredWidth, size.width),
         height: (used.height + textContainerInset.top + textContainerInset.bottom).rounded(.up)
       )
+      let cached = CachedParagraphUIViewSize(size: fittedSize, targetWidth: size.width)
+      if let relayoutLineCount {
+        lineGatedFittingSize = cached
+        lineGatedLineCount = relayoutLineCount
+      }
+      lastReportedFittingSize = cached
+      return fittedSize
     }
     // Steady state (including the table measurement chain's repeated
     // same-width passes): measure against the container as-is, no invalidation.
@@ -287,12 +357,61 @@ class ParagraphUIView: UITextView {
     // incremental; ensureLayout(for:) is the known-slow API and must not be used
     // on the streaming path.
     _ = layoutManager.glyphRange(for: textContainer)
+    if gatesStreamingHeightByLineCount {
+      let lineCount = Self.laidOutLineCount(layoutManager: layoutManager, textContainer: textContainer)
+      if let gated = lineGatedFittingSize,
+         abs(gated.targetWidth - size.width) < 0.5,
+         let prevLines = lineGatedLineCount,
+         prevLines > 0,
+         lineCount == prevLines {
+        return gated.size
+      }
+      let used = layoutManager.usedRect(for: textContainer)
+      let measuredWidth = (used.width + textContainerInset.left + textContainerInset.right).rounded(.up)
+      let fittedSize = CGSize(
+        width: min(measuredWidth, size.width),
+        height: (used.height + textContainerInset.top + textContainerInset.bottom).rounded(.up)
+      )
+      let cached = CachedParagraphUIViewSize(size: fittedSize, targetWidth: size.width)
+      lineGatedFittingSize = cached
+      lineGatedLineCount = lineCount
+      lastReportedFittingSize = cached
+      return fittedSize
+    }
     let used = layoutManager.usedRect(for: textContainer)
     let measuredWidth = (used.width + textContainerInset.left + textContainerInset.right).rounded(.up)
-    return CGSize(
+    let fittedSize = CGSize(
       width: min(measuredWidth, size.width),
       height: (used.height + textContainerInset.top + textContainerInset.bottom).rounded(.up)
     )
+    lastReportedFittingSize = CachedParagraphUIViewSize(size: fittedSize, targetWidth: size.width)
+    return fittedSize
+  }
+
+  private static func laidOutLineCount(
+    layoutManager: NSLayoutManager,
+    textContainer: NSTextContainer
+  ) -> Int {
+    let glyphCount = layoutManager.numberOfGlyphs
+    guard glyphCount > 0 else { return 0 }
+    var count = 0
+    var glyphIndex = 0
+    while glyphIndex < glyphCount {
+      var range = NSRange(location: 0, length: 0)
+      _ = layoutManager.lineFragmentRect(
+        forGlyphAt: glyphIndex,
+        effectiveRange: &range,
+        withoutAdditionalLayout: true
+      )
+      guard range.length > 0 else { break }
+      count += 1
+      glyphIndex = range.location + range.length
+    }
+    if layoutManager.extraLineFragmentTextContainer === textContainer,
+       layoutManager.extraLineFragmentRect.height > 0 {
+      count += 1
+    }
+    return count
   }
 
   /// Union of the actually used line-fragment bounds. `usedRect(for:)` can lag a
@@ -320,19 +439,201 @@ class ParagraphUIView: UITextView {
     return bounds.isNull ? .zero : bounds
   }
 
+  func adoptEquivalentParagraphContents(_ contents: NSMutableAttributedString) {
+    paragraphContents = contents
+    baseParagraphContents = contents
+    directAppendLayoutRevision = 0
+  }
+
+  func isUpToDate(with contents: NSMutableAttributedString, lineSpacing: CGFloat?) -> Bool {
+    guard self.lineSpacing == lineSpacing else { return false }
+    if paragraphContents === contents {
+      if baseParagraphContents !== contents {
+        baseParagraphContents = contents
+      }
+      return true
+    }
+    if hasDirectAppendedTail, baseParagraphContents === contents {
+      return true
+    }
+    if paragraphContents == contents {
+      adoptEquivalentParagraphContents(contents)
+      return true
+    }
+    return false
+  }
+
+  func setGatesStreamingHeightByLineCount(_ enabled: Bool) {
+    guard gatesStreamingHeightByLineCount != enabled else { return }
+    gatesStreamingHeightByLineCount = enabled
+    guard !enabled else { return }
+    let gated = lineGatedFittingSize
+    lineGatedFittingSize = nil
+    lineGatedLineCount = nil
+    guard usesTextKit1,
+          let gated,
+          gated.targetWidth > 0,
+          gated.targetWidth.isFinite else {
+      return
+    }
+    invalidateCachedSize()
+    let exactSize = sizeThatFits(
+      CGSize(width: gated.targetWidth, height: .greatestFiniteMagnitude)
+    )
+    if exactSize.height != gated.size.height {
+      directAppendLayoutRevision &+= 1
+      setNeedsLayout()
+      invalidateIntrinsicContentSize()
+    }
+  }
+
+  func canDirectAppendPlainTail() -> Bool {
+    guard usesTextKit1,
+          paragraphContents.length > 0,
+          paragraphContents.length == textStorage.length else {
+      return false
+    }
+    let attrs = paragraphContents.attributes(at: paragraphContents.length - 1, effectiveRange: nil)
+    guard let typography = attrs[.typography] as? TextFonts,
+          let font = attrs[.font] as? UIFont,
+          font == typography.normal else {
+      return false
+    }
+    return attrs[.attachment] == nil
+      && attrs[.link] == nil
+      && attrs[.backgroundColor] == nil
+      && attrs[.strikethroughStyle] == nil
+      && attrs[.underlineStyle] == nil
+  }
+
+  enum PlainTailAppendOutcome {
+    case notAppended
+    case appendedSameLine
+    case appendedHeightChanged
+  }
+
+  @discardableResult
+  func appendStreamingPlainTail(
+    _ suffixText: String,
+    animatedByWord: Bool,
+    appendsTailFadeAsUnit: Bool = false,
+    suppressIntrinsicInvalidation: Bool = false
+  ) -> PlainTailAppendOutcome {
+    guard !suffixText.isEmpty, canDirectAppendPlainTail() else { return .notAppended }
+    #if DEBUG
+    ParagraphUIViewAppendPathTestHook.recordHit()
+    ParagraphUIViewLiveProbe.onRecord?("para-set:direct-append")
+    #endif
+    let prefixLength = paragraphContents.length
+    let trailingAttributes = paragraphContents.attributes(at: prefixLength - 1, effectiveRange: nil)
+    if baseParagraphContents == nil {
+      baseParagraphContents = paragraphContents
+    }
+    if paragraphContents === baseParagraphContents {
+      paragraphContents = NSMutableAttributedString(attributedString: paragraphContents)
+    }
+    let contentSuffix = NSAttributedString(string: suffixText, attributes: trailingAttributes)
+    paragraphContents.append(contentSuffix)
+    let appendedRange = NSRange(location: prefixLength, length: contentSuffix.length)
+
+    let storageSuffix = NSMutableAttributedString(string: suffixText, attributes: trailingAttributes)
+    if let lineSpacing {
+      storageSuffix.setLineSpacing(lineSpacing)
+    }
+
+    let previousFittingSize = lastReportedFittingSize
+    intrinsicContentSizeSuppressionDepth += 1
+    textStorage.beginEditing()
+    textStorage.append(storageSuffix)
+    textStorage.endEditing()
+    intrinsicContentSizeSuppressionDepth -= 1
+
+    if customAccessibilityLabel != nil {
+      accessibilityLabel = nil
+    }
+    if accessibilityCustomActions != nil {
+      accessibilityCustomActions = nil
+    }
+    if animatedByWord {
+      appendFadeAnimations(in: appendedRange, asUnit: appendsTailFadeAsUnit)
+    }
+
+    if gatesStreamingHeightByLineCount,
+       let gated = lineGatedFittingSize,
+       gated.targetWidth > 0,
+       gated.targetWidth.isFinite,
+       let prevLines = lineGatedLineCount,
+       prevLines > 0 {
+      let expectedContainerWidth = gated.targetWidth
+        - textContainerInset.left - textContainerInset.right
+      if abs(textContainer.size.width - expectedContainerWidth) < 0.5,
+         textContainer.size.height == Self.unboundedMeasuringHeight {
+        _ = layoutManager.glyphRange(for: textContainer)
+        let updatedLines = Self.laidOutLineCount(
+          layoutManager: layoutManager,
+          textContainer: textContainer
+        )
+        if updatedLines == prevLines {
+          setNeedsDisplay()
+          return .appendedSameLine
+        }
+      }
+    }
+
+    invalidateCachedSize()
+    if let previousFittingSize,
+       previousFittingSize.targetWidth > 0,
+       previousFittingSize.targetWidth.isFinite {
+      let updatedFittingSize = sizeThatFits(
+        CGSize(width: previousFittingSize.targetWidth, height: .greatestFiniteMagnitude)
+      )
+      if updatedFittingSize.height != previousFittingSize.size.height {
+        directAppendLayoutRevision &+= 1
+        if suppressIntrinsicInvalidation {
+          setNeedsDisplay()
+        } else {
+          setNeedsLayout()
+          invalidateIntrinsicContentSize()
+        }
+        return .appendedHeightChanged
+      } else {
+        setNeedsDisplay()
+        return .appendedSameLine
+      }
+    } else {
+      directAppendLayoutRevision &+= 1
+      if suppressIntrinsicInvalidation {
+        setNeedsDisplay()
+      } else {
+        setNeedsLayout()
+        invalidateIntrinsicContentSize()
+      }
+      return .appendedHeightChanged
+    }
+  }
+
   func setParagraphContents(
     _ newContents: NSMutableAttributedString,
     lineSpacing: CGFloat? = nil,
     animatedByWord: Bool,
-    appendsTailFadeAsUnit: Bool = false
+    appendsTailFadeAsUnit: Bool = false,
+    suppressIntrinsicInvalidation: Bool = false
   ) {
     // Keep the cached interface style up to date for citation preview rendering.
     // This runs on the main thread so it's safe to read traitCollection here.
     InlineCitationAttachment.updateInterfaceStyle(traitCollection.userInterfaceStyle)
 
-    guard paragraphContents != newContents || self.lineSpacing != lineSpacing else {
+    if paragraphContents === newContents, self.lineSpacing == lineSpacing {
+      baseParagraphContents = newContents
       return
     }
+    guard paragraphContents != newContents || self.lineSpacing != lineSpacing else {
+      adoptEquivalentParagraphContents(newContents)
+      return
+    }
+    #if DEBUG
+    ParagraphUIViewLiveProbe.onRecord?("para-set")
+    #endif
 
     // Streaming publishes on the TextKit 1 path almost always extend the
     // previous contents. Appending only the new tail keeps TextKit's layout
@@ -346,32 +647,61 @@ class ParagraphUIView: UITextView {
        let appendedRange = paragraphContents.appendedTailRange(toBecome: newContents) {
       #if DEBUG
       ParagraphUIViewAppendPathTestHook.recordHit()
+      ParagraphUIViewLiveProbe.onRecord?("para-set:append")
       #endif
       self.paragraphContents = newContents
+      self.baseParagraphContents = newContents
+      self.directAppendLayoutRevision = 0
       let suffix = NSMutableAttributedString(
         attributedString: newContents.attributedSubstring(from: appendedRange)
       )
       if let lineSpacing {
         suffix.setLineSpacing(lineSpacing)
       }
+      let previousFittingSize = lastReportedFittingSize
       invalidateCachedSize()
+      intrinsicContentSizeSuppressionDepth += 1
       textStorage.beginEditing()
       textStorage.append(suffix)
       textStorage.endEditing()
-      setNeedsLayout()
+      intrinsicContentSizeSuppressionDepth -= 1
       // TextKit 1 is selected only for attachment-free paragraphs. Avoid a
-      // full attributed-range scan on every append when no citation action can
-      // exist on this path.
-      accessibilityLabel = textStorage.string
-      accessibilityCustomActions = nil
-      invalidateIntrinsicContentSize()
+      // full attributed-range scan or full-string copy on every append; our
+      // `accessibilityLabel` override resolves `textStorage.string` lazily.
+      if customAccessibilityLabel != nil {
+        accessibilityLabel = nil
+      }
+      if accessibilityCustomActions != nil {
+        accessibilityCustomActions = nil
+      }
       if animatedByWord {
         appendFadeAnimations(in: appendedRange, asUnit: appendsTailFadeAsUnit)
+      }
+      if suppressIntrinsicInvalidation {
+        setNeedsDisplay()
+      } else if let previousFittingSize,
+                previousFittingSize.targetWidth > 0,
+                previousFittingSize.targetWidth.isFinite {
+        let updatedFittingSize = sizeThatFits(
+          CGSize(width: previousFittingSize.targetWidth, height: .greatestFiniteMagnitude)
+        )
+        // This path fills a fixed proposed column. Appended glyph width is
+        // not a size change for SwiftUI until the paragraph gains a line.
+        if updatedFittingSize.height != previousFittingSize.size.height {
+          setNeedsLayout()
+          invalidateIntrinsicContentSize()
+        } else {
+          setNeedsDisplay()
+        }
+      } else {
+        setNeedsLayout()
+        invalidateIntrinsicContentSize()
       }
       return
     }
 
     #if DEBUG
+    ParagraphUIViewLiveProbe.onRecord?("para-set:full")
     if !usesTextKit1 {
       ParagraphUIViewAppendPathTestHook.recordMiss("textKit2")
     } else if self.lineSpacing != lineSpacing {
@@ -384,6 +714,8 @@ class ParagraphUIView: UITextView {
     #endif
 
     self.paragraphContents = newContents
+    self.baseParagraphContents = newContents
+    self.directAppendLayoutRevision = 0
     self.lineSpacing = lineSpacing
 
     let oldAttributedString: NSAttributedString = attributedText
@@ -405,8 +737,21 @@ class ParagraphUIView: UITextView {
     // fades for the newly appended tail are added below; otherwise the stale
     // ranges apply wrong alphas to unrelated characters in the replacement.
     activeAnimations.removeAll()
+    glyphFadeLayoutManager?.setOpacityRanges([])
+    lastReportedFittingSize = nil
+    lineGatedFittingSize = nil
+    lineGatedLineCount = nil
     invalidateCachedSize()
+    intrinsicContentSizeSuppressionDepth += 1
     attributedText = finalString
+    if usesTextKit1 {
+      textContainer.heightTracksTextView = false
+      textContainer.size = CGSize(
+        width: textContainer.size.width,
+        height: ParagraphUIView.unboundedMeasuringHeight
+      )
+    }
+    intrinsicContentSizeSuppressionDepth -= 1
 
     // Vendored fix (AmberAgent): a reused view's TextKit2 text container can still
     // be sized for a previous, wider context (e.g. an unconstrained table cell).
@@ -418,7 +763,9 @@ class ParagraphUIView: UITextView {
 
     configureAccessibility(for: finalString)
 
-    invalidateIntrinsicContentSize()
+    if !suppressIntrinsicInvalidation {
+      invalidateIntrinsicContentSize()
+    }
 
     // Vendored fix (AmberAgent): a non-append replacement can keep a real text
     // prefix while changing everything after it. The old-length heuristic skipped
@@ -443,6 +790,23 @@ class ParagraphUIView: UITextView {
 
   private func appendFadeAnimations(in newContentRange: NSRange, asUnit: Bool = false) {
     guard newContentRange.length > 0 else { return }
+    let drawsGlyphs = asUnit && glyphFadeLayoutManager != nil
+    if drawsGlyphs != rendersFadeAsGlyphs {
+      if drawsGlyphs, !activeAnimations.isEmpty {
+        // A cached TextKit 1 view can switch from legacy word fades to the
+        // explicit tail-unit mode. Restore its authoritative colors once.
+        textStorage.beginEditing()
+        paragraphContents.enumerateAttribute(.foregroundColor,
+          in: NSRange(location: 0, length: paragraphContents.length), options: []) { value, range, _ in
+          if let value { textStorage.addAttribute(.foregroundColor, value: value, range: range) }
+          else { textStorage.removeAttribute(.foregroundColor, range: range) }
+        }
+        textStorage.endEditing()
+      }
+      rendersFadeAsGlyphs = drawsGlyphs
+      glyphFadeLayoutManager?.setOpacityRanges([])
+      fadeAnimationDisplayLink?.preferredFrameRateRange = fadeFrameRateRange
+    }
     let baseStartTime = CACurrentMediaTime()
     if asUnit {
       // Vendored addition (AmberAgent): fade the whole appended tail as one
@@ -542,9 +906,14 @@ class ParagraphUIView: UITextView {
 
   /// Generate accessibility label and actions in a single pass (optimized)
   private func generateAccessibilityContent(from attributedString: NSAttributedString) -> AccessibilityContent? {
+    let fullRange = NSRange(location: 0, length: attributedString.length)
+    guard !usesTextKit1,
+          fullRange.length > 0,
+          attributedString.containsAttachments(in: fullRange) else {
+      return nil
+    }
     var labelComponents: [String] = []
     var actions: [UIAccessibilityCustomAction] = []
-    let fullRange = NSRange(location: 0, length: attributedString.length)
 
     attributedString.enumerateAttributes(in: fullRange, options: []) { attrs, range, _ in
       // Handle citation attachments
@@ -583,9 +952,13 @@ class ParagraphUIView: UITextView {
       accessibilityLabel = accessibilityContent.label
       accessibilityCustomActions = accessibilityContent.actions
     } else {
-      // No citations found, just use the plain text
-      accessibilityLabel = attributedString.string
-      accessibilityCustomActions = nil
+      // No citations found; `accessibilityLabel` getter lazily returns `textStorage.string`.
+      if customAccessibilityLabel != nil {
+        accessibilityLabel = nil
+      }
+      if accessibilityCustomActions != nil {
+        accessibilityCustomActions = nil
+      }
     }
   }
 
@@ -617,11 +990,22 @@ class ParagraphUIView: UITextView {
     activeAnimations.removeAll { currentTime - $0.startTime >= $0.duration }
 
     if activeAnimations.isEmpty {
+      glyphFadeLayoutManager?.setOpacityRanges([])
       tearDownDisplayLink()
     }
   }
 
   private func updateTextViewWithCurrentAnimations(at currentTime: CFTimeInterval = CACurrentMediaTime()) {
+    if rendersFadeAsGlyphs, let manager = glyphFadeLayoutManager {
+      manager.setOpacityRanges(activeAnimations.compactMap { animation in
+        guard NSMaxRange(animation.range) <= textStorage.length else { return nil }
+        let progress = min(max((currentTime - animation.startTime) / animation.duration, 0), 1)
+        return ParagraphFadeLayoutManager.OpacityRange(range: animation.range, alpha: easeOut(progress))
+      })
+      return
+    }
+    intrinsicContentSizeSuppressionDepth += 1
+    defer { intrinsicContentSizeSuppressionDepth -= 1 }
     textStorage.beginEditing()
     defer { textStorage.endEditing() }
 
@@ -653,17 +1037,19 @@ class ParagraphUIView: UITextView {
 
   private func setUpDisplayLink() {
     fadeAnimationDisplayLink = CADisplayLink(target: self, selector: #selector(updateFadeAnimation))
-    fadeAnimationDisplayLink?.preferredFrameRateRange = CAFrameRateRange(
-      minimum: 60,
-      maximum: 120,
-      preferred: 120
-    )
+    fadeAnimationDisplayLink?.preferredFrameRateRange = fadeFrameRateRange
     fadeAnimationDisplayLink?.add(to: .main, forMode: .common)
   }
 
   private func tearDownDisplayLink() {
     fadeAnimationDisplayLink?.remove(from: .main, forMode: .common)
     fadeAnimationDisplayLink = nil
+  }
+
+  private var fadeFrameRateRange: CAFrameRateRange {
+    rendersFadeAsGlyphs
+      ? CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+      : CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
   }
 
   private func invalidateCachedSize() {
@@ -679,12 +1065,29 @@ class ParagraphUIView: UITextView {
   /// re-layout at the new width).
   func resetForReuse() {
     tearDownDisplayLink()
+    layer.removeAllAnimations()
+    alpha = 1
     activeAnimations.removeAll()
+    glyphFadeLayoutManager?.setOpacityRanges([])
+    rendersFadeAsGlyphs = false
     paragraphContents = NSMutableAttributedString()
+    baseParagraphContents = nil
+    directAppendLayoutRevision = 0
+    gatesStreamingHeightByLineCount = false
+    lineGatedFittingSize = nil
+    lineGatedLineCount = nil
     lineSpacing = nil
     attributedText = NSAttributedString()
+    lastReportedFittingSize = nil
+    layoutInvalidationID = nil
     invalidateCachedSize()
     lastLaidOutWidth = nil
+    if customAccessibilityLabel != nil {
+      accessibilityLabel = nil
+    }
+    if accessibilityCustomActions != nil {
+      accessibilityCustomActions = nil
+    }
     // Vendored fix (AmberAgent): also drop the previous context's frame. A
     // recycled view keeps its old bounds (e.g. a wide table cell); with valid
     // bounds, `intrinsicContentSize` trusts them and advertises the stale wide
@@ -692,6 +1095,13 @@ class ParagraphUIView: UITextView {
     // both edges. SwiftUI re-frames the view during layout, so resetting to
     // zero only affects the measurement window before the new frame lands.
     frame = .zero
+    if usesTextKit1 {
+      textContainer.heightTracksTextView = false
+      textContainer.size = CGSize(
+        width: 0,
+        height: ParagraphUIView.unboundedMeasuringHeight
+      )
+    }
     setNeedsLayout()
   }
 
@@ -774,6 +1184,10 @@ enum ParagraphUIViewAppendPathTestHook {
   }
 }
 
+public enum ParagraphUIViewLiveProbe {
+  public nonisolated(unsafe) static var onRecord: ((String) -> Void)?
+}
+
 extension NSAttributedString {
   /// Test-only diagnostic mirror of `appendedTailRange(toBecome:)` that classifies
   /// *why* an append fast-path attempt didn't qualify, instead of just returning nil.
@@ -806,6 +1220,10 @@ extension NSAttributedString {
   }
 }
 #endif
+
+public enum ParagraphLayoutInvalidationHook {
+  public nonisolated(unsafe) static var onInvalidate: ((String?) -> Void)?
+}
 
 fileprivate extension NSMutableAttributedString {
   func setLineSpacing(_ lineSpacing: CGFloat) {

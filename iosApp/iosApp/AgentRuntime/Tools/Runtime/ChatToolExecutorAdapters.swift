@@ -3,39 +3,6 @@ import Foundation
 
 @MainActor
 extension ChatToolRuntime {
-    func novelDiscussionToolExecutors(
-        projectContext: NovelProjectToolRunContext? = nil
-    ) -> [String: any IOSToolExecutor] {
-        var executors: [String: any IOSToolExecutor] = [
-            "ask_user": IOSClosureToolExecutor { _, _, _ in
-                .needsApproval("等待用户回答")
-            }
-        ]
-        if let projectContext {
-            let projectExecutor = IOSNovelProjectToolExecutor(
-                projectContext: projectContext,
-                creation: novelProjectCreation
-            )
-            for name in IOSNovelProjectToolExecutor.supportedToolNames {
-                executors[name] = projectExecutor
-            }
-        }
-        guard effectiveWebSearchEnabled else { return executors }
-        for name in IOSSearchExecutor.supportedToolNames {
-            executors[name] = IOSClosureToolExecutor { [weak self] toolName, arguments, isUserInitiated in
-                guard let self else { return .failed("Chat runtime is unavailable.") }
-                switch self.searchToolPermission(isUserInitiated: isUserInitiated) {
-                case .denied(let reason): return .denied(reason)
-                case .needsApproval(let reason): return .needsApproval(reason)
-                case .allow: break
-                }
-                let call = self.toolCall(name: toolName, input: arguments)
-                return .filled(await self.dispatchSearchToolCall(call, isUserInitiated: isUserInitiated))
-            }
-        }
-        return executors
-    }
-
     func backgroundToolExecutors(
         providerSetting: ProviderSetting,
         params: TextGenerationParams,
@@ -79,7 +46,27 @@ extension ChatToolRuntime {
         }
         let phoneExecutor = IOSPhoneControlToolExecutor(runID: runId)
         for name in IOSPhoneControlToolCatalog.toolNames where availableToolNames.contains(name) {
-            executors[name] = phoneExecutor
+            if name == "phone_add_app" {
+                executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, isUserInitiated in
+                    guard let self else { return .failed("Chat runtime is unavailable.") }
+                    if !isUserInitiated,
+                       !self.effectiveHighRiskAutoApproveEnabled,
+                       IOSPhoneControlController.shared.ownerRunID == runId,
+                       IOSPhoneControlToolExecutor.requiresBackgroundAddAppDenial(
+                           arguments: arguments,
+                           controller: .shared
+                       ) {
+                        return .denied(IOSPhoneControlToolExecutor.backgroundAddAppDenialJSON())
+                    }
+                    return await phoneExecutor.execute(
+                        name: toolName,
+                        arguments: arguments,
+                        isUserInitiated: isUserInitiated
+                    )
+                }
+            } else {
+                executors[name] = phoneExecutor
+            }
         }
         for name in IOSWakeToolCatalog.toolNames where availableToolNames.contains(name) {
             executors[name] = IOSToolCallClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] tool in
@@ -245,11 +232,11 @@ extension ChatToolRuntime {
         if availableToolNames.contains("memory_tool") {
             executors["memory_tool"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] _, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
-                let policy = self.memoryToolWritePolicy(input: arguments, isUserInitiated: false)
+                let policy = self.memoryToolWritePolicy(input: arguments, isUserInitiated: false, conversationId: conversationId)
                 if case .needsUserAction(let reason) = policy {
                     return .denied("后台生成期间需要回到 App 确认记忆写入：\(reason)")
                 }
-                return .filled(self.dispatchMemoryToolCall(self.toolCall(name: "memory_tool", input: arguments), writePolicy: policy))
+                return .filled(self.dispatchMemoryToolCall(self.toolCall(name: "memory_tool", input: arguments), writePolicy: policy, conversationId: conversationId))
             }
         }
 
@@ -304,6 +291,11 @@ extension ChatToolRuntime {
             }
         }
 
+        if availableToolNames.contains(IOSPhoneControlToolCatalog.preflightToolName) {
+            executors[IOSPhoneControlToolCatalog.preflightToolName] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { _, _, _ in
+                .filled(IOSPhoneControlToolExecutor.preflightJSON(controller: .shared))
+            }
+        }
         if availableToolNames.contains(IOSWeatherToolCatalog.toolName) {
             executors[IOSWeatherToolCatalog.toolName] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { _, arguments, _ in
                 guard !IOSWeatherToolExecutor.requestsCurrentLocation(input: arguments) else {
@@ -382,6 +374,20 @@ extension ChatToolRuntime {
                     conversationId: conversationId
                 )
                 return .filledParts(result.parts)
+            }
+        }
+
+        for name in AgentSoulToolCatalog.toolNames where availableToolNames.contains(name) {
+            executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
+                guard let self else { return .failed("Chat runtime is unavailable.") }
+                let result = await self.dispatchAdvancedToolCall(
+                    self.toolCall(name: toolName, input: arguments),
+                    providerSetting: providerSetting,
+                    params: params,
+                    runId: runId,
+                    conversationId: conversationId
+                )
+                return .filled(result)
             }
         }
 
@@ -482,7 +488,7 @@ extension ChatToolRuntime {
 
         // 跨会话读取（session_search/session_read）：本地只读、无审批，前后台
         // 同注册（照 tool_search 先例）。只注册当前轮 params 可见的名字。
-        for name in ["session_search", "session_read", "history_search", "history_fetch"] where availableToolNames.contains(name) {
+        for name in ["session_search", "session_read", "history_search", "history_fetch", ChatEpisodeRecallTool.name] where availableToolNames.contains(name) {
             executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 return .filled(await self.dispatchSessionReadToolCall(
@@ -663,15 +669,18 @@ extension ChatToolRuntime {
         if name == "memory_tool" { return .memory }
         if name == "generate_image" { return .image }
         if name == "ask_user" { return .askUser }
-        if ["session_search", "session_read", "history_search", "history_fetch"].contains(name) { return .sessionRead }
+        if ["session_search", "session_read", "history_search", "history_fetch", ChatEpisodeRecallTool.name].contains(name) { return .sessionRead }
         if name == "runtime_status" { return .runtimeStatus }
         var advancedNames: Set<String> = Set([
             "mcp_call", "subagent_dispatch", "model_council_run",
             IOSSoulToolCatalog.toolName,
+            "phone_add_app",
+            IOSPhoneControlToolCatalog.preflightToolName,
             "spawn_agent", "list_agents", "interrupt_agent",
             "send_message", "followup_task", "wait_agent",
         ])
         .union(IOSAppleAgentToolCatalog.toolNames)
+        .union(AgentSoulToolCatalog.toolNames)
         .union(IOSWakeToolCatalog.toolNames)
         .union(IOSShortcutAuthoringToolCatalog.toolNames)
         .union(IOSSkillToolCatalog.toolNames)
@@ -720,7 +729,18 @@ extension ChatToolRuntime {
         for tool in params.tools {
             let name = tool.name
             if IOSPhoneControlToolCatalog.isPhoneTool(name: name) {
-                executors[name] = IOSPhoneControlToolExecutor(runID: runId, controller: phoneControl ?? .shared)
+                let resolvedController = phoneControl ?? .shared
+                if name == "phone_add_app" {
+                    executors[name] = IOSForegroundPhoneAddAppExecutor(
+                        runtime: self,
+                        runID: runId,
+                        controller: resolvedController,
+                        approvalPromptBox: approvalPromptBox,
+                        executionPolicy: executionPolicy
+                    )
+                } else {
+                    executors[name] = IOSPhoneControlToolExecutor(runID: runId, controller: resolvedController)
+                }
                 continue
             }
             let kind = pendingKindForForegroundTool(named: name, executionPolicy: executionPolicy)
@@ -740,7 +760,8 @@ extension ChatToolRuntime {
                 nestedToolRunner: nestedToolRunner,
                 nestedOutcomeUnknownProvider: nestedOutcomeUnknownProvider,
                 recipeCatalogSnapshot: recipeCatalogSnapshot,
-                executionPolicy: executionPolicy
+                executionPolicy: executionPolicy,
+                phoneControl: phoneControl
             )
         }
         return executors
@@ -777,6 +798,7 @@ private final class IOSForegroundKernelToolExecutor: IOSToolExecutor, @unchecked
     private let nestedOutcomeUnknownProvider: (@MainActor () -> IOSToolOutcomeUnknownSignal?)?
     private let recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?
     private let executionPolicy: IOSExecutionPolicySnapshot?
+    private let phoneControl: IOSPhoneControlController?
 
     init(
         runtime: ChatToolRuntime,
@@ -793,7 +815,8 @@ private final class IOSForegroundKernelToolExecutor: IOSToolExecutor, @unchecked
         nestedToolRunner: IosExecNestedToolRunner?,
         nestedOutcomeUnknownProvider: (@MainActor () -> IOSToolOutcomeUnknownSignal?)?,
         recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?,
-        executionPolicy: IOSExecutionPolicySnapshot?
+        executionPolicy: IOSExecutionPolicySnapshot?,
+        phoneControl: IOSPhoneControlController?
     ) {
         self.runtime = runtime
         self.kind = kind
@@ -810,6 +833,7 @@ private final class IOSForegroundKernelToolExecutor: IOSToolExecutor, @unchecked
         self.nestedOutcomeUnknownProvider = nestedOutcomeUnknownProvider
         self.recipeCatalogSnapshot = recipeCatalogSnapshot
         self.executionPolicy = executionPolicy
+        self.phoneControl = phoneControl
     }
 
     func execute(
@@ -839,7 +863,8 @@ private final class IOSForegroundKernelToolExecutor: IOSToolExecutor, @unchecked
             inputDigest: inputDigest,
             conversationId: conversationId,
             baseMessages: baseMessagesProvider(),
-            executionPolicy: executionPolicy
+            executionPolicy: executionPolicy,
+            phoneControl: phoneControl
         )
         let result = await runtime.execute(
             ChatPendingToolCall(kind: kind, toolCall: tool),
@@ -883,6 +908,71 @@ private final class IOSForegroundKernelToolExecutor: IOSToolExecutor, @unchecked
             return .needsApproval(prompt.toolTitle)
         case .durabilityFailure(let message):
             return .durabilityFailure(message)
+        }
+    }
+}
+
+private final class IOSForegroundPhoneAddAppExecutor: IOSToolExecutor, @unchecked Sendable {
+    private weak var runtime: ChatToolRuntime?
+    private let runID: String
+    private let controller: IOSPhoneControlController
+    private let approvalPromptBox: ChatToolRuntime.IOSForegroundApprovalPromptBox
+    private let executionPolicy: IOSExecutionPolicySnapshot?
+
+    init(
+        runtime: ChatToolRuntime,
+        runID: String,
+        controller: IOSPhoneControlController,
+        approvalPromptBox: ChatToolRuntime.IOSForegroundApprovalPromptBox,
+        executionPolicy: IOSExecutionPolicySnapshot?
+    ) {
+        self.runtime = runtime
+        self.runID = runID
+        self.controller = controller
+        self.approvalPromptBox = approvalPromptBox
+        self.executionPolicy = executionPolicy
+    }
+
+    func execute(
+        tool: UIMessagePart.Tool,
+        isUserInitiated: Bool
+    ) async -> IOSAgentToolOutcome {
+        await dispatch(tool: tool, isUserInitiated: isUserInitiated)
+    }
+
+    func execute(
+        name: String,
+        arguments: String,
+        isUserInitiated: Bool
+    ) async -> IOSAgentToolOutcome {
+        .failed("[engine] foreground phone_add_app executor requires the tool-carrying execute(tool:) entry")
+    }
+
+    @MainActor
+    private func dispatch(
+        tool: UIMessagePart.Tool,
+        isUserInitiated: Bool
+    ) async -> IOSAgentToolOutcome {
+        guard let runtime else { return .failed("Chat runtime is unavailable.") }
+        let executor = IOSPhoneControlToolExecutor(runID: runID, controller: controller)
+        let autoApprove = isUserInitiated
+            || (executionPolicy?.highRiskAutoApproveEnabled ?? runtime.effectiveHighRiskAutoApproveEnabled)
+        if autoApprove {
+            return await executor.execute(tool: tool, isUserInitiated: isUserInitiated)
+        }
+        switch await executor.prepareAddAppApproval(arguments: tool.input) {
+        case .immediate(let outcome):
+            return outcome
+        case .requiresApproval(let bundleID, let appName):
+            let request = ChatToolApprovalRequestBuilder.phoneAddApp(
+                for: tool,
+                bundleID: bundleID,
+                appName: appName,
+                reason: "请确认是否允许当前及后续手机控制任务访问并操作该应用。"
+            )
+            let prompt = ChatToolApprovalPrompt.mcp(request)
+            approvalPromptBox.put(tool.toolCallId, prompt)
+            return .needsApproval(prompt.toolTitle)
         }
     }
 }

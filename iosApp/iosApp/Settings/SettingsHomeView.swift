@@ -25,7 +25,7 @@ struct SettingsHomeView: View {
             ),
             .init(title: "显示与字体", systemImage: "slider.horizontal.3", route: .displayFont),
             .init(title: "Apple Watch", systemImage: "applewatch", route: .appleWatch),
-            .init(title: "Mac Gateway", systemImage: "desktopcomputer", route: .macGateway)
+            .init(title: "Amber · 云端", systemImage: "desktopcomputer", route: .macGateway)
         ]
     }
 
@@ -52,9 +52,7 @@ struct SettingsHomeView: View {
             .init(title: "WebMount", systemImage: "globe", route: .webMount),
             .init(title: "子代理", systemImage: "person.2", route: .subagents),
             .init(title: "模型议会", systemImage: "bubble.left.and.bubble.right", route: .council),
-            .init(title: "小应用", systemImage: "square.grid.2x2", route: .miniApps),
-            .init(title: "小说创作", systemImage: "text.book.closed", route: .novelCreation),
-            .init(title: "深度阅读", systemImage: "book.pages", route: .board)
+            .init(title: "小应用", systemImage: "square.grid.2x2", route: .miniApps)
         ]
     }
 
@@ -168,10 +166,6 @@ struct SettingsHomeView: View {
                 }
             }
         }
-    }
-
-    private func placeholder(_ title: String, _ subtitle: String, _ systemImage: String) -> Route {
-        .settingsPlaceholder(title: title, subtitle: subtitle, systemImage: systemImage)
     }
 }
 

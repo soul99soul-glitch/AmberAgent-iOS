@@ -64,6 +64,53 @@ class OpenAIResponsesGenerationTest {
         assertEquals("max_output_tokens", result.choices.single().finishReason)
     }
 
+    @Test
+    fun chatCompletionGenerationExtractsArrayContentBlocks() = runBlocking {
+        val result = generateChatCompletion(
+            """{"id":"chat_blocks","model":"gpt-5.4","choices":[{"index":0,"message":{"role":"assistant","content":[{"type":"text","text":"{\"memories\":[]}"}]},"finish_reason":"stop"}]}"""
+        )
+
+        assertEquals("""{"memories":[]}""", result.choices.single().message!!.toText())
+    }
+
+    @Test
+    fun responsesGenerationExtractsStringMessageContentAndTopLevelOutputText() = runBlocking {
+        val fromStringContent = generate(
+            """{"id":"resp_str","model":"gpt-5.4","status":"completed","output":[{"type":"message","role":"assistant","content":"{\"memories\":[]}"}]}"""
+        )
+        assertEquals("""{"memories":[]}""", fromStringContent.choices.single().message!!.toText())
+
+        val fromTopLevelOutputText = generate(
+            """{"id":"resp_top","model":"gpt-5.4","status":"completed","output":[],"output_text":"{\"memories\":[]}"}"""
+        )
+        assertEquals("""{"memories":[]}""", fromTopLevelOutputText.choices.single().message!!.toText())
+    }
+
+    private suspend fun generateChatCompletion(responseBody: String): MessageChunk {
+        val client = HttpClient(MockEngine { request ->
+            assertEquals("/v1/chat/completions", request.url.encodedPath)
+            respond(
+                content = responseBody,
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+            )
+        })
+        try {
+            return OpenAIKmpProvider(client, client).generateText(
+                ProviderSetting.OpenAI(
+                    apiKey = "sk-test",
+                    baseUrl = "https://api.openai.com/v1",
+                    authMode = OpenAIAuthMode.API_KEY,
+                    useResponseApi = false,
+                ),
+                listOf(UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("Hello")))),
+                TextGenerationParams(model = Model(modelId = "gpt-5.4")),
+            )
+        } finally {
+            client.close()
+        }
+    }
+
     private suspend fun generate(responseBody: String): MessageChunk {
         val client = HttpClient(MockEngine { request ->
             assertEquals("/v1/responses", request.url.encodedPath)

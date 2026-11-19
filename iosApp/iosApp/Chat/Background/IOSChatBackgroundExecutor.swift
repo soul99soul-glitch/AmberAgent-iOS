@@ -82,7 +82,8 @@ extension IOSChatBackgroundGenerationCoordinator {
         )
         beginChatBackgroundKeepAlive(
             requestId: backgroundTask.identifier,
-            subtitle: job.params.model.displayName
+            subtitle: job.params.model.displayName,
+            allowsAudioLeg: Self.allowsAudioLeg(for: job)
         )
         let assistantTextSnapshot = IOSChatBackgroundAssistantTextSnapshot()
         let progress = backgroundTask.progress
@@ -190,7 +191,38 @@ extension IOSChatBackgroundGenerationCoordinator {
         )
 
         let presentationEvents = AsyncStream<AgentActivityPresentation>.makeStream()
-        func makeExecutors(_ params: TextGenerationParams) -> [String: any IOSToolExecutor] {
+        @MainActor final class BackgroundPhoneClaimGate {
+            var attempted: Bool
+            init(attempted: Bool) { self.attempted = attempted }
+        }
+        let claimGate = BackgroundPhoneClaimGate(
+            attempted: IOSPhoneControlController.shared.ownerRunID == job.runId
+        )
+        let jobRunId = job.runId
+        let requestId = backgroundTask.identifier
+        let conversationHex = job.conversationId.toHexDashString()
+        let ensureBackgroundPhoneClaimed: (@MainActor () -> Bool)? = job.canClaimPhoneControl ? { @MainActor [weak self] in
+            let controller = IOSPhoneControlController.shared
+            if controller.ownerRunID == jobRunId { return true }
+            guard let self,
+                  self.activeJobs[requestId]?.runId == jobRunId,
+                  self.activeRunStates[requestId] === runState,
+                  runState.allowsRunningPresentation,
+                  !claimGate.attempted else { return false }
+            claimGate.attempted = true
+            let claimed = controller.claim(
+                runID: jobRunId,
+                conversationID: conversationHex
+            ) { [weak self] in
+                guard IOSPhoneControlController.shared.hasRequestedSession(runID: jobRunId) else { return }
+                _ = self?.cancelJob(runId: jobRunId)
+            }
+            guard claimed else { return false }
+            self.activeBackgroundTasks[requestId]?.progress.totalUnitCount = -1
+            self.keepAlive.enableLivenessHeartbeat(self.chatBackgroundAudioLeaseId(for: requestId))
+            return true
+        } : nil
+        @MainActor func makeExecutors(_ params: TextGenerationParams) -> [String: any IOSToolExecutor] {
             let executors = job.toolRuntime.backgroundToolExecutors(
                 providerSetting: requestProvider,
                 params: params,
@@ -204,7 +236,8 @@ extension IOSChatBackgroundGenerationCoordinator {
             return Self.routingPhoneActivity(
                 executors: executors,
                 runID: job.runId,
-                events: presentationEvents.continuation
+                events: presentationEvents.continuation,
+                ensureClaimedOnFirstUse: ensureBackgroundPhoneClaimed
             )
         }
         let engine = IOSAgentToolEngine(
@@ -255,6 +288,11 @@ extension IOSChatBackgroundGenerationCoordinator {
         // force（不受 P2-b 召回同集去抖影响）。
         let initialCitationTracker = IOSMemoryCitationTracker(enforceCitationAllowlist: true)
         let retryCitationTracker = IOSMemoryCitationTracker(enforceCitationAllowlist: true)
+        let injectedIds = Set(job.uploadMessages.filter { $0.role == .system }.flatMap { message in
+            message.parts.compactMap { $0 as? UIMessagePart.Text }.flatMap { IOSMemoryCitation.recordIds(in: $0) }
+        })
+        IOSMemoryPersistence.shared.events.recordRecall(ids: injectedIds, runId: job.runId, cited: false,
+                                                       now: Int64(Date().timeIntervalSince1970 * 1000))
         let budgetSettings = dependencies?.sharedSettings.snapshot
         func uploadPreparer(
             params: TextGenerationParams
@@ -451,8 +489,8 @@ extension IOSChatBackgroundGenerationCoordinator {
         job.messagesSnapshot.replace(with: result.messages)
         // P2-c: 引擎终结处 finish() 已把引用 id 收齐（幂等）；模型显式引用 →
         // markUsed(force: true)，与前台 citation flush 同语义。空集合 no-op。
-        IOSMemoryPersistence.shared.markUsed(ids: initialCitationTracker.citationIds, force: true)
-        IOSMemoryPersistence.shared.markUsed(ids: retryCitationTracker.citationIds, force: true)
+        IOSMemoryPersistence.shared.markUsed(ids: initialCitationTracker.citationIds, force: true, runId: job.runId)
+        IOSMemoryPersistence.shared.markUsed(ids: retryCitationTracker.citationIds, force: true, runId: job.runId)
         presentationEvents.continuation.finish()
         await presentationConsumer.value
         runState.clearOperationTask()

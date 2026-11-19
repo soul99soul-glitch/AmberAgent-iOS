@@ -125,7 +125,7 @@ final class IOSHTMLPDFRenderer: NSObject, WKNavigationDelegate {
         defer { timeout.cancel() }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             self.continuation = continuation
-            webView.loadHTMLString(IOSDeepReadHTMLSecurity.hardenedDocument(html), baseURL: nil)
+            webView.loadHTMLString(IOSHTMLDocumentSecurity.hardenedDocument(html), baseURL: nil)
         }
 
         let renderer = UIPrintPageRenderer()
@@ -168,6 +168,80 @@ final class IOSHTMLPDFRenderer: NSObject, WKNavigationDelegate {
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         finish(.failure(RenderError.webContentTerminated))
+    }
+}
+
+private enum IOSHTMLDocumentSecurity {
+    static let contentSecurityPolicy = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data: amberfont:; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+
+    static func hardenedDocument(_ html: String, allowsRemoteImages: Bool = false) -> String {
+        let policy = allowsRemoteImages
+            ? contentSecurityPolicy.replacingOccurrences(of: "img-src data:;", with: "img-src data: https: http:;")
+            : contentSecurityPolicy
+        let escapedPolicy = policy.replacingOccurrences(of: "\"", with: "&quot;")
+        let meta = #"<meta http-equiv="Content-Security-Policy" content="\#(escapedPolicy)">"#
+        if let head = tagRanges(named: "head", in: html).first(where: {
+            !isClosingTag(String(html[$0]))
+        }) {
+            var hardened = html
+            hardened.insert(contentsOf: meta, at: head.upperBound)
+            return hardened
+        }
+        if let htmlTag = tagRanges(named: "html", in: html).first(where: {
+            !isClosingTag(String(html[$0]))
+        }) {
+            var hardened = html
+            hardened.insert(contentsOf: "<head>\(meta)</head>", at: htmlTag.upperBound)
+            return hardened
+        }
+        return "<head>\(meta)</head>\(html)"
+    }
+
+    private static func tagRanges(named name: String?, in html: String) -> [Range<String.Index>] {
+        var result: [Range<String.Index>] = []
+        var searchStart = html.startIndex
+        while let opening = html[searchStart...].firstIndex(of: "<") {
+            var cursor = html.index(after: opening)
+            var quote: Character?
+            var closing: String.Index?
+            while cursor < html.endIndex {
+                let character = html[cursor]
+                if let activeQuote = quote {
+                    if character == activeQuote { quote = nil }
+                } else if character == "\"" || character == "'" {
+                    quote = character
+                } else if character == ">" {
+                    closing = cursor
+                    break
+                }
+                cursor = html.index(after: cursor)
+            }
+            guard let closing else { break }
+            let upperBound = html.index(after: closing)
+            let range = opening..<upperBound
+            let tag = String(html[range])
+            if let parsedName = parsedTagName(tag), name == nil || parsedName == name?.lowercased() {
+                result.append(range)
+            }
+            searchStart = upperBound
+        }
+        return result
+    }
+
+    private static func parsedTagName(_ tag: String) -> String? {
+        var body = tag.dropFirst().dropLast()
+            .drop(while: { $0.isWhitespace })
+        if body.first == "/" {
+            body = body.dropFirst().drop(while: { $0.isWhitespace })
+        }
+        guard let first = body.first, first.isLetter else { return nil }
+        return String(body.prefix(while: { character in
+            character.isLetter || character.isNumber || character == ":" || character == "-"
+        })).lowercased()
+    }
+
+    private static func isClosingTag(_ tag: String) -> Bool {
+        tag.dropFirst().drop(while: { $0.isWhitespace }).first == "/"
     }
 }
 

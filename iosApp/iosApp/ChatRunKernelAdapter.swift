@@ -62,6 +62,7 @@ final class ChatRunKernelAdapter {
         /// B2 流式投影:引擎回调的 MainActor 转递(取消后一律忽略)。
         var onAssistantTurnStarted: () -> Void = {}
         var onAssistantTurnCompleted: ([UIMessage]) -> Bool = { _ in true }
+        var onAssistantProgressPlan: ([String]) -> Void = { _ in }
         var onToolExecutionStarted: (String, String) -> Void = { _, _ in }
         var onAssistantStage: (AgentActivityStage) -> Void = { _ in }
         /// Optional so a Host that only needs first-visible progress does not
@@ -99,6 +100,10 @@ final class ChatRunKernelAdapter {
         var executionPolicy: IOSExecutionPolicySnapshot? = nil
         var phoneAutomaticReasoning: Bool = false
         var phoneControl: IOSPhoneControlController? = nil
+        var ensurePhoneControlClaimed: (@MainActor () -> Bool)? = nil
+        var fastFirstReasoning: Bool = false
+        var routerReasoningName: String? = "OFF"
+        var workerReasoningName: String? = nil
         /// CGC `maxToolResumeCount` 语义:每个工具轮消耗 1,耗尽拒执。
         let maxToolResumeCount: Int
         /// 首轮头 steer 消费(CG-C startStreaming :2141 同款位置)之后的轮边界
@@ -255,6 +260,7 @@ final class ChatRunKernelAdapter {
         let hasAssistantReasoningCallback = callbacks.onAssistantReasoning != nil
         let hasFirstVisibleDeltaCallback = callbacks.onAssistantFirstVisibleDelta != nil
 
+        var firstEngineRun = true
         while true {
             if isStoppedByHost { return working }
             // Approval finishers (notably recipe_import) complete outside the
@@ -286,7 +292,11 @@ final class ChatRunKernelAdapter {
                     // 预算由准入钩子精确承担;maxSteps 只是防失控兜底——
                     // 预算内工具轮 + 一次超额轮(准入拒执)必须都放得下。
                     maxSteps: request.maxToolResumeCount + 2,
-                    honorApprovalPause: true
+                    honorApprovalPause: true,
+                    fastFirstReasoning: request.fastFirstReasoning,
+                    routerReasoningName: request.routerReasoningName,
+                    workerReasoningName: request.workerReasoningName,
+                    resumesWorker: !firstEngineRun
                 ),
                 ledger: ledger,
                 ledgerRunId: request.runId,
@@ -296,10 +306,8 @@ final class ChatRunKernelAdapter {
                     return controller.handoffState(runID: runID) != nil
                         && controller.hasRequestedSession(runID: runID)
                 },
-                // 重组闭包经 SE-0420 继承 MainActor 隔离(参数类型非 @Sendable),
-                // 运行时由引擎线程同步执行——与后台协调器 :1260 的 executorRebuilder
-                // 同一模式(纯装配读取,不触碰可变 UI 状态)。切勿在此
-                // assumeIsolated:引擎跑在协作线程池,运行期断言必陷阱。
+                // 工具工厂读取 MainActor runtime；引擎按这个隔离签名 await
+                // 重建，不能把闭包当作普通同步函数在协作线程池直接调用。
                 executorRebuilder: { newParams in
                     let rebuilt = Self.buildExecutors(
                         runtime: toolRuntime,
@@ -315,6 +323,7 @@ final class ChatRunKernelAdapter {
                     return rebuilt
                 }
             )
+            firstEngineRun = false
 
             // 引擎段由驱动子任务承载:Host 取消只取消该子任务(协作式——
             // 执行器跨 actor await 在同一任务内,Task.checkCancellation 直接
@@ -414,6 +423,10 @@ final class ChatRunKernelAdapter {
                             return self.callbacks.onAssistantTurnCompleted(box.value)
                         }
                     },
+                    onAssistantProgressPlan: { [weak self] stages in
+                        guard let self, !self.isStoppedByHost else { return }
+                        self.callbacks.onAssistantProgressPlan(stages)
+                    },
                     onToolExecutionStarted: { [weak self] toolName, input in
                         guard let self, !self.isStoppedByHost else { return }
                         self.isExecutingTool = true
@@ -483,6 +496,22 @@ final class ChatRunKernelAdapter {
                             self.callbacks.onAssistantMessageSnapshot(box.value)
                         }
                     },
+                    onToolBatchProgress: { [weak self] messages in
+                        guard let self else { return }
+                        self.snapshotSeq += 1
+                        let seq = self.snapshotSeq
+                        let box = UncheckedMessagesBox(messages)
+                        await MainActor.run {
+                            guard !self.isStoppedByHost,
+                                  self.durabilityFailureMessage == nil,
+                                  seq >= self.lastAppliedSnapshotSeq else { return }
+                            self.lastAppliedSnapshotSeq = seq
+                            if self.working != box.value {
+                                self.working = box.value
+                                self.callbacks.onMessagesUpdated(box.value)
+                            }
+                        }
+                    },
                     onMessagesUpdated: { [weak self] messages in
                         // 引擎在非 MainActor 上下文串行回调;序号在此同步递增
                         // (nonisolated(unsafe),与 working 同一纪律),消息经盒
@@ -509,6 +538,9 @@ final class ChatRunKernelAdapter {
             // Keep completed tool outcomes frozen while accepting only the
             // interrupted assistant snapshot returned by the cancelled driver.
             if isCancelledByHost {
+                if let unknown = toolOutcomeUnknownSignal ?? result.toolOutcomeUnknown {
+                    callbacks.onToolOutcomeUnknown(unknown)
+                }
                 guard !didReportTerminal else { return working }
                 // Cancellation freezes existing tool outcomes. Only a new in-flight
                 // assistant turn from the engine may extend that snapshot.
@@ -587,7 +619,12 @@ final class ChatRunKernelAdapter {
                     promptBox: promptBox
                 )
                 // 审批等待期间 Host 取消:取消优先,不再走失败收口。
-                if isStoppedByHost { return working }
+                if isStoppedByHost {
+                    if isCancelledByHost, let unknown = toolOutcomeUnknownSignal {
+                        callbacks.onToolOutcomeUnknown(unknown)
+                    }
+                    return working
+                }
                 if !didContinue {
                     didReportTerminal = true
                     if let unknown = toolOutcomeUnknownSignal {
@@ -707,7 +744,7 @@ final class ChatRunKernelAdapter {
         nestedOutcomeUnknownProvider: @escaping @MainActor () -> IOSToolOutcomeUnknownSignal?,
         recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?
     ) -> [String: any IOSToolExecutor] {
-        runtime.foregroundToolExecutors(
+        var executors = runtime.foregroundToolExecutors(
             providerSetting: request.providerSetting,
             params: params,
             runId: request.runId,
@@ -723,6 +760,66 @@ final class ChatRunKernelAdapter {
             executionPolicy: request.executionPolicy,
             phoneControl: request.phoneControl
         )
+        if let ensureClaimed = request.ensurePhoneControlClaimed {
+            let controller = request.phoneControl ?? .shared
+            for name in Array(executors.keys) where IOSPhoneControlToolCatalog.isPhoneTool(name: name) {
+                if executors[name] is IOSPhoneControlToolExecutor {
+                    executors[name] = IOSPhoneControlToolExecutor(
+                        runID: request.runId,
+                        controller: controller,
+                        ensureClaimedOnFirstUse: ensureClaimed
+                    )
+                } else if let underlying = executors[name] {
+                    executors[name] = LazyClaimingPhoneToolExecutor(
+                        runID: request.runId,
+                        controller: controller,
+                        ensureClaimedOnFirstUse: ensureClaimed,
+                        underlying: underlying
+                    )
+                }
+            }
+        }
+        return executors
+    }
+
+    nonisolated private final class LazyClaimingPhoneToolExecutor: IOSToolExecutor, @unchecked Sendable {
+        private let runID: String
+        private let controller: IOSPhoneControlController
+        private let ensureClaimedOnFirstUse: @MainActor () -> Bool
+        private let underlying: any IOSToolExecutor
+
+        init(
+            runID: String,
+            controller: IOSPhoneControlController,
+            ensureClaimedOnFirstUse: @escaping @MainActor () -> Bool,
+            underlying: any IOSToolExecutor
+        ) {
+            self.runID = runID
+            self.controller = controller
+            self.ensureClaimedOnFirstUse = ensureClaimedOnFirstUse
+            self.underlying = underlying
+        }
+
+        private func claimIfNeeded() async {
+            let runID = self.runID
+            let controller = self.controller
+            let claim = self.ensureClaimedOnFirstUse
+            await MainActor.run {
+                if controller.ownerRunID != runID {
+                    _ = claim()
+                }
+            }
+        }
+
+        func execute(name: String, arguments: String, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
+            await claimIfNeeded()
+            return await underlying.execute(name: name, arguments: arguments, isUserInitiated: isUserInitiated)
+        }
+
+        func execute(tool: UIMessagePart.Tool, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
+            await claimIfNeeded()
+            return await underlying.execute(tool: tool, isUserInitiated: isUserInitiated)
+        }
     }
 
     /// `exec` 内调用仍走当前 Kernel 的真实 runtime/ledger/审批边界；白名单
@@ -999,8 +1096,10 @@ final class ChatRunKernelAdapter {
             case .rePause(let nextPrompt):
                 prompt = nextPrompt
             case .outcomeUnknown(let messages):
-                working = messages
-                callbacks.onMessagesUpdated(messages)
+                if !isStoppedByHost {
+                    working = messages
+                    callbacks.onMessagesUpdated(messages)
+                }
                 toolOutcomeUnknownSignal = IOSToolOutcomeUnknownSignal(
                     toolCallId: approval.toolCallId,
                     toolName: approval.toolName
@@ -1031,7 +1130,11 @@ final class ChatRunKernelAdapter {
         approvalExecutionTask = execution
         let resolution = await execution.value
         approvalExecutionTask = nil
-        // 已发出的工具仍记录真实终态；迟到结果不能夺回取消或后台交接的快照。
+        // 已发出的工具仍记录真实终态；迟到结果不能夺回取消或后台交接的快照，
+        // 但若副作用工具已跨过执行边界并落入 outcomeUnknown，仍须保留恢复信号。
+        if case .outcomeUnknown = resolution {
+            return resolution
+        }
         guard !isStoppedByHost else { return .failed }
         return resolution
     }
@@ -1059,7 +1162,7 @@ final class ChatRunKernelAdapter {
         if toolName == "memory_tool" { return 5 }
         if toolName == "generate_image" { return 6 }
         if toolName == "ask_user" { return 7 }
-        if ["session_search", "session_read", "history_search", "history_fetch", "runtime_status"].contains(toolName) { return 8 }
+        if ["session_search", "session_read", "history_search", "history_fetch", ChatEpisodeRecallTool.name, "runtime_status"].contains(toolName) { return 8 }
         return 9
     }
 

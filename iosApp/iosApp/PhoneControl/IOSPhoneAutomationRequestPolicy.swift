@@ -7,12 +7,25 @@ enum IOSPhoneAutomationRequestPolicy {
     static let sectionName = "phone_execution"
     static let planningPrompt = """
     For phone tasks, understand the current screen once, then execute the known work:
-    - When the order, semantic targets and observable postconditions are known, prefer one short phone_run_flow over separate phone_act calls. Each step still uses a fresh tree and verifies its postcondition.
-    - For an exercise, decide only the displayed question's answer. Batch its known answer selection/input and checking steps when they have verifiable conditions. A visible Check button alone does not prove an answer was selected; use enabled or a changed value where appropriate. Continue only after known expected feedback is verified.
-    - Stop the flow at a new question, unexpected/wrong feedback, an unknown page or a new visual decision. Do not invent future answers, targets or feedback labels. Shorten the flow when evidence is insufficient.
-    - Known ordered steps need no Jev choice. Use phone_run_goal when later choices depend on fresh screens: it can derive bounded candidates from the current tree, execute a sole eligible candidate locally and ask Jev to choose among multiple candidates. Use phone_act for isolated or visual actions and actions requiring separate confirmation.
-    - Reuse the fresh tree returned by an action; do not add phone_observe unless fresh evidence is missing. Do not repeat task planning or progress narration between routine buttons. Preserve authorization, unknown-result stops and completed-step receipts.
+    - For multi-step taps within the same page (such as selecting one or more options/word chips/particles and tapping Check on the current question, toggling filters, or choosing among dynamic/same-name candidates), prefer one phone_run_goal call (goal, bundle_id, completion, and page_anchor for the current prompt/header) over separate phone_act calls, even if an older note/skill suggests step-by-step phone_act taps.
+    - When a short sequence has unique, unambiguous targets and each step has an independent observable postcondition (including text typing), use phone_run_flow instead of separate phone_act calls.
+    - For an exercise, decide only the displayed question's target subgoal. A visible Check button alone does not prove an answer was selected; use enabled or a changed value/feedback control where appropriate. Continue only after known expected feedback is verified.
+    - Hand back at a new question, page semantic change, unexpected/wrong feedback, an unknown page, final commit, or a new visual decision. Do not invent future answers, targets or feedback labels.
+    - Use phone_act only for isolated single actions (such as app launch or a single Continue tap), visual coordinate taps, or withheld final commits requiring explicit confirmation.
+    - Reuse the fresh tree returned by an action; when truncated=false, omitted counts only unlabeled empty layout containers, so do not repeat phone_observe (max_nodes, include_screenshot, or include_screen_text) when the prompt and options are already displayed. Do not repeat task planning or waiting filler between routine steps. Preserve authorization, unknown-result stops and completed-step receipts.
     """
+
+    static let flowPlanningPrompt = """
+    For phone tasks, understand the current screen once, then execute the known work:
+    - Jev goal routing is currently inactive: do not call phone_run_goal. When a short sequence has unique, unambiguous targets and each step has an independent observable postcondition (including multi-step taps or text typing), use phone_run_flow instead of separate phone_act calls.
+    - For dynamic or ambiguous multi-step pages where targets depend on intermediate screen changes, observe the current state and use phone_run_flow for deterministic sub-sequences or phone_act for single actions.
+    - For an exercise, decide only the displayed question's target subgoal. A visible Check button alone does not prove an answer was selected; use enabled or a changed value/feedback control where appropriate. Continue only after known expected feedback is verified.
+    - Hand back at a new question, page semantic change, unexpected/wrong feedback, an unknown page, final commit, or a new visual decision. Do not invent future answers, targets or feedback labels.
+    - Use phone_act only for isolated single actions (such as app launch or a single Continue tap), visual coordinate taps, or withheld final commits requiring explicit confirmation.
+    - Reuse the fresh tree returned by an action; when truncated=false, omitted counts only unlabeled empty layout containers, so do not repeat phone_observe (max_nodes, include_screenshot, or include_screen_text) when the prompt and options are already displayed. Do not repeat task planning or waiting filler between routine steps. Preserve authorization, unknown-result stops and completed-step receipts.
+    """
+
+    nonisolated(unsafe) static var liveGoalPlanningActiveProvider: @Sendable () -> Bool = { true }
 
     static let presentationPrompt = """
     - Keep the user informed at meaningful milestones. After capturing the requested content or detecting a relevant change, use phone_return_to_amber before substantial analysis, writing or presenting results. Write a concise assistant update with the finding and next step, then continue the requested work in the conversation. Do this even when the user is not watching; do not leave the useful output hidden behind another app.
@@ -27,12 +40,19 @@ enum IOSPhoneAutomationRequestPolicy {
         }
     }
 
-    static func requestMessages(_ messages: [UIMessage], tools: [Tool]) -> [UIMessage] {
+    static func requestMessages(
+        _ messages: [UIMessage],
+        tools: [Tool],
+        goalPlanningActive: Bool = true
+    ) -> [UIMessage] {
         let retained = messages.compactMap(removingPlanningMessage)
         guard tools.contains(where: { $0.name == "phone_run_flow" }) else { return retained }
         let names = Set(tools.map(\.name))
         let hasPresentationTools = Set(["phone_return_to_amber", "phone_clipboard", "phone_system"]).isSubset(of: names)
-        let text = planningPrompt + (hasPresentationTools ? "\n" + presentationPrompt : "")
+        let selectedPlanningPrompt = (goalPlanningActive && names.contains("phone_run_goal"))
+            ? planningPrompt
+            : flowPlanningPrompt
+        let text = selectedPlanningPrompt + (hasPresentationTools ? "\n" + presentationPrompt : "")
         return [PromptTranscript.shared.sectionMessage(name: sectionName, text: text)] + retained
     }
 
@@ -47,7 +67,7 @@ enum IOSPhoneAutomationRequestPolicy {
             // Legacy endpoints coalesce system sections before handoff and lose
             // section metadata. Remove only our exact text from that merged part.
             guard let text = part as? UIMessagePart.Text else { return part }
-            let retained = [planningPrompt, presentationPrompt].reduce(text.text) {
+            let retained = [planningPrompt, flowPlanningPrompt, presentationPrompt].reduce(text.text) {
                 $0.replacingOccurrences(of: $1, with: "")
             }
             guard retained != text.text else { return part }

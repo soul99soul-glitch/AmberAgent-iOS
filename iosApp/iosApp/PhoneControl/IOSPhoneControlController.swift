@@ -237,7 +237,7 @@ enum IOSPhoneControlError: LocalizedError {
 @MainActor
 @Observable
 final class IOSPhoneControlController {
-    static let shared = IOSPhoneControlController()
+    static let shared = IOSPhoneControlController(automationLines: .shared)
     static let enabledPreferenceKey = "app.amber.ios.phoneControl.enabled.v1"
     static let applicationNamesPreferenceKey = "app.amber.ios.phoneControl.applicationNames.v1"
     static let selectedBundleIDsPreferenceKey = "app.amber.ios.phoneControl.scope.v1"
@@ -290,6 +290,7 @@ final class IOSPhoneControlController {
     var isOccupied: Bool { ownerRunID != nil }
     var isPreparingPairing: Bool { isUpdatingPairing && pairingOperationID != nil }
 
+    @ObservationIgnored private let automationLines: IOSPhoneAutomationLines?
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let hostBundleID: String?
     @ObservationIgnored private let credentials: any IOSPhoneControlCredentialStoring
@@ -314,6 +315,7 @@ final class IOSPhoneControlController {
     @ObservationIgnored private let onReturnToConversation: @MainActor (String, String?) -> Void
 
     init(defaults: UserDefaults = .standard,
+         automationLines: IOSPhoneAutomationLines? = nil,
          credentials: any IOSPhoneControlCredentialStoring = IOSPhoneControlCredentials(),
          session: any IOSPhoneControlSessionServing = PhoneControlSession(),
          applications: any PhoneControlApplicationDiscovering = PhoneControlApplications(),
@@ -331,6 +333,7 @@ final class IOSPhoneControlController {
              // The activity update entry point overlays the current owner's handoff state.
              Task { await AgentLiveActivityController.shared.updatePhoneControl(runID: runID, phase: .waitingForModel) }
          }) {
+        self.automationLines = automationLines
         self.defaults = defaults
         self.hostBundleID = hostBundleID
         self.credentials = credentials
@@ -347,6 +350,9 @@ final class IOSPhoneControlController {
         selectedBundleIDs = selected
         applicationNames = (defaults.dictionary(forKey: Self.applicationNamesPreferenceKey) as? [String: String] ?? [:])
             .filter { selected.contains($0.key) }
+        IOSPhoneAutomationRequestPolicy.liveGoalPlanningActiveProvider = {
+            IOSPhoneControlToolExecutor.isGoalPlanningActive()
+        }
         Task { await refreshPreparation() }
     }
 
@@ -596,6 +602,10 @@ final class IOSPhoneControlController {
         onHandoffChange(runID, .resuming)
     }
 
+    func beginAutomationUserRequest(runID: String, conversationID: String?) {
+        automationLines?.beginUserRequest(conversationID: conversationID, runID: runID)
+    }
+
     /// The executor registers the entire tool, including reads that may start the runner.
     /// It ends this lease after the receipt, before waiting for the user to resume.
     func beginPhoneTool(runID: String) throws -> IOSPhoneControlToolLease {
@@ -607,6 +617,9 @@ final class IOSPhoneControlController {
             operationID: UUID(), takeoverGeneration: context.takeoverGeneration)
         context.activeTool = lease
         owner = context
+        if let conversationID = context.conversationID {
+            automationLines?.recordRun(conversationID: conversationID, runID: runID)
+        }
         return lease
     }
 
@@ -987,6 +1000,18 @@ final class IOSPhoneControlController {
         for app in sorted where selectedBundleIDs.contains(app.bundleID) { names[app.bundleID] = app.name }
         if names != applicationNames { applicationNames = names }
         return sorted
+    }
+
+    func previewInstalledApplicationForApproval(bundleID: String, runID: String) async throws -> PhoneControlInstalledApp {
+        _ = try activeOwner(runID: runID)
+        guard !isLoadingApplications else { throw IOSPhoneControlError.occupied }
+        if !hasApplicationCatalog { _ = try await loadInstalledApplications(runID: runID) }
+        try Task.checkCancellation()
+        guard Self.validBundleID(bundleID),
+              let app = installedApplications.first(where: { $0.bundleID == bundleID }) else {
+            throw IOSPhoneControlError.applicationNotFound
+        }
+        return app
     }
 
     /// Exact IDs must come from this device's catalog. A model cannot authorize an invented ID.

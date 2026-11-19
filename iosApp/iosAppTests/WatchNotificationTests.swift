@@ -19,6 +19,11 @@ private final class WatchNotificationCenter: IOSLocalNotificationCenter {
     func removePendingRequests(identifiers: [String]) { removed += identifiers }
     func deliveredRequestIdentifiers() async -> [String] { delivered }
     func removeDeliveredRequests(identifiers: [String]) { removedDelivered += identifiers }
+    func updateTaskCompletionSound(enabled: Bool) async throws {
+        for index in requests.indices where requests[index].identifier.hasPrefix("amber.task-complete.") {
+            requests[index].playsSound = enabled
+        }
+    }
 }
 
 @MainActor

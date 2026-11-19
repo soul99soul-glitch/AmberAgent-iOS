@@ -22,29 +22,40 @@ struct ChatView: View {
     @State private var personalContextPhotoItems: [PhotosPickerItem] = []
     @State private var personalContextPhotoLoadID: UUID?
     @State private var artifactPinHandler = ChatArtifactPinHandler()
+    @State private var toolUndoHandler = ChatToolUndoHandler()
     @Environment(RouterPath.self)  var router
-    @AppStorage(IOSDisplayPreferenceKeys.followGeneration) private var followGeneration = true
+    private var followGeneration: Bool { IOSChatRenderPreferences.shared.followGeneration }
     @State var viewportState = ChatViewportState()
-    @State private var scrollToBottomTrigger = 0
+    @State var scrollToBottomTrigger = 0
     /// iPhone Duo 外屏右侧竖条是否承载了返回 / 新对话等操作。
-    @State private var sideRailActive = false
-    @State private var scrollToBottomSource: NativeTimelineBottomIntentSource = .button
-    @State private var chatSize: CGSize = .zero
+    @State var sideRailActive = false
+    @State var scrollToBottomSource: NativeTimelineBottomIntentSource = .button
+    @State var chatSize: CGSize = .zero
     @State var requestedMessageAnchor: ChatMessageAnchor?
     @State var islandPresentation: ChatIslandPresentation?
     @State var islandHoldToken = 0
     @State var composerInputController = ComposerInputController()
     @State var chatListSummary = ChatListSummarySnapshot()
+    @State var taskCountCache = ChatTaskCountCache()
     @State var artifactShelf = ChatArtifactShelfState()
     /// 产物架索引的正文图片与生成式 UI 解析缓存；引用类型，命中与淘汰不触发视图刷新。
     @State var artifactContentCache = ConversationArtifactContentCache()
-    @State private var artifactShelfDismissRevision = 0
-    @State private var dockTapRegions = ChatDockTapRegions()
+    @State var artifactShelfDismissRevision = 0
+    @State var failureNoticeToken = 0
+    @State var showsTaskFailure = false
+    @State var failureMessageID: String?
+    @State var dockTapRegions = ChatDockTapRegions()
     @State var artifactShelfStripHeight: CGFloat = 0
-    @State private var messageEditDraft: ChatMessageEditDraft?
-    @State private var pendingDeleteMessageId: String?
+    @State var messageEditDraft: ChatMessageEditDraft?
+    @State var pendingDeleteMessageId: String?
+    @State var isPresentingDuetTasks = false
+    @State var isPresentingDuetWorkspace = false
+    @State var isPresentingPersonaStudio = false
+    @State var isPresentingEmbodimentHome = false
+    @State var isPresentingCloudGatewaySettings = false
+    @State var duetSelectedToolTarget: ToolDetailTarget?
     @Environment(IOSConversationStore.self)  var conversationStore
-    @Environment(ConversationActivityCenter.self) private var conversationActivityCenter
+    @Environment(ConversationActivityCenter.self) var conversationActivityCenter
     @Environment(\.accessibilityReduceMotion)  var reduceMotion
     @Environment(\.scenePhase)  var scenePhase
 
@@ -57,7 +68,8 @@ struct ChatView: View {
         viewModel: ChatViewModel? = nil,
         initialMessageAnchor: ChatMessageAnchor? = nil,
         activityStore: IOSSubAgentActivityStore = .shared,
-        webMountController: IOSWebMountController = .shared
+        webMountController: IOSWebMountController = .shared,
+        initialComposerState: ChatComposerLocalState = ChatComposerLocalState()
     ) {
         self.settingsStore = settingsStore
         self.sharedSettings = sharedSettings
@@ -74,17 +86,46 @@ struct ChatView: View {
         self._viewModel = State(
             initialValue: resolvedViewModel
         )
+        self._composerState = State(initialValue: initialComposerState)
+    }
+
+    private var isCloudHostActive: Bool {
+        MacGatewayStore.shared.connection != nil && MacGatewayStore.shared.isCloudMainDialogueSelected
+    }
+
+    private var topBarContentClearance: CGFloat {
+        ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension
+            + artifactShelfStripHeight - ChatTopBarLayout.toolbarHeight
     }
 
     private var chatContent: some View {
-        ZStack {
+        topBar(wrapping: ZStack {
             AmberThemePageBackground(surface: .app)
-            messageList
-                .safeAreaBar(edge: .top, spacing: 0) {
-                    Color.clear
-                        .frame(height: ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight)
-                        .allowsHitTesting(false)
-                }
+            ChatDialogueHostContent(isCloudSelected: isCloudHostActive) {
+                messageList
+                    .opacity(composerState.activeDuetTab == .chat ? 1 : 0)
+                    .allowsHitTesting(composerState.activeDuetTab == .chat)
+            } cloud: {
+                AmberInlineCloudMainDialogueView(
+                    store: MacGatewayStore.shared,
+                    topInset: topBarContentClearance,
+                    isInputFocused: composerState.isInputFocused,
+                    onOpenPairingSettings: { isPresentingCloudGatewaySettings = true },
+                    onDismissKeyboard: dismissKeyboard
+                )
+                .opacity(composerState.activeDuetTab == .chat ? 1 : 0)
+                .allowsHitTesting(composerState.activeDuetTab == .chat)
+            }
+
+            // 冷启动：会话历史还没读上来时先顶上与最终页同构的中性骨架，
+            // 不先闪欢迎空态再被真实消息替换。顶栏与输入区照常渲染，
+            // 因此骨架消失时不会发生布局跳动。
+            if awaitsConversationBootstrap {
+                ChatStartupSkeleton()
+                    .padding(.top, topBarContentClearance)
+                    .zIndex(10)
+                    .accessibilityHidden(true)
+            }
 
             if let record = compactWebMountSession {
                 VStack {
@@ -94,6 +135,7 @@ struct ChatView: View {
                         runSummary: viewModel.isGenerationActiveForCurrentConversation
                             ? chatListSummary.browserTaskTitleCandidate
                             : nil,
+                        showsOnlyShortcut: true,
                         onExpand: {
                             browserState.collapsedWebMountSessionId = nil
                             browserState.expandedWebMountSessionId = record.id
@@ -124,26 +166,47 @@ struct ChatView: View {
                 .zIndex(10)
             }
 
-            // Tap-outside scrim for the attachment glass panel.
-            if composerState.isAttachExpanded {
-                Color.black.opacity(0.06)
+            // Tap-outside scrim for the attachment glass panel or inline Argon panels (Tasks / Hubs).
+            if composerState.isAttachExpanded || composerState.activeDuetTab != .chat {
+                (composerState.activeDuetTab != .chat ? AmberTheme.surface : Color.black.opacity(0.06))
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        withAnimation(.bouncy(duration: 0.38, extraBounce: 0.1)) {
-                            composerState.isAttachExpanded = false
+                        if composerState.activeDuetTab != .chat {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                composerState.activeDuetTab = .chat
+                            }
+                        } else {
+                            withAnimation(.bouncy(duration: 0.38, extraBounce: 0.1)) {
+                                composerState.isAttachExpanded = false
+                            }
                         }
                     }
                     .transition(.opacity)
             }
-            // 面板需要参与正文区域命中测试，不能挂在仅顶栏高度的 safeAreaBar 内。
-            topBar.zIndex(20)
+        })
+        .onGeometryChange(for: ChatGeometrySample.self) { proxy in
+            ChatGeometrySample(
+                size: CGSize(
+                    width: proxy.size.width,
+                    height: proxy.size.height + proxy.safeAreaInsets.top + proxy.safeAreaInsets.bottom
+                ),
+                safeAreaTop: proxy.safeAreaInsets.top
+            )
+        } action: { sample in
+            if ChatSheetDismissSmoothnessPolicy.shouldAcceptChatGeometryUpdate(
+                currentSize: chatSize,
+                proposedSize: sample.size,
+                safeAreaTop: sample.safeAreaTop,
+                isModalSheetPresented: isAnyModalSheetPresented
+            ) {
+                chatSize = sample.size
+            }
         }
-        .onGeometryChange(for: CGSize.self) { proxy in
-            CGSize(width: proxy.size.width,
-                   height: proxy.size.height + proxy.safeAreaInsets.top + proxy.safeAreaInsets.bottom)
-        } action: { chatSize = $0 }
         .animation(browserTaskVisibilityAnimation, value: compactWebMountSession?.id)
+        .onChange(of: composerState.activeDuetTab) { oldTab, newTab in
+            ChatPanelSwitchPerfProbe.didSwitch(from: oldTab.rawValue, to: newTab.rawValue)
+        }
         .onChange(of: displayedWebMountSession?.ownerRunId) { _, _ in
             browserState.expandedWebMountSessionId = nil
         }
@@ -170,7 +233,9 @@ struct ChatView: View {
                 .allowsHitTesting(!collapsesComposerForSiteMemoryApproval)
                 .accessibilityHidden(collapsesComposerForSiteMemoryApproval)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                    composerState.subAgentActivityBarHeight = height
+                    if abs(composerState.subAgentActivityBarHeight - height) > 0.5 {
+                        composerState.subAgentActivityBarHeight = height
+                    }
                     let visible = height > 0
                     if composerState.isSubAgentBarVisible != visible { composerState.isSubAgentBarVisible = visible }
                 }
@@ -199,8 +264,7 @@ struct ChatView: View {
                 viewModel.bumpMessageRevision(reason: .settingsRefresh)
                 composerState.isModelSheetPresented = false
             }
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+            .amberFloatingSheet(detents: [.medium, .large])
         }
         .sheet(item: $messageEditDraft) { draft in
             ChatMessageEditSheet(draft: draft) { messageId, newText in
@@ -209,6 +273,7 @@ struct ChatView: View {
             } onCancel: {
                 messageEditDraft = nil
             }
+            .amberFloatingSheet(detents: ChatMessageEditSheet.presentationDetents(for: draft.text))
         }
         .sheet(isPresented: $browserState.showWebMountDesktopBackends, onDismiss: {
             browserState.focusedRemoteWebMountSessionId = nil
@@ -217,8 +282,7 @@ struct ChatView: View {
                 controller: webMountController,
                 focusedSessionId: browserState.focusedRemoteWebMountSessionId
             )
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+            .amberFloatingSheet(detents: [.large])
         }
         .fileImporter(
             isPresented: $attachmentPickerState.isImportingSelectedFile,
@@ -293,8 +357,7 @@ struct ChatView: View {
                 onCancel: { personalContextPicker.cancelActiveRequest() },
                 onConfirm: { personalContextPicker.confirmHandoff() }
             )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
+            .amberFloatingSheet(detents: [.medium, .large])
         }
         .fullScreenCover(isPresented: $attachmentPickerState.isCameraPresented) {
             CameraPicker { image in
@@ -304,16 +367,114 @@ struct ChatView: View {
             }
             .ignoresSafeArea()
         }
+        .sheet(isPresented: $isPresentingDuetTasks) {
+            AmberDuetTaskCenterSheet(
+                gateway: MacGatewayStore.shared,
+                subAgentStore: activityStore,
+                onOpenFullTaskBoard: { router.navigate(to: .macTasks) },
+                onOpenTask: { task in openUnifiedTask(task) },
+                onFollowupTask: { task in followupTaskInChat(task) }
+            )
+            .amberFloatingSheet(detents: [.medium, .large])
+        }
+        .sheet(isPresented: $isPresentingDuetWorkspace) {
+            AmberDuetWorkspaceDrawerSheet(
+                conversationStore: conversationStore,
+                gateway: MacGatewayStore.shared,
+                onSelectConversation: { id in
+                    Task { _ = await openSubAgentSourceConversation(id.toHexDashString()) }
+                },
+                onNewConversation: {
+                    startNewChatTopic()
+                },
+                onOpenAllHistory: {
+                    // 旧首页已从「根」降为「会话管理」页：从抽屉里显式 push，
+                    // 不再依赖「back 到根就是首页」这种隐含关系。
+                    router.navigate(to: .home)
+                },
+                onNavigate: { destination in
+                    router.navigate(to: destination)
+                }
+            )
+            .amberFloatingSheet(detents: AmberDuetWorkspaceDrawerSheet.preferredPresentationDetents)
+        }
+        .sheet(isPresented: $isPresentingEmbodimentHome) {
+            // 顶部形象点击 → 形象人设（人设/记忆/灵感）；「更换形象」二级进原有配置页。
+            AgentEmbodimentHomeSheet(
+                sharedSettings: sharedSettings,
+                onStartConversation: { prompt in
+                    viewModel.inputText = prompt
+                    Task { await viewModel.sendMessage() }
+                }
+            )
+            .amberFloatingSheet(detents: [.large])
+        }
+        .sheet(isPresented: $isPresentingPersonaStudio) {
+            AmberPersonaStudioSheet(
+                sharedSettings: sharedSettings
+            )
+            .amberFloatingSheet(detents: [.large])
+        }
+        .sheet(isPresented: $isPresentingCloudGatewaySettings) {
+            NavigationStack {
+                MacGatewaySettingsView()
+            }
+            .amberFloatingSheet(detents: [.large])
+        }
+        .onChange(of: router.path) { _, newPath in
+            if !newPath.isEmpty && isPresentingCloudGatewaySettings {
+                isPresentingCloudGatewaySettings = false
+            }
+        }
+        .sheet(item: $duetSelectedToolTarget) { target in
+            ChatToolDetailSheet(
+                tool: target.initialTool,
+                live: target.initialTool.toolName.contains("subagent_dispatch")
+                    ? SubAgentLiveRegistry.shared.model(forToolCallId: target.toolCallId)
+                    : nil,
+                onOpenSubagentConversation: { threadId in
+                    router.navigate(to: .subAgentConversation(id: threadId))
+                }
+            )
+            .amberFloatingSheet(detents: [.medium, .large])
+        }
+    }
+
+    var isAnyModalSheetPresented: Bool {
+        isAnyFloatingSheetPresented
+    }
+
+    private var isAnyFloatingSheetPresented: Bool {
+        composerState.isModelSheetPresented
+            || messageEditDraft != nil
+            || browserState.showWebMountDesktopBackends
+            || personalContextPreviewBinding.wrappedValue != nil
+            || isPresentingDuetTasks
+            || isPresentingDuetWorkspace
+            || isPresentingEmbodimentHome
+            || isPresentingPersonaStudio
+            || isPresentingCloudGatewaySettings
+            || duetSelectedToolTarget != nil
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            chatContent
-                .frame(width: proxy.size.width, height: proxy.size.height)
-        }
+        let _ = ChatRenderProbe.record("chat-view-body")
+        let _ = { toolUndoHandler.viewModel = viewModel }()
+        chatContent
+            .environment(\.chatToolUndoHandler, toolUndoHandler)
+            .environment(\.amberIsUnderlyingSheetPresented, isAnyFloatingSheetPresented)
         // Measure the parent's proposal, before the bottom inset can grow to its ideal height.
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-            if abs(composerState.approvalContainerHeight - height) > 0.5 { composerState.approvalContainerHeight = height }
+        .onGeometryChange(for: ChatGeometrySample.self) { proxy in
+            ChatGeometrySample(size: proxy.size, safeAreaTop: proxy.safeAreaInsets.top)
+        } action: { sample in
+            if ChatSheetDismissSmoothnessPolicy.shouldAcceptApprovalContainerHeightUpdate(
+                currentHeight: composerState.approvalContainerHeight,
+                proposedHeight: sample.size.height,
+                safeAreaTop: sample.safeAreaTop,
+                isModalSheetPresented: isAnyModalSheetPresented
+            ) {
+                composerState.approvalContainerHeight = sample.size.height
+            }
         }
         .simultaneousGesture(SpatialTapGesture(coordinateSpace: .global).onEnded { tap in
             // Observe taps alongside the existing controls/scroll views; do not
@@ -361,8 +522,21 @@ struct ChatView: View {
         // 不受同会话落盘（生成中 tool start/result/complete）影响。
         // 这样落盘不再触发重灌历史 + 重建 ScrollView，消除抖动和「上滑看历史被甩回锚点」。
         // 消息内容同步由 generation 链路的 setMessages 负责，不靠这里。
+        .onChange(of: router.phoneAutomationChatPresentationRevision) { _, _ in
+            composerState.activeDuetTab = .chat
+        }
         .onChange(of: conversationStore.conversationSwitchedRevision) { _, _ in
             handleConversationSwitch()
+        }
+        .onChange(of: MacGatewayStore.shared.suggestionHostKey, initial: true) { _, host in
+            viewModel.setSuggestionHost(host)
+            viewModel.refreshCloudSuggestions(gateway: MacGatewayStore.shared)
+        }
+        .onChange(of: MacGatewayStore.shared.cloudSuggestionReplyID) { _, _ in
+            viewModel.refreshCloudSuggestions(gateway: MacGatewayStore.shared)
+        }
+        .onChange(of: MacGatewayStore.shared.selectedCloudDialogueWorkItemId) { _, _ in
+            viewModel.invalidateSuggestionRequest()
         }
         .onChange(of: viewModel.currentConversationRunId) { _, runId in
             rememberJevSummaryRun(runId)
@@ -388,6 +562,22 @@ struct ChatView: View {
         }
         .onChange(of: sharedSettings.revision) { _, _ in
             handleSharedSettingsRevisionChange()
+        }
+        .onChange(of: viewModel.isGenerationActive) { _, _ in
+            refreshChatListSummary()
+            syncIslandPresentation()
+        }
+        .onChange(of: viewModel.isLoading) { _, _ in
+            refreshChatListSummary()
+            syncIslandPresentation()
+        }
+        .onChange(of: viewModel.runActivityRevision) { _, _ in
+            refreshChatListSummary()
+            syncIslandPresentation()
+        }
+        .onChange(of: viewModel.selectedFollowupRunId) { _, _ in
+            refreshChatListSummary()
+            syncIslandPresentation()
         }
         .onChange(of: scenePhase) { _, _ in
             syncIslandPresentation()
@@ -505,26 +695,49 @@ struct ChatView: View {
     }
 
     private func handleMessageUpdateSignal(_ signal: ChatMessageUpdateSignal) {
-        refreshChatListSummary(
-            resetTitleSeed: signal.event == .conversationLoaded ||
-                signal.event == .conversationSwitched ||
-                signal.event == .branchChanged
-        )
+        if signal.event == .assistantStreamDelta {
+            refreshStreamingChatListSummary()
+        } else {
+            refreshChatListSummary(
+                resetTitleSeed: signal.event == .conversationLoaded ||
+                    signal.event == .conversationSwitched ||
+                    signal.event == .branchChanged
+            )
+        }
         // 后台内容若在本轮前台生成期间落盘,门控当时跳过且未消费;收尾时补查上屏。
         switch signal.event {
-        case .generationCompleted, .generationFailed, .generationCancelled:
+        case .generationFailed:
+            failureNoticeToken &+= 1
+            let token = failureNoticeToken
+            showsTaskFailure = true
+            failureMessageID = viewModel.messages.last(where: ChatViewModel.isLocalGenerationError)
+                .map(ChatMessageProjector.messageId(for:))
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                guard !Task.isCancelled, failureNoticeToken == token else { return }
+                showsTaskFailure = false
+            }
             handleBackgroundContentLanded()
+        case .generationCompleted, .generationCancelled:
+            handleBackgroundContentLanded()
+        case .conversationLoaded, .conversationSwitched, .branchChanged, .userMessageAppended:
+            failureNoticeToken &+= 1
+            showsTaskFailure = false
+            failureMessageID = nil
         default:
             break
         }
+        if signal.event != .assistantStreamDelta { syncIslandPresentation() }
     }
 
     private func handleComposerFocusStarted() {
-        // Composer focus is a direct navigation intent: the user is preparing to type
-        // at the tail. Do not depend on ChatListSummary here; during first session
-        // entry that summary can lag behind the message list by one render pass.
+        guard Self.shouldFollowBottomOnComposerFocus(viewportState: viewportState) else { return }
         scrollToBottomSource = .composerFocus
         scrollToBottomTrigger &+= 1
+    }
+
+    static func shouldFollowBottomOnComposerFocus(viewportState: ChatViewportState) -> Bool {
+        viewportState.isAtBottom && !viewportState.followPaused
     }
 
     private func handleSharedSettingsRevisionChange() {
@@ -568,7 +781,7 @@ struct ChatView: View {
     }
 
     @MainActor
-    private func openSubAgentSourceConversation(_ sourceConversationId: String) async -> Bool {
+    func openSubAgentSourceConversation(_ sourceConversationId: String) async -> Bool {
         guard let uuid = UUID(uuidString: sourceConversationId) else { return false }
         let conversationId = KotlinUuid.companion.parse(
             uuidString: uuid.uuidString.lowercased()
@@ -642,8 +855,10 @@ struct ChatView: View {
 
     private var sideRailTopItems: [AmberSideRailItem] {
         [
-            AmberSideRailItem(id: "back", systemImage: isSplitDetailRoot ? "sidebar.left" : "chevron.left",
-                              accessibilityLabel: "返回") { router.goBack() },
+            AmberSideRailItem(id: "back", systemImage: hasSidebarAtRoot ? "sidebar.left" : "line.3.horizontal",
+                              accessibilityLabel: hasSidebarAtRoot ? "显示会话列表" : "空间与历史") {
+                handleBackTap()
+            },
             AmberSideRailItem(id: "new-chat", systemImage: "square.and.pencil", accessibilityLabel: "新建聊天") {
                 Task { await viewModel.startNewConversation() }
             },
@@ -663,28 +878,60 @@ struct ChatView: View {
         }]
     }
 
-    /// 双栏详情栏根：聊天页没有上一页可返回。
-    private var isSplitDetailRoot: Bool { router.chatIsDetailRoot && router.path.isEmpty }
+    /// 双栏详情栏根：聊天页没有上一页可返回，返回键改为收放会话侧栏。
+    private var hasSidebarAtRoot: Bool { router.showsSidebarControl && router.path.isEmpty }
 
-    var topBar: some View {
-        let generating = viewModel.isGenerationActive
+    /// 启动引导尚未走完（历史未读上来）且当前无可见内容：用骨架占位。
+    /// 一旦 `isBootstrapped` 为真（成功或失败都算结束）就立即让位给真实时线。
+    private var awaitsConversationBootstrap: Bool {
+        !conversationStore.isBootstrapped
+            && !viewModel.isLoading
+            && viewModel.messages.isEmpty
+    }
+
+    /// 顶栏 / 外屏竖条的返回键共用同一套语义，避免两处各自推断根在哪。
+    private func handleBackTap() {
+        if hasSidebarAtRoot {
+            router.goBack()
+        } else {
+            isPresentingDuetWorkspace = true
+        }
+    }
+
+    /// 单流陪伴对话中的「✦ 新话题」入口：将前序活跃轮次就地封存为一个 Episode 并插入轻量分割线，
+    /// 不清空历史滚屏；仅当尚无会话实体时才初始化新会话。
+    func startNewChatTopic() {
+        guard conversationStore.currentConversation != nil else {
+            Task { await viewModel.startNewConversation() }
+            return
+        }
+        if viewModel.startNewEpisode() {
+            viewportState.followPaused = false
+            scrollToBottomSource = .button
+            scrollToBottomTrigger &+= 1
+        }
+    }
+
+    private func topBar(wrapping dialogue: some View) -> some View {
+        let generating = viewModel.isGenerationActive || viewModel.completionFeedback.hasActiveOrDrainingRun
+        let currentIslandState = topIslandState
         let recap = generating ? nil : currentRecap
         let recapLoading = !generating && (currentConversationIdString.map {
             conversationStore.recapGenerator.isLoading(for: $0)
         } ?? false)
         return ChatTopBarView(
-            presentation: islandPresentation ?? .idle(topIslandState),
+            presentation: islandPresentation ?? .idle(currentIslandState),
             conversationID: currentConversationIdString,
             hasMessages: chatListSummary.hasMessages,
-            isGenerating: viewModel.isGenerationActive,
+            isGenerating: generating,
             notices: conversationActivityCenter.notices,
             shelfHeight: chatSize.height * 0.55,
-            onBack: { router.goBack() },
+            onBack: handleBackTap,
             onIslandTap: handleIslandTap,
             onCancel: { viewModel.cancelGeneration() },
             onOpenConversation: openActivityConversation,
             onDismiss: { conversationActivityCenter.dismiss(conversationId: $0) },
-            onNewConversation: { Task { await viewModel.startNewConversation() } },
+            onNewConversation: startNewChatTopic,
             loadPreview: { id in
                 guard let message = await conversationActivityCenter.lastMessage(conversationId: id) else { return nil }
                 return message.toText().nilIfBlank
@@ -694,10 +941,10 @@ struct ChatView: View {
                     .map { String(describing: $0.updateAt) }
             },
             artifacts: artifactShelf.index,
-            backSystemImage: isSplitDetailRoot ? "sidebar.left" : "chevron.left",
-            backAccessibilityLabel: isSplitDetailRoot
+            backSystemImage: hasSidebarAtRoot ? "sidebar.left" : "line.3.horizontal",
+            backAccessibilityLabel: hasSidebarAtRoot
                 ? (router.showsSidebar ? "隐藏会话列表" : "显示会话列表")
-                : "返回",
+                : "空间与历史",
             showsBackButton: !sideRailActive,
             snippets: currentConversationIdString.map {
                 ChatArtifactPinning.visibleSnippets(conversationStore.artifactStore.snippets(for: $0), messageIDs: chatListSummary.messageIDs)
@@ -757,137 +1004,16 @@ struct ChatView: View {
             },
             onRefreshRecap: requestRecap,
             onLocateRecapNode: locateRecapNode,
-            onRecapNextStep: fillRecapNextStep
+            onRecapNextStep: fillRecapNextStep,
+            backgroundRunningCount: viewModel.activeTaskRunIdsForCurrentConversation.count,
+            isModalSheetPresented: isAnyModalSheetPresented,
+            onAvatarTap: {
+                isPresentingEmbodimentHome = true
+            },
+            dialogue: AnyView(dialogue)
         )
-        .onAppear { syncIslandPresentation() }
-        .onChange(of: topIslandState) { _, _ in syncIslandPresentation() }
-    }
-
-    private var pendingUserGateRequestID: String? {
-        [viewModel.pendingAskUser?.id, viewModel.pendingMemoryApproval?.id,
-         viewModel.pendingSearchApproval?.id, viewModel.pendingWebMountApproval?.id,
-         viewModel.pendingWorkspaceApproval?.id, viewModel.pendingIshHandoffApproval?.id,
-         viewModel.pendingMcpApproval?.id, viewModel.pendingCouncilApproval?.id,
-         viewModel.pendingRecipeApproval?.id, viewModel.pendingToolOutcomeUnknown?.toolCallId]
-            .compactMap { $0 }.first
-    }
-
-    private func handleIslandTap(_ presentation: ChatIslandPresentation) {
-        guard let conversationID = currentConversationIdString else { return }
-        switch ChatIslandNavigation.target(
-            for: presentation, conversationID: conversationID, messages: viewModel.messages,
-            pendingRequestID: pendingUserGateRequestID, requestToken: UUID()
-        ) {
-        case .none: break
-        case .bottom:
-            scrollToBottomSource = .button
-            scrollToBottomTrigger &+= 1
-        case .anchor(let anchor):
-            requestedMessageAnchor = anchor
-        case .pendingGate:
-            guard viewModel.hasPendingUserGate else { return }
-            dismissKeyboard()
-            composerState.gateHighlightRequest = UUID()
-        }
-    }
-
-    private func openActivityConversation(_ id: String) async -> Bool {
-        let opened = await openSubAgentSourceConversation(id)
-        conversationActivityCenter.didOpenConversation(
-            id: id, succeeded: opened, isTranscript: opened && currentConversationIdString != id
-        )
-        if !opened && conversationStore.lastUserVisibleError == nil {
-            conversationStore.publishUserVisibleError(IOSUserVisibleError(
-                title: "无法打开对话", message: "该对话已不存在或暂时无法读取。", severity: .warning
-            ))
-        }
-        return opened
-    }
-
-    var topIslandState: ChatActivityIslandState {
-        // 等待用户永远最先：审批/问答暂停时，岛同步停下来等。
-        if viewModel.hasPendingUserGate {
-            return ChatActivityIslandState.activity(
-                kind: .awaitingUser,
-                title: IOSAppLocalization.string("等待确认", defaultValue: "等待确认"),
-                detail: viewModel.pendingAskUser != nil
-                    ? IOSAppLocalization.string("回答问题", defaultValue: "回答问题")
-                    : (viewModel.pendingToolOutcomeUnknown != nil
-                        ? IOSAppLocalization.string("确认操作结果", defaultValue: "确认操作结果")
-                        : IOSAppLocalization.string("工具审批", defaultValue: "工具审批")),
-                systemImage: "checkmark.circle",
-                tint: .amber,
-                toolID: pendingUserGateRequestID
-            )
-        }
-
-        if viewModel.isBackgroundGenerationWaitingForForegroundResume {
-            return ChatActivityIslandState.activity(
-                kind: .waiting,
-                title: IOSAppLocalization.string("正在恢复", defaultValue: "正在恢复"),
-                detail: IOSAppLocalization.string(
-                    "正在检查可安全恢复方式",
-                    defaultValue: "正在检查可安全恢复方式"
-                ),
-                systemImage: "arrow.triangle.2.circlepath",
-                tint: .amber
-            )
-        }
-
-        if let step = chatListSummary.activeToolStep {
-            return ChatActivityIslandState.activity(
-                kind: step.visualKind.isImageTool ? .image : .tool,
-                title: compactIslandText(step.title, limit: 18),
-                detail: step.detail.map { compactIslandText($0, limit: 20) },
-                systemImage: step.systemImage,
-                tint: islandTint(for: step),
-                toolID: step.id
-            )
-        }
-
-        if viewModel.isRecognizingImages {
-            return ChatActivityIslandState.activity(
-                kind: .image,
-                title: IOSAppLocalization.string("识别图片", defaultValue: "识别图片"),
-                detail: viewModel.visionRecognitionImageCount > 1
-                    ? IOSAppLocalization.formatted(
-                        "共 %lld 张",
-                        defaultValue: "共 %lld 张",
-                        arguments: [Int64(viewModel.visionRecognitionImageCount)]
-                    ) : nil,
-                systemImage: "viewfinder",
-                tint: .cyan
-            )
-        }
-
-        if chatListSummary.awaitingFirstAssistantChunk {
-            return ChatActivityIslandState.activity(
-                kind: .waiting,
-                title: IOSAppLocalization.string("正在连接", defaultValue: "正在连接"),
-                detail: viewModel.islandModelDisplayName,
-                systemImage: "sparkles",
-                tint: .amber
-            )
-        }
-
-        if viewModel.isGenerationActive {
-            if chatListSummary.lastAssistantHasOpenReasoning {
-                return ChatActivityIslandState.activity(
-                    kind: .thinking,
-                    title: IOSAppLocalization.string("正在思考", defaultValue: "正在思考"),
-                    systemImage: "brain.head.profile",
-                    tint: .amber
-                )
-            }
-            return ChatActivityIslandState.activity(
-                kind: .generating,
-                title: IOSAppLocalization.string("正在生成回复", defaultValue: "正在生成回复"),
-                systemImage: "text.bubble",
-                tint: .accent
-            )
-        }
-
-        return .conversationTitle(conversationTitleForIsland)
+            .onAppear { syncIslandPresentation() }
+            .onChange(of: topIslandState) { _, _ in syncIslandPresentation() }
     }
 
     // MARK: - Message List
@@ -895,10 +1021,15 @@ struct ChatView: View {
     private var messageList: some View {
         let _ = artifactPinHandler.action = pinArtifactSnippet
         return ChatTimelineSignalHost(viewModel: viewModel, onSignalChange: handleMessageUpdateSignal) { signal in
+            let timelineActivity = currentTimelineActivity
             NativeChatTimelineView(
                 signal: signal,
+                timelineUpdates: viewModel.timelineUpdates,
                 configurationIssue: configurationIssue,
                 isGenerationActive: viewModel.isGenerationActive,
+                liveTaskTailIDs: viewModel.currentRun.state.liveTaskTailMessageIds,
+                usesIndependentTasks: !viewModel.activeTaskRunIdsForCurrentConversation.isEmpty,
+                activity: timelineActivity,
                 isLoading: viewModel.isLoading,
                 isRecognizingImages: viewModel.isRecognizingImages,
                 contextCompactState: viewModel.contextCompactState,
@@ -916,108 +1047,26 @@ struct ChatView: View {
                 variantInfoProvider: { index in viewModel.variantInfo(atMessageIndex: index) },
                 onAction: handleChatListAction,
                 onViewportStateChange: applyCollectionViewportState,
-                onDismissKeyboard: dismissKeyboard
+                onDismissKeyboard: dismissKeyboard,
+                topContentClearance: topBarContentClearance
             )
             .environment(\.intelligentUIHost, viewModel.intelligentUIHost)
             .environment(\.intelligentUIConversationID, currentConversationIdString)
             .environment(\.intelligentUIBusy, viewModel.isGenerationActive || viewModel.isLoading || viewModel.isIntelligentUISubmissionInFlight)
             .environment(\.chatMessageEditingAllowed, !viewModel.isIntelligentUISubmissionInFlight)
             .environment(\.chatArtifactPinAction, artifactPinHandler)
+            .environment(\.chatCompletionFeedback, viewModel.completionFeedback)
+            .modifier(ChatCompletionFeedbackVisibility(
+                owner: viewModel.completionFeedback,
+                isVisible: scenePhase == .active && composerState.activeDuetTab == .chat && !isCloudHostActive
+            ))
             .id(NativeChatTimelineSessionIdentity.viewID(conversationId: conversationStore.currentConversation?.id))
         }
     }
+}
 
-    var isStreamingFollowActive: Bool {
-        viewModel.isGenerationActive || viewModel.isLoading
-    }
 
-    /// Forcefully dismiss the keyboard. Clears the SwiftUI focus binding and also resigns the
-    /// UIKit first responder directly — the latter guarantees dismissal even if the focus
-    /// binding alone does not take effect.
-    func dismissKeyboard() {
-        composerState.isInputFocused = false
-        UIApplication.shared.sendAction(
-            #selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil
-        )
-    }
-
-    private func applyCollectionViewportState(_ newState: ChatViewportState) {
-        guard viewportState != newState else { return }
-        var transaction = Transaction()
-        transaction.animation = nil
-        withTransaction(transaction) {
-            viewportState = newState
-        }
-    }
-
-    private func handleChatListAction(_ action: ChatListAction) {
-        switch action {
-        case let .regenerate(messageId):
-            viewModel.regenerate(messageId: messageId)
-        case let .requestEdit(messageId, currentText):
-            messageEditDraft = ChatMessageEditDraft(messageId: messageId, text: currentText)
-        case let .edit(messageId, newText):
-            viewModel.editMessage(messageId: messageId, newText: newText)
-        case let .delete(messageId):
-            pendingDeleteMessageId = messageId
-        case let .selectVariant(messageId, variantIndex):
-            viewModel.selectVariant(messageId: messageId, variantIndex: variantIndex)
-        case let .generativeWidget(prompt):
-            guard !viewModel.isGenerationActive else { return }
-            viewModel.inputText = prompt
-            viewportState.followPaused = false
-            viewModel.sendMessage(startsGenerationAfterInsertion: true)
-        case let .modifyGeneratedImage(urlString, prompt, aspectRatio):
-            guard !viewModel.isGenerationActive else { return }
-            viewportState.followPaused = false
-            viewModel.modifyGeneratedImage(
-                sourceImageURL: urlString,
-                prompt: prompt,
-                aspectRatio: aspectRatio
-            )
-        case let .openMiniApp(appId):
-            router.navigate(to: .miniAppRunner(appId: appId))
-        case .openMiniApps:
-            router.navigate(to: .miniApps)
-        case let .openSubagentConversation(id):
-            router.navigate(to: .subAgentConversation(id: id))
-        case .primaryConfiguration:
-            openPrimaryConfigurationAction()
-        case .modelDefaults:
-            openModelDefaults()
-        }
-    }
-
-    private func openPrimaryConfigurationAction() {
-        switch configurationIssue {
-        case .some(.missingModel):
-            openModelDefaults()
-        case .some(.missingAPIKey), .some(.invalidBaseURL), .some(.missingProvider),
-             .some(.unsupportedProvider), .some(.codexNotSignedIn), .some(.grokNotSignedIn),
-             .some(.geminiNotSignedIn), .some(.providerDisabled), .none:
-            router.navigate(to: .providers)
-        }
-    }
-
-    private func openModelDefaults() {
-        router.navigate(to: .modelDefaults)
-    }
-
-    @discardableResult
-    private func repairCurrentChatModelIfNeeded() -> Bool {
-        sharedSettings.repairCurrentChatModelIfNeeded(settingsStore)
-    }
-
-    func popoverBinding(for panel: ComposerPanel) -> Binding<Bool> {
-        Binding(
-            get: { composerState.activeComposerPanel == panel },
-            set: { isPresented in
-                if isPresented {
-                    composerState.activeComposerPanel = panel
-                } else if composerState.activeComposerPanel == panel {
-                    composerState.activeComposerPanel = nil
-                }
-            }
-        )
-    }
+private struct ChatGeometrySample: Equatable {
+    let size: CGSize
+    let safeAreaTop: CGFloat
 }

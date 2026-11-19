@@ -117,6 +117,80 @@ enum IOSCloudConfigWire {
         default: cloudSource
         }
     }
+
+    static func providerDisplayName(for provider: String) -> String {
+        switch provider.lowercased() {
+        case "openai": return "OpenAI 兼容 (openai)"
+        case "claude": return "Claude (claude)"
+        default: return provider
+        }
+    }
+
+    static func shortProtocolName(for provider: String) -> String {
+        switch provider.lowercased() {
+        case "openai": return "OpenAI"
+        case "claude": return "Claude"
+        default: return provider
+        }
+    }
+
+    /// Normalizes a model `baseUrl` onto the cloud daemon's strict `java.net.URI`
+    /// contract (`CloudConfigurationManager.validateRemoteModel`): empty string, or
+    /// `https` scheme with non-empty host and no userinfo/query/fragment.
+    /// Lowercases scheme + host and strips trailing `/` so mixed-case local URLs
+    /// never fail server-side `uri.scheme != "https"` or miss remote matching.
+    static func normalizedModelBaseUrl(_ baseUrl: String) -> String? {
+        let trimmed = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "" }
+        guard var components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "https",
+              let host = components.host?.lowercased(),
+              !host.isEmpty,
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil else {
+            return nil
+        }
+        components.scheme = scheme
+        components.host = host
+        if components.path == "/" {
+            components.path = ""
+        } else if components.path.count > 1 {
+            while components.path.hasSuffix("/") {
+                components.path.removeLast()
+            }
+        }
+        return components.string
+    }
+
+    static func isValidCloudModelBaseUrl(_ baseUrl: String) -> Bool {
+        normalizedModelBaseUrl(baseUrl) != nil
+    }
+
+    /// The contract's default-address normalization: an empty baseUrl resolves
+    /// to the protocol default before comparing destinations.
+    static func effectiveBaseUrl(provider: String, baseUrl: String) -> String {
+        let trimmed = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            if let normalized = normalizedModelBaseUrl(trimmed), !normalized.isEmpty {
+                return normalized
+            }
+            return trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        }
+        return provider.lowercased() == "claude" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"
+    }
+
+    /// Human-readable Base URL host/default summary for UI comparison.
+    static func displayBaseUrl(provider: String, baseUrl: String) -> String {
+        let trimmed = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            let defaultHost = provider.lowercased() == "claude" ? "api.anthropic.com" : "api.openai.com"
+            return macGatewayL("默认") + " (\(defaultHost))"
+        }
+        return URLComponents(string: trimmed)?.host?.lowercased() ?? trimmed
+    }
 }
 
 // MARK: - Local export items (what this device can offer)
@@ -159,16 +233,24 @@ struct IOSCloudProviderExportItem: Identifiable, Equatable {
     let managedAuthLabel: String?
     let enabled: Bool
 
-    /// Only a real API key on a cloud-supported protocol can be imported;
-    /// account sign-in sessions and disabled providers stay local.
+    /// Only a real API key on a cloud-supported protocol with a contract-valid
+    /// HTTPS Base URL can be imported; LAN HTTP or account sessions stay local.
     var isExportable: Bool {
-        enabled && managedAuthLabel == nil && hasApiKey && !chatModels.isEmpty && kind.isCloudSupported
+        enabled
+            && managedAuthLabel == nil
+            && hasApiKey
+            && !chatModels.isEmpty
+            && kind.isCloudSupported
+            && IOSCloudConfigWire.isValidCloudModelBaseUrl(baseUrl)
     }
 
     var blockedReason: String? {
         if !kind.isCloudSupported { return macGatewayL("云端不支持该服务商协议") }
         if !enabled { return macGatewayL("已停用") }
         if let managedAuthLabel { return managedAuthLabel + macGatewayL(" 登录态不能导出") }
+        if !IOSCloudConfigWire.isValidCloudModelBaseUrl(baseUrl) {
+            return macGatewayL("仅支持 HTTPS 无查询参数的接入地址")
+        }
         if !hasApiKey { return macGatewayL("没有 API Key") }
         if chatModels.isEmpty { return macGatewayL("没有聊天模型") }
         return nil
@@ -205,6 +287,24 @@ struct IOSCloudSearchExportItem: Identifiable, Equatable {
 
 // MARK: - Import draft & preview
 
+/// Grouped summary of local items that cannot be exported to the cloud,
+/// surfaced on demand instead of repeating per-row blocked labels.
+struct IOSCloudBlockedCategorySummary: Equatable, Identifiable, Sendable {
+    enum Category: String, Equatable, Sendable {
+        case missingApiKey
+        case oauthNotExportable
+        case unsupportedProtocol
+        case disabledOrEmpty
+    }
+
+    let category: Category
+    let title: String
+    let itemNames: [String]
+    let explanation: String
+
+    var id: String { category.rawValue }
+}
+
 /// Selection state for "从本机导入". Defaults are deliberately narrow — the
 /// current chat provider/model and the selected search service only — never
 /// every configured account.
@@ -234,8 +334,100 @@ struct IOSCloudImportDraft: Equatable {
         searches.filter { selectedSearchIds.contains($0.serviceId) && $0.isExportable }
     }
 
+    var exportableProviders: [IOSCloudProviderExportItem] {
+        providers.filter(\.isExportable)
+    }
+
+    var exportableSearches: [IOSCloudSearchExportItem] {
+        searches.filter(\.isExportable)
+    }
+
+    var blockedProviders: [IOSCloudProviderExportItem] {
+        providers.filter { !$0.isExportable }
+    }
+
+    var blockedProvidersSummary: String? {
+        guard !blockedProviders.isEmpty else { return nil }
+        let names = blockedProviders.prefix(2).map(\.name).joined(separator: "、")
+        let suffix = blockedProviders.count > 2 ? " 等 \(blockedProviders.count) 项" : "（\(blockedProviders.count) 项）"
+        return macGatewayL("已隐藏不可导出的服务商：\(names)\(suffix)（未填 API Key、OAuth 本机登录或协议暂不支持）")
+    }
+
     var hasSelection: Bool {
         selectedProvider != nil || !selectedSearches.isEmpty
+    }
+
+    /// A draft scoped strictly to the chosen provider/model for the primary
+    /// "选择当前云端模型" action, leaving search services untouched.
+    var modelOnlyDraft: IOSCloudImportDraft {
+        var copy = self
+        copy.selectedSearchIds = []
+        return copy
+    }
+
+    /// Groups non-exportable local providers and search services by reason so
+    /// the UI can summarize them on demand rather than repeating per-row blocked
+    /// labels across a flat list. Never includes secret material.
+    var blockedSummaries: [IOSCloudBlockedCategorySummary] {
+        var oauthNames: [String] = []
+        var unsupportedNames: [String] = []
+        var missingKeyNames: [String] = []
+        var disabledOrEmptyNames: [String] = []
+
+        for provider in providers where !provider.isExportable {
+            if let auth = provider.managedAuthLabel {
+                oauthNames.append("\(provider.name)（\(auth)）")
+            } else if !provider.kind.isCloudSupported || !IOSCloudConfigWire.isValidCloudModelBaseUrl(provider.baseUrl) {
+                unsupportedNames.append(provider.name)
+            } else if !provider.enabled || (provider.hasApiKey && provider.chatModels.isEmpty) {
+                disabledOrEmptyNames.append(provider.name)
+            } else if !provider.hasApiKey {
+                missingKeyNames.append(provider.name)
+            }
+        }
+
+        for search in searches where !search.isExportable {
+            if !search.isCloudSupported {
+                unsupportedNames.append(search.name)
+            } else if search.requiresKey && !search.hasApiKey {
+                missingKeyNames.append(search.name)
+            }
+        }
+
+        var result: [IOSCloudBlockedCategorySummary] = []
+        if !missingKeyNames.isEmpty {
+            result.append(IOSCloudBlockedCategorySummary(
+                category: .missingApiKey,
+                title: macGatewayL("缺少 API Key"),
+                itemNames: missingKeyNames,
+                explanation: macGatewayL("本机尚未填写 API Key，可先在本机补齐，或直接在云端配置中手动设置")
+            ))
+        }
+        if !oauthNames.isEmpty {
+            result.append(IOSCloudBlockedCategorySummary(
+                category: .oauthNotExportable,
+                title: macGatewayL("账号登录态仅限本机"),
+                itemNames: oauthNames,
+                explanation: macGatewayL("OAuth 与网页登录态绑定当前设备，不支持导出到云端")
+            ))
+        }
+        if !unsupportedNames.isEmpty {
+            result.append(IOSCloudBlockedCategorySummary(
+                category: .unsupportedProtocol,
+                title: macGatewayL("云端暂不支持该协议"),
+                itemNames: unsupportedNames,
+                explanation: macGatewayL("云端目前支持 OpenAI / Claude 模型协议与 Bing / DuckDuckGo / Exa / Brave 搜索源")
+            ))
+        }
+        if !disabledOrEmptyNames.isEmpty {
+            result.append(IOSCloudBlockedCategorySummary(
+                category: .disabledOrEmpty,
+                title: macGatewayL("已停用或未添加模型"),
+                itemNames: disabledOrEmptyNames,
+                explanation: macGatewayL("在本机启用服务商并添加聊天模型后即可导入")
+            ))
+        }
+        return result
     }
 
     /// Builds the draft from the shared settings snapshot. Secret values are
@@ -465,9 +657,7 @@ extension IOSCloudImportDraft {
     /// The contract's default-address normalization: an empty baseUrl resolves
     /// to the protocol default before comparing destinations.
     private func effectiveBaseUrl(_ provider: String, _ baseUrl: String) -> String {
-        let trimmed = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { return trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
-        return provider.lowercased() == "claude" ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"
+        IOSCloudConfigWire.effectiveBaseUrl(provider: provider, baseUrl: baseUrl)
     }
 }
 
@@ -493,6 +683,8 @@ struct IOSCloudConfigBundle: Equatable, Sendable {
         /// Empty baseUrl uses the provider protocol's default address.
         var baseUrl: String
         var credential: CredentialAction
+        /// Non-wire friendly provider label for local UI feedback banners.
+        var providerDisplayName: String? = nil
     }
 
     struct SearchEntry: Equatable, Sendable {
@@ -659,11 +851,14 @@ extension IOSCloudImportDraft {
            let setting = sharedSettings.snapshot.providers.first(where: { $0.id.description() == provider.providerId }) {
             let apiKey = ChatProviderConfiguration.apiKey(of: setting)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedBaseUrl = IOSCloudConfigWire.normalizedModelBaseUrl(provider.baseUrl)
+                ?? provider.baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
             modelSection = IOSCloudConfigBundle.ModelSection(
                 providerKind: provider.kind.rawValue,
                 modelId: model.modelId,
-                baseUrl: provider.baseUrl,
-                credential: apiKey.isEmpty ? .keep : .replace(apiKey)
+                baseUrl: normalizedBaseUrl,
+                credential: apiKey.isEmpty ? .keep : .replace(apiKey),
+                providerDisplayName: provider.name
             )
         }
         let searchEntries = selectedSearches.map { item -> IOSCloudConfigBundle.SearchEntry in

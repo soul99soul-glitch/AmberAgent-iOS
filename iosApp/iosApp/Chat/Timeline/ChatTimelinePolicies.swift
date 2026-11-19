@@ -15,6 +15,7 @@ enum ChatListAction {
     case openMiniApp(appId: String)
     case openMiniApps
     case openSubagentConversation(id: String)
+    case openToolDetail(tool: UIMessagePart.Tool)
     case primaryConfiguration
     case modelDefaults
 }
@@ -72,11 +73,20 @@ enum NativeStaticTimelineRendererMemory {
         case .conversationLoaded, .conversationSwitched, .branchChanged:
             return []
         default:
-            // Empty renderer memory needs no full-history ID scan. This is the
-            // normal cold-history path, including body updates while browsing.
-            var retained = previous.isEmpty ? previous : previous.intersection(
-                Set(messages.map(ChatMessageProjector.messageId(for:)))
-            )
+            // Empty renderer memory needs no full-history ID scan. When non-empty,
+            // streamed IDs almost always live near the tail, so scanning backward
+            // finds all retained IDs in O(|previous|) without bridging every old UUID.
+            var retained: Set<String> = []
+            if !previous.isEmpty {
+                retained.reserveCapacity(previous.count)
+                for message in messages.reversed() {
+                    let id = ChatMessageProjector.messageId(for: message)
+                    if previous.contains(id) {
+                        retained.insert(id)
+                        if retained.count == previous.count { break }
+                    }
+                }
+            }
             if event.remembersStreamingRenderer,
                let lastAssistant = messages.last(where: { $0.role == MessageRole.assistant }) {
                 retained.insert(ChatMessageProjector.messageId(for: lastAssistant))
@@ -165,5 +175,24 @@ extension AnyTransition {
             ),
             removal: .opacity
         )
+    }
+}
+
+/// 按「跟随生成」偏好开关 `.sizeChanges` 底锚,与小说创作统一。
+/// 行锚定位置(用户上滑浏览历史)不会被它拽走(探针已实证)。
+struct ChatSizeChangesPinModifier: ViewModifier {
+    let preservesScrollIdentity: Bool
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        if preservesScrollIdentity {
+            // Normal viewport changes keep the mounted scroll view. Explicit
+            // message navigation retains its existing anchor-resolution path.
+            content.defaultScrollAnchor(enabled ? .bottom : nil, for: .sizeChanges)
+        } else if enabled {
+            content.defaultScrollAnchor(.bottom, for: .sizeChanges)
+        } else {
+            content
+        }
     }
 }

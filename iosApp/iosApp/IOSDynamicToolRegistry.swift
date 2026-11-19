@@ -34,12 +34,13 @@ enum IOSRecipePrimitiveCatalog {
         if tool == "wm_site_memory" { return .unsupported }
         if IOSWebMountToolCatalog.supportedToolNames.contains(tool) { return .webMount }
         if tool == "memory_tool" { return .memory }
-        if ["session_search", "session_read", "history_search", "history_fetch"].contains(tool) { return .sessionRead }
+        if ["session_search", "session_read", "history_search", "history_fetch", ChatEpisodeRecallTool.name].contains(tool) { return .sessionRead }
         // runtime_status 同为本地只读自省（无会话 store 依赖），复用 .sessionRead
         // 路由：dispatchSessionReadToolCall 内按名字先分流。
         if tool == "runtime_status" { return .sessionRead }
         if tool == "tool_search" || tool == "tools_list" { return .discovery }
         if IOSSkillToolCatalog.toolNames.contains(tool), tool != "skill_import" { return .skill }
+        if AgentSoulToolCatalog.toolNames.contains(tool) { return .advanced }
         if IOSProviderConfigToolCatalog.toolNames.contains(tool),
            !IOSProviderConfigToolCatalog.highRiskToolNames.contains(tool) {
             return .advanced

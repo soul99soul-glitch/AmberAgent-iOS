@@ -8,6 +8,11 @@ struct MacTasksBoardView: View {
     @Environment(RouterPath.self) private var router
     @State private var creatingSchedule = false
     @State private var showsDone = false
+    @State private var deepLinkedCloudTask: DeepLinkedCloudTask?
+
+    private struct DeepLinkedCloudTask: Identifiable, Equatable {
+        let id: String
+    }
 
     private let store = MacGatewayStore.shared
     private static let refreshInterval: Duration = .seconds(10)
@@ -42,6 +47,19 @@ struct MacTasksBoardView: View {
             }
         }
         .sheet(isPresented: $creatingSchedule) { MacGatewayScheduleSheet(store: store) }
+        .sheet(item: $deepLinkedCloudTask) { target in
+            MacGatewayCloudTaskDetailSheet(store: store, requestId: target.id, workItemId: target.id)
+        }
+        .onAppear { consumePendingCloudTaskDeepLink() }
+        .onChange(of: store.pendingCloudTaskWorkItemId) { _, _ in
+            consumePendingCloudTaskDeepLink()
+        }
+    }
+
+    private func consumePendingCloudTaskDeepLink() {
+        guard let workItemId = store.pendingCloudTaskWorkItemId, !workItemId.isEmpty else { return }
+        store.pendingCloudTaskWorkItemId = nil
+        deepLinkedCloudTask = DeepLinkedCloudTask(id: workItemId)
     }
 
     private var header: some View {
@@ -73,10 +91,10 @@ struct MacTasksBoardView: View {
 
     private var unpairedSection: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: "Mac")
+            AmberSectionLabel(text: "Amber · 云端")
             AmberFormGroup {
-                MacGatewayRow(icon: "desktopcomputer", title: L("尚未配对 Mac"),
-                              detail: L("在 设置 › Mac Gateway 中扫码配对后，Mac 上的定时任务和 Claude Code / Codex 会话会出现在这里"),
+                MacGatewayRow(icon: "desktopcomputer", title: L("尚未配对 Amber · 云端"),
+                              detail: L("在 设置 › Amber · 云端 中扫码配对后，Mac 上的定时任务和 Claude Code / Codex 会话会出现在这里"),
                               action: { router.navigate(to: .macGateway) }) {
                     MacGatewayChevron()
                 }

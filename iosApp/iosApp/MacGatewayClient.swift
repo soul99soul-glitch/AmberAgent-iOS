@@ -90,6 +90,8 @@ struct MacGatewayStatus: Decodable, Equatable, Sendable {
     var health: Health?
     /// Where Synara-hosted tasks are answered from outside the LAN; opened in the browser.
     var synaraURL: String?
+    /// Monotonically increasing revision of `/v2/soul` (`C-SOUL-V1`) when supported by the gateway.
+    var soulRevision: Int64?
     var sessions: [Session]
 }
 
@@ -198,6 +200,61 @@ struct MacGatewayScheduleDraft: Equatable, Sendable {
     }
 }
 
+struct IOSDeviceContextSnapshotPayload: Encodable, Equatable, Sendable {
+    struct CalendarItem: Encodable, Equatable, Sendable {
+        var title: String
+        var startMs: Int64
+        var endMs: Int64
+        var allDay: Bool
+    }
+
+    struct CalendarDomain: Encodable, Equatable, Sendable {
+        var items: [CalendarItem]
+    }
+
+    struct ReminderItem: Encodable, Equatable, Sendable {
+        var title: String
+        var dueMs: Int64?
+        var priority: Int?
+    }
+
+    struct RemindersDomain: Encodable, Equatable, Sendable {
+        var items: [ReminderItem]
+    }
+
+    struct WorkspaceArtifactItem: Encodable, Equatable, Sendable {
+        var id: String
+        var title: String
+        var type: String
+        var updatedAtMs: Int64
+        var summary: String
+    }
+
+    struct WorkspaceArtifactsDomain: Encodable, Equatable, Sendable {
+        var items: [WorkspaceArtifactItem]
+    }
+
+    struct Domains: Encodable, Equatable, Sendable {
+        var calendarUpcoming: CalendarDomain?
+        var remindersDue: RemindersDomain?
+        var workspaceArtifacts: WorkspaceArtifactsDomain?
+    }
+
+    var deviceId: String?
+    var capturedAtEpochMs: Int64
+    var ttlSeconds: Int64?
+    var domains: Domains
+}
+
+struct IOSDeviceContextSnapshotMetadata: Decodable, Equatable, Sendable {
+    var status: String
+    var deviceId: String?
+    var capturedAtEpochMs: Int64?
+    var ttlSeconds: Int64?
+    var expiresAtEpochMs: Int64?
+    var domains: [String]
+}
+
 enum MacGatewayError: LocalizedError, Equatable {
     case unreachable
     /// The Mac answered with a different certificate than the one pinned at pairing.
@@ -218,7 +275,7 @@ enum MacGatewayError: LocalizedError, Equatable {
         case .conflict(let message), .server(let message):
             message
         case .invalidResponse:
-            IOSAppLocalization.string("Mac Gateway 返回了无法识别的数据", defaultValue: "Mac Gateway 返回了无法识别的数据")
+            IOSAppLocalization.string("Amber · 云端返回了无法识别的数据", defaultValue: "Amber · 云端返回了无法识别的数据")
         }
     }
 }
@@ -255,6 +312,49 @@ final class MacGatewayPinningDelegate: NSObject, URLSessionDelegate, Sendable {
               let raw = SecKeyCopyExternalRepresentation(key, nil) as Data?,
               raw.count == 65 else { return nil }
         return Data(SHA256.hash(data: Data(p256SPKIPrefix) + raw)).base64EncodedString()
+    }
+}
+
+enum MacGatewayDecisionSurface: String, Equatable, Sendable {
+    case app
+    case notification
+}
+
+/// Trust provenance attached to `POST /v1/amber/decision`.
+/// Trusted foreground/biometric headers are emitted ONLY on `.app` when both flags are true;
+/// notification decisions are fail-closed to `X-Amber-Surface: notification`.
+struct MacGatewayDecisionTrustContext: Equatable, Sendable {
+    var surface: MacGatewayDecisionSurface
+    var trustedForeground: Bool
+    var biometricVerified: Bool
+
+    var httpHeaders: [String: String] {
+        var headers: [String: String] = ["X-Amber-Surface": surface.rawValue]
+        if surface == .app && trustedForeground && biometricVerified {
+            headers["X-Amber-Trusted-Foreground"] = "true"
+            headers["X-Amber-Biometric-Verified"] = "true"
+        }
+        return headers
+    }
+
+    static let untrustedNotification = MacGatewayDecisionTrustContext(
+        surface: .notification,
+        trustedForeground: false,
+        biometricVerified: false
+    )
+
+    static let unverifiedForegroundApp = MacGatewayDecisionTrustContext(
+        surface: .app,
+        trustedForeground: false,
+        biometricVerified: false
+    )
+
+    static func verifiedForegroundApp() -> MacGatewayDecisionTrustContext {
+        MacGatewayDecisionTrustContext(
+            surface: .app,
+            trustedForeground: true,
+            biometricVerified: true
+        )
     }
 }
 
@@ -323,8 +423,19 @@ actor MacGatewayClient {
 
     /// Approve or deny the tool call an Amber scheduled run is waiting on. The Mac answers within ~5 s (it reports
     /// "busy" rather than going silent), so the long timeout keeps a slow answer from being re-sent to another address.
-    func decide(sessionKey: String, toolCallId: String, allow: Bool) async throws {
-        _ = try await send("POST", "/v1/amber/decision", body: ["sessionKey": sessionKey, "toolCallId": toolCallId, "allow": allow], slow: true)
+    func decide(
+        sessionKey: String,
+        toolCallId: String,
+        allow: Bool,
+        trustContext: MacGatewayDecisionTrustContext = .unverifiedForegroundApp
+    ) async throws {
+        _ = try await send(
+            "POST",
+            "/v1/amber/decision",
+            body: ["sessionKey": sessionKey, "toolCallId": toolCallId, "allow": allow],
+            headers: trustContext.httpHeaders,
+            slow: true
+        )
     }
 
     func schedules() async throws -> [MacGatewaySchedule] {
@@ -357,6 +468,21 @@ actor MacGatewayClient {
         _ = try await send("POST", "/v1/unpair")
     }
 
+    func putDeviceContextSnapshot(_ payload: IOSDeviceContextSnapshotPayload) async throws -> IOSDeviceContextSnapshotMetadata {
+        let data = try JSONEncoder().encode(payload)
+        let response = try await sendData("PUT", "/v2/device-context/snapshot", bodyData: data, slow: false)
+        return try JSONDecoder().decode(IOSDeviceContextSnapshotMetadata.self, from: response)
+    }
+
+    func getDeviceContextSnapshotMetadata() async throws -> IOSDeviceContextSnapshotMetadata {
+        let response = try await send("GET", "/v2/device-context/snapshot")
+        return try JSONDecoder().decode(IOSDeviceContextSnapshotMetadata.self, from: response)
+    }
+
+    func deleteDeviceContextSnapshot() async throws {
+        _ = try await send("DELETE", "/v2/device-context/snapshot")
+    }
+
     func decode<T: Decodable>(_ data: Data) throws -> T {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .secondsSince1970
@@ -367,9 +493,15 @@ actor MacGatewayClient {
         }
     }
 
-    func send(_ method: String, _ path: String, body: [String: Any]? = nil, slow: Bool = false) async throws -> Data {
+    func send(
+        _ method: String,
+        _ path: String,
+        body: [String: Any]? = nil,
+        headers: [String: String] = [:],
+        slow: Bool = false
+    ) async throws -> Data {
         let bodyData = try body.map { try JSONSerialization.data(withJSONObject: $0) }
-        return try await sendData(method, path, bodyData: bodyData, slow: slow)
+        return try await sendData(method, path, bodyData: bodyData, headers: headers, slow: slow)
     }
 
     /// Raw response for APIs that carry their own error contract (e.g. /v2/configuration's
@@ -382,21 +514,35 @@ actor MacGatewayClient {
         var currentRevision: Int? { (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["currentRevision"] as? Int }
     }
 
-    func sendData(_ method: String, _ path: String, bodyData: Data? = nil, slow: Bool = false) async throws -> Data {
-        let response = try await requestData(method, path, bodyData: bodyData, slow: slow)
+    func sendData(
+        _ method: String,
+        _ path: String,
+        bodyData: Data? = nil,
+        headers: [String: String] = [:],
+        slow: Bool = false
+    ) async throws -> Data {
+        let response = try await requestData(method, path, bodyData: bodyData, headers: headers, slow: slow)
         switch response.status {
         case 200..<300:
             return response.data
         case 401:
             throw MacGatewayError.unauthorized
         case 409:
-            throw MacGatewayError.conflict(response.errorCode ?? "HTTP \(response.status)")
+            let message = Self.extractErrorMessage(from: response.data) ?? response.errorCode
+            throw MacGatewayError.conflict(message ?? "HTTP \(response.status)")
         default:
-            throw MacGatewayError.server(response.errorCode ?? "HTTP \(response.status)")
+            let message = Self.extractErrorMessage(from: response.data) ?? response.errorCode
+            throw MacGatewayError.server(message ?? "HTTP \(response.status)")
         }
     }
 
-    func requestData(_ method: String, _ path: String, bodyData: Data? = nil, slow: Bool = false) async throws -> MacGatewayRawResponse {
+    func requestData(
+        _ method: String,
+        _ path: String,
+        bodyData: Data? = nil,
+        headers: [String: String] = [:],
+        slow: Bool = false
+    ) async throws -> MacGatewayRawResponse {
         let ordered = preferredAddress.map { [$0] + addrs.filter { $0 != preferredAddress } } ?? addrs
         var sawPinMismatch = false
         for address in ordered {
@@ -406,6 +552,9 @@ actor MacGatewayClient {
             request.httpBody = bodyData
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+            for (field, value) in headers {
+                request.setValue(value, forHTTPHeaderField: field)
+            }
             let data: Data
             let response: URLResponse
             do {
@@ -424,6 +573,26 @@ actor MacGatewayClient {
             return MacGatewayRawResponse(status: (response as? HTTPURLResponse)?.statusCode ?? 0, data: data)
         }
         throw sawPinMismatch ? MacGatewayError.certificateMismatch : MacGatewayError.unreachable
+    }
+
+    private static func extractErrorMessage(from data: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        if let errorString = object["error"] as? String, !errorString.isEmpty {
+            return errorString
+        }
+        if let nested = object["error"] as? [String: Any] {
+            if let code = nested["code"] as? String, !code.isEmpty { return code }
+            if let message = nested["message"] as? String, !message.isEmpty { return message }
+        }
+        if let code = object["code"] as? String, !code.isEmpty {
+            return code
+        }
+        if let message = object["message"] as? String, !message.isEmpty {
+            return message
+        }
+        return nil
     }
 
     private static func hostLiteral(_ address: String) -> String {

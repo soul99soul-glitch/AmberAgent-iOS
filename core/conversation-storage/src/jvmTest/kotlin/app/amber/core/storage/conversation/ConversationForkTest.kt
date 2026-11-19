@@ -55,6 +55,22 @@ class ConversationForkTest {
                 .joinToString("") { it.text }
         }
 
+    @Test
+    fun forkPreservesMemoryPolicyAndMarksInheritedUserSources() {
+        for (mode in app.amber.core.model.ConversationMemoryMode.entries) {
+            val source = sourceConversation(listOf(node(user("parent fact")), node(assistant("answer")))).copy(memoryMode = mode)
+            for (turns in listOf("none", "all", "1")) {
+                val child = fork(source, turns)
+                assertEquals(mode, child.memoryMode)
+                for (message in child.currentMessages.filter { it.role == MessageRole.USER }) {
+                    val text = message.parts.filterIsInstance<UIMessagePart.Text>().single()
+                    assertEquals("true", text.metadata?.get("amber.memory.inherited")?.toString()?.trim('"'))
+                }
+                assertTrue(source.currentMessages.first().parts.first().metadata == null)
+            }
+        }
+    }
+
     // MARK: - 三模式
 
     @Test

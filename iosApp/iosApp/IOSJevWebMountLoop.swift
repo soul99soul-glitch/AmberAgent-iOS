@@ -33,6 +33,8 @@ final class IOSJevWebMountLoopService {
         var draftValue: String?
         /// 主模型声明的允许范围（动作名集合）；只能小于白名单，不能放大。
         var allowedActions: Set<String>
+        /// 可选的当前页面语义锚点（如当前题干或区域标题）；偏离时立即交回主模型重新理解。
+        var pageAnchor: String? = nil
         /// 主模型给的可选更小预算；nil = 默认。
         var maxActionDecisions: Int?
         var maxSeconds: Int?
@@ -43,6 +45,8 @@ final class IOSJevWebMountLoopService {
         var id: String
         var role: String
         var label: String
+        var disabled: Bool = false
+        var selected: Bool? = nil
     }
 
     struct PageObservation: Equatable {
@@ -62,21 +66,24 @@ final class IOSJevWebMountLoopService {
         /// 快照元素仍有效，免一次全量提取。
         var documentId: String = ""
         var domRevision: Int = 0
+        var visibleText: String = ""
     }
 
     enum ActionKind: String, Equatable {
         case scroll = "scroll"
         case select = "select"
         case clickNav = "click_nav"
+        case clickControl = "click_control"
         case typeDraft = "type_draft"
         case submitReadonlySearch = "submit_readonly_search"
     }
 
-    /// v1 动作白名单：读取/导航/草稿/只读搜索。之外的动作一律 handback。
+    /// v1 动作白名单：读取/导航/页内安全控件点按/草稿/只读搜索。之外的动作一律 handback。
     static let actionWhitelist: Set<String> = [
         ActionKind.scroll.rawValue,
         ActionKind.select.rawValue,
         ActionKind.clickNav.rawValue,
+        ActionKind.clickControl.rawValue,
         ActionKind.typeDraft.rawValue,
         ActionKind.submitReadonlySearch.rawValue,
     ]
@@ -196,19 +203,29 @@ final class IOSJevWebMountLoopService {
             goal: goal,
             draftValue: (object["draft_value"] as? String)?.nilIfBlank,
             allowedActions: allowed,
+            pageAnchor: (object["page_anchor"] as? String)?.nilIfBlank,
             maxActionDecisions: boundedCount("max_action_decisions"),
             maxSeconds: boundedCount("max_seconds"),
             maxNoProgress: boundedCount("max_no_progress")
         )
     }
 
-    /// 完成核验：completion_text 出现在 URL 或任一可见元素 label 中。缺省标记
+    /// 完成核验：completion_text 出现在 URL、标题、可见文本或任一可见元素 label 中。缺省标记
     /// 永不完成 → 循环只能以预算/handback 边界退出（安全侧）。
     static func isComplete(marker: String, observation: PageObservation) -> Bool {
         let needle = marker.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return false }
         if observation.url.localizedCaseInsensitiveContains(needle) { return true }
         if observation.title.localizedCaseInsensitiveContains(needle) { return true }
+        if !observation.visibleText.isEmpty && observation.visibleText.localizedCaseInsensitiveContains(needle) { return true }
+        return observation.elements.contains { $0.label.localizedCaseInsensitiveContains(needle) }
+    }
+
+    static func matchesPageAnchor(_ anchor: String, observation: PageObservation) -> Bool {
+        let needle = anchor.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return true }
+        if observation.title.localizedCaseInsensitiveContains(needle) { return true }
+        if !observation.visibleText.isEmpty && observation.visibleText.localizedCaseInsensitiveContains(needle) { return true }
         return observation.elements.contains { $0.label.localizedCaseInsensitiveContains(needle) }
     }
 
@@ -221,10 +238,19 @@ final class IOSJevWebMountLoopService {
         let nodes = object["interactive_elements"] as? [[String: Any]] ?? []
         let elements = nodes.compactMap { node -> PageElement? in
             guard let ref = (node["ref"] as? String)?.nilIfBlank else { return nil }
+            let disabled = ((node["disabled"] as? NSNumber)?.boolValue)
+                ?? ((node["aria_disabled"] as? NSNumber)?.boolValue)
+                ?? false
+            let selected = ((node["selected"] as? NSNumber)?.boolValue)
+                ?? ((node["checked"] as? NSNumber)?.boolValue)
+                ?? ((node["aria_selected"] as? NSNumber)?.boolValue)
+                ?? ((node["aria_checked"] as? NSNumber)?.boolValue)
             return PageElement(
                 id: ref,
                 role: (node["role"] as? String) ?? "",
-                label: ((node["text"] as? String) ?? (node["name"] as? String)) ?? ""
+                label: ((node["text"] as? String) ?? (node["name"] as? String) ?? (node["label"] as? String)) ?? "",
+                disabled: disabled,
+                selected: selected
             )
         }
         let scroll = (object["scroll"] as? [String: Any]) ?? (page?["scroll"] as? [String: Any])
@@ -233,9 +259,11 @@ final class IOSJevWebMountLoopService {
         let documentId = ((page?["document_id"] as? String) ?? (object["document_id"] as? String)) ?? ""
         let domRevision = ((page?["dom_revision"] as? NSNumber) ?? (object["dom_revision"] as? NSNumber))
             .flatMap { Int($0.doubleValue) } ?? 0
+        let visibleText = (object["visible_text"] as? String) ?? ""
         return PageObservation(
             snapshotId: snapshotId, revision: revision, url: url, elements: elements,
-            scrollY: scrollY, title: title, documentId: documentId, domRevision: domRevision
+            scrollY: scrollY, title: title, documentId: documentId, domRevision: domRevision,
+            visibleText: visibleText
         )
     }
 
@@ -267,7 +295,12 @@ final class IOSJevWebMountLoopService {
     /// 它们随观察轮换，只有语义签名相同的页面才能复用同一决策。
     static func replayPageKey(_ observation: PageObservation) -> String {
         let signature = observation.elements
-            .map { "\($0.role)\u{1f}\($0.label)" }
+            .map { el in
+                var entry = "\(el.role)\u{1f}\(el.label)"
+                if el.disabled { entry += "\u{1f}dis" }
+                if el.selected == true { entry += "\u{1f}sel" }
+                return entry
+            }
             .joined(separator: "\u{1e}")
         return "\(urlTitleKey(observation))|\(signature)"
     }
@@ -516,6 +549,14 @@ final class IOSJevWebMountLoopService {
                 return .completed(steps: steps, finalObservation: observation)
             }
 
+            if let pageAnchor = input.pageAnchor, !Self.matchesPageAnchor(pageAnchor, observation: observation) {
+                return .handback(
+                    reason: "当前页面语义或锚点已变化（未命中 \(pageAnchor.prefix(80))），交回主模型重新理解。",
+                    steps: steps,
+                    latestObservation: observation
+                )
+            }
+
             if noProgressCount >= maxNoProgress {
                 return .handback(reason: "连续 \(noProgressCount) 次无进展（\(noProgressHint)）。", steps: steps, latestObservation: observation)
             }
@@ -712,6 +753,28 @@ final class IOSJevWebMountLoopService {
 
     // MARK: Legal action candidates
 
+    private static let inPageControlRoles: Set<String> = [
+        "button", "option", "tab", "radio", "checkbox", "switch", "menuitem",
+    ]
+
+    static func isWithheldControlLabel(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+        if IOSPhoneGoalLoop.isFinalCommit(trimmed) { return true }
+        let lower = trimmed.lowercased()
+        let blockedPatterns = [
+            "captcha", "two-factor", "2fa", "mfa", "otp", "verification code", "passkey", "oauth",
+            "submit order", "place order", "confirm payment", "confirm delete", "unsubscribe",
+            "验证码", "人机验证", "确认支付", "确认删除", "提交订单", "注销账号",
+        ]
+        if blockedPatterns.contains(where: { lower.contains($0) }) { return true }
+        let exactCommitLabels: Set<String> = [
+            "submit", "confirm", "approve", "authorize", "allow", "pay", "buy", "checkout", "delete", "remove", "send", "publish",
+            "提交", "确认", "批准", "授权", "允许", "支付", "付款", "购买", "下单", "删除", "发送", "发布", "登录", "登入",
+        ]
+        return exactCommitLabels.contains(lower)
+    }
+
     static func legalActionCandidates(
         input: LoopInput,
         observation: PageObservation
@@ -724,11 +787,16 @@ final class IOSJevWebMountLoopService {
         let allowed = input.allowedActions.intersection(actionWhitelist)
         // Observation has no option values. Leave selection to the parent
         // model's wm_select/wm_click path instead of proposing a valueless action.
-        for element in observation.elements {
+        for element in observation.elements where !element.disabled {
             // 控件角色契约：动作语义来自快照中已验证的控件类型，不凭按钮文案推断。
             let role = element.role.lowercased()
             if allowed.contains(ActionKind.clickNav.rawValue), role == "link" {
                 candidates.append(PlannedAction(kind: .clickNav, elementId: element.id, value: nil, snapshotRevision: observation.revision, snapshotId: observation.snapshotId))
+            }
+            if allowed.contains(ActionKind.clickControl.rawValue),
+               inPageControlRoles.contains(role),
+               !Self.isWithheldControlLabel(element.label) {
+                candidates.append(PlannedAction(kind: .clickControl, elementId: element.id, value: nil, snapshotRevision: observation.revision, snapshotId: observation.snapshotId))
             }
             if allowed.contains(ActionKind.typeDraft.rawValue), role == "textbox" {
                 // 缺草稿值 → 该类动作不作为候选（交回主模型补值）。
@@ -778,7 +846,7 @@ final class IOSJevWebMountLoopService {
         // Jev 每轮只见当前快照、没有记忆：不带历史会把"已点过的导航链接"
         // 当成新目标反复执行（真机 bug：同一链接连点 10 次直到预算耗尽）。
         if !recentSteps.isEmpty {
-            lines.append("已执行动作（最近 5 步）：\(recentSteps.suffix(5).joined(separator: "；"))")
+            lines.append("已执行动作（最近 12 步）：\(recentSteps.suffix(12).joined(separator: "；"))")
         }
         if scrollStalled {
             // 没有这条信号 Jev 无法知道滚动已无效，会在页底无限空滚。
@@ -789,7 +857,8 @@ final class IOSJevWebMountLoopService {
         for element in observation.elements where candidateElementIds.contains(element.id) {
             // label 来自页面文本不设上限：截断防整包超 maxRequestBytes。
             // 明显 base64 段附解码文本一并送检（增强 Phase D 注入筛查）。
-            lines.append("- \(element.id) [\(element.role)] \(IOSJevInjectionScreening.augmented(String(element.label.prefix(120))))")
+            let stateBadge = element.selected == true ? " [已选中]" : ""
+            lines.append("- \(element.id) [\(element.role)]\(stateBadge) \(IOSJevInjectionScreening.augmented(String(element.label.prefix(120))))")
         }
         let state = lines.joined(separator: "\n")
         var options = Dictionary(
@@ -898,14 +967,28 @@ final class IOSJevWebMountLoopService {
     /// choice criteria 的 option→description。Vercel 契约按 option→描述字符串
     /// 下发（null 描述会被 Gateway 拒收），描述同时让 Jev 知道目标语义。
     static func optionDescription(_ action: PlannedAction, in observation: PageObservation) -> String {
-        let elementLabel = action.elementId.flatMap { id in
-            observation.elements.first(where: { $0.id == id })?.label
-        }?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matchedElement = action.elementId.flatMap { id in
+            observation.elements.first(where: { $0.id == id })
+        }
+        let elementLabel = matchedElement?.label.trimmingCharacters(in: .whitespacesAndNewlines)
         // 截断与 state 行同口径：64 个候选 × 无上限 label 会把请求顶爆。
         let target = String(((elementLabel?.isEmpty == false ? elementLabel : nil) ?? action.elementId ?? "").prefix(120))
         switch action.kind {
         case .scroll: return "向下滚动页面，加载更多内容"
         case .clickNav: return "点击导航链接：\(target)"
+        case .clickControl:
+            var suffix = ""
+            if matchedElement?.selected == true { suffix += "（已选中）" }
+            if let elementLabel, !elementLabel.isEmpty {
+                let sameLabelPeers = observation.elements.filter {
+                    !$0.disabled && $0.label.trimmingCharacters(in: .whitespacesAndNewlines) == elementLabel
+                }
+                if sameLabelPeers.count > 1,
+                   let rank = sameLabelPeers.firstIndex(where: { $0.id == matchedElement?.id }) {
+                    suffix += "（同名第 \(rank + 1)/\(sameLabelPeers.count) 项）"
+                }
+            }
+            return "点击页面控件：\(target)\(suffix)"
         case .select: return "选择控件选项：\(target)"
         case .typeDraft: return "在输入框填入草稿文本：\(target)"
         case .submitReadonlySearch: return "提交只读搜索：\(target)"

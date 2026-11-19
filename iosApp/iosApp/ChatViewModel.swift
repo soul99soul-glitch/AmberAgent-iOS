@@ -63,7 +63,7 @@ final class ChatViewModel {
     }
 
     /// 用户消息入场弹簧；生成启动也以它的视觉时长为界，二者不会脱节。
-    static let userMessageSendSpring = Spring(response: 0.34, dampingRatio: 0.8)
+    static let userMessageSendSpring = Spring(response: 0.30, dampingRatio: 0.84)
 
     /// 生成启动（参数与工具目录组装、Kernel、后台保活、记忆召回）在主线程上要
     /// 同步跑上百毫秒；与发送放在同一事件里会挡住用户气泡上屏并打断入场动画。
@@ -73,6 +73,7 @@ final class ChatViewModel {
         let run: ChatConversationRun
         let inputDigest: String
         let conversationId: KotlinUuid?
+        let anchorUserMessageId: String?
     }
 
     @ObservationIgnored var deferredGenerationStart: DeferredGenerationStart?
@@ -114,7 +115,10 @@ final class ChatViewModel {
     }
     var inputText: String {
         get { currentRun.state.inputText }
-        set { currentRun.state.inputText = newValue }
+        set {
+            currentRun.state.inputText = newValue
+            suggestionDraftChanged(newValue)
+        }
     }
     var isLoading: Bool {
         get { currentRun.state.isLoading }
@@ -131,17 +135,33 @@ final class ChatViewModel {
     var reasoningLevel: ReasoningLevel = .off
     var messageRevision: Int = 0
     var messageUpdateSignal = ChatMessageUpdateSignal()
+    var timelineStructuralSignal = ChatMessageUpdateSignal()
+    @ObservationIgnored let timelineUpdates = ChatTimelineUpdates()
     var artifactUpdateSignal = ChatMessageUpdateSignal()
     var artifactUpdateWasRunning = false
     /// token 聚合只在结构性消息事件后重算；流式 delta 不改 usage，跳过 O(n) 扫描。
-    @ObservationIgnored var tokenRevision: Int = 0
+    /// 作为 @Observable 属性暴露给 `contextSnapshot`，使 `ChatContextControl` 只订阅结构性
+    /// tokenRevision 而不订阅逐拍变化的 `currentRun.state.messages`。
+    var tokenRevision: Int = 0
     @ObservationIgnored private var cachedTokenSnapshot: ChatContextSnapshot?
     @ObservationIgnored private var cachedTokenRevision: Int = -1
+    @ObservationIgnored private var cachedTokenMessageCount: Int = -1
+    @ObservationIgnored private var cachedOccupancyEntry: (key: OccupancyCacheKey, tokens: Int)?
+
+    private struct OccupancyCacheKey: Equatable {
+        let tokenRevision: Int
+        let messageCount: Int
+        let conversationId: String?
+        let draftText: String
+        let extraWeightedChars: Int
+        let systemOverheadText: String
+    }
     @ObservationIgnored private var imageGenerationResumeCache: [String: ImageGenerationResumeCacheEntry] = [:]
     @ObservationIgnored private var imageGenerationResumeCacheStoreID: ObjectIdentifier?
     @ObservationIgnored private var retryingFailedRunIds: Set<String> = []
     @ObservationIgnored var retryMutationRunId: String?
     @ObservationIgnored var isStartingWatchQuestion = false
+    @ObservationIgnored var agentSoulStore: AgentSoulStore = .shared
     var pendingMemoryApproval: MemoryToolApprovalRequest? {
         get { currentRun.state.pendingMemoryApproval }
         set { currentRun.state.pendingMemoryApproval = newValue }
@@ -256,7 +276,9 @@ final class ChatViewModel {
             state.jevApprovalTriage = triage
         }
     }
+    @ObservationIgnored var isReconcilingToolOutcome = false
     var toolOutcomeUnknownDescriptors: [IOSToolOutcomeUnknownDescriptor] = []
+    var outcomeUnknownFollowup: IOSOutcomeUnknownFollowup?
 
     var pendingToolOutcomeUnknown: IOSToolOutcomeUnknownDescriptor? {
         guard let conversationId = currentConversationId?.toHexDashString() else { return nil }
@@ -354,6 +376,8 @@ final class ChatViewModel {
         return runRegistry.run(forHex: conversationId)?.host?.currentRunId
     }
 
+    var completionFeedback: ChatCompletionFeedback { currentRun.state.completionFeedback }
+
     // MARK: - P1-e 编排子线程只读缓存
 
     /// 当前会话是否编排子线程（存在 thread_edge）。composerSendBlockReason 每条
@@ -420,18 +444,25 @@ final class ChatViewModel {
     }
 
     var contextSnapshot: ChatContextSnapshot {
-        // O(n) token 聚合按 tokenRevision 缓存：流式 delta 不改 usage，跳过重算。
+        // O(n) token 聚合与占用估算按 tokenRevision 缓存：流式 delta 不改 usage，跳过重算，
+        // 且通过 `untrackedMessages` 避免把 `ChatContextControl` 订阅到逐拍变化的 `state.messages`。
         // 廉价字段（modelId、filePreview）每次 live 读取，不进缓存。
+        let revision = tokenRevision
+        let currentMessages = currentRun.state.untrackedMessages
+        let messageCount = currentMessages.count
         let cached: ChatContextSnapshot
-        if let hit = cachedTokenSnapshot, cachedTokenRevision == tokenRevision {
+        if let hit = cachedTokenSnapshot,
+           cachedTokenRevision == revision,
+           cachedTokenMessageCount == messageCount {
             cached = hit
         } else {
-            cached = Self.snapshot(from: ChatContextUsageMetrics.lastAssistantTurn(in: messages))
+            cached = Self.snapshot(from: ChatContextUsageMetrics.lastAssistantTurn(in: currentMessages))
             cachedTokenSnapshot = cached
-            cachedTokenRevision = tokenRevision
+            cachedTokenRevision = revision
+            cachedTokenMessageCount = messageCount
         }
         return ChatContextSnapshot(
-            messageCount: messages.count,
+            messageCount: messageCount,
             modelId: currentModelId,
             supportsReasoning: currentModelSupportsReasoning,
             pendingSelectedFileName: pendingSelectedFilePreview?.fileName,
@@ -445,18 +476,33 @@ final class ChatViewModel {
                 modelWindow: currentModel?.contextWindowTokens.map { Int(truncating: $0) },
                 modelId: currentModelId
             ),
-            currentContextTokens: occupancyTokens()
+            currentContextTokens: occupancyTokens(messages: currentMessages, revision: revision)
         )
     }
 
-    private func occupancyTokens() -> Int {
-        IOSContextCompactionCoordinator.shared.nextTurnOccupancyTokens(
+    private func occupancyTokens(messages: [UIMessage], revision: Int) -> Int {
+        let extra = occupancyExtraWeightedChars
+        let overhead = occupancySystemOverheadText
+        let key = OccupancyCacheKey(
+            tokenRevision: revision,
+            messageCount: messages.count,
+            conversationId: currentConversationId?.toHexDashString(),
+            draftText: inputText,
+            extraWeightedChars: extra,
+            systemOverheadText: overhead
+        )
+        if let hit = cachedOccupancyEntry, hit.key == key {
+            return hit.tokens
+        }
+        let tokens = IOSContextCompactionCoordinator.shared.nextTurnOccupancyTokens(
             messages: messages,
             conversationId: currentConversationId,
             draftText: inputText,
-            extraWeightedChars: occupancyExtraWeightedChars,
-            systemOverheadText: occupancySystemOverheadText
+            extraWeightedChars: extra,
+            systemOverheadText: overhead
         )
+        cachedOccupancyEntry = (key, tokens)
+        return tokens
     }
 
     private var occupancyExtraWeightedChars: Int {
@@ -469,7 +515,10 @@ final class ChatViewModel {
 
     private var occupancySystemOverheadText: String {
         let systemPrompt = sharedSettings.snapshot.getCurrentAssistant().systemPrompt
-        let soul = sharedSettings.agentRuntime.agentSoulMarkdown
+        let soul = ChatRuntimeContextBuilder.resolvedSoulMarkdown(
+            sharedSettings: sharedSettings,
+            soulStore: agentSoulStore
+        )
         return [systemPrompt, soul]
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -508,11 +557,13 @@ final class ChatViewModel {
 #if DEBUG
         if generationActiveOverrideForTesting?(currentConversationId) == true { return true }
 #endif
-        return kernelRunHost.isRunning
+        return currentRun.hasActiveOrQueuedTask
+            || kernelRunHost.isRunning
             || hasActiveBackgroundGenerationForCurrentConversation
     }
 
     var isForegroundGenerationActiveForCurrentConversation: Bool {
+        if currentRun.hasActiveOrQueuedTask { return true }
         guard kernelRunHost.isRunning else { return false }
         let activeConversationId = kernelRunHost.activeConversationId
         switch (currentConversationId, activeConversationId) {
@@ -526,7 +577,11 @@ final class ChatViewModel {
     }
 
     var isGenerationActiveForCurrentConversation: Bool {
+        _ = runActivityRevision
         guard let currentConversationId else { return false }
+        if currentRun.hasActiveOrQueuedTask {
+            return true
+        }
         if kernelRunHost.isRunning,
            let activeConversationId = kernelRunHost.activeConversationId,
            String(describing: currentConversationId) == String(describing: activeConversationId) {
@@ -546,6 +601,9 @@ final class ChatViewModel {
 #if DEBUG
         if generationActiveOverrideForTesting?(conversationId) == true { return true }
 #endif
+        if runRegistry.run(for: conversationId)?.hasActiveOrQueuedTask == true {
+            return true
+        }
         if host(for: conversationId)?.isRunning == true {
             return true
         }
@@ -558,7 +616,7 @@ final class ChatViewModel {
     /// the coordinator itself remains its existing source of truth.
     var hasActiveChatGeneration: Bool {
         _ = runActivityRevision
-        return runRegistry.allRuns.contains { $0.host?.isRunning == true }
+        return runRegistry.allRuns.contains { $0.hasActiveOrQueuedTask }
             || IOSChatBackgroundGenerationCoordinator.shared.hasPendingConversationWrites
     }
 
@@ -688,6 +746,7 @@ final class ChatViewModel {
             changesConversation = true
         }
         if changesConversation {
+            startDeferredGenerationNow()
             configurationError = nil
             invalidateSuggestionRequest()
             discardSelectedFileContextForConversationChange()
@@ -792,7 +851,7 @@ final class ChatViewModel {
 
     private func latestChatRun(conversationId: String) async -> AgentActivityDurableRunIdentity? {
         await withCheckedContinuation { continuation in
-            agentRuntimeDao.listAllRuns { result, _ in
+            agentRuntimeDao.listRunSummaries { result, _ in
                 let latest = (result ?? [])
                     .filter {
                         IOSDurableRunStore.Descriptor.chatRecoveryAliases.contains($0.agentDescriptorId)
@@ -825,6 +884,13 @@ final class ChatViewModel {
         if let run = runRegistry.run(for: conversationId) {
             run.state.steerQueue = []
             run.state.inputText = ""
+            run.state.selectedFollowupRunId = nil
+            for slot in run.orderedSlots where slot.isActiveOrQueued {
+                _ = cancelGeneration(runId: slot.runId)
+            }
+            for host in run.allActiveHosts {
+                host.cancel()
+            }
         }
         host(for: conversationId)?.cancel()
         // P1-a: 删除会话时清掉其队列 sidecar，避免孤儿条目。
@@ -900,6 +966,11 @@ final class ChatViewModel {
         }
         if isGenerationActive {
             // 生成中发送改为入队（含图/附件）；队列满时回到禁用态。
+            let route = ChatInboundTurnTriage.route(text: text,
+                hasAttachments: !pendingImages.isEmpty || pendingSelectedFilePreview != nil,
+                hasExplicitTarget: selectedFollowupRunId != nil)
+            if route == .status { return nil }
+            if case .stop = route { return nil }
             return steerQueue.count >= IOSSteerQueueStore.maxPendingUserMessages
                 ? .steerQueueFull
                 : nil
@@ -1049,7 +1120,11 @@ final class ChatViewModel {
                 return self.sharedSettings.snapshot.assistants.contains { $0.id == assistantId }
             },
             soulMarkdown: { [weak self] in
-                self?.sharedSettings.agentRuntime.agentSoulMarkdown ?? ""
+                guard let self else { return "" }
+                return ChatRuntimeContextBuilder.resolvedSoulMarkdown(
+                    sharedSettings: self.sharedSettings,
+                    soulStore: self.agentSoulStore
+                )
             },
             sharedSettingsProvider: {
                 sharedSettings

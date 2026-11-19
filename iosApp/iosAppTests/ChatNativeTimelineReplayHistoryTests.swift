@@ -272,6 +272,27 @@ final class ChatNativeTimelineReplayHistoryTests: ChatNativeTimelineReplayTestCa
                        "同一回合的思考和工具胶囊不能因内部消息分段而增加间距")
     }
 
+    func testHiddenTaskStatusesDoNotAddTimelineGaps() throws {
+        let fixture = makeFixture()
+        defer { fixture.tearDown() }
+        let user = makeUserMessage("查询资料")
+        fixture.model.messages = [user]
+        fixture.model.send(.initialLoad)
+        pump(seconds: 0.5)
+        let scrollView = try XCTUnwrap(fixture.scrollView)
+        let initialHeight = scrollView.contentSize.height
+        let instant = KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0)
+        let reasoning = UIMessage(id: KotlinUuid.companion.random(), role: MessageRole.assistant,
+            parts: [UIMessagePart.Reasoning(reasoning: "核对资料", createdAt: instant, finishedAt: nil, metadata: nil)],
+            annotations: [], createdAt: chatNowLocalDateTime(), finishedAt: nil, modelId: nil, usage: nil, translation: nil)
+        fixture.model.messages.append(reasoning)
+        fixture.model.isGenerationActive = true
+        fixture.model.send(.streamDelta)
+        pump(seconds: 0.5)
+        XCTAssertEqual(scrollView.contentSize.height, initialHeight, accuracy: 1,
+                       "隐藏的任务状态不能占用消息列表高度")
+    }
+
     func testAssistantContinuationHasNoRepeatedHeaderGap() throws {
         let fixture = makeFixture()
         defer { fixture.tearDown() }

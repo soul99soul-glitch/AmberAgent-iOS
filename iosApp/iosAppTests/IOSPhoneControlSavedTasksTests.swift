@@ -1,9 +1,152 @@
+import Shared
 import SwiftUI
 import XCTest
 @testable import iosApp
 
 @MainActor
 final class IOSPhoneControlSavedTasksTests: XCTestCase {
+    func testAutomationLineReusesRealConversationAndPersistsTwoRounds() async throws {
+        let fixture = try SavedTasksStoreFixture()
+        defer { fixture.tearDown() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = IOSConversationStore(baseDirectory: root)
+        await store.bootstrap()
+        let index = IOSPhoneAutomationLines(defaults: fixture.defaults)
+        let vm = ChatViewModel(settingsStore: SettingsStore(userDefaults: fixture.defaults),
+                               sharedSettings: fixture.store, autoGenerateResponses: false)
+        vm.conversationStore = store
+        vm.reloadFromStore()
+        let firstPrepared = await vm.preparePhoneAutomationConversation(actionID: "saved-a", title: "合成任务", lines: index)
+        XCTAssertTrue(firstPrepared)
+        vm.reloadFromStore(reason: .conversationSwitch)
+        let firstID = try XCTUnwrap(store.currentConversation?.id)
+        let firstRound = [UIMessage.companion.user(prompt: "合成任务第一轮"), UIMessage.companion.assistant(prompt: "第一轮结果")]
+        await store.saveCurrent(messages: firstRound)
+        vm.reloadFromStore()
+        index.recordRun(conversationID: firstID.toHexDashString(), runID: "synthetic-run-1")
+        index.recordRun(conversationID: firstID.toHexDashString(), runID: "synthetic-run-1")
+
+        XCTAssertTrue(fixture.defaults.synchronize())
+        let freshDefaults = try XCTUnwrap(UserDefaults(suiteName: fixture.suite))
+        let restoredIndex = IOSPhoneAutomationLines(defaults: freshDefaults)
+        let restoredStore = IOSConversationStore(baseDirectory: root)
+        await restoredStore.bootstrap()
+        vm.conversationStore = restoredStore
+        vm.reloadFromStore()
+        let secondPrepared = await vm.preparePhoneAutomationConversation(actionID: "saved-a", title: "编辑后任务名", lines: restoredIndex)
+        XCTAssertTrue(secondPrepared)
+        XCTAssertEqual(restoredStore.currentConversation?.id, firstID)
+        XCTAssertEqual(restoredStore.currentMessages.map(\.id), firstRound.map(\.id), "Prior result/context must survive actual document reload")
+        let secondRound = firstRound + [UIMessage.companion.user(prompt: "继续第二轮"), UIMessage.companion.assistant(prompt: "第二轮结果")]
+        await restoredStore.saveCurrent(messages: secondRound)
+        restoredIndex.recordRun(conversationID: firstID.toHexDashString(), runID: "synthetic-run-2")
+        XCTAssertEqual(restoredIndex.lines.count, 1)
+        XCTAssertEqual(restoredIndex.lines.first?.runs.map(\.id), ["synthetic-run-1", "synthetic-run-2"])
+        vm.reloadFromStore()
+        let otherPrepared = await vm.preparePhoneAutomationConversation(actionID: "saved-b", title: "同名任务", lines: restoredIndex)
+        XCTAssertTrue(otherPrepared)
+        XCTAssertNotEqual(restoredStore.currentConversation?.id, firstID)
+        XCTAssertTrue(restoredStore.currentMessages.isEmpty)
+        XCTAssertEqual(restoredIndex.lines.count, 2)
+        vm.reloadFromStore()
+        let ordinaryCreated = await vm.startNewConversation(automationLines: restoredIndex)
+        XCTAssertTrue(ordinaryCreated)
+        XCTAssertFalse(restoredIndex.isDedicated(conversationID: try XCTUnwrap(restoredStore.currentConversation?.id.toHexDashString())))
+        let reloaded = IOSConversationStore(baseDirectory: root)
+        await reloaded.bootstrap()
+        let selected = await reloaded.selectConversationIfAvailable(id: firstID)
+        XCTAssertTrue(selected)
+        XCTAssertEqual(reloaded.currentMessages.map(\.id), secondRound.map(\.id))
+    }
+
+    func testActualPhoneToolRegistersAdHocLineOnceWithoutClassifyingOrdinaryClaim() throws {
+        let fixture = try SavedTasksStoreFixture()
+        defer { fixture.tearDown() }
+        let index = IOSPhoneAutomationLines(defaults: fixture.defaults)
+        let controller = IOSPhoneControlController(defaults: fixture.defaults, automationLines: index)
+        controller.enabled = true
+        XCTAssertTrue(controller.claim(runID: "synthetic-run", conversationID: "conversation-a", onStop: {}))
+        XCTAssertTrue(index.lines.isEmpty, "Merely allowing phone tools does not classify ordinary chat")
+        let lease = try controller.beginPhoneTool(runID: "synthetic-run")
+        controller.endPhoneTool(lease)
+        let next = try controller.beginPhoneTool(runID: "synthetic-run")
+        controller.endPhoneTool(next)
+        XCTAssertEqual(index.lines.count, 1)
+        XCTAssertEqual(index.lines.first?.runs.count, 1)
+        XCTAssertFalse(index.isDedicated(conversationID: "conversation-a"), "Existing mixed chat remains in ordinary history")
+        index.recordRun(conversationID: "conversation-a", runID: "different-goal-in-same-chat")
+        XCTAssertEqual(index.lines.count, 2, "A shared chat is not proof of the same automation")
+        index.recordRun(conversationID: "conversation-b", runID: "another-run")
+        XCTAssertEqual(IOSPhoneAutomationLines(defaults: fixture.defaults).lines.count, 3)
+        let inbox = IOSDeepLinkInbox()
+        guard case .agentPrompt(let handoffID) = try XCTUnwrap(inbox.preparePromptHandoff("普通请求")) else { return XCTFail() }
+        XCTAssertNil(inbox.phoneAutomationID(forPromptHandoff: handoffID))
+    }
+
+    func testSavedLineRecordsAcceptedRequestBeforeFirstPhoneTool() throws {
+        let fixture = try SavedTasksStoreFixture()
+        defer { fixture.tearDown() }
+        let index = IOSPhoneAutomationLines(defaults: fixture.defaults)
+        XCTAssertTrue(index.bindSavedTask(actionID: "saved", title: "合成任务", conversationID: "chat-a"))
+        let controller = IOSPhoneControlController(defaults: fixture.defaults, automationLines: index)
+        controller.beginAutomationUserRequest(runID: "first", conversationID: "chat-a")
+        index.recordRun(conversationID: "chat-a", runID: "first")
+        controller.beginAutomationUserRequest(runID: "second", conversationID: "chat-a")
+        XCTAssertEqual(index.lines.count, 1)
+        XCTAssertEqual(index.lines.first?.runs.map(\.id), ["first", "second"], "An accepted attempt without phone tools still belongs to its saved line, without claiming success")
+        controller.beginAutomationUserRequest(runID: "ordinary", conversationID: "chat-b")
+        XCTAssertEqual(index.lines.first?.runs.count, 2)
+    }
+
+    func testExplicitTemporaryTaskContinuationOwnsOnlyNextUserRequest() throws {
+        let fixture = try SavedTasksStoreFixture()
+        defer { fixture.tearDown() }
+        let index = IOSPhoneAutomationLines(defaults: fixture.defaults)
+        let controller = IOSPhoneControlController(defaults: fixture.defaults, automationLines: index)
+        index.recordRun(conversationID: "chat-a", runID: "first")
+        let line = try XCTUnwrap(index.lines.first)
+        index.selectForContinuation(lineID: line.id)
+        XCTAssertTrue(index.keepsContextForNextRequest(conversationID: "chat-a"))
+        controller.beginAutomationUserRequest(runID: "second", conversationID: "chat-a")
+        XCTAssertFalse(index.keepsContextForNextRequest(conversationID: "chat-a"))
+        index.recordRun(conversationID: "chat-a", runID: "second")
+        XCTAssertEqual(index.lines.count, 1)
+        XCTAssertEqual(index.lines.first?.runs.map(\.id), ["first", "second"])
+        controller.beginAutomationUserRequest(runID: "unrelated", conversationID: "chat-a")
+        index.recordRun(conversationID: "chat-a", runID: "unrelated")
+        XCTAssertEqual(index.lines.count, 2, "The explicit selection must not leak into later goals")
+        index.selectForContinuation(lineID: line.id)
+        controller.beginAutomationUserRequest(runID: "different-chat", conversationID: "chat-b")
+        index.recordRun(conversationID: "chat-b", runID: "different-chat")
+        XCTAssertEqual(index.lines.count, 3)
+        XCTAssertEqual(IOSPhoneAutomationLines(defaults: fixture.defaults).lines.first?.runs.count, 2)
+    }
+
+    func testAutomationIdleContinuityDoesNotDisableExplicitNewTopic() async throws {
+        let fixture = try SavedTasksStoreFixture()
+        defer { fixture.tearDown() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = IOSConversationStore(baseDirectory: root)
+        await store.bootstrap()
+        let index = IOSPhoneAutomationLines(defaults: fixture.defaults)
+        let vm = ChatViewModel(settingsStore: SettingsStore(userDefaults: fixture.defaults),
+                               sharedSettings: fixture.store, autoGenerateResponses: false)
+        vm.conversationStore = store
+        vm.reloadFromStore()
+        let prepared = await vm.preparePhoneAutomationConversation(actionID: "idle-a", title: "合成连续任务", lines: index)
+        XCTAssertTrue(prepared)
+        vm.reloadFromStore()
+        let id = try XCTUnwrap(vm.currentConversationId?.toHexDashString())
+        defer { ChatEpisodeStore.shared.remove(conversationIds: [id]) }
+        vm.messages = [UIMessage.companion.user(prompt: "合成一轮"), UIMessage.companion.assistant(prompt: "合成结果")]
+        XCTAssertNil(vm.sealActiveEpisodeForIdleGapIfNeeded(incomingTimestampMillis: Int64(Date().timeIntervalSince1970 * 1000) + 86_400_000, automationLines: index))
+        XCTAssertTrue(ChatEpisodeStore.shared.episodes(for: id).isEmpty)
+        XCTAssertTrue(vm.startNewEpisode())
+        XCTAssertEqual(ChatEpisodeStore.shared.episodes(for: id).count, 1)
+    }
+
     func testPlainTaskUsesOneShotPromptHandoff() throws {
         let fixture = try SavedTasksStoreFixture()
         defer { fixture.tearDown() }
@@ -15,6 +158,7 @@ final class IOSPhoneControlSavedTasksTests: XCTestCase {
         XCTAssertEqual(submitted.count, 1)
         let destination = try XCTUnwrap(IOSAppDeepLink.parse(try XCTUnwrap(submitted.first)))
         guard case .agentPrompt(let id) = destination else { return XCTFail("Task must enter the existing prompt handoff path") }
+        XCTAssertEqual(inbox.phoneAutomationID(forPromptHandoff: id), action.id, "Saved phone tasks must carry stable identity into AppShell")
         XCTAssertEqual(inbox.consumePromptHandoff(id: id), action.prompt)
         XCTAssertNil(inbox.consumePromptHandoff(id: id), "The prompt is consumed only once by the new-conversation path")
     }

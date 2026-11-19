@@ -1,0 +1,99 @@
+import SwiftUI
+import Shared
+
+/// Reference callbacks stay current when an unchanged history chunk skips body.
+@MainActor
+final class ChatTimelineChunkCallbacks {
+    var boundary: (String, CGFloat?, CGFloat?) -> Void = { _, _, _ in }
+    var action: (ChatListAction) -> Void = { _ in }
+}
+
+struct ChatTimelineChunkView<EntryContent: View>: View, @MainActor Equatable {
+    let chunk: NativeTimelineChunk
+    let presentationSignature: Int
+    let firstEntryID: String?
+    let historyLoadTriggerID: String?
+    let historyBoundaryIDs: Set<String>
+    let activity: ChatTimelineActivity?
+    let hasActivityAnchor: Bool
+    let contextCompactState: ChatContextCompactState
+    let callbacks: ChatTimelineChunkCallbacks
+    let entryView: (NativeTimelineEntry) -> EntryContent
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        ChatRenderProbe.record("chunk-compare", id: lhs.chunk.id)
+        return lhs.chunk.signature == rhs.chunk.signature &&
+            lhs.presentationSignature == rhs.presentationSignature &&
+            lhs.activity == rhs.activity &&
+            lhs.hasActivityAnchor == rhs.hasActivityAnchor
+    }
+
+    var body: some View {
+        let _ = ChatRenderProbe.record("chunk", id: chunk.id)
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(chunk.entries) { entry in
+                let observesHistoryBoundary = entry.id == historyLoadTriggerID
+                let hasHistoryBoundaryAnchor = observesHistoryBoundary || historyBoundaryIDs.contains(entry.id)
+                let activityHere = entry.messageId != nil && entry.messageId == activity?.anchorMessageID
+                let awaitingSegmentedFirstBlock = entry.isAwaitingSegmentedFirstBlock
+                let statusReplacesEntry = activityHere && entry.isGlobalStatusOnly
+                let isHiddenStatus = (entry.isGlobalStatusOnly && !statusReplacesEntry) ||
+                    entry.automationScreenshotGroup?.isCollapsedMember == true ||
+                    entry.kind == .pendingAssistant ||
+                    entry.kind == .visionRecognition ||
+                    (entry.kind == .contextMarker &&
+                     (entry.compactState ?? contextCompactState).status != .completed)
+                // Hidden status-only entries must not leave per-task gaps in the timeline.
+                let topSpacing: CGFloat = entry.id == firstEntryID ||
+                    isHiddenStatus ? 0 : (
+                    entry.isAssistantContinuation ? ChatLayout.assistantPartSpacing : 14
+                )
+                if hasHistoryBoundaryAnchor {
+                    Color.clear
+                        .frame(height: 0)
+                        .id("history-boundary-" + entry.id)
+                        .accessibilityHidden(true)
+                        .onGeometryChange(for: CGFloat?.self) { proxy in
+                            guard observesHistoryBoundary,
+                                  let viewport = proxy.bounds(of: .scrollView),
+                                  viewport.height > 0 else { return nil }
+                            let relativeTop = -viewport.minY / viewport.height
+                            return relativeTop < 0 ? -1 : relativeTop
+                        } action: { previous, current in
+                            guard observesHistoryBoundary else { return }
+                            callbacks.boundary(entry.id, previous, current)
+                        }
+                        .padding(.top, topSpacing)
+                }
+                if entry.kind == .bottomAnchor, let activity, !hasActivityAnchor {
+                    ChatTimelineActivityRowView(activity: activity, showAgentName: true, onAction: { callbacks.action($0) })
+                        .padding(.top, entry.id == firstEntryID ? 0 : 14)
+                }
+                let suppressesEntryTopSpacing = hasHistoryBoundaryAnchor ||
+                    (!statusReplacesEntry && awaitingSegmentedFirstBlock)
+                Group {
+                    if let activity, statusReplacesEntry {
+                        ChatTimelineActivityRowView(activity: activity, showAgentName: !entry.isAssistantContinuation, onAction: { callbacks.action($0) })
+                            .id(entry.id)
+                    } else {
+                        entryView(entry)
+                    }
+                }
+                .padding(.top, suppressesEntryTopSpacing ? 0 : topSpacing)
+                if let activity, activityHere, !statusReplacesEntry, activity.shouldDisplayBelow(entry) {
+                    // 仅当当前轮气泡正在吐正文时收起进度行（防流式结束 28pt 下坠）；工具执行与次轮思考仍展示在首轮气泡下方。
+                    let isAfterUserMessage = entry.role == MessageRole.user
+                    let showHeaderOnActivity = isAfterUserMessage || (awaitingSegmentedFirstBlock && !entry.isAssistantContinuation)
+                    let activityTopSpacing: CGFloat = isAfterUserMessage
+                        ? 14
+                        : (awaitingSegmentedFirstBlock
+                            ? (hasHistoryBoundaryAnchor ? 0 : topSpacing)
+                            : ChatLayout.assistantPartSpacing)
+                    ChatTimelineActivityRowView(activity: activity, showAgentName: showHeaderOnActivity, onAction: { callbacks.action($0) })
+                        .padding(.top, activityTopSpacing)
+                }
+            }
+        }
+        .scrollTargetLayout()
+    }
+}

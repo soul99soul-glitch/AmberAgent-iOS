@@ -13,11 +13,13 @@ private actor HighlightTaskManager: ObservableObject {
   /// When multiple CodeBlockViews render concurrently, N separate JSContexts cause
   /// JavaScriptCore OOM crashes (COPILOT-IOS-3F9C, 3F7Z, 3FSQ).
   private static let sharedHighlight = Highlight()
+  private static let minimumHighlightIntervalNs: UInt64 = 90_000_000
 
   private var latestCode: String?
   private var isProcessing = false
+  private var lastHighlightFinishedUptimeNs: UInt64 = 0
 
-  func enqueueCode(_ code: String, completion: @escaping (AttributedString) -> Void) {
+  func enqueueCode(_ code: String, completion: @escaping (String, AttributedString) -> Void) {
     latestCode = code
 
     if !isProcessing {
@@ -27,19 +29,30 @@ private actor HighlightTaskManager: ObservableObject {
     }
   }
 
-  private func processQueue(completion: @escaping (AttributedString) -> Void) async {
+  private func processQueue(completion: @escaping (String, AttributedString) -> Void) async {
     guard !isProcessing else { return }
 
     isProcessing = true
 
-    while let codeToProcess = latestCode {
+    while latestCode != nil {
+      if lastHighlightFinishedUptimeNs > 0 {
+        let nowNs = DispatchTime.now().uptimeNanoseconds
+        let elapsedNs = nowNs >= lastHighlightFinishedUptimeNs ? nowNs - lastHighlightFinishedUptimeNs : 0
+        if elapsedNs < Self.minimumHighlightIntervalNs {
+          try? await Task.sleep(nanoseconds: Self.minimumHighlightIntervalNs - elapsedNs)
+        }
+      }
+      guard let codeToProcess = latestCode else { break }
       latestCode = nil
 
       let css: String = await CodeBlockView.syntaxHighlightingCss
       if let result = try? await Self.sharedHighlight.attributedText(codeToProcess, colors: .custom(css: css, background: "")) {
+        lastHighlightFinishedUptimeNs = DispatchTime.now().uptimeNanoseconds
         await MainActor.run {
-          completion(result)
+          completion(codeToProcess, result)
         }
+      } else {
+        lastHighlightFinishedUptimeNs = DispatchTime.now().uptimeNanoseconds
       }
     }
 
@@ -74,6 +87,7 @@ public struct CodeBlockView: View {
 
   @State var copied: Bool = false
   @State var attributedString: AttributedString?
+  @State private var highlightedCode: String?
   @StateObject private var taskManager: HighlightTaskManager = HighlightTaskManager()
 
   public init(language: String, code: String, onCodeCopied: (() -> Void)? = nil,
@@ -95,7 +109,8 @@ public struct CodeBlockView: View {
   }
 
   private func updateAttributedString(code: String) async {
-    await taskManager.enqueueCode(code) { newAttributedString in
+    await taskManager.enqueueCode(code) { processedCode, newAttributedString in
+      self.highlightedCode = processedCode
       self.attributedString = newAttributedString
     }
   }
@@ -108,10 +123,27 @@ public struct CodeBlockView: View {
     shouldCollapse ? String(code.prefix(300)) : code
   }
 
+  @available(iOS 16.1, *)
+  private var renderedAttributedCode: AttributedString {
+    let currentCode = displayedCode
+    guard let attributedString, let highlightedCode else {
+      return AttributedString(currentCode)
+    }
+    if highlightedCode == currentCode {
+      return attributedString
+    }
+    if currentCode.hasPrefix(highlightedCode) {
+      var combined = attributedString
+      combined.append(AttributedString(String(currentCode.dropFirst(highlightedCode.count))))
+      return combined
+    }
+    return AttributedString(currentCode)
+  }
+
   @ViewBuilder
   private var codeText: some View {
     if #available(iOS 16.1, *) {
-      Text(attributedString ?? AttributedString(displayedCode))
+      Text(renderedAttributedCode)
         .font(Typography.codeTextFonts)
         .foregroundStyle(Color.Theme.Component.CodeBlock.Foreground.FunctionParameter)
         .transition(.opacity)

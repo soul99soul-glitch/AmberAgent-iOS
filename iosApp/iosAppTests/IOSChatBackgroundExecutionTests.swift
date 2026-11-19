@@ -99,7 +99,9 @@ final class IOSChatBackgroundExecutionTests: XCTestCase {
         timeoutSeconds: TimeInterval = 60,
         modelId: String? = nil,
         reasoningLevel: ReasoningLevel = .off,
-        phoneAutomaticReasoning: Bool = false
+        phoneAutomaticReasoning: Bool = false,
+        mode: IOSChatBackgroundHandoffMode = .continueModel,
+        responseId: String? = nil
     ) async throws -> Run {
         let id = UUID().uuidString
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("background-run-\(id)")
@@ -130,8 +132,8 @@ final class IOSChatBackgroundExecutionTests: XCTestCase {
             conversationId: conversationId, providerId: setting.id.toHexDashString(), providerSetting: setting,
             params: TextGenerationParams(model: model, temperature: nil, topP: nil, maxTokens: nil,
                 tools: ToolKt.iosToolDeclarations(names: ["tools_list"]), reasoningLevel: reasoningLevel, customHeaders: [], customBody: []),
-            uploadMessages: [systemMessage], displayMessages: [], mode: .continueModel,
-            generativeUiRequirement: .none, generativeUiFallbackAttempted: false,
+            uploadMessages: [systemMessage], displayMessages: [], mode: mode,
+            responseId: responseId, generativeUiRequirement: .none, generativeUiFallbackAttempted: false,
             fullToolNames: ["tools_list", "workspace_file_read"], subAgentTimeoutSeconds: timeoutSeconds,
             phoneAutomaticReasoning: phoneAutomaticReasoning)
         let recorded = try await IOSDurableRunStore().startChatRun(runId: id,
@@ -453,5 +455,21 @@ final class IOSChatBackgroundExecutionTests: XCTestCase {
         let snapshot = try await IOSDurableRunStore().snapshot(runId: run.handoff.runId)
         XCTAssertEqual(snapshot?.status, .outcomeUnknown)
         XCTAssertTrue(keepAlive.activeLeaseIds.isEmpty)
+    }
+
+    func testE5OpenAIRemoteResumeDoesNotStartAudioWhileLocalExecutionDoes() async throws {
+        let assertions = Assertions()
+        let keepAlive = assertions.keepAlive(audioEnabled: true)
+        let provider = Provider()
+        let coordinator = IOSChatBackgroundGenerationCoordinator(keepAlive: keepAlive, provider: provider)
+        let resumeRun = try await makeRun(mode: .resumeResponse, responseId: "resp_remote_e5")
+        defer {
+            coordinator.cancelJobs(conversationId: resumeRun.handoff.conversationId)
+            try? FileManager.default.removeItem(at: resumeRun.directory)
+        }
+        start(resumeRun, on: coordinator)
+        XCTAssertFalse(assertions.audio.isActive, "OpenAI detached remote resume must not start audio keep-alive")
+        let resumeJob = try XCTUnwrap(coordinator.activeJobs.values.first { $0.runId == resumeRun.handoff.runId })
+        XCTAssertFalse(IOSChatBackgroundGenerationCoordinator.allowsAudioLeg(for: resumeJob))
     }
 }

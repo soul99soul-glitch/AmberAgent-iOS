@@ -5,6 +5,8 @@ import app.amber.ai.ui.UIMessage
 import app.amber.ai.ui.UIMessagePart
 import app.amber.core.model.Conversation
 import app.amber.core.model.MessageNode
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
@@ -47,7 +49,18 @@ fun forkConversation(
         id = newId,
         assistantId = assistantId ?: source.assistantId,
         title = newTitle,
-        messageNodes = messages.map { MessageNode.of(it) },
+        messageNodes = messages.map { message ->
+            // Forked history is context, never a fresh user statement for memory extraction.
+            val inherited = if (message.role == MessageRole.USER) message.copy(
+                parts = message.parts.map { part ->
+                    if (part is UIMessagePart.Text) part.copy(metadata = JsonObject(
+                        part.metadata.orEmpty() + ("amber.memory.inherited" to JsonPrimitive("true"))
+                    )) else part
+                }
+            ) else message
+            MessageNode.of(inherited)
+        },
+        memoryMode = source.memoryMode,
         isPinned = false,
         createAt = now,
         updateAt = now,

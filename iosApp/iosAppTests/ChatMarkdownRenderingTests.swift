@@ -8,6 +8,85 @@ import Shared
 
 @MainActor
 final class ChatMarkdownRenderingTests: ChatMessageProjectionTestCase {
+    private final class TextEditRecorder: NSObject, NSTextStorageDelegate {
+        var attributeEdits = 0
+        func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorage.EditActions,
+                         range editedRange: NSRange, changeInLength delta: Int) {
+            if editedMask.contains(.editedAttributes) { attributeEdits += 1 }
+        }
+    }
+
+    func testNativeStreamingFadeDoesNotEditTextStorageEveryDisplayFrame() {
+        let view = ParagraphUIView.makeTextKit1View()
+        view.frame = CGRect(x: 0, y: 0, width: 300, height: 100)
+        let style: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 18), .foregroundColor: UIColor.red]
+        view.setParagraphContents(NSMutableAttributedString(string: "已有文字", attributes: style), animatedByWord: false)
+        view.setParagraphContents(NSMutableAttributedString(string: "已有文字 新增文字", attributes: style),
+                                  animatedByWord: true, appendsTailFadeAsUnit: true)
+        XCTAssertFalse(view.activeAnimations.isEmpty, "保留可见的尾段淡入")
+        XCTAssertEqual(view.fadeFrameRateForTesting?.preferred, 120)
+        let recorder = TextEditRecorder()
+        view.textStorage.delegate = recorder
+        defer { view.textStorage.delegate = nil; view.resetForReuse() }
+        let deadline = Date().addingTimeInterval(0.15)
+        while Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.005)) }
+        XCTAssertEqual(recorder.attributeEdits, 0,
+                       "显示帧只改变绘制透明度，不应让颜色属性编辑进入 TextKit/布局更新链")
+        XCTAssertEqual(view.textStorage.string, "已有文字 新增文字")
+        XCTAssertEqual(view.textStorage.attribute(.foregroundColor, at: 6, effectiveRange: nil) as? UIColor, .red)
+    }
+
+    func testLegacyParagraphWordFadeKeepsItsExistingBehavior() {
+        let view = ParagraphUIView.makeTextKit1View()
+        view.frame = CGRect(x: 0, y: 0, width: 300, height: 100)
+        let style: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 18), .foregroundColor: UIColor.red]
+        view.setParagraphContents(NSMutableAttributedString(string: "existing", attributes: style), animatedByWord: false)
+        view.setParagraphContents(NSMutableAttributedString(string: "existing next words", attributes: style), animatedByWord: true)
+        XCTAssertFalse(view.activeAnimations.isEmpty)
+        let recorder = TextEditRecorder()
+        view.textStorage.delegate = recorder
+        defer { view.textStorage.delegate = nil; view.resetForReuse() }
+        let deadline = Date().addingTimeInterval(0.15)
+        while Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.005)) }
+        _ = view.perform(NSSelectorFromString("updateFadeAnimation"))
+        XCTAssertGreaterThan(recorder.attributeEdits, 0, "未显式启用尾段模式的 vendor 行为保持不变")
+        XCTAssertEqual(view.fadeFrameRateForTesting?.preferred, 60)
+    }
+
+    func testGlyphOpacityActuallyFadesWithoutChangingTextOrColor() throws {
+        let contents = NSAttributedString(string: "office 字形", attributes: [
+            .font: UIFont.systemFont(ofSize: 24), .foregroundColor: UIColor.red])
+        let storage = NSTextStorage(attributedString: contents)
+        let manager = ParagraphFadeLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: 300, height: 80))
+        storage.addLayoutManager(manager)
+        manager.addTextContainer(container)
+        let glyphs = manager.glyphRange(for: container)
+        // Initial TextKit layout resolves script-specific font fallback. Fading
+        // must preserve the content and attributes after that normal layout.
+        let laidOutContents = NSAttributedString(attributedString: storage)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        format.preferredRange = .standard
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 80), format: format)
+        let blank = try XCTUnwrap(renderer.image { _ in }.pngData())
+        func rendered(_ alpha: CGFloat) throws -> Data {
+            manager.setOpacityRanges([.init(range: NSRange(location: 0, length: storage.length), alpha: alpha)])
+            return try XCTUnwrap(renderer.image { _ in
+                manager.drawGlyphs(forGlyphRange: glyphs, at: .zero)
+            }.pngData())
+        }
+        let visible = try rendered(1)
+        let invisible = try rendered(0)
+        let half = try rendered(0.5)
+        XCTAssertNotEqual(visible, blank)
+        XCTAssertEqual(invisible, blank)
+        XCTAssertNotEqual(half, blank)
+        XCTAssertNotEqual(half, visible)
+        XCTAssertEqual(NSAttributedString(attributedString: storage), laidOutContents)
+    }
+
 
     func testFrozenMarkdownSnapshotUsesTheSingleNonEmptyTextPartVerbatim() {
         let messageID = KotlinUuid.companion.random()
@@ -173,6 +252,55 @@ final class ChatMarkdownRenderingTests: ChatMessageProjectionTestCase {
         XCTAssertEqual(completed.count, 1)
         XCTAssertEqual(prefix.first?.kind, "text")
         XCTAssertEqual(completed.first?.kind, "text")
+    }
+
+    func testTextKit1ParagraphKeepsItsProposedColumnWidthWhileAppending() throws {
+        let width: CGFloat = 337.3
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        func root(_ text: String) -> some View {
+            ParagraphView(contents: NSMutableAttributedString(string: text,
+                attributes: [.font: UIFont.systemFont(ofSize: 17), .foregroundColor: UIColor.label]),
+                lineSpacing: 4, usesTextKit1: true)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: width)
+        }
+        let host = UIHostingController(rootView: root("短句"))
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previousWindow?.makeKey() }
+        func paragraph(in view: UIView) -> ParagraphUIView? {
+            if let paragraph = view as? ParagraphUIView { return paragraph }
+            return view.subviews.lazy.compactMap { paragraph(in: $0) }.first
+        }
+        for text in ["短句", "短句继续增长", String(repeating: "长正文保持列宽，不跟随字宽来回排版。", count: 12)] {
+            host.rootView = root(text)
+            host.view.layoutIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+            let view = try XCTUnwrap(paragraph(in: host.view))
+            XCTAssertEqual(view.bounds.width, width, accuracy: 0.5)
+            XCTAssertEqual(view.text, text)
+        }
+    }
+
+    func testTextKit1SameLineAppendDoesNotInvalidateIntrinsicSize() {
+        let view = ParagraphUIView.makeTextKit1View()
+        view.frame = CGRect(x: 0, y: 0, width: 337.3, height: 21)
+        let style: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 17)]
+        view.setParagraphContents(NSMutableAttributedString(string: "短", attributes: style), animatedByWord: false)
+        view.layoutIfNeeded()
+        let before = view.sizeThatFits(CGSize(width: 337.3, height: .greatestFiniteMagnitude))
+        let previousProbe = ParagraphUIViewLiveProbe.onRecord
+        var invalidations = 0
+        ParagraphUIViewLiveProbe.onRecord = { if $0 == "para-intrinsic-invalidate" { invalidations += 1 } }
+        defer { ParagraphUIViewLiveProbe.onRecord = previousProbe; view.resetForReuse() }
+        view.setParagraphContents(NSMutableAttributedString(string: "短句", attributes: style), animatedByWord: false)
+        XCTAssertEqual(view.sizeThatFits(CGSize(width: 337.3, height: .greatestFiniteMagnitude)).height, before.height)
+        XCTAssertEqual(invalidations, 0, "列宽固定且没有换行时，追加字宽不应让 SwiftUI 重新测量整行")
+        XCTAssertEqual(view.text, "短句")
     }
 
     func testTextKit1LongParagraphMeasuresEachAppendAtLineGranularity() {
@@ -683,5 +811,65 @@ final class ChatMarkdownRenderingTests: ChatMessageProjectionTestCase {
         )
         XCTAssertTrue(reusedTextKit1.usesTextKit1)
         ParagraphUIViewCache.shared.recycle(reusedTextKit1)
+    }
+
+    func testRenderableDocumentReusesUnchangedListItemPrefixObjects() async {
+        let parser = MarkdownParserImpl()
+        let initial = await parser.parse(text: "1. First item\n2. Second item")
+        let updated = await parser.parse(text: "1. First item\n2. Second item grows")
+        let initialRenderable = await RenderableDocument(document: initial, config: .default)
+        let converted = await RenderableDocument(document: updated, config: .default)
+        let updatedRenderable = converted.reusingUnchangedPrefix(from: initialRenderable)
+
+        guard case let .orderedList(_, initialItems) = initialRenderable.renderables[0],
+              case let .orderedList(_, updatedItems) = updatedRenderable.renderables[0],
+              case let .paragraph(_, initialFirst) = initialItems[0].children[0],
+              case let .paragraph(_, updatedFirst) = updatedItems[0].children[0],
+              case let .paragraph(_, initialSecond) = initialItems[1].children[0],
+              case let .paragraph(_, updatedSecond) = updatedItems[1].children[0] else {
+            return XCTFail("Expected ordered list with two paragraph items")
+        }
+
+        XCTAssertTrue(initialFirst === updatedFirst)
+        XCTAssertFalse(initialSecond === updatedSecond)
+        XCTAssertEqual(updatedSecond.string, "Second item grows")
+    }
+
+    func testTailDrainKeepsStreamingModeAndSingleFlightSerialParseWithoutCancellingInFlightWork() async throws {
+        let renderedText = await ChatStableStreamingMarkdownControllerTestSupport
+            .renderedTextAfterRapidNonAnimatedPrefixBurst()
+        var expectedText = "尾段排空起点"
+        for step in 1...12 {
+            expectedText += "，第\(step)拍增量"
+        }
+        XCTAssertEqual(renderedText, expectedText)
+
+        let testDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let repoRoot = testDirectory.deletingLastPathComponent()
+        let bubbleSource = try String(
+            contentsOf: repoRoot.appendingPathComponent("iosApp/Chat/Message/MessageBubbleView.swift"),
+            encoding: .utf8
+        )
+        let blocksSource = try String(
+            contentsOf: repoRoot.appendingPathComponent("iosApp/Chat/Rendering/Markdown/ChatStreamingMarkdownBlocks.swift"),
+            encoding: .utf8
+        )
+        let stableSource = try String(
+            contentsOf: repoRoot.appendingPathComponent("iosApp/Chat/Rendering/Markdown/ChatStableStreamingMarkdown.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(
+            bubbleSource.contains("isStreaming: (isGenerating && isLastMessage) || isPacingReveal"),
+            "ChatStreamingRevealPacer 尾段排空期间必须继续向 ChatAssistantMarkdownView 传递流式态。"
+        )
+        XCTAssertTrue(
+            blocksSource.contains("textBlock(revealedText, id: block.id, isPacingReveal: isPacingReveal)"),
+            "分段渲染器的内层 pacer 在尾段排空期间必须继续保持动画与增量解析节流。"
+        )
+        XCTAssertTrue(
+            stableSource.contains("throttleSleepTask?.cancel()"),
+            "切换完成态只应唤醒节流 sleep，不能取消正在执行的 parseNow 任务导致尾段解析饥饿。"
+        )
     }
 }

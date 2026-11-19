@@ -68,8 +68,8 @@ struct IOSGenerativeWidgetPayloadDetector {
     private static let maxNeedleLength: Int =
         (foldedGeneralNeedles + foldedJSONNeedles).map(\.count).max() ?? 16
 
-    private var processedUTF8Count = 0
-    private var checkpoint: [UInt8] = []
+    private var processedUTF16Count = 0
+    private var checkpointUTF16: [UInt16] = []
     /// 已扫窗口的小写折叠尾巴(maxNeedleLength-1),兜住跨 chunk 边界的 needle。
     private var overlap: [UInt8] = []
     /// 首个非空白字符是否 "{"。nil = 尚未见到任何非空白字符。
@@ -83,24 +83,29 @@ struct IOSGenerativeWidgetPayloadDetector {
 
     mutating func update(with text: String) {
         guard !mayContainPayload else { return }
-        let utf8 = text.utf8
-        let count = utf8.count
-        guard count != processedUTF8Count || !checkpointMatches(in: utf8) else { return }
-        if count < processedUTF8Count || !checkpointMatches(in: utf8) {
+        let ns = text as NSString
+        let utf16Count = ns.length
+        let matches = checkpointMatches(in: ns)
+        guard utf16Count != processedUTF16Count || !matches else { return }
+        if utf16Count < processedUTF16Count || !matches {
             resetState()
         }
 
-        let start = utf8.index(utf8.startIndex, offsetBy: processedUTF8Count)
+        let appended = processedUTF16Count == 0 ? text : ns.substring(from: processedUTF16Count)
         var window = overlap
-        window.reserveCapacity(overlap.count + (count - processedUTF8Count))
-        for byte in utf8[start...] {
+        window.reserveCapacity(overlap.count + (utf16Count - processedUTF16Count) * 3)
+        for byte in appended.utf8 {
             if startsWithJSONBrace == nil, !Self.isASCIIWhitespace(byte) {
                 startsWithJSONBrace = byte == UInt8(ascii: "{")
             }
             window.append(Self.foldASCII(byte))
         }
-        processedUTF8Count = count
-        checkpoint = Array(utf8.suffix(Self.checkpointLength))
+        processedUTF16Count = utf16Count
+        let length = min(utf16Count, Self.checkpointLength)
+        checkpointUTF16 = Self.codeUnits(
+            in: ns,
+            range: NSRange(location: utf16Count - length, length: length)
+        )
 
         if Self.containsAny(Self.foldedGeneralNeedles, in: window) {
             mayContainPayload = true
@@ -123,19 +128,28 @@ struct IOSGenerativeWidgetPayloadDetector {
 
     private mutating func resetState() {
         mayContainPayload = false
-        processedUTF8Count = 0
-        checkpoint.removeAll(keepingCapacity: true)
+        processedUTF16Count = 0
+        checkpointUTF16.removeAll(keepingCapacity: true)
         overlap.removeAll(keepingCapacity: true)
         startsWithJSONBrace = nil
     }
 
-    private func checkpointMatches(in utf8: String.UTF8View) -> Bool {
-        guard processedUTF8Count > 0 else { return true }
-        guard processedUTF8Count <= utf8.count, checkpoint.count <= processedUTF8Count else { return false }
-        let startOffset = processedUTF8Count - checkpoint.count
-        let start = utf8.index(utf8.startIndex, offsetBy: startOffset)
-        let end = utf8.index(start, offsetBy: checkpoint.count)
-        return utf8[start..<end].elementsEqual(checkpoint)
+    private func checkpointMatches(in ns: NSString) -> Bool {
+        guard processedUTF16Count > 0 else { return true }
+        guard processedUTF16Count <= ns.length, checkpointUTF16.count <= processedUTF16Count else { return false }
+        if let last = checkpointUTF16.last, (0xD800...0xDBFF).contains(last) { return false }
+        return Self.codeUnits(
+            in: ns,
+            range: NSRange(location: processedUTF16Count - checkpointUTF16.count, length: checkpointUTF16.count)
+        ) == checkpointUTF16
+    }
+
+    private static func codeUnits(in ns: NSString, range: NSRange) -> [UInt16] {
+        guard range.length > 0 else { return [] }
+        return [UInt16](unsafeUninitializedCapacity: range.length) { buffer, initializedCount in
+            ns.getCharacters(buffer.baseAddress!, range: range)
+            initializedCount = range.length
+        }
     }
 
     private static func foldASCII(_ byte: UInt8) -> UInt8 {

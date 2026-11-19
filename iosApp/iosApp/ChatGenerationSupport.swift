@@ -18,6 +18,7 @@ struct ChatPendingToolApproval {
     var executionPolicy: IOSExecutionPolicySnapshot? = nil
     /// baseMessages 不含真实对话时（嵌套 exec 的合成消息）由调用方提供最近的用户消息。
     var recentUserTexts: [String]? = nil
+    var phoneControl: IOSPhoneControlController? = nil
 }
 
 struct ChatGenerationDependencies {
@@ -35,6 +36,7 @@ struct ChatGenerationDependencies {
     /// 跨会话读取工具（session_search/session_read）的会话存储源。var 带默认值，
     /// 成员构造器给默认参数——既有调用点零改动；nil = 工具返回结构化不可用。
     var conversationStoreProvider: (() -> IOSConversationStore?)? = nil
+    var agentSoulStore: AgentSoulStore? = nil
 }
 
 struct ChatMiniAppOutputApplication {
@@ -165,6 +167,16 @@ struct ChatGenerationBindings {
     /// 在边界到达——只在会话切换时刷新会让这些轮次漏掉编排语境注入）。
     /// 默认空实现零影响。
     var refreshOrchestrationLinks: @MainActor () async -> Void = {}
+    /// Per-run stage and liveness for the single chat status; nil records activity only.
+    var recordTaskActivity: @MainActor (AgentActivityStage?) -> Void = { _ in }
+    var foregroundReasoningLevels: @MainActor (Model) -> [ReasoningLevel] = { _ in [] }
+    var isForegroundRouterRun: @MainActor () -> Bool = { false }
+    var recordTaskToolActivity: @MainActor (String, String) -> Void = { _, _ in }
+    var recordTaskProgressPlan: @MainActor ([String]) -> Void = { _ in }
+    var recordTaskReasoning: @MainActor (String?) -> Void = { _ in }
+    var setProvisionalAssistant: @MainActor (UIMessage) -> Bool = { _ in false }
+    var recordStreamHeartbeat: @MainActor () -> Void = {}
+    var abandonCompletionFeedback: @MainActor (String) -> Void = { _ in }
 }
 
 struct IOSGenerativeUiRequirement: Equatable {

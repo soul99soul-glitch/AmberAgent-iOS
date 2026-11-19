@@ -47,6 +47,8 @@ enum ChatMarkdownRendererPolicy {
 /// 实验渲染器在这里互斥切换,避免两边各渲染各的、视觉不一致。
 struct ChatAssistantMarkdownView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.chatIsActivelyPacingReveal) private var isActivelyPacingReveal
+    @Environment(\.chatIsInsideStreamingGraphHost) private var isInsideStreamingGraphHost
     let markdown: String
     var renderCacheNamespace: String?
     var displaySetting: DisplaySetting?
@@ -62,11 +64,16 @@ struct ChatAssistantMarkdownView: View {
     @State private var taskSegments: [IOSIntelligentUISegment] = []
     @State private var taskPreview: IOSIntelligentUIStreamingPreview?
 
+    private var effectiveIsStreaming: Bool {
+        isStreaming || isActivelyPacingReveal
+    }
+
     // 渲染器选择已硬编码：block 渲染器无条件参与竞争，coalesced 合并默认开启。
     // 不再暴露 microsoft/liyanan/streamingBlock/coalesced 开关给用户。
-    @AppStorage(IOSDisplayPreferenceKeys.fontScale) private var fontScale = 1.0
-    @AppStorage(IOSDisplayPreferenceKeys.chatFont) private var chatFont = IOSChatFont.default.rawValue
-    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = 17
+    private var fontScale: Double { IOSChatRenderPreferences.shared.fontScale }
+    private var chatFont: String { IOSChatRenderPreferences.shared.chatFont }
+    private var isSegmentedReplyDelivery: Bool { IOSChatRenderPreferences.shared.isSegmentedReplyDelivery }
+    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = IOSChatFont.defaultBodyPointSize
     /// per-view-instance 的「这个 bubble 用过 block 流式渲染」latch，覆盖 completion 瞬间；
     /// 回收后的完成态由 projection 层 hasEverStreamed + liveRenderingEnabled 驱动。
     @State private var hasUsedBlockMarkdownRenderer = false
@@ -111,7 +118,7 @@ struct ChatAssistantMarkdownView: View {
         // 非流式行(历史行,首帧结果必须就位且不会每 delta 重建)做 eager 扫描;
         // 流式行从空状态起步,由 onAppear/onChange 的持久盒增量补齐——
         // 代价仅是"流式中途重进入"首帧探测未就位(下一帧补齐)。
-        if isStreaming {
+        if isStreaming || (hasEverStreamed && liveRenderingEnabled) {
             let detection = ChatStreamingDetectionBox(markdown: "")
             _detection = State(initialValue: detection)
             _mayContainWidgetPayload = State(initialValue: false)
@@ -137,9 +144,12 @@ struct ChatAssistantMarkdownView: View {
     }
 
     var body: some View {
+        let _ = isInsideStreamingGraphHost ? () : ChatTimelineRowLayoutInvalidation.markRowDirty(sourceMessageID)
+        let _ = ChatRenderProbe.record("markdown", id: sourceMessageID ?? "unattributed")
         let widgetSettings = IOSGenerativeWidgetSettings(generativeUiSetting)
         let renderedMarkdown = renderedMarkdownText
-        let liveStreaming = isStreaming && liveRenderingEnabled
+        let activeStreaming = effectiveIsStreaming
+        let liveStreaming = activeStreaming && liveRenderingEnabled
         Group {
             if widgetSettings.enabled && (mayContainWidgetPayload || !taskSegments.isEmpty) {
                 if !taskSegments.isEmpty {
@@ -149,7 +159,7 @@ struct ChatAssistantMarkdownView: View {
                             case .text(let text):
                                 visualContent(text, liveStreaming: liveStreaming, segmentIdentity: "task:\(index)")
                             case .card(let definition):
-                                if isStreaming {
+                                if activeStreaming {
                                     IOSIntelligentUIStreamingPreviewView(preview: .complete(definition),
                                         generationNamespace: liveStreaming ? taskGenerationNamespace(index) : nil,
                                         isAnimating: liveStreaming)
@@ -196,22 +206,26 @@ struct ChatAssistantMarkdownView: View {
             if renderedMarkdownSnapshot.isEmpty {
                 renderedMarkdownSnapshot = markdown
             }
-            updateTaskSegments(reconcile: true)
-            updateWidgetPayloadLatch(with: markdown)
-            if isStreaming && liveRenderingEnabled {
+            if !effectiveIsStreaming {
+                reconcileFinalWidgetPayloadLatch(with: markdown)
+            } else {
+                updateWidgetPayloadLatch(with: markdown)
+            }
+            updateTaskSegments(reconcile: !effectiveIsStreaming)
+            if effectiveIsStreaming && liveRenderingEnabled {
                 updateTableRendererLatch(with: renderedMarkdown)
             }
         }
         .onChange(of: markdown) { _, newValue in
             updateTaskSegments()
             updateWidgetPayloadLatch(with: newValue)
-            if isStreaming,
+            if effectiveIsStreaming,
                liveRenderingEnabled,
                !hasUsedBlockMarkdownRenderer {
                 updateTableRendererLatch(with: newValue)
             }
         }
-        .onChange(of: isStreaming) { _, newValue in
+        .onChange(of: effectiveIsStreaming) { _, newValue in
             if newValue && liveRenderingEnabled {
                 renderedMarkdownSnapshot = markdown
                 if !hasUsedBlockMarkdownRenderer {
@@ -232,13 +246,13 @@ struct ChatAssistantMarkdownView: View {
             renderedMarkdownSnapshot = markdown
             updateTaskSegments(reconcile: true)
             if ChatStreamingMarkdownRendererPolicy.initialBlockRendererLatch(
-                isStreaming: isStreaming,
+                isStreaming: effectiveIsStreaming,
                 hasEverStreamed: hasEverStreamed,
                 liveRenderingEnabled: newValue
             ) {
                 hasUsedBlockMarkdownRenderer = true
             }
-            if newValue && isStreaming {
+            if newValue && effectiveIsStreaming {
                 if !hasUsedBlockMarkdownRenderer {
                     updateTableRendererLatch(with: markdown)
                 }
@@ -301,7 +315,8 @@ struct ChatAssistantMarkdownView: View {
 
     private func updateTaskSegments(reconcile: Bool = false) {
         let text = renderedMarkdownText
-        if reconcile || !isStreaming {
+        let activeStreaming = effectiveIsStreaming
+        if reconcile || !activeStreaming {
             detection.taskUI.reconcileFinalText(text)
         } else {
             detection.taskUI.update(with: text)
@@ -312,7 +327,7 @@ struct ChatAssistantMarkdownView: View {
             if reconcile { detection.taskPreview.reset() }
             return
         }
-        if isStreaming {
+        if activeStreaming {
             if reconcile { detection.taskPreview.reconcile(text) }
             else { detection.taskPreview.update(with: text) }
             if detection.taskPreview.preview != taskPreview { taskPreview = detection.taskPreview.preview }
@@ -320,7 +335,7 @@ struct ChatAssistantMarkdownView: View {
             detection.taskPreview.reset()
             if taskPreview != nil { taskPreview = nil }
         }
-        let parsed = IOSIntelligentUIProtocol.parse(text, isStreaming: isStreaming)
+        let parsed = IOSIntelligentUIProtocol.parse(text, isStreaming: activeStreaming)
         let next = parsed.contains { segment in
             if case .text = segment { return false }
             return true
@@ -347,7 +362,7 @@ struct ChatAssistantMarkdownView: View {
         if !liveRenderingEnabled, let frozenMarkdownSnapshot, !frozenMarkdownSnapshot.isEmpty {
             return frozenMarkdownSnapshot
         }
-        if isStreaming && !liveRenderingEnabled && !renderedMarkdownSnapshot.isEmpty {
+        if effectiveIsStreaming && !liveRenderingEnabled && !renderedMarkdownSnapshot.isEmpty {
             return renderedMarkdownSnapshot
         }
         return markdown
@@ -363,7 +378,7 @@ struct ChatAssistantMarkdownView: View {
     }
 
     private func updateTableRendererLatch(with text: String) {
-        if isStreaming, liveRenderingEnabled {
+        if effectiveIsStreaming, liveRenderingEnabled {
             hasUsedBlockMarkdownRenderer = true
         }
         detection.table.update(with: text)
@@ -401,11 +416,13 @@ struct ChatAssistantMarkdownView: View {
     /// 完成态的 view 实例可以继续使用 SwiftStreamingMarkdown 保持 renderer 连续性,但必须
     /// 退出文字动画路径,避免 UIKit 段落视图在完成/回收阶段继续走动态文字更新和尺寸缓存。
     private var boundedFontScale: Double {
-        min(max(fontScale, 0.88), 1.25)
+        IOSChatFont.clampedScale(fontScale)
     }
 
     private func streamingMarkdownConfig(liveStreaming: Bool) -> SwiftStreamingMarkdown.MarkdownRenderConfig {
         let scale = boundedFontScale
+        let effectivePointSize = scaledBodyPointSize * scale
+        let selectedChatFont = IOSChatFont(rawValue: chatFont) ?? .default
         let foreground = UIColor(AmberTheme.foreground)
         let foreground2 = UIColor(AmberTheme.foreground2)
         let muted = UIColor(AmberTheme.muted)
@@ -413,12 +430,13 @@ struct ChatAssistantMarkdownView: View {
         let border = UIColor(AmberTheme.border)
         let accent = UIColor(AmberTheme.accent)
         let bodyFonts = ChatStreamingMarkdownTypography.bodyFonts(
-            chatFont: IOSChatFont(rawValue: chatFont) ?? .default,
-            pointSize: scaledBodyPointSize * scale
+            chatFont: selectedChatFont,
+            pointSize: effectivePointSize
         )
         let headingFonts = ChatStreamingMarkdownTypography.applyingChatFont(
-            IOSChatFont(rawValue: chatFont) ?? .default,
-            to: SwiftStreamingMarkdown.MarkdownRenderConfig.defaultHeadingStyle
+            selectedChatFont,
+            to: SwiftStreamingMarkdown.MarkdownRenderConfig.defaultHeadingStyle,
+            pointSize: effectivePointSize
         )
         let paragraphStyle = SwiftStreamingMarkdown.MarkdownRenderConfig.MarkdownTextStyle(
             textFonts: bodyFonts,
@@ -453,13 +471,15 @@ struct ChatAssistantMarkdownView: View {
             boldTextColor: foreground,
             linkTextFont: bodyFonts.normal,
             linkTextColor: accent,
-            codeTextFont: SwiftStreamingMarkdown.MarkdownRenderConfig.defaultInlineStyle.codeTextFont,
+            codeTextFont: ChatStreamingMarkdownTypography.inlineCodeFont(pointSize: effectivePointSize),
             codeTextColor: foreground2,
             codeBackgroundColor: surface2,
             codeUnderlineColor: border
         )
-        // Reduce Motion 下流式淡入全关（与思考框 animatesStreamingBody 同语义）。
-        let animates = liveStreaming && !reduceMotion
+        // Reduce Motion 下流式淡入全关（与思考框 animatesStreamingBody 同语义）；
+        // 分段呈现关闭逐词淡入与跨段合并，由已完成 Markdown 块级单次入场承载。
+        let segmented = isSegmentedReplyDelivery
+        let animates = liveStreaming && !reduceMotion && !segmented
         return SwiftStreamingMarkdown.MarkdownRenderConfig.default
             .withShouldAnimateText(value: animates)
             // 逐拍尾段整体淡入 + 解除 window 门控：修「开头看不到淡入、一拍一跳」
@@ -471,8 +491,8 @@ struct ChatAssistantMarkdownView: View {
             .withParagraphStyle(value: paragraphStyle)
             .withTableStyle(value: tableStyle)
             .withInlineStyle(value: inlineStyle)
-            .withParagraphLineSpacing(value: 4 * scale)
-            .withHeadingLineSpacing(value: 4 * scale)
+            .withParagraphLineSpacing(value: 3.2 * scale)
+            .withHeadingLineSpacing(value: 3.2 * scale)
             .withBlockSpacing(value: 8)
             .withListItemSpacing(value: 4)
             .withTableCellHorizontalPadding(value: 12)
@@ -488,7 +508,7 @@ struct ChatAssistantMarkdownView: View {
             // 新段落也不再是「新建视图 + 从 alpha 0 淡入」。合并块内的增长仍走
             // ParagraphUIView 的 append 快路径(行距/段距烘进属性串,视图侧传 nil)。
             // 这里是三个界面(Chat/议会/小说)共用的唯一 config 构造点。
-            .withCoalescesAdjacentTextBlocks(value: true)
+            .withCoalescesAdjacentTextBlocks(value: !segmented)
     }
 
     @ViewBuilder
@@ -497,16 +517,17 @@ struct ChatAssistantMarkdownView: View {
         liveStreaming: Bool,
         cacheIdentitySuffix: String = "document"
     ) -> some View {
+        let segmented = isSegmentedReplyDelivery
         let config = detection.markdownConfig(
             for: ChatStreamingDetectionBox.MarkdownConfigKey(
-                liveStreaming: liveStreaming,
+                liveStreaming: liveStreaming && !segmented,
                 reduceMotion: reduceMotion,
                 fontScale: boundedFontScale,
                 bodyPointSize: scaledBodyPointSize,
                 chatFont: chatFont,
                 themePaper: AmberThemeRuntime.shared.paper.rawValue,
                 themeAccentHex: AmberThemeRuntime.shared.accentHex,
-                coalescedTextBlocks: true
+                coalescedTextBlocks: !segmented
             ),
             build: { streamingMarkdownConfig(liveStreaming: liveStreaming) }
         )
