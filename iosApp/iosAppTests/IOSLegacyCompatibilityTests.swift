@@ -101,6 +101,12 @@ final class IOSLegacyCompatibilityTests: XCTestCase {
         XCTAssertEqual(store.hubs.first?.memoryPolicy, .hubIsolated)
         XCTAssertEqual(store.smartCollections.count, 1)
         XCTAssertEqual(store.smartCollections.first?.template, .general)
+
+        // An unrelated save and reload must preserve the legacy collection's promotion policy.
+        store.createHub(title: "通用中心", makeActive: false)
+        let reloaded = AmberHubStore(userDefaults: defaults)
+        let promoted = try XCTUnwrap(reloaded.promoteSmartCollectionToHub("col-novel-1"))
+        XCTAssertEqual(promoted.memoryPolicy, .hubIsolated)
     }
 
     func testAgentActivityPresentationDecodesLegacyDeepReadKindAsResearch() throws {

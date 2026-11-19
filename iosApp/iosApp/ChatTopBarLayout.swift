@@ -5,6 +5,7 @@ enum ChatTopBarLayout {
     @MainActor static var onCapsuleFrameForTesting: ((CGRect, String) -> Void)?
     @MainActor static var onAvatarFrameForTesting: ((CGRect) -> Void)?
     @MainActor static var onPanelFrameForTesting: ((CGRect) -> Void)?
+    @MainActor static var onTimelineContentInsetForTesting: ((CGFloat) -> Void)?
     #endif
     static let avatarDiameter: CGFloat = 76
     static let islandTopOffset: CGFloat = 8

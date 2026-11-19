@@ -7,6 +7,10 @@ import Combine
 /// Production Chat timeline. The native scroll driver owns normal bottom-follow;
 /// SwiftUI takes over only after an explicit driver fallback.
 struct NativeChatTimelineView: View {
+    #if DEBUG
+    private static let contentCoordinateSpace = "NativeChatTimelineView.content"
+    #endif
+
     static let historyPageSize = 60
     var signal: ChatMessageUpdateSignal
     var timelineUpdates: ChatTimelineUpdates? = nil
@@ -183,7 +187,22 @@ struct NativeChatTimelineView: View {
                     }
                 }
                 .padding(.horizontal, ChatLayout.timelineHorizontalInset)
-                .padding(.top, 12 + topContentClearance)
+                .padding(.top, 12)
+                #if DEBUG
+                .background {
+                    if ChatTopBarLayout.onTimelineContentInsetForTesting != nil {
+                        Color.clear.onGeometryChange(for: CGFloat.self) {
+                            $0.frame(in: .named(Self.contentCoordinateSpace)).minY
+                        } action: {
+                            ChatTopBarLayout.onTimelineContentInsetForTesting?($0)
+                        }
+                    }
+                }
+                #endif
+                .padding(.top, topContentClearance)
+                #if DEBUG
+                .coordinateSpace(name: Self.contentCoordinateSpace)
+                #endif
                 // 底部留白收窄：原先 28 与底锚点 bottomRestGap(26) 叠加达到 54pt，
                 // 气泡悬在半空。这里与锚点合计约 22pt，贴近输入框上方但有呼吸感。
                 .padding(.bottom, 10)

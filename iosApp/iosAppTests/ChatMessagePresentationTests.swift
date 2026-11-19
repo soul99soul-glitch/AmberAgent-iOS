@@ -109,13 +109,16 @@ final class ChatMessagePresentationTests: ChatMessageProjectionTestCase {
         var measurements: [[String: Any]] = []
         var avatar = CGRect.null
         var panel = CGRect.null
+        var timelineContentInset: CGFloat?
         ChatTopBarLayout.onCapsuleFrameForTesting = { capsule = $0; capsuleTitle = $1 }
         ChatTopBarLayout.onAvatarFrameForTesting = { avatar = $0 }
         ChatTopBarLayout.onPanelFrameForTesting = { panel = $0 }
+        ChatTopBarLayout.onTimelineContentInsetForTesting = { timelineContentInset = $0 }
         defer {
             ChatTopBarLayout.onCapsuleFrameForTesting = nil
             ChatTopBarLayout.onAvatarFrameForTesting = nil
             ChatTopBarLayout.onPanelFrameForTesting = nil
+            ChatTopBarLayout.onTimelineContentInsetForTesting = nil
         }
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow)
@@ -134,6 +137,7 @@ final class ChatMessagePresentationTests: ChatMessageProjectionTestCase {
                     .environment(RouterPath())
                     .environment(\.dynamicTypeSize, size)
                 capsule = .null; avatar = .null; panel = .null
+                timelineContentInset = nil
                 var host = UIHostingController(rootView: root)
                 window.rootViewController = host
                 window.makeKeyAndVisible()
@@ -161,7 +165,9 @@ final class ChatMessagePresentationTests: ChatMessageProjectionTestCase {
                 let contentTop: CGFloat
                 if tab == .chat {
                     let scroll = try XCTUnwrap(scrolls(host.view).max { $0.bounds.height < $1.bounds.height })
+                    // Combine the viewport inset with the measured padding inside the scroll content.
                     contentTop = scroll.convert(scroll.bounds, to: host.view).minY
+                        + scroll.adjustedContentInset.top + (try XCTUnwrap(timelineContentInset))
                 } else {
                     XCTAssertFalse(panel.isNull)
                     contentTop = panel.minY

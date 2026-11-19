@@ -121,6 +121,7 @@ struct AmberSmartCollectionItem: Codable, Equatable, Identifiable, Sendable {
     var digest: String
     var template: AmberHubTemplate
     var promotionSuggested: Bool
+    var promotionMemoryPolicy: AmberHubMemoryPolicy? = nil
 
     var compactSummaryItem: String {
         "\(title) (\(itemCount))"
@@ -130,6 +131,30 @@ struct AmberSmartCollectionItem: Codable, Equatable, Identifiable, Sendable {
 
     var sampleKeywords: [String] {
         [primaryTag, digest].filter { !$0.isEmpty }
+    }
+}
+
+extension AmberSmartCollectionItem {
+    private enum CodingKeys: String, CodingKey {
+        case id, title, primaryTag, itemCount, conversationIds, memoryCount, digest
+        case template, promotionSuggested, promotionMemoryPolicy
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        title = try values.decode(String.self, forKey: .title)
+        primaryTag = try values.decode(String.self, forKey: .primaryTag)
+        itemCount = try values.decode(Int.self, forKey: .itemCount)
+        conversationIds = try values.decode([String].self, forKey: .conversationIds)
+        memoryCount = try values.decode(Int.self, forKey: .memoryCount)
+        digest = try values.decode(String.self, forKey: .digest)
+        promotionSuggested = try values.decode(Bool.self, forKey: .promotionSuggested)
+        let rawTemplate = try values.decode(String.self, forKey: .template)
+        template = AmberHubTemplate(rawValue: rawTemplate) ?? .general
+        // The removed template previously selected an isolated Hub at promotion.
+        promotionMemoryPolicy = try values.decodeIfPresent(AmberHubMemoryPolicy.self, forKey: .promotionMemoryPolicy)
+            ?? (rawTemplate == "NOVEL" ? .hubIsolated : nil)
     }
 }
 
@@ -496,7 +521,7 @@ final class AmberHubStore {
             return nil
         }
         smartCollections.removeAll { $0.id == collectionId }
-        let resolvedPolicy = memoryPolicy ?? .sharedWithGlobal
+        let resolvedPolicy = memoryPolicy ?? collection.promotionMemoryPolicy ?? .sharedWithGlobal
         let hub = AmberHubItem(
             title: collection.title,
             thesis: collection.digest,
@@ -570,7 +595,7 @@ final class AmberHubStore {
             title: collection.title,
             thesis: collection.digest,
             template: collection.template,
-            memoryPolicy: .sharedWithGlobal,
+            memoryPolicy: collection.promotionMemoryPolicy ?? .sharedWithGlobal,
             pinnedSupertags: [collection.primaryTag],
             conversationIds: collection.conversationIds,
             memoryCountHint: max(collection.memoryCount, collection.itemCount)
