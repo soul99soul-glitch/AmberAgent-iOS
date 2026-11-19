@@ -92,19 +92,22 @@ struct ChatView: View {
         MacGatewayStore.shared.connection != nil && MacGatewayStore.shared.isCloudMainDialogueSelected
     }
 
+    private var topBarContentClearance: CGFloat {
+        ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension
+            + artifactShelfStripHeight - ChatTopBarLayout.toolbarHeight
+    }
+
     private var chatContent: some View {
-        return ZStack {
+        topBar(wrapping: ZStack {
             AmberThemePageBackground(surface: .app)
             ChatDialogueHostContent(isCloudSelected: isCloudHostActive) {
                 messageList
-                    // Reserve actual viewport space so scrolled messages cannot paint underneath the title capsule.
-                    .padding(.top, ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight)
                     .opacity(composerState.activeDuetTab == .chat ? 1 : 0)
                     .allowsHitTesting(composerState.activeDuetTab == .chat)
             } cloud: {
                 AmberInlineCloudMainDialogueView(
                     store: MacGatewayStore.shared,
-                    topInset: ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight,
+                    topInset: topBarContentClearance,
                     isInputFocused: composerState.isInputFocused,
                     onOpenPairingSettings: { isPresentingCloudGatewaySettings = true },
                     onDismissKeyboard: dismissKeyboard
@@ -118,6 +121,7 @@ struct ChatView: View {
             // 因此骨架消失时不会发生布局跳动。
             if awaitsConversationBootstrap {
                 ChatStartupSkeleton()
+                    .padding(.top, topBarContentClearance)
                     .zIndex(10)
                     .accessibilityHidden(true)
             }
@@ -179,10 +183,7 @@ struct ChatView: View {
                     }
                     .transition(.opacity)
             }
-            // 面板需要参与正文区域命中测试，不能挂在仅顶栏高度的 safeAreaBar 内。
-            topBar
-                .zIndex(20)
-        }
+        })
         .onGeometryChange(for: ChatGeometrySample.self) { proxy in
             ChatGeometrySample(
                 size: CGSize(
@@ -901,7 +902,7 @@ struct ChatView: View {
         }
     }
 
-    var topBar: some View {
+    private func topBar(wrapping dialogue: some View) -> some View {
         let generating = viewModel.isGenerationActive || viewModel.completionFeedback.hasActiveOrDrainingRun
         let currentIslandState = topIslandState
         let recap = generating ? nil : currentRecap
@@ -998,10 +999,11 @@ struct ChatView: View {
             isModalSheetPresented: isAnyModalSheetPresented,
             onAvatarTap: {
                 isPresentingEmbodimentHome = true
-            }
+            },
+            dialogue: AnyView(dialogue)
         )
-        .onAppear { syncIslandPresentation() }
-        .onChange(of: topIslandState) { _, _ in syncIslandPresentation() }
+            .onAppear { syncIslandPresentation() }
+            .onChange(of: topIslandState) { _, _ in syncIslandPresentation() }
     }
 
     // MARK: - Message List
@@ -1035,7 +1037,8 @@ struct ChatView: View {
                 variantInfoProvider: { index in viewModel.variantInfo(atMessageIndex: index) },
                 onAction: handleChatListAction,
                 onViewportStateChange: applyCollectionViewportState,
-                onDismissKeyboard: dismissKeyboard
+                onDismissKeyboard: dismissKeyboard,
+                topContentClearance: topBarContentClearance
             )
             .environment(\.intelligentUIHost, viewModel.intelligentUIHost)
             .environment(\.intelligentUIConversationID, currentConversationIdString)

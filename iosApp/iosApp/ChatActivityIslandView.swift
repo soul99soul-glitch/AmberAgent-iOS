@@ -366,6 +366,7 @@ struct ChatActivityIslandView: View {
                 .fixedSize(horizontal: true, vertical: false)
                 .background { glowUnderlay }
                 .modifier(ChatActivityIslandGlass())
+                .contentShape(Capsule())
                 .scaleEffect(x: reduceMotion ? 1 : capsuleScale, y: 1)
                 .animation(
                     reduceMotion ? nil : .easeInOut(duration: 0.22),
@@ -395,7 +396,6 @@ struct ChatActivityIslandView: View {
                 .zIndex(1)
         }
         .frame(width: maxWidth, height: ChatTopBarLayout.islandHeight, alignment: .top)
-        .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(accessibilitySummary))
     }

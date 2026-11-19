@@ -33,6 +33,7 @@ struct NativeChatTimelineView: View {
     var onAction: (ChatListAction) -> Void
     var onViewportStateChange: (ChatViewportState) -> Void
     var onDismissKeyboard: () -> Void
+    var topContentClearance: CGFloat = 0
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -182,7 +183,7 @@ struct NativeChatTimelineView: View {
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 12)
+                .padding(.top, 12 + topContentClearance)
                 // 底部留白收窄：原先 28 与底锚点 bottomRestGap(26) 叠加达到 54pt，
                 // 气泡悬在半空。这里与锚点合计约 22pt，贴近输入框上方但有呼吸感。
                 .padding(.bottom, 10)
@@ -233,7 +234,7 @@ struct NativeChatTimelineView: View {
                         Color.clear
                     }
                     .padding(.horizontal, 16)
-                    .padding(.top, 12)
+                    .padding(.top, 12 + topContentClearance)
                     .allowsHitTesting(false)
                 }
             }
