@@ -135,6 +135,7 @@ final class MacGatewayStore {
     var cloudDialogueLastViewedSeq: Int64 = 0
     /// Explicit Paired Cloud Main Dialogue (/v2/dialogue/* & /v2/work-items/{id}/inputs|stop) state.
     var isCloudMainDialogueSelected = false
+    var cloudDialogueConversationId: String? = nil
     var cloudDialogueCursor: Int64 = 0
     var cloudDialogueEvents: [MacGatewayCloudDialogueEvent] = []
     var cloudDialogueEntranceEventIds: Set<String> = []

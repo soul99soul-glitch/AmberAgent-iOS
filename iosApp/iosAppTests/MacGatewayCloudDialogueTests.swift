@@ -293,6 +293,7 @@ struct MacGatewayCloudDialogueTests {
                 let query = url.query
                 let body = request.httpBody.flatMap { String(data: $0, encoding: .utf8) }
                 seenRequests.append((method, path, query, body))
+                #expect(request.value(forHTTPHeaderField: "X-Amber-Dialogue-Version") == "1")
 
                 func respond(_ status: Int, _ json: String) -> (Data, URLResponse) {
                     let response = HTTPURLResponse(
@@ -363,7 +364,7 @@ struct MacGatewayCloudDialogueTests {
                         {
                           "items": [
                             {"seq":4,"id":"evt-in-1","kind":"followup","role":"user","text":"补充：重点看磁盘空间","topicId":"topic-1","workItemId":"work:1","outcome":null},
-                            {"seq":5,"id":"evt-consumed-1","kind":"input_consumed","role":"assistant","text":"补充：重点看磁盘空间","topicId":"topic-1","workItemId":"work:1","outcome":null},
+                            {"seq":5,"id":"consumed:evt-in-1","kind":"input_consumed","role":"system","text":"补充已被任务消费","topicId":"topic-1","workItemId":"work:1","outcome":null},
                             {"seq":6,"id":"evt-proc-3","kind":"process_event","role":"assistant","text":"已根据补充聚焦磁盘空间…","topicId":"topic-1","workItemId":"work:1","outcome":null},
                             {"seq":7,"id":"evt-in-2","kind":"followup","role":"user","text":"再补充：顺便看归档日志","topicId":"topic-1","workItemId":"work:1","outcome":null}
                           ],
@@ -375,7 +376,7 @@ struct MacGatewayCloudDialogueTests {
                         {
                           "items": [
                             {"seq":8,"id":"evt-stop-1","kind":"stop_requested","role":"user","text":"停止任务","topicId":"topic-1","workItemId":"work:1","outcome":"cancelled"},
-                            {"seq":9,"id":"evt-cancel-2","kind":"input_cancelled","role":"assistant","text":"再补充：顺便看归档日志","topicId":"topic-1","workItemId":"work:1","outcome":"cancelled"},
+                            {"seq":9,"id":"cancelled:evt-in-2","kind":"input_cancelled","role":"system","text":"任务已停止，这条补充未执行","topicId":"topic-1","workItemId":"work:1","outcome":"cancelled"},
                             {"seq":10,"id":"evt-res-1","kind":"task_result","role":"assistant","text":"任务已按请求停止","topicId":"topic-1","workItemId":"work:1","outcome":"cancelled"}
                           ],
                           "nextCursor": 10
@@ -471,7 +472,7 @@ struct MacGatewayCloudDialogueTests {
         #expect(followup2BeforeStop.state == .received)
         #expect(followup2BeforeStop.isShownAsExecuted == false)
 
-        // 5. Stop work:1 before followup2 is consumed -> followup2 is marked cancelled and NEVER shown as executed
+        // The stop receipt acknowledges the control request. Each follow-up has its own disposition.
         let stopReceipt = try await store.stopCloudWorkItem(
             workItemId: "work:1",
             requestId: "770e8400-e29b-41d4-a716-446655440002"
@@ -482,15 +483,16 @@ struct MacGatewayCloudDialogueTests {
         #expect(store.cloudDialogueProgressByWorkItem["work:1"]?.outcome == nil)
 
         let followup2AfterStop = try #require(store.cloudDialogueFollowups.first(where: { $0.requestId == "660e8400-e29b-41d4-a716-446655440002" }))
-        #expect(followup2AfterStop.state == .cancelled)
+        #expect(followup2AfterStop.state == .received)
+        #expect(followup2AfterStop.needsReceiptReconciliation)
         #expect(followup2AfterStop.isShownAsExecuted == false)
-        #expect(followup2AfterStop.state.displayBadgeText == "已取消（未执行）")
 
         // Verify GET /v2/dialogue/receipts/{requestId} also confirms consumed vs cancelled
         let queried1 = try await store.refreshCloudDialogueReceipt(requestId: "660e8400-e29b-41d4-a716-446655440001").get()
         #expect(queried1.state == .consumed)
         let queried2 = try await store.refreshCloudDialogueReceipt(requestId: "660e8400-e29b-41d4-a716-446655440002").get()
         #expect(queried2.state == .cancelled)
+        #expect(store.cloudDialogueFollowups.first { $0.requestId == queried2.requestId }?.state.displayBadgeText == "已取消（未执行）")
 
         await server.setPhase(3)
         _ = try await store.pollCloudDialogueEvents().get()

@@ -81,6 +81,46 @@ struct MacGatewayCloudWorkItem: Codable, Equatable, Identifiable, Sendable {
     var state: MacGatewayCloudWorkState
     var progress: String?
     var updatedAtMs: Int64
+    var conversationId: String? = nil
+    var parentRunId: String? = nil
+    var executorKind: String? = nil
+    var executorId: String? = nil
+    var epoch: Int64? = nil
+    var observedSeq: Int64? = nil
+    var ledgerId: String? = nil
+    var outcomeUnknown: Bool? = nil
+
+    init(
+        id: String,
+        agentId: String,
+        title: String,
+        state: MacGatewayCloudWorkState,
+        progress: String? = nil,
+        updatedAtMs: Int64,
+        conversationId: String? = nil,
+        parentRunId: String? = nil,
+        executorKind: String? = nil,
+        executorId: String? = nil,
+        epoch: Int64? = nil,
+        observedSeq: Int64? = nil,
+        ledgerId: String? = nil,
+        outcomeUnknown: Bool? = nil
+    ) {
+        self.id = id
+        self.agentId = agentId
+        self.title = title
+        self.state = state
+        self.progress = progress
+        self.updatedAtMs = updatedAtMs
+        self.conversationId = conversationId
+        self.parentRunId = parentRunId
+        self.executorKind = executorKind
+        self.executorId = executorId
+        self.epoch = epoch
+        self.observedSeq = observedSeq
+        self.ledgerId = ledgerId
+        self.outcomeUnknown = outcomeUnknown
+    }
 
     var updatedAtDate: Date {
         Date(timeIntervalSince1970: TimeInterval(updatedAtMs) / 1_000.0)
@@ -156,6 +196,44 @@ struct MacGatewayCloudTaskRequest: Codable, Equatable, Sendable {
 struct MacGatewayCloudTaskReceipt: Codable, Equatable, Sendable {
     var workItem: MacGatewayCloudWorkItem
     var replayed: Bool
+    var conversationId: String? = nil
+    var causedByInputId: String? = nil
+    var causedByRequestId: String? = nil
+    var parentRunId: String? = nil
+    var executorKind: String? = nil
+    var executorId: String? = nil
+    var epoch: Int64? = nil
+    var observedSeq: Int64? = nil
+    var ledgerId: String? = nil
+    var outcomeUnknown: Bool? = nil
+
+    init(
+        workItem: MacGatewayCloudWorkItem,
+        replayed: Bool,
+        conversationId: String? = nil,
+        causedByInputId: String? = nil,
+        causedByRequestId: String? = nil,
+        parentRunId: String? = nil,
+        executorKind: String? = nil,
+        executorId: String? = nil,
+        epoch: Int64? = nil,
+        observedSeq: Int64? = nil,
+        ledgerId: String? = nil,
+        outcomeUnknown: Bool? = nil
+    ) {
+        self.workItem = workItem
+        self.replayed = replayed
+        self.conversationId = conversationId
+        self.causedByInputId = causedByInputId
+        self.causedByRequestId = causedByRequestId
+        self.parentRunId = parentRunId
+        self.executorKind = executorKind
+        self.executorId = executorId
+        self.epoch = epoch
+        self.observedSeq = observedSeq
+        self.ledgerId = ledgerId
+        self.outcomeUnknown = outcomeUnknown
+    }
 }
 
 struct MacGatewayCloudWorkDetail: Codable, Equatable, Sendable {
@@ -164,6 +242,44 @@ struct MacGatewayCloudWorkDetail: Codable, Equatable, Sendable {
     var failure: String?
     var sessionArchived: Bool
     var resultMarkdown: String?
+    var conversationId: String? = nil
+    var parentRunId: String? = nil
+    var executorKind: String? = nil
+    var executorId: String? = nil
+    var epoch: Int64? = nil
+    var observedSeq: Int64? = nil
+    var ledgerId: String? = nil
+    var outcomeUnknown: Bool? = nil
+
+    init(
+        workItem: MacGatewayCloudWorkItem,
+        brief: String,
+        failure: String? = nil,
+        sessionArchived: Bool,
+        resultMarkdown: String? = nil,
+        conversationId: String? = nil,
+        parentRunId: String? = nil,
+        executorKind: String? = nil,
+        executorId: String? = nil,
+        epoch: Int64? = nil,
+        observedSeq: Int64? = nil,
+        ledgerId: String? = nil,
+        outcomeUnknown: Bool? = nil
+    ) {
+        self.workItem = workItem
+        self.brief = brief
+        self.failure = failure
+        self.sessionArchived = sessionArchived
+        self.resultMarkdown = resultMarkdown
+        self.conversationId = conversationId
+        self.parentRunId = parentRunId
+        self.executorKind = executorKind
+        self.executorId = executorId
+        self.epoch = epoch
+        self.observedSeq = observedSeq
+        self.ledgerId = ledgerId
+        self.outcomeUnknown = outcomeUnknown
+    }
 }
 
 enum MacGatewayCloudActivityPhase: String, Codable, Equatable, Sendable {
@@ -208,6 +324,48 @@ struct MacGatewayCloudTimelineEntry: Codable, Equatable, Identifiable, Sendable 
     var role: String
     var agentId: String?
     var text: String
+    var conversationId: String? = nil
+    var causedByInputId: String? = nil
+    var causedByRequestId: String? = nil
+    var parentRunId: String? = nil
+    var executorKind: String? = nil
+    var executorId: String? = nil
+    var epoch: Int64? = nil
+    var observedSeq: Int64? = nil
+    var ledgerId: String? = nil
+    var outcomeUnknown: Bool? = nil
+
+    init(
+        id: String,
+        role: String,
+        agentId: String? = nil,
+        text: String,
+        conversationId: String? = nil,
+        causedByInputId: String? = nil,
+        causedByRequestId: String? = nil,
+        parentRunId: String? = nil,
+        executorKind: String? = nil,
+        executorId: String? = nil,
+        epoch: Int64? = nil,
+        observedSeq: Int64? = nil,
+        ledgerId: String? = nil,
+        outcomeUnknown: Bool? = nil
+    ) {
+        self.id = id
+        self.role = role
+        self.agentId = agentId
+        self.text = text
+        self.conversationId = conversationId
+        self.causedByInputId = causedByInputId
+        self.causedByRequestId = causedByRequestId
+        self.parentRunId = parentRunId
+        self.executorKind = executorKind
+        self.executorId = executorId
+        self.epoch = epoch
+        self.observedSeq = observedSeq
+        self.ledgerId = ledgerId
+        self.outcomeUnknown = outcomeUnknown
+    }
 }
 
 struct MacGatewayCloudTimelinePage: Codable, Equatable, Sendable {

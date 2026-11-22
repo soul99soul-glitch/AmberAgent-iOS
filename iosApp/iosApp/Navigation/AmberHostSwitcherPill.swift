@@ -658,8 +658,7 @@ struct AmberInlineCloudMainDialogueView: View {
     }
 
     private func cloudEventBubble(_ event: MacGatewayCloudDialogueEvent, isAssistantContinuation: Bool) -> some View {
-        let followup = store.cloudDialogueFollowups.first { $0.eventId == event.id ||
-            ($0.workItemId == event.workItemId && $0.text == event.text) }
+        let followup = store.cloudDialogueFollowup(for: event)
         return CloudDialogueMessageRow(
             event: event,
             text: store.cloudDialogueDisplayText(for: event),
@@ -786,8 +785,7 @@ struct MacGatewayCloudDialogueSheet: View {
 
                 List {
                     ForEach(store.cloudDialogueVisibleEvents) { event in
-                        let followup = store.cloudDialogueFollowups.first { $0.eventId == event.id ||
-                            ($0.workItemId == event.workItemId && $0.text == event.text) }
+                        let followup = store.cloudDialogueFollowup(for: event)
                         CloudDialogueMessageRow(event: event, text: store.cloudDialogueDisplayText(for: event), feedback: nil,
                             followupStatus: event.kind == .followup ? followup.map {
                                 $0.deliveryStatus(isSending: store.busyCloudDialogueRequestIds.contains($0.requestId))
