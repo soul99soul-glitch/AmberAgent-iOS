@@ -1,5 +1,7 @@
 package app.amber.cloud.gateway
 
+import app.amber.cloud.config.PairingBootstrapHint
+import app.amber.cloud.security.CredentialRedactor
 import app.amber.core.native.AmberNativeBridge
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -24,16 +26,39 @@ data class PairingPayload(
     val port: Int,
     val fp: String,
     val s: String,
+    val bootstrap: PairingBootstrapHint? = null,
 ) {
     val deepLinkUrl: String
         get() {
-            val jsonBytes = compactJson.encodeToString(this).encodeToByteArray()
+            val rawJson = compactJson.encodeToString(this)
+            require(!containsSecretPattern(rawJson)) { "配对二维码载荷严禁包含明文 API Key 或 OAuth Token" }
+            val sanitizedBootstrap = bootstrap?.copy(
+                provider = CredentialRedactor.redact(bootstrap.provider).take(32),
+                authMode = CredentialRedactor.redact(bootstrap.authMode).take(32),
+            )
+            val safePayload = copy(
+                name = CredentialRedactor.redact(name).take(64),
+                bootstrap = sanitizedBootstrap,
+            )
+            val jsonText = compactJson.encodeToString(safePayload)
+            require(!containsSecretPattern(jsonText)) { "配对二维码载荷严禁包含明文 API Key 或 OAuth Token" }
+            val jsonBytes = jsonText.encodeToByteArray()
             val encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(jsonBytes)
             return "amber://gateway/pair?p=$encoded"
         }
 
     companion object {
-        private val compactJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+        private val compactJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
+        private val FORBIDDEN_QR_SECRET_PATTERNS = listOf(
+            Regex("""sk-[A-Za-z0-9_-]{12,}"""),
+            Regex("""AIza[0-9A-Za-z_-]{20,}"""),
+            Regex("""ghp_[A-Za-z0-9]{20,}"""),
+            Regex("""eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"""),
+            Regex("""(?i)(api[_-]?key|oauth[_-]?token|refresh[_-]?token|access[_-]?token)\s*[:=]"""),
+        )
+
+        fun containsSecretPattern(raw: String): Boolean =
+            FORBIDDEN_QR_SECRET_PATTERNS.any { it.containsMatchIn(raw) }
 
         fun parse(urlOrParam: String): PairingPayload? {
             val trimmed = urlOrParam.trim()

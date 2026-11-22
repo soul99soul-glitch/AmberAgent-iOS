@@ -143,6 +143,7 @@ class ModelWorkerTurnRunner(
     private val memoryStore: CloudMemoryStore? = null,
     private val modelClients: Map<String, CloudModelClient> = emptyMap(),
     private val soulStore: CloudSoulStore? = null,
+    private val proceduralRuleStore: app.amber.cloud.rules.ProceduralRuleStore? = null,
     private val contextManager: CloudContextManager? = null,
     private val contextWindowTokens: Int = 32_000,
     private val activityThrottleMs: Long = 30_000L,
@@ -163,9 +164,17 @@ class ModelWorkerTurnRunner(
         val client = profile?.modelPreference?.let { modelClients[it] ?: error("Agent 模型配置已移除") } ?: modelClient
         val memories = if (profile != null) memoryStore?.recallForPrompt(item.brief, agentId = profile.id, memoryPolicy = profile.memoryPolicy).orEmpty() else emptyList()
         val policy = profile?.memoryPolicy ?: AgentMemoryPolicy.SHARED_WITH_GLOBAL
+        val activeRules = if (policy == AgentMemoryPolicy.HUB_ISOLATED) {
+            emptyList()
+        } else {
+            proceduralRuleStore?.selectActiveForInjection(
+                conversationId = item.conversationId,
+                recordHit = true,
+            ).orEmpty()
+        }
         val systemPrompt = buildString {
             append(
-                soulStore?.renderDirectSystemPrompt(policy)
+                soulStore?.renderDirectSystemPrompt(policy, activeRules = activeRules)
                     ?: if (profile != null) memoryStore?.loadSoulPrompt(policy).orEmpty() else CloudMemoryStore.DEFAULT_SOUL_MARKDOWN
             )
             append("\n你是受管 Worker，只处理当前任务；不得创建 agent、派单或向其他 agent 发送消息。\n")

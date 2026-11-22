@@ -29,6 +29,8 @@ struct DesktopCloudRemoteConfig: Equatable, Sendable {
         var modelId: String = ""
         var baseURL: String = ""
         var keyConfigured = false
+        var authMode: String = "apiKey"
+        var siwcConfigured = false
     }
     struct Search: Equatable, Sendable {
         var sources: [String] = []
@@ -205,6 +207,14 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     private(set) var remoteConfigError: String?
     private(set) var isImporting = false
     private(set) var isSoulSyncing = false
+    /// Procedural rule cards managed on the paired daemon (`GET /v2/rules`).
+    private(set) var rules: [DesktopProceduralRule] = []
+    private(set) var rulesError: String?
+    private(set) var ruleSoulRedirectNotice: String?
+    private(set) var isMutatingRule = false
+    /// Single-scan pairing QR issued for onboarding a new phone with encrypted bootstrap sync.
+    var issuedPairingTicket: DesktopIssuedPairingTicket?
+    private(set) var isIssuingPairing = false
     /// Names of secret slots the cloud confirmed after the last upload.
     private(set) var lastConfiguredSecrets: Set<String>?
     var pendingPairing: DesktopCloudPairingPayload?
@@ -212,6 +222,8 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
 
     @ObservationIgnored private var client: DesktopCloudClient?
     @ObservationIgnored private var sync: (any DesktopCloudConfigSync)?
+    @ObservationIgnored private var rulesSync: (any DesktopCloudRulesSync)?
+    @ObservationIgnored private var pairingBootstrapSync: (any DesktopCloudPairingBootstrapSync)?
     @ObservationIgnored private let soulCoordinator: DesktopCloudSoulCoordinator?
     @ObservationIgnored private var poll: Task<Void, Never>?
     @ObservationIgnored private var statusGeneration = 0
@@ -222,6 +234,8 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     /// Builds the config sync from the paired client; injectable so tests never touch TLS/JWE.
     @ObservationIgnored private let makeSync: @Sendable (DesktopCloudClient, DesktopCloudConnection) -> (any DesktopCloudConfigSync)?
     @ObservationIgnored private let makeSoulSync: @Sendable (DesktopCloudClient, DesktopCloudConnection) -> (any DesktopCloudSoulSync)?
+    @ObservationIgnored private let makeRulesSync: @Sendable (DesktopCloudClient, DesktopCloudConnection) -> (any DesktopCloudRulesSync)?
+    @ObservationIgnored private let makePairingBootstrapSync: @Sendable (DesktopCloudClient, DesktopCloudConnection) -> (any DesktopCloudPairingBootstrapSync)?
 
     var lastSoulSyncError: String? { soulCoordinator?.lastSyncError }
 
@@ -232,7 +246,9 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
         defaults: UserDefaults = .standard,
         tokens: any DesktopCloudTokenStore = DesktopCloudKeychainTokens(),
         makeSync: (@Sendable (DesktopCloudClient, DesktopCloudConnection) -> (any DesktopCloudConfigSync)?)? = nil,
-        makeSoulSync: (@Sendable (DesktopCloudClient, DesktopCloudConnection) -> (any DesktopCloudSoulSync)?)? = nil
+        makeSoulSync: (@Sendable (DesktopCloudClient, DesktopCloudConnection) -> (any DesktopCloudSoulSync)?)? = nil,
+        makeRulesSync: (@Sendable (DesktopCloudClient, DesktopCloudConnection) -> (any DesktopCloudRulesSync)?)? = nil,
+        makePairingBootstrapSync: (@Sendable (DesktopCloudClient, DesktopCloudConnection) -> (any DesktopCloudPairingBootstrapSync)?)? = nil
     ) {
         self.settings = settings
         self.searchSettings = searchSettings
@@ -245,6 +261,12 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
         }
         self.makeSync = makeSync ?? { client, connection in
             DesktopCloudClientConfigSync(client: client, connection: connection, kidStore: kidStore)
+        }
+        self.makeRulesSync = makeRulesSync ?? { client, _ in
+            DesktopCloudClientRulesSync(client: client)
+        }
+        self.makePairingBootstrapSync = makePairingBootstrapSync ?? { client, _ in
+            DesktopCloudClientPairingBootstrapSync(client: client)
         }
         if let data = defaults.data(forKey: Self.connectionKey),
            let saved = try? JSONDecoder().decode(DesktopCloudConnection.self, from: data),
@@ -259,6 +281,8 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
                                         fingerprint: connection.fingerprint, token: token)
         self.client = client
         self.sync = makeSync(client, connection)
+        self.rulesSync = makeRulesSync(client, connection)
+        self.pairingBootstrapSync = makePairingBootstrapSync(client, connection)
         soulCoordinator?.attach(gatewayId: connection.gatewayId, sync: makeSoulSync(client, connection))
     }
 
@@ -284,7 +308,13 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
         defer { isBusy = false }
         let pairingClient = DesktopCloudClient(addrs: payload.addrs, port: payload.port, fingerprint: payload.fp, token: nil)
         do {
-            let response = try await pairingClient.pair(secret: payload.s, deviceName: Self.deviceName)
+            let ephemeralKeyPair = try? DesktopBootstrapJWE.generateEphemeralRSAKeyPair()
+            let response = try await pairingClient.pair(
+                secret: payload.s,
+                deviceName: Self.deviceName,
+                requestBootstrapSync: true,
+                clientPublicJwk: ephemeralKeyPair?.publicJwk
+            )
             guard tokens.store(key: Self.tokenKey, value: response.token) else {
                 notice = Notice(text: "无法把配对凭据写入钥匙串", isError: true)
                 return
@@ -294,6 +324,21 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
             defaults.set(try? JSONEncoder().encode(saved), forKey: Self.connectionKey)
             connection = saved
             install(saved, token: response.token)
+            if let bootstrap = response.bootstrap {
+                if let dto = bootstrap.configuration, dto.gatewayId == saved.gatewayId {
+                    remoteConfig = DesktopCloudClientConfigSync.mapRemoteConfig(dto)
+                    remoteConfigError = nil
+                }
+                if let activeRules = bootstrap.activeRules {
+                    rules = activeRules
+                    rulesError = nil
+                }
+                if let importKey = bootstrap.importKey,
+                   importKey.gatewayId == saved.gatewayId,
+                   DesktopCloudRSA.jwkThumbprint(e: importKey.publicJwk.e, n: importKey.publicJwk.n) == importKey.kid {
+                    DesktopCloudPinnedKidStore(defaults: defaults).pin(importKey.kid, forGateway: saved.gatewayId)
+                }
+            }
             pendingPairing = nil
             notice = nil
             await refresh()
@@ -332,6 +377,7 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
             isReachable = true
             await soulCoordinator?.reconcile(remoteRevisionHint: latest.soulRevision)
             await refreshRemoteConfig()
+            await refreshRules()
         } catch is CancellationError {
         } catch {
             guard self.client === client, generation == statusGeneration else { return }
@@ -370,6 +416,101 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
         isSoulSyncing = true
         defer { isSoulSyncing = false }
         await soulCoordinator.syncNow()
+    }
+
+    // MARK: - Procedural rule cards
+
+    func refreshRules() async {
+        guard let rulesSync else { return }
+        do {
+            rules = try await rulesSync.listRules()
+            rulesError = nil
+        } catch is CancellationError {
+        } catch {
+            if forgetIfRevoked(error) { return }
+            rulesError = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    func proposeRule(title: String? = nil, instruction: String, scope: String = "global") async -> DesktopRuleProposalOutcome? {
+        guard let rulesSync, !isMutatingRule else { return nil }
+        isMutatingRule = true
+        ruleSoulRedirectNotice = nil
+        defer { isMutatingRule = false }
+        do {
+            let outcome = try await rulesSync.proposeRule(title: title, instruction: instruction, scope: scope)
+            switch outcome {
+            case .proposed(let rule, _):
+                upsertRuleInState(rule)
+                rulesError = nil
+            case .redirectToSoul(_, let message):
+                ruleSoulRedirectNotice = message
+            case .rejected(_, let message):
+                rulesError = message
+            }
+            return outcome
+        } catch {
+            if !forgetIfRevoked(error) {
+                rulesError = error.localizedDescription
+            }
+            return nil
+        }
+    }
+
+    func confirmRule(id: String) async {
+        await mutateRule { try await $0.confirmRule(id: id) }
+    }
+
+    func archiveRule(id: String) async {
+        await mutateRule { try await $0.archiveRule(id: id) }
+    }
+
+    func revokeRule(id: String) async {
+        await mutateRule { try await $0.revokeRule(id: id) }
+    }
+
+    private func mutateRule(_ action: (any DesktopCloudRulesSync) async throws -> DesktopProceduralRule) async {
+        guard let rulesSync, !isMutatingRule else { return }
+        isMutatingRule = true
+        defer { isMutatingRule = false }
+        do {
+            let updated = try await action(rulesSync)
+            upsertRuleInState(updated)
+            rulesError = nil
+        } catch {
+            if !forgetIfRevoked(error) {
+                rulesError = error.localizedDescription
+            }
+        }
+    }
+
+    private func upsertRuleInState(_ rule: DesktopProceduralRule) {
+        if let idx = rules.firstIndex(where: { $0.id == rule.id }) {
+            rules[idx] = rule
+        } else {
+            rules.insert(rule, at: 0)
+        }
+    }
+
+    // MARK: - Single-scan pairing QR (for onboarding a new phone)
+
+    func issueSingleScanPairing() async {
+        guard let pairingBootstrapSync, !isIssuingPairing else { return }
+        isIssuingPairing = true
+        defer { isIssuingPairing = false }
+        do {
+            issuedPairingTicket = try await pairingBootstrapSync.issuePairingTicket()
+            notice = nil
+        } catch {
+            if !forgetIfRevoked(error) {
+                notice = Notice(text: "生成配对二维码失败：\(error.localizedDescription)", isError: true)
+            }
+        }
+    }
+
+    func clearIssuedPairing() {
+        issuedPairingTicket = nil
     }
 
     // MARK: - Remote config apply (manual update)
@@ -655,10 +796,16 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
         connection = nil
         client = nil
         sync = nil
+        rulesSync = nil
+        pairingBootstrapSync = nil
         status = nil
         pendingRequest = nil
         remoteConfig = nil
         remoteConfigError = nil
+        rules = []
+        rulesError = nil
+        ruleSoulRedirectNotice = nil
+        issuedPairingTicket = nil
         lastConfiguredSecrets = nil
         isReachable = nil
         poll?.cancel(); poll = nil

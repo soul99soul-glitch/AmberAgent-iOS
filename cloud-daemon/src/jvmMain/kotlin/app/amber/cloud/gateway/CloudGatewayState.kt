@@ -222,7 +222,7 @@ class CloudGatewayState(
     gatewayNameOverride: String? = null,
     var pushSender: PushSender = PushSender { Result.success(Unit) },
     var soulRevisionProvider: () -> Long = { 0L },
-    private val clockEpochSeconds: () -> Double = { nowEpochSeconds() },
+    internal val clockEpochSeconds: () -> Double = { nowEpochSeconds() },
 ) {
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
     private val compactJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }

@@ -14,7 +14,13 @@ struct DesktopCloudRemoteConfigResponse: Decodable {
     var supportedModelProviders: [String]?
     var supportedSearchSources: [String]?
 
-    struct Model: Decodable { var provider: String?; var modelId: String?; var baseUrl: String? }
+    struct Model: Decodable {
+        var provider: String?
+        var modelId: String?
+        var baseUrl: String?
+        var authMode: String?
+        var siwcConfigured: Bool?
+    }
     struct Search: Decodable { var sources: [String]?; var mode: String? }
     struct Credential: Decodable { var configured: Bool? }
 }
@@ -298,12 +304,18 @@ actor DesktopCloudClientConfigSync: DesktopCloudConfigSync {
         let response: DesktopCloudRemoteConfigResponse =
             try await client.decode(client.send("GET", "/v2/configuration"))
         guard response.gatewayId == gatewayId else { throw DesktopCloudError.invalidResponse }
+        return Self.mapRemoteConfig(response)
+    }
+
+    static func mapRemoteConfig(_ response: DesktopCloudRemoteConfigResponse) -> DesktopCloudRemoteConfig {
         let credentials = response.credentials ?? [:]
         return DesktopCloudRemoteConfig(
             model: .init(provider: response.model?.provider ?? "",
                          modelId: response.model?.modelId ?? "",
                          baseURL: response.model?.baseUrl ?? "",
-                         keyConfigured: credentials["modelApiKey"]?.configured == true),
+                         keyConfigured: credentials["modelApiKey"]?.configured == true,
+                         authMode: response.model?.authMode ?? "apiKey",
+                         siwcConfigured: response.model?.siwcConfigured ?? false),
             search: .init(sources: response.search?.sources ?? [],
                           mode: response.search?.mode ?? "fallback",
                           exaKeyConfigured: credentials["exaApiKey"]?.configured == true,

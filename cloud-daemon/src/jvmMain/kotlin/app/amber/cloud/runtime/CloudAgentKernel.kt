@@ -167,6 +167,7 @@ class CloudAgentKernel(
         masterSecretOverride = masterSecretOverride,
     )
     val memoryStore = CloudMemoryStore(memoryDir)
+    val proceduralRuleStore = app.amber.cloud.rules.ProceduralRuleStore(dataDir)
     val soulStore = app.amber.cloud.soul.CloudSoulStore(dataDir = dataDir, memoryDir = memoryDir, workspaceDir = workspaceDir).also { s ->
         memoryStore.onSoulPromptSaved = { md ->
             s.put(app.amber.cloud.soul.SoulPutRequestDto(soulMarkdown = md, isDefault = md.isBlank(), source = "memory_store"))
@@ -223,6 +224,7 @@ class CloudAgentKernel(
         memoryStore = memoryStore,
         modelClients = modelClients,
         soulStore = soulStore,
+        proceduralRuleStore = proceduralRuleStore,
         contextManager = contextManager,
         contextWindowTokens = contextWindowTokens,
     )
@@ -595,10 +597,20 @@ class CloudAgentKernel(
         } else null
         val memoryAgentId = profile?.id?.takeUnless { it == MAIN_AGENT_ID } ?: GLOBAL_MEMORY_AGENT_ID
 
-        // Auto-extract explicit memory directive in direct owner chat
+        // Auto-extract explicit memory directive & proposed procedural rules in direct owner chat
         if (message.scope == ConversationScope.DIRECT && message.senderRole == SenderRole.OWNER) {
             ownerBinding.bindOwnerDirectly(message.channel.wireName, message.senderId, message.chatId)
-            if (existing.memoryMode == ConversationMemoryMode.ENABLED) extractExplicitMemoryIfPresent(message.text, convId.toString(), memoryAgentId)
+            if (existing.memoryMode == ConversationMemoryMode.ENABLED) {
+                extractExplicitMemoryIfPresent(message.text, convId.toString(), memoryAgentId)
+                // Always creates a `proposed` rule card only; never auto-activates on a single correction.
+                runCatching {
+                    proceduralRuleStore.proposeFromCorrection(
+                        userText = message.text,
+                        scope = convId.toString(),
+                        sourceEventId = message.messageId,
+                    )
+                }
+            }
         }
 
         val redactedUserText = CredentialRedactor.redact(message.text)
@@ -627,11 +639,21 @@ class CloudAgentKernel(
             memoryStore.recallForPrompt(message.text).filter { it.scope != MemoryScope.CORE }
         }
 
+        val activeRules = if ((profile?.memoryPolicy ?: AgentMemoryPolicy.SHARED_WITH_GLOBAL) == AgentMemoryPolicy.HUB_ISOLATED) {
+            emptyList()
+        } else {
+            proceduralRuleStore.selectActiveForInjection(
+                conversationId = convId.toString(),
+                recordHit = true,
+            )
+        }
+
         // Defect #7: Prepare request messages with pinned SYSTEM message and dynamic memory on tail
         val preparedMessages = contextManager.prepareRequestMessages(
             systemPrompt = soulStore.renderDirectSystemPrompt(
                 memoryPolicy = profile?.memoryPolicy ?: AgentMemoryPolicy.SHARED_WITH_GLOBAL,
                 extraInstructions = profile?.instructions.orEmpty(),
+                activeRules = activeRules,
             ),
             memories = recalledMemories,
             conversationId = convId.toString(),

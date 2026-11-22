@@ -1,10 +1,13 @@
 package app.amber.cloud
 
+import app.amber.cloud.config.PairingBootstrapHint
 import app.amber.cloud.gateway.CandidateAddressResolver
 import app.amber.cloud.gateway.CloudGatewayState
 import app.amber.cloud.gateway.PairingPayload
 import app.amber.cloud.gateway.TerminalQrGenerator
 import app.amber.cloud.gateway.TlsIdentityManager
+import app.amber.cloud.rules.ProceduralRuleStore
+import app.amber.cloud.soul.CloudSoulStore
 import java.io.File
 
 /**
@@ -37,6 +40,8 @@ internal fun runCli(args: Array<String>) {
             val addrs = CandidateAddressResolver.resolve(
                 publicAddresses = listOfNotNull(publicAddr),
             )
+            val soulStore = CloudSoulStore(dataDir)
+            val ruleStore = ProceduralRuleStore(dataDir)
             val payload = PairingPayload(
                 v = 1,
                 id = state.identity.id,
@@ -45,6 +50,11 @@ internal fun runCli(args: Array<String>) {
                 port = port,
                 fp = tls.spkiFingerprintBase64,
                 s = secret,
+                bootstrap = PairingBootstrapHint(
+                    syncSupported = true,
+                    soulRevision = soulStore.currentRevision(),
+                    activeRulesCount = ruleStore.activeSnapshot().size,
+                ),
             )
             val qr = TerminalQrGenerator.renderAnsi(payload.deepLinkUrl)
             println(qr)

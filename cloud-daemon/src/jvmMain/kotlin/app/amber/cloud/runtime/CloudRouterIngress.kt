@@ -52,6 +52,15 @@ internal class CloudRouterIngress(private val kernel: CloudAgentKernel) : Channe
                     it.copy(id = Uuid.parse(deterministic.toString()))
                 }
             }
+            if (message.scope == ConversationScope.DIRECT && message.senderRole == SenderRole.OWNER) {
+                runCatching {
+                    kernel.proceduralRuleStore.proposeFromCorrection(
+                        userText = message.text,
+                        scope = conversationId.toString(),
+                        sourceEventId = userMessage.id.toString(),
+                    )
+                }
+            }
             kernel.conversationStorage.saveConversation(conversation.copy(
                 messageNodes = if(conversation.messageNodes.any {it.currentMessage.id==userMessage.id}) conversation.messageNodes else conversation.messageNodes + userMessage.toMessageNode(),
                 updateAt = Clock.System.now(),
@@ -75,8 +84,15 @@ internal class CloudRouterIngress(private val kernel: CloudAgentKernel) : Channe
         val memories = kernel.memoryStore.recallForPrompt(input.batchPrompt).let { recalled ->
             if (conversationId == PRIMARY_CONVERSATION_ID) recalled else recalled.filter { it.scope != MemoryScope.CORE }
         }
+        val activeRules = kernel.proceduralRuleStore.selectActiveForInjection(
+            conversationId = conversationId.toString(),
+            recordHit = true,
+        )
         kernel.contextManager.prepareRequestMessages(
-            systemPrompt = kernel.soulStore.renderRouterSystemPrompt(ModelRouterBrain.DEFAULT_ROUTER_SYSTEM_PROMPT),
+            systemPrompt = kernel.soulStore.renderRouterSystemPrompt(
+                routerInstructions = ModelRouterBrain.DEFAULT_ROUTER_SYSTEM_PROMPT,
+                activeRules = activeRules,
+            ),
             memories = memories, conversationId = conversationId.toString(),
             historyMessages = history, tokenBudget = kernel.contextWindowTokens,
         )

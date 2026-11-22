@@ -75,7 +75,13 @@ fun main(args: Array<String>) {
 
     logger.info("amberd starting on $host:$port (dataDir=${dataDir.absolutePath}, gatewayId=${kernel.gatewayState.identity.id})")
     embeddedServer(CIO, port = port, host = host) {
-        configureCloudGateway(kernel.gatewayState, feishuChannel, AgentCentricApi(kernel))
+        configureCloudGateway(
+            state = kernel.gatewayState,
+            feishuChannel = feishuChannel,
+            agentApi = AgentCentricApi(kernel),
+            gatewayPort = port,
+            publicAddresses = listOfNotNull(System.getenv("AMBER_PUBLIC_ADDR")),
+        )
     }.start(wait = true)
 }
 

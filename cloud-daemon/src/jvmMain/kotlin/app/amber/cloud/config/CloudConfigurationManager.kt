@@ -1,9 +1,12 @@
 package app.amber.cloud.config
 
 import app.amber.cloud.gateway.PairedDevice
+import app.amber.cloud.rules.ProceduralRuleRecord
+import app.amber.cloud.rules.ProceduralRuleStatus
 import app.amber.cloud.runtime.CloudModelClient
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.security.EnvelopeCredentialVault
+import app.amber.cloud.soul.SoulStateDto
 import app.amber.cloud.tasks.CloudSearch
 import app.amber.cloud.tasks.PublicHttp
 import kotlinx.coroutines.currentCoroutineContext
@@ -65,6 +68,71 @@ class CloudConfigurationManager internal constructor(
         return encryption.publicKey(device.id, clockSeconds())
     }
 
+    /**
+     * Builds strictly non-secret metadata for the single-scan pairing QR payload.
+     */
+    @Synchronized fun buildBootstrapHint(soulRevision: Long, activeRulesCount: Int): PairingBootstrapHint {
+        val hasEncrypted = keys.values.any { !it.isNullOrBlank() }
+        return PairingBootstrapHint(
+            syncSupported = true,
+            configRevision = state.revision,
+            provider = state.model.provider,
+            authMode = state.model.authMode.ifBlank { "apiKey" },
+            siwcConfigured = state.model.siwcConfigured,
+            hasEncryptedCredentials = hasEncrypted,
+            soulRevision = soulRevision,
+            activeRulesCount = activeRulesCount,
+        )
+    }
+
+    /**
+     * Exports the single-scan pairing bootstrap bundle over an authenticated or newly paired TLS-pinned session.
+     *
+     * - Plaintext API keys are NEVER placed in top-level fields; they are ONLY sealed inside [PairingBootstrapSnapshot.encryptedConfigJwe]
+     *   when [clientPublicJwk] is supplied.
+     * - Only [ProceduralRuleStatus.ACTIVE] rules are included in the snapshot.
+     */
+    @Synchronized fun exportBootstrapSnapshot(
+        device: PairedDevice,
+        clientPublicJwk: JsonObject?,
+        soul: SoulStateDto?,
+        activeRules: List<ProceduralRuleRecord>,
+    ): PairingBootstrapSnapshot {
+        requireManagementDevice(device)
+        val now = clockSeconds()
+        val sealedJwe = clientPublicJwk?.let { jwk ->
+            val bundle = BootstrapEnvelopePayload(
+                version = 1,
+                gatewayId = gatewayId,
+                deviceId = device.id,
+                issuedAt = now,
+                expiresAt = now + 300,
+                configRevision = state.revision,
+                model = state.model,
+                search = state.search,
+                credentials = BootstrapCredentialBundle(
+                    modelApiKey = keys[CloudConfigLoader.KEY_MODEL_API_KEY]?.takeIf { it.isNotBlank() },
+                    exaApiKey = keys[KEY_NAMES.getValue("exaApiKey")]?.takeIf { it.isNotBlank() },
+                    braveApiKey = keys[KEY_NAMES.getValue("braveApiKey")]?.takeIf { it.isNotBlank() },
+                ),
+            )
+            val plaintextBytes = json.encodeToString(bundle).toByteArray()
+            try {
+                ConfigurationEncryption.encryptForClient(jwk, plaintextBytes, type = "amber-bootstrap+jwe")
+            } finally {
+                plaintextBytes.fill(0)
+            }
+        }
+        return PairingBootstrapSnapshot(
+            version = 1,
+            configuration = view(device),
+            encryptedConfigJwe = sealedJwe,
+            soul = soul,
+            activeRules = activeRules.filter { it.status == ProceduralRuleStatus.ACTIVE },
+            importKey = importKey(device),
+        )
+    }
+
     @Synchronized fun update(device: PairedDevice, compact: String): ConfigurationReceipt {
         requireManagementDevice(device)
         val bytes = encryption.decrypt(compact)
@@ -91,7 +159,14 @@ class CloudConfigurationManager internal constructor(
         payload.configuration?.model?.let(::validateRemoteModel)
         val next = state.copy(
             revision = state.revision + 1,
-            model = payload.configuration?.model?.let { it.copy(provider = it.provider.trim().lowercase(), modelId = it.modelId.trim(), baseUrl = it.baseUrl.trim().trimEnd('/')) } ?: state.model,
+            model = payload.configuration?.model?.let {
+                it.copy(
+                    provider = it.provider.trim().lowercase(),
+                    modelId = it.modelId.trim(),
+                    baseUrl = it.baseUrl.trim().trimEnd('/'),
+                    authMode = it.authMode.trim().ifEmpty { "apiKey" },
+                )
+            } ?: state.model,
             search = payload.configuration?.search ?: state.search,
             requests = state.requests + RequestRecord(device.id, payload.requestId, hash, state.revision + 1),
         )
@@ -148,6 +223,7 @@ class CloudConfigurationManager internal constructor(
 
     private fun validateRemoteModel(model: ManagedModelSettings) {
         if (model.provider.trim().lowercase() !in setOf("openai", "claude") || model.modelId.isBlank() || model.modelId.length > 200 || model.modelId.any(Char::isISOControl)) fail(422, "invalid_configuration")
+        if (model.authMode.trim().ifEmpty { "apiKey" } !in SUPPORTED_AUTH_MODES) fail(422, "invalid_configuration")
         if (model.baseUrl.isBlank()) return
         val uri = runCatching { URI(model.baseUrl.trim()) }.getOrNull()
         if (uri == null || uri.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null || uri.rawQuery != null || uri.rawFragment != null) fail(422, "invalid_configuration")
@@ -160,6 +236,7 @@ class CloudConfigurationManager internal constructor(
 
     companion object {
         const val STATE_KEY = "daemon.configuration.state.v1"
+        val SUPPORTED_AUTH_MODES = setOf("apiKey", "chatgptSiwc", "plan")
         val KEY_NAMES = mapOf("modelApiKey" to "model.api_key", "exaApiKey" to "search.exa_key", "braveApiKey" to "search.brave_key")
         fun requireManagementDevice(device: PairedDevice) {
             if (!device.trustedApprovalSurface || device.platform !in setOf("ios", "macos", "android", "harmony")) throw ConfigurationApiException(403, "untrusted_device")
