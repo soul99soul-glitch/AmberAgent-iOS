@@ -409,6 +409,9 @@ class DesktopCodingPlanBridgeTest {
         kotlin.test.assertEquals(app.amber.ai.provider.OpenAIAuthMode.CHATGPT_SIWC, siwc.authMode)
         kotlin.test.assertEquals("https://api.openai.com/v1", siwc.baseUrl)
         kotlin.test.assertTrue(siwc.useResponseApi)
+        val textOnly = Model(modelId = "gpt-5.4-mini", inputModalities = listOf(app.amber.ai.provider.Modality.TEXT))
+        val catalog = Json.decodeFromString<List<DesktopCatalogModel>>(desktopCatalogJSON(listOf(textOnly), siwc.authMode))
+        assertEquals(false, catalog.single().supportsVision)
         kotlin.test.assertFailsWith<IllegalArgumentException> {
             desktopAuthenticatedConfiguration(
                 "openai",

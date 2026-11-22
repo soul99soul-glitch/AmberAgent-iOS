@@ -121,6 +121,7 @@ private val SIWC_UNSUPPORTED_HOSTED_TOOL_TYPES = setOf(
     "image_generation",
     "file_search",
     "code_interpreter",
+    "computer",
     "computer_use",
     "computer_use_preview",
     "mcp",
@@ -822,6 +823,11 @@ class OpenAIKmpProvider internal constructor(
         extraHeaders: List<CustomHeader> = emptyList(),
     ): List<CustomHeader> {
         val token = providerSetting.apiKey
+        if (providerSetting.authMode == OpenAIAuthMode.CHATGPT_SIWC) {
+            val extras = resolveOpenAIRequestHeaders(providerSetting.authMode, extraHeaders)
+                .filterNot { it.name.equals("Authorization", ignoreCase = true) || it.name.equals("api-key", ignoreCase = true) }
+            return listOf(CustomHeader("Authorization", "Bearer $token")) + extras
+        }
         val host = hostOf(providerSetting.baseUrl)
         val usesMimoApiKey = providerSetting.brand == OpenAIBrand.MIMO ||
             providerSetting.authMode == OpenAIAuthMode.MIMO_CODING_PLAN ||
@@ -976,8 +982,9 @@ class OpenAIKmpProvider internal constructor(
         normalizeOpenAIStreamDataLines(data).mapNotNull { payload ->
             val obj = runCatching { json.parseToJsonElement(payload) as? JsonObject }
                 .getOrNull() ?: return@mapNotNull null
-            obj["error"]?.let { errorElement ->
-                formatSiwcUsageError(errorElement, payload)?.let { throw IllegalStateException(it) }
+            val explicitError = siwc && obj.str("type") == "error"
+            (obj["error"] ?: obj.takeIf { explicitError })?.let { errorElement ->
+                if (siwc) formatSiwcUsageError(errorElement)?.let { throw IllegalStateException(it) }
                 throw errorElement.parseErrorDetail()
             }
             val status = when (obj.str("type")) {
@@ -1014,7 +1021,7 @@ class OpenAIKmpProvider internal constructor(
 
             "failed" -> {
                 val errorElement = response?.get("error")
-                formatSiwcUsageError(errorElement, response?.toString())?.let {
+                if (siwc) formatSiwcUsageError(errorElement)?.let {
                     throw IllegalStateException(it)
                 }
                 val detail = errorElement?.parseErrorDetail()?.message
@@ -1036,10 +1043,10 @@ class OpenAIKmpProvider internal constructor(
             }
         return when (code) {
             "subscription_sharing_usage_limit_exceeded" ->
-                "ChatGPT 套餐共享额度已用尽（subscription_sharing_usage_limit_exceeded）。请前往 $CHATGPT_SIWC_USAGE_URL 查看或管理用量，或切换为 OpenAI API Key。"
+                "已达到 ChatGPT 套餐共享用量上限（subscription_sharing_usage_limit_exceeded）。请前往 $CHATGPT_SIWC_USAGE_URL 查看或管理用量。"
 
             "subscription_sharing_usage_unavailable" ->
-                "当前账号的 ChatGPT 套餐共享暂不可用（subscription_sharing_usage_unavailable）。请前往 $CHATGPT_SIWC_USAGE_URL 检查订阅状态与套餐共享设置，或切换为 OpenAI API Key。"
+                "暂时无法确认 ChatGPT 套餐用量（subscription_sharing_usage_unavailable），请稍后重试。用量设置：$CHATGPT_SIWC_USAGE_URL"
 
             else -> null
         }
@@ -1210,37 +1217,57 @@ class OpenAIKmpProvider internal constructor(
         sanitized["stream"] = JsonPrimitive(true)
         SIWC_UNSUPPORTED_RESPONSE_FIELDS.forEach { sanitized.remove(it) }
 
-        val inputArray = sanitized["input"] as? JsonArray
-        if (inputArray != null) {
-            sanitized["input"] = buildJsonArray {
-                inputArray.forEach { item ->
-                    val obj = item as? JsonObject
-                    if (obj != null && obj.str("role").equals("system", ignoreCase = true)) {
-                        add(JsonObject(obj.toMutableMap().apply {
-                            put("role", JsonPrimitive("developer"))
-                        }))
-                    } else {
-                        add(item)
-                    }
+        val input = when (val value = sanitized["input"]) {
+            is JsonArray -> value
+            is JsonPrimitive -> {
+                require(value.isString) { "SIWC input must be a message array or text" }
+                JsonArray(listOf(buildJsonObject { put("role", "user"); put("content", value) }))
+            }
+            else -> error("SIWC input must be a message array or text")
+        }
+        val supportedTools = (sanitized["tools"] as? JsonArray).orEmpty().mapNotNull(::filterSiwcTool)
+        val (localTools, topLevelTools) = supportedTools.partition {
+            val type = (it as? JsonObject)?.str("type")
+            type == "function" || type == "custom"
+        }
+        val cleanInput = buildJsonArray {
+            // additional_tools keeps local tool names stable across calls and result replay.
+            if (localTools.isNotEmpty()) add(buildJsonObject {
+                put("type", "additional_tools")
+                put("role", "developer")
+                put("tools", JsonArray(localTools))
+            })
+            for (item in input) {
+                val obj = item as? JsonObject
+                when (obj?.str("type")) {
+                    "tool_search_call", "tool_search_output" -> continue
+                    "additional_tools" -> filterSiwcTool(JsonObject(obj + ("role" to JsonPrimitive("developer"))))?.let(::add)
+                    else -> if (obj != null && obj.str("role").equals("system", ignoreCase = true)) {
+                        add(JsonObject(obj + ("role" to JsonPrimitive("developer"))))
+                    } else add(item)
                 }
             }
         }
+        sanitized["input"] = cleanInput
 
-        val toolsArray = sanitized["tools"] as? JsonArray
-        if (toolsArray != null) {
-            val filteredTools = toolsArray.filter { toolElement ->
-                val toolType = (toolElement as? JsonObject)?.str("type")?.lowercase()
-                toolType == null || toolType !in SIWC_UNSUPPORTED_HOSTED_TOOL_TYPES
-            }
-            if (filteredTools.isEmpty()) {
-                sanitized.remove("tools")
-                sanitized.remove("parallel_tool_calls")
-            } else {
-                sanitized["tools"] = JsonArray(filteredTools)
-            }
+        if (topLevelTools.isEmpty()) sanitized.remove("tools") else sanitized["tools"] = JsonArray(topLevelTools)
+        if (topLevelTools.isEmpty() && cleanInput.none { (it as? JsonObject)?.str("type") == "additional_tools" }) {
+            sanitized.remove("parallel_tool_calls")
+            sanitized.remove("tool_choice")
+        } else {
+            sanitized.remove("tool_choice")?.let(::filterSiwcTool)?.let { sanitized["tool_choice"] = it }
         }
 
         return JsonObject(sanitized)
+    }
+
+    private fun filterSiwcTool(tool: JsonElement): JsonElement? {
+        val obj = tool as? JsonObject ?: return tool
+        if (obj.str("type")?.lowercase() in SIWC_UNSUPPORTED_HOSTED_TOOL_TYPES) return null
+        val nested = obj["tools"] as? JsonArray ?: return tool
+        val supported = nested.mapNotNull(::filterSiwcTool)
+        if (supported.isEmpty()) return null
+        return JsonObject(obj + ("tools" to JsonArray(supported)))
     }
 
     private fun buildResponsesMessages(

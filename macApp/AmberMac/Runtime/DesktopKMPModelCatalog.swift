@@ -40,16 +40,11 @@ import Foundation
             return try DesktopJSON.decode([DesktopCatalogModel].self, from: json)
         } catch is CancellationError { throw CancellationError() }
         catch let siwcError as DesktopSIWCError {
-            throw DesktopRuntimeError.message(siwcError.localizedDescription)
+            throw siwcError
         }
         catch {
-            let description = error.localizedDescription
-            if description.contains("subscription_sharing_usage_limit_exceeded") {
-                throw DesktopRuntimeError.message(DesktopSIWCError.usageLimitExceeded.localizedDescription)
-            }
-            if description.contains("subscription_sharing_usage_unavailable") {
-                throw DesktopRuntimeError.message(DesktopSIWCError.usageUnavailable.localizedDescription)
-            }
+            if configuration.authMode == .chatgptSiwc,
+               let planError = DesktopSIWCError.planError(in: error.localizedDescription) { throw planError }
             throw DesktopRuntimeError.message("获取模型失败，请核对协议、地址、凭证与网络。")
         }
     }
@@ -70,9 +65,7 @@ import Foundation
                                 guard received else { throw DesktopRuntimeError.message("服务商未返回文字内容。") }
                                 return true
                             case .failed(let message):
-                                if message.contains("subscription_sharing_usage_") || message.contains("chatgpt.tokens.use.direct") || message.contains("Continue with ChatGPT") {
-                                    throw DesktopRuntimeError.message(message)
-                                }
+                                if configuration.authMode == .chatgptSiwc, let error = DesktopSIWCError.planError(in: message) { throw error }
                                 throw DesktopRuntimeError.message("模型生成请求失败。")
                             case .cancelled: throw CancellationError()
                             }

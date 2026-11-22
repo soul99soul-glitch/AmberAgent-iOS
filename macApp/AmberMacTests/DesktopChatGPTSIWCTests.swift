@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import XCTest
 @testable import AmberMac
@@ -31,6 +32,64 @@ private final class InMemorySIWCSecretStore: DesktopSIWCSecretStore, @unchecked 
 }
 
 final class DesktopChatGPTSIWCTests: XCTestCase {
+    private func connect(to server: DesktopSIWCLoopbackServer) throws -> FileHandle {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = server.port.bigEndian
+        address.sin_addr.s_addr = INADDR_LOOPBACK.bigEndian
+        let status = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard status == 0 else { throw POSIXError(.ECONNREFUSED) }
+        return handle
+    }
+
+    func testLoopbackIgnoresOtherRequestsAndReadsFragmentedCallback() async throws {
+        let server = DesktopSIWCLoopbackServer()
+        _ = try server.start()
+        let waiter = Task { try await server.waitForCallback(state: "wanted", timeout: 5) }
+        defer { waiter.cancel() }
+        for (target, status) in [("/favicon.ico", 404), ("/auth/callback?state=old&error=access_denied", 400)] {
+            let url = try XCTUnwrap(URL(string: "http://127.0.0.1:\(server.port)\(target)"))
+            let (_, response) = try await URLSession.shared.data(from: url)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, status)
+        }
+        let client = try connect(to: server)
+        try client.write(contentsOf: Data("GET /auth/call".utf8))
+        try await Task.sleep(for: .milliseconds(30))
+        try client.write(contentsOf: Data("back?state=wanted&code=local HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".utf8))
+        let payload = try await waiter.value
+        XCTAssertEqual(payload.code, "local")
+        let response = try XCTUnwrap(try client.readToEnd())
+        let separator = try XCTUnwrap(response.range(of: Data("\r\n\r\n".utf8)))
+        let header = String(decoding: response[..<separator.lowerBound], as: UTF8.self)
+        XCTAssertTrue(header.hasPrefix("HTTP/1.1 200 OK\r\n"))
+        XCTAssertTrue(header.contains("Content-Length: \(response.count - separator.upperBound)\r\n"))
+        XCTAssertThrowsError(try connect(to: server))
+    }
+
+    func testLoopbackReleasesIdleConnectionOnDeadlineAndCancellation() async throws {
+        for cancel in [false, true] {
+            let server = DesktopSIWCLoopbackServer()
+            _ = try server.start()
+            let client = try connect(to: server)
+            let waiter = Task { try await server.waitForCallback(state: "wanted", timeout: cancel ? 5 : 0.15) }
+            try client.write(contentsOf: Data("GET ".utf8))
+            let start = ContinuousClock.now
+            if cancel { try await Task.sleep(for: .milliseconds(50)); waiter.cancel() }
+            do { _ = try await waiter.value; XCTFail("Expected the wait to end without a callback") }
+            catch is CancellationError { XCTAssertTrue(cancel) }
+            catch DesktopSIWCError.timedOut { XCTAssertFalse(cancel) }
+            XCTAssertLessThan(start.duration(to: .now), .seconds(2))
+            XCTAssertThrowsError(try connect(to: server))
+        }
+    }
+
     private func makeES256Fixture(
         kid: String = "test-ec-key-1",
         claims: [String: Any]
@@ -117,19 +176,24 @@ final class DesktopChatGPTSIWCTests: XCTestCase {
             name: nil,
             planType: "plus"
         )
-        XCTAssertFalse(DesktopSIWCAuthStore.save(providerId: "p1", credentials: bad, store: store))
+        XCTAssertThrowsError(try DesktopSIWCAuthStore.retainClientID(bad.clientId, providerId: "p1", store: store))
+        XCTAssertThrowsError(try DesktopSIWCAuthStore.save(providerId: "p1", credentials: bad, store: store))
         XCTAssertNil(DesktopSIWCAuthStore.load(providerId: "p1", store: store))
         XCTAssertNil(DesktopSIWCAuthStore.loadClientID(providerId: "p1", store: store))
     }
 
     func testEndToEndLoopbackSignInRefreshRotationAndRelogin() async throws {
-        DesktopChatGPTSIWCClient.clearCachedJWKSForTesting()
         let store = InMemorySIWCSecretStore()
         let providerId = UUID().uuidString.lowercased()
         let nowBox = LockedBox<Int64>(1_800_000_000_000)
         let capturedAuthURLs = LockedBox<[URL]>([])
         let capturedTokenForms = LockedBox<[String]>([])
         let capturedNonce = LockedBox<String?>(nil)
+        let failFirstExchange = LockedBox(true)
+        let keysAvailable = LockedBox(true)
+        let revoked = LockedBox<String?>(nil)
+        let callbackClientID = LockedBox("oaiapp_issued_001")
+        let subject = LockedBox("user_sub_42")
 
         let fixturePrivateKey = P256.Signing.PrivateKey()
         let rawPub = fixturePrivateKey.publicKey.rawRepresentation
@@ -144,7 +208,7 @@ final class DesktopChatGPTSIWCTests: XCTestCase {
             var claims: [String: Any] = [
                 "iss": "https://auth.openai.com",
                 "aud": [clientId],
-                "sub": "user_sub_42",
+                "sub": subject.withLock { $0 },
                 "email": "siwc@example.com",
                 "name": "SIWC Tester",
                 "exp": exp,
@@ -164,11 +228,20 @@ final class DesktopChatGPTSIWCTests: XCTestCase {
             transport: { request in
                 let url = request.url!
                 if url.absoluteString == DesktopChatGPTSIWCConstants.jwksEndpoint {
+                    guard keysAvailable.withLock({ $0 }) else { throw URLError(.notConnectedToInternet) }
                     let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
                     return (jwksData, resp)
                 }
                 let body = String(decoding: request.httpBody ?? Data(), as: UTF8.self)
+                if url.absoluteString == DesktopChatGPTSIWCConstants.revocationEndpoint {
+                    revoked.withLock { $0 = body }
+                    return (Data(), HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+                }
                 capturedTokenForms.withLock { $0.append(body) }
+                if failFirstExchange.withLock({ value in defer { value = false }; return value }) {
+                    return (Data(#"{"error":"invalid_grant"}"#.utf8),
+                            HTTPURLResponse(url: url, statusCode: 400, httpVersion: nil, headerFields: nil)!)
+                }
                 let isRefresh = body.contains("grant_type=refresh_token")
                 let nowSec = Double(nowBox.withLock { $0 }) / 1000.0
                 let idToken = try signIDToken(
@@ -181,6 +254,7 @@ final class DesktopChatGPTSIWCTests: XCTestCase {
                     "refresh_token": isRefresh ? "rt_rotated_2" : "rt_initial_1",
                     "id_token": idToken,
                     "expires_in": 3600,
+                    "earliest_refresh_at": nowSec + 60,
                     "scope": DesktopChatGPTSIWCConstants.scopeString,
                 ]
                 let data = try JSONSerialization.data(withJSONObject: tokenPayload)
@@ -195,7 +269,7 @@ final class DesktopChatGPTSIWCTests: XCTestCase {
                 capturedNonce.withLock { $0 = items["nonce"] }
                 guard let redirectURI = items["redirect_uri"],
                       let state = items["state"] else { return false }
-                let callbackURLString = "\(redirectURI)?code=auth_code_xyz&state=\(state)&client_id=oaiapp_issued_001"
+                let callbackURLString = "\(redirectURI)?code=auth_code_xyz&state=\(state)&client_id=\(callbackClientID.withLock { $0 })"
                 guard let callbackURL = URL(string: callbackURLString) else { return false }
                 Task.detached {
                     _ = try? await URLSession.shared.data(from: callbackURL)
@@ -205,8 +279,16 @@ final class DesktopChatGPTSIWCTests: XCTestCase {
             nowMillis: { nowBox.withLock { $0 } }
         )
 
-        // 1. First login: dynamic registration -> saves issued client_id, never dynamic_agent_client
+        do {
+            _ = try await client.signIn(timeout: 10)
+            XCTFail("Expected the first code exchange to fail")
+        } catch DesktopSIWCError.tokenExchangeFailed {}
+        XCTAssertEqual(DesktopSIWCAuthStore.loadClientID(providerId: providerId, store: store), "oaiapp_issued_001")
+        XCTAssertNil(DesktopSIWCAuthStore.load(providerId: providerId, store: store))
+
+        // Retry after the failed code exchange uses the registration already issued.
         let account = try await client.signIn(timeout: 10)
+        XCTAssertFalse(try XCTUnwrap(capturedAuthURLs.withLock { $0.last }).absoluteString.contains("agent_name_hint"))
         XCTAssertEqual(account.email, "siwc@example.com")
         XCTAssertEqual(account.plan, "plus")
         XCTAssertTrue(account.planAvailable)
@@ -221,14 +303,24 @@ final class DesktopChatGPTSIWCTests: XCTestCase {
         XCTAssertTrue(firstForm.contains("resource=https%3A%2F%2Fapi.openai.com%2Fv1"))
         XCTAssertFalse(firstForm.contains("client_secret="))
 
-        // 2. Cached token before earliest_refresh_at
+        // Permission to refresh has started, but this access token is still fresh.
+        nowBox.withLock { $0 += 120_000 }
         let cachedToken = try await client.getValidAccessToken()
         XCTAssertEqual(cachedToken, "at_initial_1")
 
         // 3. Advance clock past expiry -> refreshes and rotates refresh_token
         nowBox.withLock { $0 += 3_700_000 }
-        let refreshedToken = try await client.getValidAccessToken()
-        XCTAssertEqual(refreshedToken, "at_refreshed_2")
+        keysAvailable.withLock { $0 = false }
+        do {
+            _ = try await client.getValidAccessToken()
+            XCTFail("Cannot use the replacement until its ID token is verified")
+        } catch DesktopSIWCError.jwksUnavailable {}
+        keysAvailable.withLock { $0 = true }
+        async let tokenA = client.getValidAccessToken()
+        async let tokenB = client.getValidAccessToken()
+        let refreshed = try await [tokenA, tokenB]
+        XCTAssertEqual(refreshed, ["at_refreshed_2", "at_refreshed_2"])
+        XCTAssertEqual(capturedTokenForms.withLock { $0.filter { $0.contains("grant_type=refresh_token") }.count }, 1)
         let rotated = try XCTUnwrap(DesktopSIWCAuthStore.load(providerId: providerId, store: store))
         XCTAssertEqual(rotated.refreshToken, "rt_rotated_2")
 
@@ -242,10 +334,32 @@ final class DesktopChatGPTSIWCTests: XCTestCase {
         XCTAssertNil(secondItems["agent_name_hint"])
         XCTAssertNotNil(secondItems["id_token_hint"])
         XCTAssertEqual(secondItems["login_hint"], "siwc@example.com")
+
+        let exchanges = capturedTokenForms.withLock { $0.count }
+        callbackClientID.withLock { $0 = "different_registration" }
+        do {
+            _ = try await client.signIn(timeout: 10)
+            XCTFail("A reconnect must stay on its registration")
+        } catch is DesktopSIWCError {}
+        XCTAssertEqual(capturedTokenForms.withLock { $0.count }, exchanges)
+
+        let hostID = saved.extAgentHostId
+        try await client.endSession()
+        XCTAssertTrue(revoked.withLock { $0?.contains("token=rt_initial_1") == true })
+        XCTAssertNil(DesktopSIWCAuthStore.load(providerId: providerId, store: store))
+        XCTAssertEqual(DesktopSIWCAuthStore.loadClientID(providerId: providerId, store: store), saved.clientId)
+        callbackClientID.withLock { $0 = saved.clientId }
+        subject.withLock { $0 = "different_subject" }
+        do {
+            _ = try await client.signIn(timeout: 10)
+            XCTFail("The registration must retain its verified subject through logout")
+        } catch DesktopSIWCError.identityMismatch {}
+        try await client.endSession(deleteRegistration: true)
+        XCTAssertNil(DesktopSIWCAuthStore.loadClientID(providerId: providerId, store: store))
+        XCTAssertEqual(try DesktopSIWCAuthStore.getOrCreateExtAgentHostID(store: store), hostID)
     }
 
     func testMissingDirectTokenSharingScopeKeepsLoginButMarksPlanUnavailable() async throws {
-        DesktopChatGPTSIWCClient.clearCachedJWKSForTesting()
         let store = InMemorySIWCSecretStore()
         let providerId = UUID().uuidString.lowercased()
         let nowSec = Date().timeIntervalSince1970
@@ -281,11 +395,8 @@ final class DesktopChatGPTSIWCTests: XCTestCase {
                 let sig = try privateKey.signature(for: Data(input.utf8)).rawRepresentation
                 let idToken = "\(input).\(DesktopSIWCJWTVerifier.base64URLEncode(sig))"
                 let body: [String: Any] = [
-                    "access_token": "at_limited",
-                    "refresh_token": "rt_limited",
                     "id_token": idToken,
-                    "expires_in": 3600,
-                    "scope": "openid profile email offline_access resource.invoke",
+                    "scope": "openid profile email",
                 ]
                 return (try JSONSerialization.data(withJSONObject: body),
                         HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
@@ -331,6 +442,9 @@ final class DesktopChatGPTSIWCTests: XCTestCase {
             nowSeconds: now
         )
         XCTAssertEqual(parsed.subject, "sub_1")
+        XCTAssertThrowsError(try DesktopSIWCJWTVerifier.verify(
+            idToken: valid.jwt, expectedIssuer: "https://other.example", expectedClientID: "oaiapp_123",
+            expectedNonce: "n_ok", jwks: valid.jwks, nowSeconds: now))
 
         XCTAssertThrowsError(try DesktopSIWCJWTVerifier.verify(
             idToken: valid.jwt,

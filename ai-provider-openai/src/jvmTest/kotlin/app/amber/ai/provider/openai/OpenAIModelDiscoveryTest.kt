@@ -61,10 +61,10 @@ class OpenAIModelDiscoveryTest {
     @Test
     fun siwcDiscoveryFiltersVisibilityListPreservesOrderAndUsesDisplayNameAndSlug() = runBlocking {
         var requestedUrl: String? = null
-        var authHeader: String? = null
+        var authHeaders: List<String>? = null
         val engine = MockEngine { request ->
             requestedUrl = request.url.toString()
-            authHeader = request.headers[HttpHeaders.Authorization]
+            authHeaders = request.headers.getAll(HttpHeaders.Authorization)
             respond(
                 content = """
                     {"models":[
@@ -87,11 +87,11 @@ class OpenAIModelDiscoveryTest {
                     baseUrl = "https://custom.ignored.example/v1",
                     authMode = app.amber.ai.provider.OpenAIAuthMode.CHATGPT_SIWC,
                 ),
-                emptyList(),
+                listOf(app.amber.ai.provider.CustomHeader("authorization", "Bearer old-api-key")),
             )
 
             assertEquals("https://api.openai.com/v1/models", requestedUrl)
-            assertEquals("Bearer siwc-access-token", authHeader)
+            assertEquals(listOf("Bearer siwc-access-token"), authHeaders)
             assertEquals(listOf("gpt-5.4", "gpt-5.4-mini", "gpt-5.4-codex"), models.map { it.modelId })
             assertEquals(listOf("GPT-5.4", "GPT-5.4 mini", "gpt-5.4-codex"), models.map { it.displayName })
             assertEquals(400000, models[0].contextWindowTokens)

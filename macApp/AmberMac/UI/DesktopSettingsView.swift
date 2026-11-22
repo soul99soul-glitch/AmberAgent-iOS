@@ -132,6 +132,9 @@ struct DesktopSettingsView: View {
             // Fresh provider: pre-tick everything so「添加所选模型」is one click.
             if editingID == nil, draft.models.isEmpty { selectedCatalogIDs = Set(models.map(\.id)) }
         }
+        .onChange(of: catalogRequest.failed) { _, failed in
+            if failed && draft.authMode == .chatgptSiwc { siwcLogin.reloadAccount() }
+        }
         .sheet(isPresented: $presetPickerPresented) {
             DesktopProviderPresetPicker { preset, usePlan in
                 presetPickerPresented = false
@@ -167,10 +170,12 @@ struct DesktopSettingsView: View {
             if draft.authMode == .antigravityOAuth && value != .gemini { draft.authMode = .apiKey }
             if draft.authMode == .grokOAuth && value != .openAI { draft.authMode = .apiKey }
         }
-        .onChange(of: draft.authMode) { _, value in
+        .onChange(of: draft.authMode) { old, value in
             if value == .chatgptSiwc {
                 draft.kind = .responses
                 draft.baseURL = DesktopChatGPTSIWCConstants.apiBaseURL
+            } else if old == .chatgptSiwc {
+                siwcLogin.cancel()
             }
         }
     }
@@ -409,7 +414,7 @@ struct DesktopSettingsView: View {
                         Spacer()
                         Button("刷新模型列表") { fetchModels(testOnly: false) }
                             .disabled(editingID == nil || catalogRequest.isLoading || siwcLogin.isBusy)
-                        Button("退出登录") { if let id = editingID { siwcLogin.logout(id) } }
+                        Button("退出登录", action: logoutSIWC)
                             .disabled(editingID == nil || siwcLogin.isBusy)
                     }
                 } else {
@@ -428,7 +433,7 @@ struct DesktopSettingsView: View {
                                 draft.authMode = .apiKey
                                 draft.baseURL = DesktopChatGPTSIWCConstants.apiBaseURL
                             }
-                            Button("退出登录") { if let id = editingID { siwcLogin.logout(id) } }
+                            Button("退出登录", action: logoutSIWC)
                                 .disabled(editingID == nil)
                         }
                     }
@@ -455,6 +460,13 @@ struct DesktopSettingsView: View {
         }
     }
 
+    private func logoutSIWC() {
+        guard let id = editingID else { return }
+        catalogRequest.cancel()
+        selectedCatalogIDs = []
+        siwcLogin.logout(id)
+    }
+
     private func startSIWCLogin() {
         let targetID: UUID
         if let existing = editingID, !hasUnsavedChanges {
@@ -464,7 +476,7 @@ struct DesktopSettingsView: View {
             targetID = savedID
         }
         siwcLogin.login(targetID) { account in
-            if account.planAvailable && draft.models.isEmpty {
+            if account.planAvailable && editingID == targetID && draft.authMode == .chatgptSiwc {
                 fetchModels(testOnly: false)
             }
         }
@@ -943,9 +955,12 @@ struct DesktopSettingsView: View {
             defer { deleting = false }
             do {
                 try await login.removeCredentials(id)
-                try await siwcLogin.removeCredentials(id)
+                var revocationWarning: String?
+                do { try await siwcLogin.removeCredentials(id) }
+                catch DesktopSIWCError.revocationUnconfirmed { revocationWarning = DesktopSIWCError.revocationUnconfirmed.localizedDescription }
                 try settings.deleteProvider(id)
                 load(settings.providers.first?.id)
+                if let revocationWarning { status = revocationWarning; failed = true }
             } catch { status = "移除服务商失败，请解锁钥匙串后重试。"; failed = true }
         }
     }

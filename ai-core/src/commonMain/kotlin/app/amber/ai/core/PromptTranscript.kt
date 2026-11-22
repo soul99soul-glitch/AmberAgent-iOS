@@ -59,7 +59,7 @@ data class PromptTranscriptCapabilities(
                     val host = host(setting.baseUrl)
                     if (setting.authMode == OpenAIAuthMode.CHATGPT_SIWC) {
                         // SIWC Preview forbids `tool_search` and `{type: "message", role: "system"}`;
-                        // keep system prompts in top-level `instructions` and tools in top-level `tools`.
+                        // Fold the transcript into instructions and let the SIWC adapter publish local tools.
                         return PromptTranscriptCapabilities()
                     }
                     val codex = setting.authMode == OpenAIAuthMode.CODEX_OAUTH && host == "chatgpt.com"

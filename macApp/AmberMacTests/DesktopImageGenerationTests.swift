@@ -252,6 +252,14 @@ import Observation
         let formal = DesktopImageGeneration(settings: settings, files: files, enabled: true, transport: transport)
         do { _ = try await formal.generate(ownerID: UUID(), prompt: "Lamp"); XCTFail() } catch { }
         XCTAssertTrue(transport.requests.isEmpty, "Conversation model fallback must not be used for image generation")
+        var plan = DesktopProviderConfiguration(name: "ChatGPT", kind: .responses,
+            baseURL: "https://api.openai.com/v1", modelID: "image-fixture")
+        plan.authMode = .chatgptSiwc
+        try settings.saveProvider(plan, apiKey: "")
+        settings.setAuxiliaryModel(plan.selectedModelID, for: .imageGeneration)
+        do { _ = try await formal.generate(ownerID: UUID(), prompt: "Lamp"); XCTFail() }
+        catch { XCTAssertEqual(error.localizedDescription, "当前登录方式不支持图片生成。") }
+        XCTAssertTrue(transport.requests.isEmpty)
     }
 
     func testCancellationStopsTheActualTransportAndDoesNotPublishFiles() async throws {

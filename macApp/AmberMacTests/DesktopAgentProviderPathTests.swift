@@ -5,6 +5,29 @@ import XCTest
 /// P2 review B3 and the tool-mode overflow message. These need `DesktopAgentProvider`, which the SwiftPM runtime
 /// host cannot compile (it links the KMP Shared framework), so they live in the Xcode test target.
 @MainActor final class DesktopAgentProviderPathTests: XCTestCase {
+    func testSIWCStreamErrorSurvivesToolEngineAndDesktopBanner() async throws {
+        struct LimitStream: IOSAgentTextProvider, IOSAgentStreamingProvider {
+            func generateText(providerSetting: ProviderSetting, messages: [UIMessage], params: TextGenerationParams) async throws -> MessageChunk {
+                XCTFail("Expected a streaming request"); throw CancellationError()
+            }
+            func streamText(providerSetting: ProviderSetting, messages: [UIMessage], params: TextGenerationParams,
+                onChunk: @escaping @Sendable (MessageChunk) -> Void, onComplete: @escaping @Sendable () -> Void,
+                onError: @escaping @Sendable (KotlinThrowable) -> Void) -> Kotlinx_coroutines_coreJob? {
+                onError(KotlinThrowable(message: "subscription_sharing_usage_limit_exceeded: private upstream text"))
+                return nil
+            }
+        }
+        let bridge = DesktopProviderBridge.shared
+        let provider = try bridge.configurationWithAuth(kind: "responses", id: UUID().uuidString,
+            name: "ChatGPT", baseUrl: "https://api.openai.com/v1", apiKey: "test", authMode: "chatgptSiwc")
+        let input = try bridge.messages(json: DesktopJSON.encode([DesktopMessage(role: .user, text: "Hello")]))
+        let engine = IOSAgentToolEngine(provider: LimitStream(), executors: [:])
+        let result = await engine.run(providerSetting: provider, messages: input, params: bridge.params(modelID: "gpt-5.4"))
+        let expected = DesktopSIWCError.usageLimitExceeded.localizedDescription
+        XCTAssertEqual(result.providerFailureMessage, expected)
+        XCTAssertEqual(DesktopAgentProvider.stopReason(result, rounds: 8, authMode: .chatgptSiwc)?.banner, expected)
+    }
+
     /// B3: the tool path must forward the same caching switch the plain chat path already honoured.
     func testPromptCachingAppliesToClaudeOnlyWhenEnabled() {
         var configuration = DesktopProviderConfiguration(name: "C", kind: .claude,

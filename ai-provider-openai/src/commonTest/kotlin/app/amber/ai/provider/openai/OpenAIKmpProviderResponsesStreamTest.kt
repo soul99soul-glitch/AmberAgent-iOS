@@ -79,6 +79,20 @@ class OpenAIKmpProviderResponsesStreamTest {
     }
 
     @Test
+    fun siwcExplicitStreamErrorSurfacesItsCodeWithoutReclassifyingOtherProviders() {
+        val provider = OpenAIKmpProvider()
+        val code = "subscription_sharing_usage_unavailable"
+        val error = assertFailsWith<IllegalStateException> {
+            provider.parseResponsesStreamData("""{"type":"error","code":"$code","message":"Unavailable"}""", siwc = true)
+        }
+        assertTrue(code in error.message.orEmpty())
+        val nonSiwcError = assertFailsWith<IllegalStateException> {
+            provider.parseResponsesStreamData("""{"type":"response.failed","response":{"error":{"code":"$code","message":"original detail"}}}""")
+        }
+        assertTrue("original detail" in nonSiwcError.message.orEmpty())
+    }
+
+    @Test
     fun siwcStreamRequiresResponseCompletedEvent() {
         val doneOnly = OpenAIStreamTerminalState(OpenAIStreamKind.RESPONSES_SIWC)
         doneOnly.observe("data: [DONE]")

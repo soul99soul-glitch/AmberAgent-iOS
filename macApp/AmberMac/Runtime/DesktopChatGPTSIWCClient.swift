@@ -11,6 +11,7 @@ enum DesktopChatGPTSIWCConstants {
     static let issuer = "https://auth.openai.com"
     static let authorizationEndpoint = "https://auth.openai.com/api/accounts/authorize"
     static let tokenEndpoint = "https://auth.openai.com/api/accounts/oauth/token"
+    static let revocationEndpoint = "https://auth.openai.com/api/accounts/oauth/revoke"
     static let jwksEndpoint = "https://auth.openai.com/.well-known/jwks.json"
     static let resource = "https://api.openai.com/v1"
     static let apiBaseURL = "https://api.openai.com/v1"
@@ -44,7 +45,10 @@ enum DesktopSIWCError: LocalizedError, Equatable, Sendable {
     case notSignedIn
     case planScopeUnavailable
     case dynamicRegistrationMissingClientID
-    case invalidState
+    case registrationMismatch
+    case identityMismatch
+    case revocationUnconfirmed
+    case jwksUnavailable
     case authorizationDenied(String)
     case loopbackListenerFailed(String)
     case browserLaunchFailed
@@ -63,8 +67,14 @@ enum DesktopSIWCError: LocalizedError, Equatable, Sendable {
             "当前账号未授予 chatgpt.tokens.use.direct 权限，暂不可使用 ChatGPT 套餐额度。请重新授权或切换为 OpenAI API Key。"
         case .dynamicRegistrationMissingClientID:
             "OpenAI 授权回调未返回有效的客户端标识（client_id），无法完成动态注册。"
-        case .invalidState:
-            "授权回调的 state 校验失败，已拒绝本次登录。请重试。"
+        case .registrationMismatch:
+            "回调中的客户端标识与所选连接不符，请重新登录。"
+        case .identityMismatch:
+            "返回的 ChatGPT 账号与所选连接不符。请使用原账号登录，或另建服务商连接。"
+        case .revocationUnconfirmed:
+            "已清除本机登录凭证。未能确认远端会话已撤销，可在 ChatGPT 设置中断开此应用。"
+        case .jwksUnavailable:
+            "暂时无法获取 OpenAI 验签公钥，请稍后重试。"
         case .authorizationDenied(let detail):
             detail.isEmpty ? "授权已取消或被拒绝。" : "ChatGPT 授权未完成：\(detail)"
         case .loopbackListenerFailed(let detail):
@@ -80,26 +90,36 @@ enum DesktopSIWCError: LocalizedError, Equatable, Sendable {
         case .credentialStoreFailed:
             "无法将 ChatGPT 登录凭证保存到系统钥匙串，请解锁钥匙串后重试。"
         case .usageLimitExceeded:
-            "ChatGPT 套餐共享额度已用尽（subscription_sharing_usage_limit_exceeded）。请前往 https://chatgpt.com/settings/usage 查看或管理用量，或切换为 OpenAI API Key。"
+            "已达到 ChatGPT 套餐共享用量上限（subscription_sharing_usage_limit_exceeded）。请前往 https://chatgpt.com/settings/usage 查看或管理用量。"
         case .usageUnavailable:
-            "当前账号的 ChatGPT 套餐共享暂不可用（subscription_sharing_usage_unavailable）。请前往 https://chatgpt.com/settings/usage 检查订阅状态与套餐共享设置，或切换为 OpenAI API Key。"
+            "暂时无法确认 ChatGPT 套餐用量（subscription_sharing_usage_unavailable），请稍后重试。用量设置：https://chatgpt.com/settings/usage"
         }
+    }
+
+    static func planError(in message: String) -> Self? {
+        if message.contains("subscription_sharing_usage_limit_exceeded") { return .usageLimitExceeded }
+        if message.contains("subscription_sharing_usage_unavailable") { return .usageUnavailable }
+        if message.contains("chatgpt.tokens.use.direct") { return .planScopeUnavailable }
+        if message.contains("Continue with ChatGPT") { return .notSignedIn }
+        return nil
     }
 }
 
 struct DesktopSIWCCredentials: Codable, Equatable, Sendable {
-    let accessToken: String
-    let refreshToken: String
+    let accessToken: String?
+    let refreshToken: String?
     let idToken: String?
     let clientId: String
     let extAgentHostId: String
     let expiresAtMillis: Int64
     let earliestRefreshAtMillis: Int64
     let scopes: [String]
-    let subject: String?
-    let email: String?
-    let name: String?
-    let planType: String?
+    var subject: String?
+    var email: String?
+    var name: String?
+    var planType: String?
+
+    var pendingVerificationAtMillis: Int64?
 
     var hasDirectTokenSharingScope: Bool {
         scopes.contains(DesktopChatGPTSIWCConstants.requiredPlanScope)
@@ -143,6 +163,11 @@ struct DesktopSIWCKeychainSecretStore: DesktopSIWCSecretStore {
 }
 
 enum DesktopSIWCAuthStore {
+    private struct Registration: Codable, Equatable {
+        let clientID: String
+        let subject: String?
+    }
+
     enum RefreshCommitResult: Equatable, Sendable {
         case saved
         case storeFailed
@@ -175,7 +200,7 @@ enum DesktopSIWCAuthStore {
     ) -> String? {
         lock.lock()
         defer { lock.unlock() }
-        return loadClientIDLocked(providerId: providerId, store: store)
+        return registrationLocked(providerId: providerId, store: store)?.clientID
     }
 
     static func load(
@@ -187,79 +212,100 @@ enum DesktopSIWCAuthStore {
         return loadLocked(providerId: providerId, store: store)
     }
 
-    @discardableResult
+    /// Registration succeeds before the one-time code is exchanged. Keep it even if exchange fails.
+    static func retainClientID(_ clientID: String, providerId: String, store: any DesktopSIWCSecretStore) throws {
+        guard isValidIssuedClientID(clientID) else { throw DesktopSIWCError.dynamicRegistrationMissingClientID }
+        lock.lock()
+        defer { lock.unlock() }
+        if let existing = registrationLocked(providerId: providerId, store: store) {
+            guard existing.clientID == clientID else { throw DesktopSIWCError.registrationMismatch }
+        } else if !store.store(key: clientIDKey(providerId: providerId), value: clientID) {
+            throw DesktopSIWCError.credentialStoreFailed
+        }
+    }
+
     static func save(
         providerId: String,
         credentials: DesktopSIWCCredentials,
         store: any DesktopSIWCSecretStore = DesktopSIWCKeychainSecretStore()
-    ) -> Bool {
+    ) throws {
         guard isValidIssuedClientID(credentials.clientId),
-              let encoded = encode(credentials) else { return false }
+              let subject = credentials.subject else { throw DesktopSIWCError.registrationMismatch }
         lock.lock()
         defer { lock.unlock() }
-        let savedCreds = store.store(key: credentialsKey(providerId: providerId), value: encoded)
-        let savedClient = store.store(key: clientIDKey(providerId: providerId), value: credentials.clientId)
-        return savedCreds && savedClient
+        let registration = registrationLocked(providerId: providerId, store: store)
+        guard registration?.clientID == credentials.clientId else { throw DesktopSIWCError.registrationMismatch }
+        if let knownSubject = registration?.subject, subject != knownSubject { throw DesktopSIWCError.identityMismatch }
+        let bound = Registration(clientID: credentials.clientId, subject: subject)
+        guard keepRegistrationLocked(bound, providerId: providerId, store: store),
+              let tokens = encode(credentials), store.store(key: credentialsKey(providerId: providerId), value: tokens)
+        else { throw DesktopSIWCError.credentialStoreFailed }
+    }
+
+    private static func keepRegistrationLocked(
+        _ registration: Registration, providerId: String, store: any DesktopSIWCSecretStore
+    ) -> Bool {
+        guard let encoded = encode(registration) else { return false }
+        let key = clientIDKey(providerId: providerId)
+        return store.load(key: key) == encoded || store.store(key: key, value: encoded)
     }
 
     static func saveRefreshedCredentials(
         providerId: String,
         expected: DesktopSIWCCredentials,
-        refreshed: DesktopSIWCCredentials,
+        refreshed: DesktopSIWCCredentials?,
         store: any DesktopSIWCSecretStore = DesktopSIWCKeychainSecretStore()
     ) -> RefreshCommitResult {
-        guard isValidIssuedClientID(refreshed.clientId),
-              let encoded = encode(refreshed) else { return .storeFailed }
         lock.lock()
         defer { lock.unlock() }
         guard loadLocked(providerId: providerId, store: store) == expected else {
             return .credentialsChanged
         }
-        let savedCreds = store.store(key: credentialsKey(providerId: providerId), value: encoded)
-        let savedClient = store.store(key: clientIDKey(providerId: providerId), value: refreshed.clientId)
-        return (savedCreds && savedClient) ? .saved : .storeFailed
+        let key = credentialsKey(providerId: providerId)
+        if let refreshed {
+            guard let encoded = encode(refreshed), store.store(key: key, value: encoded) else { return .storeFailed }
+        } else {
+            // Legacy sessions kept the verified subject only in their token record.
+            let registration = Registration(clientID: expected.clientId, subject: expected.subject)
+            guard keepRegistrationLocked(registration, providerId: providerId, store: store),
+                  store.delete(key: key) else { return .storeFailed }
+        }
+        return .saved
     }
 
-    /// Signs out the provider session while keeping the device `ext_agent_host_id` and issued `client_id`
-    /// so a subsequent sign-in on this device reuses the registered client.
-    @discardableResult
-    static func logout(
-        providerId: String,
-        store: any DesktopSIWCSecretStore = DesktopSIWCKeychainSecretStore()
-    ) -> Bool {
+    /// Remove the credentials and return exactly the session whose refresh token needs revoking.
+    static func removeSession(
+        providerId: String, deleteRegistration: Bool, store: any DesktopSIWCSecretStore
+    ) throws -> DesktopSIWCCredentials? {
         lock.lock()
         defer { lock.unlock() }
-        return store.delete(key: credentialsKey(providerId: providerId))
-    }
-
-    /// Removes all provider-scoped SIWC credentials when a provider entry is deleted.
-    @discardableResult
-    static func deleteProvider(
-        providerId: String,
-        store: any DesktopSIWCSecretStore = DesktopSIWCKeychainSecretStore()
-    ) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        let credsDeleted = store.delete(key: credentialsKey(providerId: providerId))
-        let clientDeleted = store.delete(key: clientIDKey(providerId: providerId))
-        return credsDeleted && clientDeleted
+        let current = loadLocked(providerId: providerId, store: store)
+        if !deleteRegistration, let current {
+            let registration = Registration(clientID: current.clientId, subject: current.subject)
+            guard keepRegistrationLocked(registration, providerId: providerId, store: store) else {
+                throw DesktopSIWCError.credentialStoreFailed
+            }
+        }
+        guard store.delete(key: credentialsKey(providerId: providerId)),
+              !deleteRegistration || store.delete(key: clientIDKey(providerId: providerId)) else {
+            throw DesktopSIWCError.credentialStoreFailed
+        }
+        return current
     }
 
     static func isValidIssuedClientID(_ value: String?) -> Bool {
-        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !trimmed.isEmpty,
-              trimmed != DesktopChatGPTSIWCConstants.dynamicClientID else {
-            return false
-        }
-        return true
+        guard let value, value != DesktopChatGPTSIWCConstants.dynamicClientID else { return false }
+        return value.wholeMatch(of: /[a-zA-Z0-9_-]{1,200}/) != nil
     }
 
-    private static func loadClientIDLocked(providerId: String, store: any DesktopSIWCSecretStore) -> String? {
-        if let direct = store.load(key: clientIDKey(providerId: providerId)), isValidIssuedClientID(direct) {
-            return direct.trimmingCharacters(in: .whitespacesAndNewlines)
+    private static func registrationLocked(providerId: String, store: any DesktopSIWCSecretStore) -> Registration? {
+        let raw = store.load(key: clientIDKey(providerId: providerId))
+        if let raw, raw.hasPrefix("{") {
+            return try? JSONDecoder().decode(Registration.self, from: Data(raw.utf8))
         }
-        if let creds = loadLocked(providerId: providerId, store: store), isValidIssuedClientID(creds.clientId) {
-            return creds.clientId
+        let credentials = loadLocked(providerId: providerId, store: store)
+        if let id = raw ?? credentials?.clientId, isValidIssuedClientID(id) {
+            return Registration(clientID: id, subject: credentials?.clientId == id ? credentials?.subject : nil)
         }
         return nil
     }
@@ -274,8 +320,10 @@ enum DesktopSIWCAuthStore {
         return credentials
     }
 
-    private static func encode(_ credentials: DesktopSIWCCredentials) -> String? {
-        guard let data = try? JSONEncoder().encode(credentials) else { return nil }
+    private static func encode(_ value: some Encodable) -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        guard let data = try? encoder.encode(value) else { return nil }
         return String(data: data, encoding: .utf8)
     }
 }
@@ -337,7 +385,9 @@ enum DesktopSIWCJWTVerifier {
         guard let iss = payload["iss"] as? String, iss == expectedIssuer else {
             throw DesktopSIWCError.idTokenVerificationFailed("iss 发行方不匹配。")
         }
-        guard audienceMatches(payload["aud"], expectedClientID: expectedClientID) else {
+        let audiences = (payload["aud"] as? [String]) ?? (payload["aud"] as? String).map { [$0] } ?? []
+        guard audiences.contains(expectedClientID),
+              (audiences.count == 1 && payload["azp"] == nil) || payload["azp"] as? String == expectedClientID else {
             throw DesktopSIWCError.idTokenVerificationFailed("aud 未包含颁布的 client_id。")
         }
         guard let exp = numericTimestamp(payload["exp"]),
@@ -365,19 +415,6 @@ enum DesktopSIWCJWTVerifier {
         let planType = authClaims?["chatgpt_plan_type"] as? String
 
         return DesktopSIWCVerifiedIDToken(subject: sub, email: email, name: name, planType: planType)
-    }
-
-    private static func audienceMatches(_ rawAudience: Any?, expectedClientID: String) -> Bool {
-        if let single = rawAudience as? String {
-            return single == expectedClientID
-        }
-        if let list = rawAudience as? [String] {
-            return list.contains(expectedClientID)
-        }
-        if let list = rawAudience as? [Any] {
-            return list.compactMap { $0 as? String }.contains(expectedClientID)
-        }
-        return false
     }
 
     private static func numericTimestamp(_ raw: Any?) -> TimeInterval? {
@@ -423,6 +460,7 @@ enum DesktopSIWCJWTVerifier {
         alg: String,
         jwk: DesktopSIWCJWK
     ) throws -> Bool {
+        guard jwk.alg == nil || jwk.alg == alg else { return false }
         switch alg {
         case "RS256", "RS384", "RS512":
             guard jwk.kty == "RSA",
@@ -436,8 +474,7 @@ enum DesktopSIWCJWTVerifier {
                 kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
                 kSecAttrKeyClass as String: kSecAttrKeyClassPublic,
             ]
-            var cfError: Unmanaged<CFError>?
-            guard let secKey = SecKeyCreateWithData(derKey as CFData, attributes as CFDictionary, &cfError) else {
+            guard let secKey = SecKeyCreateWithData(derKey as CFData, attributes as CFDictionary, nil) else {
                 return false
             }
             let secAlg: SecKeyAlgorithm = switch alg {
@@ -445,7 +482,7 @@ enum DesktopSIWCJWTVerifier {
             case "RS512": .rsaSignatureMessagePKCS1v15SHA512
             default: .rsaSignatureMessagePKCS1v15SHA256
             }
-            return SecKeyVerifySignature(secKey, secAlg, signingInput as CFData, signature as CFData, &cfError)
+            return SecKeyVerifySignature(secKey, secAlg, signingInput as CFData, signature as CFData, nil)
 
         case "ES256":
             guard jwk.kty == "EC", jwk.crv == "P-256",
@@ -560,6 +597,7 @@ struct DesktopSIWCCallbackPayload: Equatable, Sendable {
 final class DesktopSIWCLoopbackServer: @unchecked Sendable {
     private let lock = NSLock()
     private var listenFD: Int32 = -1
+    private var activeClientFD: Int32 = -1
     private(set) var port: UInt16 = 0
     private var closed = false
 
@@ -571,6 +609,11 @@ final class DesktopSIWCLoopbackServer: @unchecked Sendable {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else {
             throw DesktopSIWCError.loopbackListenerFailed("socket() 失败（errno=\(errno)）")
+        }
+        guard fcntl(fd, F_SETFL, O_NONBLOCK) == 0 else {
+            let code = errno
+            Darwin.close(fd)
+            throw DesktopSIWCError.loopbackListenerFailed("fcntl() 失败（errno=\(code)）")
         }
         var reuse: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
@@ -636,7 +679,7 @@ final class DesktopSIWCLoopbackServer: @unchecked Sendable {
         stop()
     }
 
-    func waitForCallback(timeout: TimeInterval = DesktopChatGPTSIWCConstants.loginTimeoutSeconds) async throws -> DesktopSIWCCallbackPayload {
+    func waitForCallback(state: String, timeout: TimeInterval = DesktopChatGPTSIWCConstants.loginTimeoutSeconds) async throws -> DesktopSIWCCallbackPayload {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -646,7 +689,7 @@ final class DesktopSIWCLoopbackServer: @unchecked Sendable {
                     }
                     let deadline = Date().addingTimeInterval(timeout)
                     do {
-                        let payload = try self.acceptLoop(deadline: deadline)
+                        let payload = try self.acceptLoop(state: state, deadline: deadline)
                         self.stop()
                         continuation.resume(returning: payload)
                     } catch {
@@ -656,11 +699,21 @@ final class DesktopSIWCLoopbackServer: @unchecked Sendable {
                 }
             }
         } onCancel: { [weak self] in
-            self?.stop()
+            self?.cancelWait()
         }
     }
 
-    private func acceptLoop(deadline: Date) throws -> DesktopSIWCCallbackPayload {
+    // Wake blocking I/O, but leave close() to the reader. A descriptor closed here
+    // could already have been reassigned by the time poll/accept/recv resumes.
+    private func cancelWait() {
+        lock.withLock {
+            closed = true
+            if listenFD >= 0 { Darwin.shutdown(listenFD, SHUT_RDWR) }
+            if activeClientFD >= 0 { Darwin.shutdown(activeClientFD, SHUT_RDWR) }
+        }
+    }
+
+    private func acceptLoop(state: String, deadline: Date) throws -> DesktopSIWCCallbackPayload {
         while true {
             let fd = currentFD()
             guard fd >= 0 else { throw CancellationError() }
@@ -669,8 +722,8 @@ final class DesktopSIWCLoopbackServer: @unchecked Sendable {
             if remaining <= 0 { throw DesktopSIWCError.timedOut }
 
             var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-            let waitMillis = Int32(min(remaining * 1000.0, 500.0))
-            let ready = poll(&pfd, 1, max(waitMillis, 50))
+            let waitMillis = Int32(min(remaining * 1000.0, 250.0).rounded(.up))
+            let ready = poll(&pfd, 1, waitMillis)
             if ready == 0 { continue }
             if ready < 0 {
                 if errno == EINTR { continue }
@@ -678,21 +731,26 @@ final class DesktopSIWCLoopbackServer: @unchecked Sendable {
                 throw DesktopSIWCError.loopbackListenerFailed("poll() 失败（errno=\(errno)）")
             }
 
-            var clientAddr = sockaddr_in()
-            var clientLen = socklen_t(MemoryLayout<sockaddr_in>.size)
-            let clientFD = withUnsafeMutablePointer(to: &clientAddr) { ptr in
-                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
-                    accept(fd, sockPtr, &clientLen)
-                }
-            }
+            guard currentFD() >= 0 else { throw CancellationError() }
+            let clientFD = accept(fd, nil, nil)
             if clientFD < 0 {
                 if currentFD() < 0 { throw CancellationError() }
-                if errno == EINTR { continue }
-                continue
+                if errno == EINTR || errno == ECONNABORTED || errno == EAGAIN { continue }
+                throw DesktopSIWCError.loopbackListenerFailed("accept() 失败（errno=\(errno)）")
             }
 
-            let payload = handleClient(clientFD)
-            Darwin.close(clientFD)
+            let canRead = lock.withLock {
+                activeClientFD = clientFD
+                return !closed
+            }
+            defer {
+                lock.withLock { activeClientFD = -1 }
+                Darwin.close(clientFD)
+            }
+            guard canRead else { throw CancellationError() }
+            var noSignal: Int32 = 1
+            guard setsockopt(clientFD, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout.size(ofValue: noSignal))) == 0 else { continue }
+            let payload = handleClient(clientFD, state: state, deadline: min(deadline, Date().addingTimeInterval(5)))
             if let payload { return payload }
         }
     }
@@ -703,39 +761,57 @@ final class DesktopSIWCLoopbackServer: @unchecked Sendable {
         return closed ? -1 : listenFD
     }
 
-    private func handleClient(_ clientFD: Int32) -> DesktopSIWCCallbackPayload? {
-        var tv = timeval(tv_sec: 5, tv_usec: 0)
-        setsockopt(clientFD, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-
-        var buffer = [UInt8](repeating: 0, count: 16_384)
-        let bytesRead = recv(clientFD, &buffer, buffer.count, 0)
-        guard bytesRead > 0 else { return nil }
-
-        let requestText = String(decoding: buffer[0..<bytesRead], as: UTF8.self)
-        guard let firstLine = requestText.components(separatedBy: "\r\n").first else {
-            writeResponse(clientFD, status: "400 Bad Request", html: Self.errorHTML("无效的回调请求。"))
-            return nil
+    private func requestLine(_ fd: Int32, deadline: Date) -> String? {
+        let headerEnd = Data("\r\n\r\n".utf8)
+        var header = Data()
+        var buffer = [UInt8](repeating: 0, count: 2048)
+        while header.count < 16_384 {
+            let remaining = deadline.timeIntervalSinceNow
+            guard remaining > 0 else { return nil }
+            var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&pfd, 1, Int32((remaining * 1000).rounded(.up)))
+            if ready < 0 && errno == EINTR { continue }
+            guard ready > 0 else { return nil }
+            let count = recv(fd, &buffer, buffer.count, 0)
+            if count < 0 && (errno == EINTR || errno == EAGAIN) { continue }
+            guard count > 0 else { return nil }
+            header.append(contentsOf: buffer.prefix(count))
+            if header.range(of: headerEnd) != nil {
+                return String(decoding: header.prefix { $0 != 13 }, as: UTF8.self)
+            }
         }
+        return nil
+    }
+
+    private func handleClient(_ clientFD: Int32, state: String, deadline: Date) -> DesktopSIWCCallbackPayload? {
+        guard let firstLine = requestLine(clientFD, deadline: deadline) else { return nil }
         let parts = firstLine.split(separator: " ")
-        guard parts.count >= 2, parts[0] == "GET" else {
+        guard parts.count == 3, parts[0] == "GET" else {
             writeResponse(clientFD, status: "405 Method Not Allowed", html: Self.errorHTML("不支持的请求方法。"))
             return nil
         }
         let target = String(parts[1])
-        guard let components = URLComponents(string: "http://\(DesktopChatGPTSIWCConstants.loopbackHost)\(target)"),
-              components.path == DesktopChatGPTSIWCConstants.callbackPath else {
+        guard let components = URLComponents(string: target), components.scheme == nil, components.host == nil,
+              components.percentEncodedPath == DesktopChatGPTSIWCConstants.callbackPath else {
             writeResponse(clientFD, status: "404 Not Found", html: Self.errorHTML("Not Found"))
             return nil
         }
 
-        let query = Dictionary(
-            (components.queryItems ?? []).map { ($0.name, $0.value ?? "") },
-            uniquingKeysWith: { _, latest in latest }
-        )
+        var query: [String: String] = [:]
+        for item in components.queryItems ?? [] {
+            guard query.updateValue(item.value ?? "", forKey: item.name) == nil else {
+                writeResponse(clientFD, status: "400 Bad Request", html: Self.errorHTML("回调参数重复。"))
+                return nil
+            }
+        }
+        guard query["state"] == state else {
+            writeResponse(clientFD, status: "400 Bad Request", html: Self.errorHTML("回调不属于当前登录。"))
+            return nil
+        }
         let payload = DesktopSIWCCallbackPayload(
             code: query["code"]?.trimmingCharacters(in: .whitespacesAndNewlines).siwcNonEmpty,
             state: query["state"]?.trimmingCharacters(in: .whitespacesAndNewlines).siwcNonEmpty,
-            clientID: query["client_id"]?.trimmingCharacters(in: .whitespacesAndNewlines).siwcNonEmpty,
+            clientID: query["client_id"],
             error: query["error"]?.trimmingCharacters(in: .whitespacesAndNewlines).siwcNonEmpty,
             errorDescription: query["error_description"]?.trimmingCharacters(in: .whitespacesAndNewlines).siwcNonEmpty
         )
@@ -758,6 +834,7 @@ final class DesktopSIWCLoopbackServer: @unchecked Sendable {
             var totalSent = 0
             while totalSent < response.count {
                 let sent = send(clientFD, base.advanced(by: totalSent), response.count - totalSent, 0)
+                if sent < 0 && errno == EINTR { continue }
                 if sent <= 0 { break }
                 totalSent += sent
             }
@@ -779,8 +856,8 @@ final class DesktopSIWCLoopbackServer: @unchecked Sendable {
     </head>
     <body>
       <div class="card">
-        <h1>已完成 ChatGPT 授权</h1>
-        <p>请返回 Amber，此页面现在可以关闭。</p>
+        <h1>已收到 ChatGPT 授权回调</h1>
+        <p>请返回 Amber 查看登录结果，此页面可以关闭。</p>
       </div>
     </body>
     </html>
@@ -819,8 +896,8 @@ actor DesktopChatGPTSIWCClient {
     typealias Clock = @Sendable () -> Int64
 
     private static let refreshLock = NSLock()
-    nonisolated(unsafe) private static var inFlightRefreshes: [String: Task<DesktopSIWCCredentials, Error>] = [:]
-    nonisolated(unsafe) private static var cachedJWKS: DesktopSIWCJWKS?
+    private typealias RefreshTask = Task<DesktopSIWCCredentials, Error>
+    nonisolated(unsafe) private static var inFlightRefreshes: [String: RefreshTask] = [:]
 
     let providerId: String
     private let secretStore: any DesktopSIWCSecretStore
@@ -867,7 +944,8 @@ actor DesktopChatGPTSIWCClient {
         extAgentHostID: String,
         savedClientID: String?,
         idTokenHint: String? = nil,
-        loginHint: String? = nil
+        loginHint: String? = nil,
+        requestPlanConsent: Bool = false
     ) -> URL {
         let isDynamicRegistration = !DesktopSIWCAuthStore.isValidIssuedClientID(savedClientID)
         let clientID = isDynamicRegistration
@@ -889,6 +967,7 @@ actor DesktopChatGPTSIWCClient {
         if isDynamicRegistration {
             items.append(URLQueryItem(name: "agent_name_hint", value: DesktopChatGPTSIWCConstants.agentNameHint))
         } else {
+            if requestPlanConsent { items.append(URLQueryItem(name: "prompt", value: "consent")) }
             if let idTokenHint = idTokenHint?.trimmingCharacters(in: .whitespacesAndNewlines), !idTokenHint.isEmpty {
                 items.append(URLQueryItem(name: "id_token_hint", value: idTokenHint))
             }
@@ -902,16 +981,14 @@ actor DesktopChatGPTSIWCClient {
     }
 
     static func generatePKCE() -> (verifier: String, challenge: String) {
-        let verifier = randomBase64URL(byteCount: 32)
+        let verifier = randomBase64URL()
         let digest = SHA256.hash(data: Data(verifier.utf8))
         let challenge = DesktopSIWCJWTVerifier.base64URLEncode(Data(digest))
         return (verifier, challenge)
     }
 
-    static func randomBase64URL(byteCount: Int) -> String {
-        var bytes = [UInt8](repeating: 0, count: byteCount)
-        _ = SecRandomCopyBytes(kSecRandomDefault, byteCount, &bytes)
-        return DesktopSIWCJWTVerifier.base64URLEncode(Data(bytes))
+    static func randomBase64URL() -> String {
+        SymmetricKey(size: .bits256).withUnsafeBytes { DesktopSIWCJWTVerifier.base64URLEncode(Data($0)) }
     }
 
     func signIn(
@@ -920,11 +997,9 @@ actor DesktopChatGPTSIWCClient {
         let extAgentHostID = try DesktopSIWCAuthStore.getOrCreateExtAgentHostID(store: secretStore)
         let existingCredentials = DesktopSIWCAuthStore.load(providerId: providerId, store: secretStore)
         let savedClientID = DesktopSIWCAuthStore.loadClientID(providerId: providerId, store: secretStore)
-        let isDynamicRegistration = !DesktopSIWCAuthStore.isValidIssuedClientID(savedClientID)
-
         let pkce = Self.generatePKCE()
-        let state = Self.randomBase64URL(byteCount: 32)
-        let nonce = Self.randomBase64URL(byteCount: 32)
+        let state = Self.randomBase64URL()
+        let nonce = Self.randomBase64URL()
 
         // Start 127.0.0.1 loopback listener BEFORE opening system browser.
         let server = DesktopSIWCLoopbackServer()
@@ -939,39 +1014,32 @@ actor DesktopChatGPTSIWCClient {
             nonce: nonce,
             extAgentHostID: extAgentHostID,
             savedClientID: savedClientID,
-            idTokenHint: existingCredentials?.idToken,
-            loginHint: existingCredentials?.email
+            idTokenHint: existingCredentials?.pendingVerificationAtMillis == nil ? existingCredentials?.idToken : nil,
+            loginHint: existingCredentials?.email,
+            requestPlanConsent: existingCredentials?.hasDirectTokenSharingScope == false
         )
 
+        try Task.checkCancellation()
         let opened = await openBrowser(authURL)
         guard opened else { throw DesktopSIWCError.browserLaunchFailed }
 
-        let callback = try await server.waitForCallback(timeout: timeout)
+        let callback = try await server.waitForCallback(state: state, timeout: timeout)
+        try Task.checkCancellation()
         if let error = callback.error {
             let detail = [error, callback.errorDescription].compactMap { $0 }.joined(separator: "：")
             throw DesktopSIWCError.authorizationDenied(detail)
-        }
-        guard callback.state == state else {
-            throw DesktopSIWCError.invalidState
         }
         guard let code = callback.code, !code.isEmpty else {
             throw DesktopSIWCError.authorizationDenied("回调缺少授权码（code）。")
         }
 
-        let issuedClientID: String
-        if isDynamicRegistration {
-            guard DesktopSIWCAuthStore.isValidIssuedClientID(callback.clientID),
-                  let returned = callback.clientID else {
-                throw DesktopSIWCError.dynamicRegistrationMissingClientID
-            }
-            issuedClientID = returned
-        } else if DesktopSIWCAuthStore.isValidIssuedClientID(callback.clientID), let returned = callback.clientID {
-            issuedClientID = returned
-        } else if let savedClientID, DesktopSIWCAuthStore.isValidIssuedClientID(savedClientID) {
-            issuedClientID = savedClientID
-        } else {
+        if let savedClientID, let returned = callback.clientID, returned != savedClientID {
+            throw DesktopSIWCError.registrationMismatch
+        }
+        guard let issuedClientID = savedClientID ?? callback.clientID else {
             throw DesktopSIWCError.dynamicRegistrationMissingClientID
         }
+        try DesktopSIWCAuthStore.retainClientID(issuedClientID, providerId: providerId, store: secretStore)
 
         let credentials = try await exchangeAuthorizationCode(
             code: code,
@@ -982,96 +1050,134 @@ actor DesktopChatGPTSIWCClient {
             expectedNonce: nonce
         )
 
-        guard DesktopSIWCAuthStore.save(providerId: providerId, credentials: credentials, store: secretStore) else {
-            throw DesktopSIWCError.credentialStoreFailed
-        }
+        try Task.checkCancellation()
+        try DesktopSIWCAuthStore.save(providerId: providerId, credentials: credentials, store: secretStore)
         return credentials.account
     }
 
     func getValidAccessToken(forceRefresh: Bool = false) async throws -> String {
-        guard let current = DesktopSIWCAuthStore.load(providerId: providerId, store: secretStore) else {
-            throw DesktopSIWCError.notSignedIn
-        }
-        guard current.hasDirectTokenSharingScope else {
-            throw DesktopSIWCError.planScopeUnavailable
-        }
-        let now = nowMillis()
-        let needsRefresh = forceRefresh ||
-            now >= current.expiresAtMillis - DesktopChatGPTSIWCConstants.refreshSkewMillis ||
-            now >= current.earliestRefreshAtMillis
-        if !needsRefresh && now < current.expiresAtMillis - DesktopChatGPTSIWCConstants.refreshSkewMillis {
-            return current.accessToken
-        }
-
-        let refreshed = try await coalescedRefresh(current: current)
-        guard refreshed.hasDirectTokenSharingScope else {
-            throw DesktopSIWCError.planScopeUnavailable
-        }
-        return refreshed.accessToken
-    }
-
-    func logout() -> Bool {
-        Self.cancelInFlightRefresh(providerId: providerId)
-        return DesktopSIWCAuthStore.logout(providerId: providerId, store: secretStore)
-    }
-
-    func deleteProvider() -> Bool {
-        Self.cancelInFlightRefresh(providerId: providerId)
-        return DesktopSIWCAuthStore.deleteProvider(providerId: providerId, store: secretStore)
-    }
-
-    private func coalescedRefresh(current: DesktopSIWCCredentials) async throws -> DesktopSIWCCredentials {
-        let key = providerId
-        let task: Task<DesktopSIWCCredentials, Error> = Self.refreshLock.withLock {
-            if let existing = Self.inFlightRefreshes[key] { return existing }
-            let created = Task { [self] in
-                defer {
-                    _ = Self.refreshLock.withLock { Self.inFlightRefreshes.removeValue(forKey: key) }
-                }
-                return try await self.performRefresh(current: current)
+        // Read the token and install its refresh under one lock across all client instances.
+        let (current, flight) = try Self.refreshLock.withLock { () throws -> (DesktopSIWCCredentials, RefreshTask?) in
+            guard let current = DesktopSIWCAuthStore.load(providerId: providerId, store: secretStore) else {
+                throw DesktopSIWCError.notSignedIn
             }
-            Self.inFlightRefreshes[key] = created
-            return created
+            if current.pendingVerificationAtMillis == nil {
+                guard current.hasDirectTokenSharingScope else { throw DesktopSIWCError.planScopeUnavailable }
+                let now = nowMillis()
+                let nearExpiry = now >= current.expiresAtMillis - DesktopChatGPTSIWCConstants.refreshSkewMillis
+                if !forceRefresh && !nearExpiry { return (current, nil) }
+                if now < current.earliestRefreshAtMillis || current.refreshToken == nil {
+                    if now < current.expiresAtMillis { return (current, nil) }
+                    if current.refreshToken == nil { throw DesktopSIWCError.notSignedIn }
+                    throw DesktopSIWCError.tokenExchangeFailed("尚未到服务端允许刷新的时间，请稍后重试。")
+                }
+            }
+            if let existing = Self.inFlightRefreshes[providerId] { return (current, existing) }
+            let task = Task {
+                defer { Self.refreshLock.withLock { Self.inFlightRefreshes[providerId] = nil } }
+                return try await performRefresh(current: current)
+            }
+            Self.inFlightRefreshes[providerId] = task
+            return (current, task)
         }
-        return try await task.value
+        let resolved = try await flight?.value ?? current
+        try Task.checkCancellation()
+        if flight != nil, DesktopSIWCAuthStore.load(providerId: providerId, store: secretStore) != resolved {
+            throw CancellationError()
+        }
+        guard resolved.hasDirectTokenSharingScope else { throw DesktopSIWCError.planScopeUnavailable }
+        guard let access = resolved.accessToken else { throw DesktopSIWCError.notSignedIn }
+        guard nowMillis() < resolved.expiresAtMillis else {
+            throw DesktopSIWCError.tokenExchangeFailed("访问凭证已过期，请重试。")
+        }
+        return access
     }
 
-    private static func cancelInFlightRefresh(providerId: String) {
-        let task = refreshLock.withLock { inFlightRefreshes.removeValue(forKey: providerId) }
-        task?.cancel()
+    func endSession(deleteRegistration: Bool = false) async throws {
+        // A dispatched refresh owns the rotating token until it settles. Take the latest
+        // replacement out of local use before attempting revocation.
+        while true {
+            let (flight, removed) = try Self.refreshLock.withLock { () throws -> (RefreshTask?, DesktopSIWCCredentials?) in
+                if let task = Self.inFlightRefreshes[providerId] { return (task, nil) }
+                let removed = try DesktopSIWCAuthStore.removeSession(providerId: providerId,
+                    deleteRegistration: deleteRegistration, store: secretStore)
+                return (nil, removed)
+            }
+            if let flight { _ = await flight.result; continue }
+            if let removed, let token = removed.refreshToken {
+                try await revoke(refreshToken: token, clientID: removed.clientId)
+            }
+            return
+        }
+    }
+
+    private func revoke(refreshToken: String, clientID: String) async throws {
+        var request = URLRequest(url: URL(string: DesktopChatGPTSIWCConstants.revocationEndpoint)!, timeoutInterval: 10)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(Self.formEncode([
+            "token": refreshToken, "token_type_hint": "refresh_token", "client_id": clientID,
+        ]).utf8)
+        for attempt in 0..<2 {
+            let status = try? await transport(request).1.statusCode
+            if status == 200 { return }
+            let temporary = status.map { (500..<600).contains($0) } ?? true
+            guard attempt == 0, temporary, !Task.isCancelled else { break }
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+        throw DesktopSIWCError.revocationUnconfirmed
+    }
+
+    private func commitRefresh(_ refreshed: DesktopSIWCCredentials?, replacing current: DesktopSIWCCredentials) throws {
+        switch DesktopSIWCAuthStore.saveRefreshedCredentials(
+            providerId: providerId, expected: current, refreshed: refreshed, store: secretStore
+        ) {
+        case .saved: return
+        case .credentialsChanged: throw CancellationError()
+        case .storeFailed: throw DesktopSIWCError.credentialStoreFailed
+        }
     }
 
     private func performRefresh(current: DesktopSIWCCredentials) async throws -> DesktopSIWCCredentials {
-        let form = Self.formEncode([
-            "grant_type": "refresh_token",
-            "refresh_token": current.refreshToken,
-            "client_id": current.clientId,
-            "resource": DesktopChatGPTSIWCConstants.resource,
-        ])
-        let tokenJSON = try await postTokenRequest(formBody: form)
-        let refreshed = try await parseTokenResponse(
-            tokenJSON,
-            issuedClientID: current.clientId,
-            extAgentHostID: current.extAgentHostId,
-            expectedNonce: nil,
-            fallback: current
-        )
-        switch DesktopSIWCAuthStore.saveRefreshedCredentials(
-            providerId: providerId,
-            expected: current,
-            refreshed: refreshed,
-            store: secretStore
-        ) {
-        case .saved:
-            return refreshed
-        case .credentialsChanged:
-            guard let latest = DesktopSIWCAuthStore.load(providerId: providerId, store: secretStore) else {
-                throw DesktopSIWCError.notSignedIn
-            }
-            return latest
-        case .storeFailed:
-            throw DesktopSIWCError.credentialStoreFailed
+        var verified = current
+        if current.pendingVerificationAtMillis != nil {
+            verified = try await finishRotation(current)
+            if nowMillis() < verified.expiresAtMillis { return verified }
         }
+        guard let refreshToken = verified.refreshToken else { throw DesktopSIWCError.notSignedIn }
+        let form = Self.formEncode([
+            "grant_type": "refresh_token", "refresh_token": refreshToken,
+            "client_id": verified.clientId, "resource": DesktopChatGPTSIWCConstants.resource,
+        ])
+        let tokenJSON: [String: Any]
+        do {
+            tokenJSON = try await postTokenRequest(formBody: form, refreshing: true)
+        } catch DesktopSIWCError.notSignedIn {
+            try commitRefresh(nil, replacing: verified)
+            throw DesktopSIWCError.notSignedIn
+        }
+        var refreshed = try parseTokenResponse(tokenJSON, issuedClientID: verified.clientId,
+                                               extAgentHostID: verified.extAgentHostId, fallback: verified)
+        if tokenJSON["id_token"] != nil {
+            // The server already rotated the grant. Persist the successor before a JWKS fetch
+            // can fail or the app quits. It cannot be used until its identity is verified.
+            refreshed.pendingVerificationAtMillis = nowMillis()
+        }
+        try commitRefresh(refreshed, replacing: verified)
+        if refreshed.pendingVerificationAtMillis != nil { return try await finishRotation(refreshed) }
+        return refreshed
+    }
+
+    private func finishRotation(_ pending: DesktopSIWCCredentials) async throws -> DesktopSIWCCredentials {
+        let verified: DesktopSIWCCredentials
+        do {
+            verified = try await verifyIdentity(pending, nonce: nil)
+        } catch let error as DesktopSIWCError where error != .jwksUnavailable {
+            try commitRefresh(nil, replacing: pending)
+            throw error
+        }
+        try commitRefresh(verified, replacing: pending)
+        return verified
     }
 
     private func exchangeAuthorizationCode(
@@ -1091,16 +1197,12 @@ actor DesktopChatGPTSIWCClient {
             "resource": DesktopChatGPTSIWCConstants.resource,
         ])
         let tokenJSON = try await postTokenRequest(formBody: form)
-        return try await parseTokenResponse(
-            tokenJSON,
-            issuedClientID: issuedClientID,
-            extAgentHostID: extAgentHostID,
-            expectedNonce: expectedNonce,
-            fallback: nil
-        )
+        let credentials = try parseTokenResponse(tokenJSON, issuedClientID: issuedClientID,
+                                                 extAgentHostID: extAgentHostID, fallback: nil)
+        return try await verifyIdentity(credentials, nonce: expectedNonce)
     }
 
-    private func postTokenRequest(formBody: String) async throws -> [String: Any] {
+    private func postTokenRequest(formBody: String, refreshing: Bool = false) async throws -> [String: Any] {
         var request = URLRequest(url: URL(string: DesktopChatGPTSIWCConstants.tokenEndpoint)!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -1117,7 +1219,16 @@ actor DesktopChatGPTSIWCClient {
         }
 
         guard (200..<300).contains(response.statusCode) else {
-            throw DesktopSIWCError.tokenExchangeFailed("HTTP \(response.statusCode) \(Self.safeErrorDetail(data))")
+            let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let code = body?["error"] as? String
+            let invalidGrant = ["invalid_grant", "invalid_refresh_token", "token_expired", "refresh_token_expired",
+                                "refresh_token_invalidated", "refresh_token_reused"]
+            if refreshing, (400..<500).contains(response.statusCode), let code, invalidGrant.contains(code) {
+                throw DesktopSIWCError.notSignedIn
+            }
+            // Only known protocol codes are suitable for display. Error bodies can echo credentials.
+            let detail = (invalidGrant + ["invalid_client"]).first { $0 == code }
+            throw DesktopSIWCError.tokenExchangeFailed(["HTTP \(response.statusCode)", detail].compactMap { $0 }.joined(separator: " "))
         }
         guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             throw DesktopSIWCError.tokenExchangeFailed("Token 响应不是有效的 JSON。")
@@ -1126,86 +1237,68 @@ actor DesktopChatGPTSIWCClient {
     }
 
     private func parseTokenResponse(
-        _ json: [String: Any],
-        issuedClientID: String,
-        extAgentHostID: String,
-        expectedNonce: String?,
-        fallback: DesktopSIWCCredentials?
-    ) async throws -> DesktopSIWCCredentials {
-        guard let accessToken = (json["access_token"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !accessToken.isEmpty else {
-            throw DesktopSIWCError.tokenExchangeFailed("Token 响应缺少 access_token。")
+        _ json: [String: Any], issuedClientID: String, extAgentHostID: String, fallback: DesktopSIWCCredentials?
+    ) throws -> DesktopSIWCCredentials {
+        let scopes = (json["scope"] as? String)?.split(whereSeparator: \.isWhitespace).map(String.init)
+            ?? fallback?.scopes ?? []
+        let access = (json["access_token"] as? String)?.siwcNonEmpty
+        let refresh = (json["refresh_token"] as? String)?.siwcNonEmpty
+        let newIDToken = (json["id_token"] as? String)?.siwcNonEmpty
+        if scopes.contains(DesktopChatGPTSIWCConstants.requiredPlanScope) || fallback != nil {
+            guard access != nil else { throw DesktopSIWCError.tokenExchangeFailed("Token 响应缺少 access_token。") }
         }
-        let refreshToken = ((json["refresh_token"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).siwcNonEmpty)
-            ?? fallback?.refreshToken
-            ?? ""
-        guard !refreshToken.isEmpty else {
-            throw DesktopSIWCError.tokenExchangeFailed("Token 响应缺少 refresh_token。")
+        if scopes.contains("offline_access") || fallback != nil {
+            guard refresh != nil else { throw DesktopSIWCError.tokenExchangeFailed("Token 响应缺少 refresh_token。") }
         }
-
-        let idToken = (json["id_token"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).siwcNonEmpty
-            ?? fallback?.idToken
-
-        var verified: DesktopSIWCVerifiedIDToken?
-        if let rawIDToken = (json["id_token"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).siwcNonEmpty {
-            verified = try await verifyIDTokenWithJWKS(
-                rawIDToken,
-                expectedClientID: issuedClientID,
-                expectedNonce: expectedNonce
-            )
-        } else if expectedNonce != nil {
-            throw DesktopSIWCError.idTokenVerificationFailed("登录响应缺少 id_token。")
+        if newIDToken == nil && (fallback == nil || json["id_token"] != nil) {
+            throw DesktopSIWCError.idTokenVerificationFailed("Token 响应缺少有效的 id_token。")
         }
-
-        let returnedScopes: [String]
-        if let scopeString = json["scope"] as? String {
-            returnedScopes = scopeString
-                .split(whereSeparator: \.isWhitespace)
-                .map(String.init)
-        } else if let fallback {
-            returnedScopes = fallback.scopes
-        } else {
-            returnedScopes = []
+        if let type = json["token_type"] as? String, access != nil, type.lowercased() != "bearer" {
+            throw DesktopSIWCError.tokenExchangeFailed("不支持的 token_type。")
         }
 
         let now = nowMillis()
-        let expiresInSeconds = Self.parseNumeric(json["expires_in"])
-        let lifetimeMillis = expiresInSeconds.map { max(Int64($0 * 1000.0), 60_000) }
-            ?? DesktopChatGPTSIWCConstants.fallbackTokenLifetimeMillis
-        let expiresAtMillis = now + lifetimeMillis
-
-        let earliestRefreshAtMillis: Int64
-        if let serverEarliest = Self.parseEpochMillis(json["earliest_refresh_at"]) {
-            earliestRefreshAtMillis = serverEarliest
+        let lifetime: Int64
+        if let raw = json["expires_in"] {
+            guard let seconds = Self.parseNumeric(raw), seconds > 0,
+                  let milliseconds = Int64(exactly: (seconds * 1000).rounded(.down)) else {
+                throw DesktopSIWCError.tokenExchangeFailed("无效的 expires_in。")
+            }
+            lifetime = milliseconds
         } else {
-            earliestRefreshAtMillis = max(
-                now + Int64(Double(lifetimeMillis) * 0.75),
-                expiresAtMillis - DesktopChatGPTSIWCConstants.refreshSkewMillis
-            )
+            lifetime = DesktopChatGPTSIWCConstants.fallbackTokenLifetimeMillis
         }
-
+        let (expires, overflow) = now.addingReportingOverflow(lifetime)
+        guard !overflow else { throw DesktopSIWCError.tokenExchangeFailed("无效的 expires_in。") }
         return DesktopSIWCCredentials(
-            accessToken: accessToken,
-            refreshToken: refreshToken,
-            idToken: idToken,
-            clientId: issuedClientID,
-            extAgentHostId: extAgentHostID,
-            expiresAtMillis: expiresAtMillis,
-            earliestRefreshAtMillis: min(earliestRefreshAtMillis, expiresAtMillis),
-            scopes: returnedScopes,
-            subject: verified?.subject ?? fallback?.subject,
-            email: verified?.email ?? fallback?.email,
-            name: verified?.name ?? fallback?.name,
-            planType: verified?.planType ?? fallback?.planType
+            accessToken: access, refreshToken: refresh, idToken: newIDToken ?? fallback?.idToken,
+            clientId: issuedClientID, extAgentHostId: extAgentHostID, expiresAtMillis: expires,
+            earliestRefreshAtMillis: Self.parseEpochMillis(json["earliest_refresh_at"]) ?? now,
+            scopes: scopes, subject: fallback?.subject, email: fallback?.email,
+            name: fallback?.name, planType: fallback?.planType
         )
+    }
+
+    private func verifyIdentity(_ credentials: DesktopSIWCCredentials, nonce: String?) async throws -> DesktopSIWCCredentials {
+        guard let idToken = credentials.idToken else { throw DesktopSIWCError.idTokenVerificationFailed("缺少 id_token。") }
+        let verified = try await verifyIDTokenWithJWKS(idToken, expectedClientID: credentials.clientId,
+            expectedNonce: nonce, atMillis: credentials.pendingVerificationAtMillis ?? nowMillis())
+        if let subject = credentials.subject, subject != verified.subject { throw DesktopSIWCError.identityMismatch }
+        var result = credentials
+        result.pendingVerificationAtMillis = nil
+        result.subject = verified.subject
+        result.email = verified.email ?? credentials.email
+        result.name = verified.name ?? credentials.name
+        result.planType = verified.planType ?? credentials.planType
+        return result
     }
 
     private func verifyIDTokenWithJWKS(
         _ idToken: String,
         expectedClientID: String,
-        expectedNonce: String?
+        expectedNonce: String?, atMillis: Int64
     ) async throws -> DesktopSIWCVerifiedIDToken {
-        let nowSeconds = TimeInterval(nowMillis()) / 1000.0
+        let nowSeconds = TimeInterval(atMillis) / 1000.0
         let initialJWKS = try await fetchJWKS(forceRefresh: false)
         do {
             return try DesktopSIWCJWTVerifier.verify(
@@ -1229,10 +1322,8 @@ actor DesktopChatGPTSIWCClient {
     }
 
     private func fetchJWKS(forceRefresh: Bool) async throws -> DesktopSIWCJWKS {
-        if !forceRefresh, let cached = Self.refreshLock.withLock({ Self.cachedJWKS }) {
-            return cached
-        }
-        var request = URLRequest(url: URL(string: DesktopChatGPTSIWCConstants.jwksEndpoint)!)
+        var request = URLRequest(url: URL(string: DesktopChatGPTSIWCConstants.jwksEndpoint)!,
+                                 cachePolicy: forceRefresh ? .reloadIgnoringLocalCacheData : .useProtocolCachePolicy)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let (data, response): (Data, HTTPURLResponse)
@@ -1241,19 +1332,12 @@ actor DesktopChatGPTSIWCClient {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            throw DesktopSIWCError.idTokenVerificationFailed("无法获取 OpenAI JWKS 公钥（离线或网络受限）：\(error.localizedDescription)")
+            throw DesktopSIWCError.jwksUnavailable
         }
         guard (200..<300).contains(response.statusCode),
               let jwks = try? JSONDecoder().decode(DesktopSIWCJWKS.self, from: data),
-              !jwks.keys.isEmpty else {
-            throw DesktopSIWCError.idTokenVerificationFailed("JWKS 公钥响应无效（HTTP \(response.statusCode)）。")
-        }
-        Self.refreshLock.withLock { Self.cachedJWKS = jwks }
+              !jwks.keys.isEmpty else { throw DesktopSIWCError.jwksUnavailable }
         return jwks
-    }
-
-    static func clearCachedJWKSForTesting() {
-        refreshLock.withLock { cachedJWKS = nil }
     }
 
     private static func parseNumeric(_ raw: Any?) -> Double? {
@@ -1266,19 +1350,14 @@ actor DesktopChatGPTSIWCClient {
     }
 
     private static func parseEpochMillis(_ raw: Any?) -> Int64? {
-        guard let numeric = parseNumeric(raw), numeric > 0 else { return nil }
-        // Accept both Unix seconds (~1.7e9) and Unix milliseconds (~1.7e12).
-        return numeric < 10_000_000_000 ? Int64(numeric * 1000.0) : Int64(numeric)
-    }
-
-    private static func safeErrorDetail(_ data: Data) -> String {
-        guard !data.isEmpty else { return "" }
-        if let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
-            if let desc = object["error_description"] as? String, !desc.isEmpty { return desc }
-            if let err = object["error"] as? String, !err.isEmpty { return err }
-            if let msg = object["message"] as? String, !msg.isEmpty { return msg }
+        if let numeric = parseNumeric(raw), numeric > 0 {
+            let millis = numeric < 10_000_000_000 ? numeric * 1000 : numeric
+            return Int64(exactly: millis.rounded(.down))
         }
-        return String(decoding: data.prefix(240), as: UTF8.self)
+        guard let text = raw as? String else { return nil }
+        let withFraction = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
+        let date = (try? withFraction.parse(text)) ?? (try? Date.ISO8601FormatStyle().parse(text))
+        return date.map { Int64($0.timeIntervalSince1970 * 1000) }
     }
 
     private static func formEncode(_ params: [String: String]) -> String {
@@ -1312,13 +1391,11 @@ actor DesktopChatGPTSIWCClient {
     }
 
     func logout(providerID: UUID) async throws {
-        let ok = await DesktopChatGPTSIWCClient(providerId: providerID.uuidString.lowercased()).logout()
-        guard ok else { throw DesktopSIWCError.credentialStoreFailed }
+        try await DesktopChatGPTSIWCClient(providerId: providerID.uuidString.lowercased()).endSession()
     }
 
     func deleteProvider(providerID: UUID) async throws {
-        let ok = await DesktopChatGPTSIWCClient(providerId: providerID.uuidString.lowercased()).deleteProvider()
-        guard ok else { throw DesktopSIWCError.credentialStoreFailed }
+        try await DesktopChatGPTSIWCClient(providerId: providerID.uuidString.lowercased()).endSession(deleteRegistration: true)
     }
 }
 
@@ -1344,9 +1421,13 @@ actor DesktopChatGPTSIWCClient {
     func selectProvider(_ id: UUID?) {
         cancel()
         providerID = id
-        account = id.flatMap { authorizer.account(providerID: $0) }
+        reloadAccount()
         status = nil
         failed = false
+    }
+
+    func reloadAccount() {
+        account = providerID.flatMap { authorizer.account(providerID: $0) }
     }
 
     func cancel() {
@@ -1426,6 +1507,7 @@ actor DesktopChatGPTSIWCClient {
                 status = "已退出 ChatGPT 登录，服务商和模型配置已保留。"
             } catch {
                 guard token == request else { return }
+                account = authorizer.account(providerID: id)
                 failed = true
                 status = error.localizedDescription
             }

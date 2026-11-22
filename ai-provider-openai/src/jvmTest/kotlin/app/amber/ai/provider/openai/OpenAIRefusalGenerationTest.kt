@@ -35,15 +35,12 @@ class OpenAIRefusalGenerationTest {
     }
 
     @Test
-    fun codexSingleShotGenerationPreservesStreamedRefusal() = runBlocking {
-        withProvider(responsesRefusalStream(), streaming = true) { provider ->
-            val result = provider.generateText(
-                setting(responses = false).copy(authMode = OpenAIAuthMode.CODEX_OAUTH),
-                messages,
-                params,
-            )
-
-            assertEquals(refusal, result.choices.single().message!!.text())
+    fun oauthSingleShotGenerationPreservesStreamedRefusal() = runBlocking {
+        for (mode in listOf(OpenAIAuthMode.CODEX_OAUTH, OpenAIAuthMode.CHATGPT_SIWC)) {
+            withProvider(responsesRefusalStream(), streaming = true) { provider ->
+                val result = provider.generateText(setting(responses = false).copy(authMode = mode), messages, params)
+                assertEquals(refusal, result.choices.single().message!!.text(), mode.name)
+            }
         }
     }
 

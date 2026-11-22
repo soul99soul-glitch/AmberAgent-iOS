@@ -23,6 +23,7 @@ import app.amber.ai.ui.UIMessagePart
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -780,6 +781,14 @@ class OpenAIKmpProviderRequestTest {
                                 put("role", "user")
                                 put("content", "Hello")
                             })
+                            add(buildJsonObject {
+                                put("type", "additional_tools")
+                                put("role", "developer")
+                                putJsonArray("tools") {
+                                    add(buildJsonObject { put("type", "function"); put("name", "tool_search") })
+                                    add(buildJsonObject { put("type", "file_search") })
+                                }
+                            })
                         },
                     ),
                     CustomBody(
@@ -792,11 +801,13 @@ class OpenAIKmpProviderRequestTest {
                             add(buildJsonObject { put("type", "file_search") })
                             add(buildJsonObject { put("type", "code_interpreter") })
                             add(buildJsonObject { put("type", "computer_use") })
+                            add(buildJsonObject { put("type", "computer") })
                             add(buildJsonObject { put("type", "mcp") })
                             add(buildJsonObject { put("type", "tool_search") })
                             add(buildJsonObject { put("type", "programmatic_tool_calling") })
                         },
                     ),
+                    CustomBody("tool_choice", buildJsonObject { put("type", "file_search") }),
                 ),
             ),
             stream = false,
@@ -819,10 +830,16 @@ class OpenAIKmpProviderRequestTest {
 
         val inputItems = body.getValue("input").jsonArray
         assertTrue(inputItems.none { it.jsonObject["role"]?.jsonPrimitive?.content == "system" })
-        assertEquals("developer", inputItems[0].jsonObject.getValue("role").jsonPrimitive.content)
+        val instruction = inputItems.map { it.jsonObject }.single { it["content"] == JsonPrimitive("Injected system") }
+        assertEquals("developer", instruction.getValue("role").jsonPrimitive.content)
+        val declarations = inputItems.first().jsonObject
+        assertEquals("additional_tools", declarations.getValue("type").jsonPrimitive.content)
+        assertEquals(listOf("function", "custom"), declarations.getValue("tools").jsonArray.map { it.jsonObject.getValue("type").jsonPrimitive.content })
+        assertEquals("tool_search", inputItems.last().jsonObject.getValue("tools").jsonArray.single().jsonObject.getValue("name").jsonPrimitive.content)
 
         val toolTypes = body.getValue("tools").jsonArray.map { it.jsonObject.getValue("type").jsonPrimitive.content }
-        assertEquals(listOf("function", "custom", "web_search"), toolTypes)
+        assertEquals(listOf("web_search"), toolTypes)
+        assertFalse("tool_choice" in body)
     }
 
     private fun transcriptMessages(vararg events: PromptTranscriptEvent): List<UIMessage> = buildList {

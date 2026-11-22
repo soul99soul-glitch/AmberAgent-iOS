@@ -108,12 +108,15 @@ import Foundation
         let accumulator = DesktopKMPAccumulator(messages: input, model: params.model, responseID: responseID, run: run)
         let job: Kotlinx_coroutines_coreJob
         if let value = provider as? ProviderSetting.OpenAI {
+            let siwc = value.authMode == .chatgptSiwc
             job = openAI.streamTextCancellable(providerSetting: value, messages: input, params: params,
                 onChunk: { @Sendable in accumulator.append($0) },
                 onComplete: { @Sendable in if accumulator.flushAndStop() { run.yield(.complete) } },
                 onError: { @Sendable in
                     _ = accumulator.flushAndStop()
-                    run.yield(.failed(Self.failureMessage($0.message ?? "")))
+                    let message = $0.message ?? ""
+                    let planError = siwc ? DesktopSIWCError.planError(in: message) : nil
+                    run.yield(.failed(planError?.localizedDescription ?? Self.failureMessage(message)))
                 })
         } else if let value = provider as? ProviderSetting.Claude {
             job = claude.streamTextCancellable(providerSetting: value, messages: input, params: params,
@@ -130,18 +133,6 @@ import Foundation
 
     nonisolated private static func failureMessage(_ raw: String) -> String {
         // Provider bodies can echo credentials; present classified status, never raw bodies.
-        if raw.contains("subscription_sharing_usage_limit_exceeded") {
-            return DesktopSIWCError.usageLimitExceeded.localizedDescription
-        }
-        if raw.contains("subscription_sharing_usage_unavailable") {
-            return DesktopSIWCError.usageUnavailable.localizedDescription
-        }
-        if raw.contains("chatgpt.tokens.use.direct") {
-            return DesktopSIWCError.planScopeUnavailable.localizedDescription
-        }
-        if raw.contains("Continue with ChatGPT") {
-            return DesktopSIWCError.notSignedIn.localizedDescription
-        }
         if raw.contains("401") || raw.contains("403") { return "服务商拒绝认证，请检查 API Key 与账号权限后重试。" }
         if raw.contains("429") { return "服务商请求限额已到，请稍后重试或检查余额。" }
         if raw.contains("404") { return "服务商未找到模型或 API 路径，请检查地址与 Model ID。" }
