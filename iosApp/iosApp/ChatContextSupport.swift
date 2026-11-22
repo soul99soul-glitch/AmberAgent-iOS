@@ -392,6 +392,7 @@ struct ChatRuntimeContextBuilder {
 
     @MainActor
     private func messagesByInjectingProceduralRules(_ messages: [UIMessage]) -> [UIMessage] {
+        guard AmberHubStore.shared.allowsGlobalMemory(conversationId: conversationId) else { return messages }
         let effectiveRuleStore = ruleStore ?? .shared
         let active = effectiveRuleStore.selectActiveForInjection(
             conversationId: conversationId,
@@ -400,7 +401,7 @@ struct ChatRuntimeContextBuilder {
         )
         let block = IOSAuthorityPromptAssembler.renderConfirmedRulesBlock(active)
         guard !block.isEmpty else { return messages }
-        return [PromptTranscript.shared.sectionMessage(name: "proceduralRules", text: block)] + messages
+        return [PromptTranscript.shared.sectionMessage(name: PromptTranscriptKt.PROCEDURAL_RULES_SECTION, text: block)] + messages
     }
 
     @MainActor

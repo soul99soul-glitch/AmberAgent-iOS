@@ -242,12 +242,13 @@ extension ChatViewModel {
                 messagesByInjectingRuntimeContext: { [weak self] messages in
                     self?.messagesByInjectingRuntimeContext(messages, state: state) ?? messages
                 },
-                messagesByInjectingRuntimeContextForRun: { [weak self] messages, mcpEnabled, memoryRecallOverride in
+                messagesByInjectingRuntimeContextForRun: { [weak self] messages, mcpEnabled, memoryRecallOverride, recordRuleHits in
                     self?.messagesByInjectingRuntimeContext(
                         messages,
                         mcpEnabledOverride: mcpEnabled,
                         state: state,
-                        memoryRecallOverride: memoryRecallOverride
+                        memoryRecallOverride: memoryRecallOverride,
+                        recordRuleHits: recordRuleHits
                     ) ?? messages
                 },
                 prepareImageAttachments: { [weak self] messages, model, settings, conversationId in

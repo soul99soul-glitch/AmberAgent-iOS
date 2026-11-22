@@ -152,6 +152,8 @@ enum IOSPairingBootstrapError: LocalizedError, Equatable, Sendable {
     case gatewayMismatch
     case deviceMismatch
     case envelopeExpired
+    case settingsUnavailable
+    case settingsSaveFailed
 
     var errorDescription: String? {
         switch self {
@@ -167,6 +169,10 @@ enum IOSPairingBootstrapError: LocalizedError, Equatable, Sendable {
             return IOSAppLocalization.string("同步配置与当前配对网关不匹配", defaultValue: "同步配置与当前配对网关不匹配")
         case .envelopeExpired:
             return IOSAppLocalization.string("加密同步配置已过期，请重新配对或刷新同步", defaultValue: "加密同步配置已过期，请重新配对或刷新同步")
+        case .settingsUnavailable:
+            return IOSAppLocalization.string("本机模型设置尚未就绪", defaultValue: "本机模型设置尚未就绪")
+        case .settingsSaveFailed:
+            return IOSAppLocalization.string("本机未能安全保存同步配置", defaultValue: "本机未能安全保存同步配置")
         }
     }
 }
@@ -294,7 +300,7 @@ enum IOSPairingBootstrapCrypto {
         privateKey: SecKey,
         expectedGatewayId: String? = nil,
         expectedDeviceId: String? = nil,
-        nowSeconds: Int64? = nil
+        nowSeconds: Int64 = Int64(Date().timeIntervalSince1970)
     ) throws -> IOSBootstrapEnvelopePayload {
         let parts = compact.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
         guard parts.count == 5,
@@ -314,7 +320,8 @@ enum IOSPairingBootstrapCrypto {
         guard let encryptedKey = base64urlDecode(parts[1]),
               let iv = base64urlDecode(parts[2]),
               let ciphertext = base64urlDecode(parts[3]),
-              let tag = base64urlDecode(parts[4])
+              let tag = base64urlDecode(parts[4]),
+              iv.count == 12, tag.count == 16
         else {
             throw IOSPairingBootstrapError.invalidEnvelopeStructure
         }
@@ -325,7 +332,7 @@ enum IOSPairingBootstrapCrypto {
             .rsaEncryptionOAEPSHA256,
             encryptedKey as CFData,
             &decryptError
-        ) as Data? else {
+        ) as Data?, cekData.count == 32 else {
             throw IOSPairingBootstrapError.decryptionFailed
         }
 
@@ -345,14 +352,21 @@ enum IOSPairingBootstrapCrypto {
             throw IOSPairingBootstrapError.invalidEnvelopeStructure
         }
 
-        if let expectedGatewayId, !expectedGatewayId.isEmpty, decoded.gatewayId != expectedGatewayId {
+        if let expectedGatewayId, decoded.gatewayId.isEmpty || decoded.gatewayId != expectedGatewayId {
             throw IOSPairingBootstrapError.gatewayMismatch
         }
-        if let expectedDeviceId, !expectedDeviceId.isEmpty, decoded.deviceId != expectedDeviceId {
+        if let expectedDeviceId, decoded.deviceId.isEmpty || decoded.deviceId != expectedDeviceId {
             throw IOSPairingBootstrapError.deviceMismatch
         }
-        if let nowSeconds, decoded.expiresAt > 0, nowSeconds > decoded.expiresAt {
+        if decoded.expiresAt <= nowSeconds {
             throw IOSPairingBootstrapError.envelopeExpired
+        }
+        guard decoded.version == 1, decoded.issuedAt > 0, decoded.expiresAt > decoded.issuedAt,
+              decoded.expiresAt - decoded.issuedAt <= 300 else {
+            throw IOSPairingBootstrapError.invalidEnvelopeStructure
+        }
+        if decoded.issuedAt - 60 > nowSeconds {
+            throw IOSPairingBootstrapError.invalidEnvelopeStructure
         }
         return decoded
     }
@@ -460,14 +474,22 @@ enum IOSPairingBootstrapImporter {
     ) throws -> ApplyResult {
         let resolvedSoulStore = soulStore ?? .shared
         let resolvedRuleStore = ruleStore ?? .shared
+        if let version = snapshot.version, version != 1 {
+            throw IOSPairingBootstrapError.invalidEnvelopeStructure
+        }
+        if let config = snapshot.configuration, config.gatewayId != gatewayId {
+            throw IOSPairingBootstrapError.gatewayMismatch
+        }
         var provider = snapshot.configuration?.model.provider ?? ""
         var modelId = snapshot.configuration?.model.modelId ?? ""
         var authMode = snapshot.configuration?.model.authMode ?? "apiKey"
         var siwcConfigured = snapshot.configuration?.model.siwcConfigured ?? false
         var credentialsImported = false
+        var requiresLocalSignIn = false
         var decrypted = false
 
-        if let jwe = snapshot.encryptedConfigJwe, !jwe.isEmpty, let privateKey {
+        if let jwe = snapshot.encryptedConfigJwe {
+            guard let privateKey else { throw IOSPairingBootstrapError.decryptionFailed }
             let payload = try IOSPairingBootstrapCrypto.unseal(
                 jwe,
                 privateKey: privateKey,
@@ -481,11 +503,10 @@ enum IOSPairingBootstrapImporter {
             authMode = payload.model.authMode
             siwcConfigured = payload.model.siwcConfigured
 
-            if let sharedSettings {
-                credentialsImported = importModelAndCredentials(payload: payload, into: sharedSettings)
-            } else {
-                credentialsImported = !(payload.credentials.modelApiKey ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }
+            guard let sharedSettings else { throw IOSPairingBootstrapError.settingsUnavailable }
+            let result = try importModelAndCredentials(payload: payload, into: sharedSettings)
+            credentialsImported = result.hasCredentials
+            requiresLocalSignIn = result.requiresLocalSignIn
         }
 
         var soulSynced = false
@@ -510,6 +531,7 @@ enum IOSPairingBootstrapImporter {
             modelId: modelId,
             authMode: authMode,
             siwcConfigured: siwcConfigured,
+            requiresLocalSignIn: requiresLocalSignIn,
             credentialsImported: credentialsImported,
             soulSynced: soulSynced,
             activeRulesImported: activeRulesImported
@@ -534,138 +556,127 @@ enum IOSPairingBootstrapImporter {
     private static func importModelAndCredentials(
         payload: IOSBootstrapEnvelopePayload,
         into sharedSettings: IOSSharedSettingsStore
-    ) -> Bool {
+    ) throws -> (hasCredentials: Bool, requiresLocalSignIn: Bool) {
+        let mutations = IosSettingsMutations.shared
+        var settings = sharedSettings.snapshot
+        let key = payload.credentials.modelApiKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let kind = payload.model.provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let modelId = payload.model.modelId.trimmingCharacters(in: .whitespacesAndNewlines)
-        let baseUrl = payload.model.baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
-        let apiKey = payload.credentials.modelApiKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        var importedAnyKey = false
-
-        if kind == "openai" || kind == "claude" {
-            let existingProvider = sharedSettings.snapshot.providers.first { provider in
-                if kind == "openai", let openAI = provider as? ProviderSetting.OpenAI {
-                    if !baseUrl.isEmpty {
-                        return openAI.baseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                            == baseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                    }
-                    return openAI.enabled
-                }
-                if kind == "claude", let claude = provider as? ProviderSetting.Claude {
-                    if !baseUrl.isEmpty {
-                        return claude.baseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                            == baseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                    }
-                    return claude.enabled
-                }
-                return false
-            } ?? sharedSettings.snapshot.providers.first { provider in
-                kind == "openai" ? (provider is ProviderSetting.OpenAI) : (provider is ProviderSetting.Claude)
+        let supportsProvider = IOSCloudConfigWire.supportedProviders.contains(kind)
+        // The daemon can also run in local echo mode, which has no iOS provider to import.
+        let requiresLocalSignIn = supportsProvider
+            ? try importChatModel(payload.model, apiKey: key, settings: &settings)
+            : false
+        var hasCredentials = supportsProvider && !key.isEmpty
+        var importedSearchProviders: [[String: String]] = []
+        let searchKeys = [("exa", payload.credentials.exaApiKey), ("brave", payload.credentials.braveApiKey)]
+        for (type, rawKey) in searchKeys {
+            guard let searchKey = rawKey?.trimmingCharacters(in: .whitespacesAndNewlines), !searchKey.isEmpty else { continue }
+            hasCredentials = true
+            let alreadyImported = settings.searchServices.contains { service in
+                type == "exa" ? (service as? SearchServiceOptions.ExaOptions)?.apiKey == searchKey
+                    : (service as? SearchServiceOptions.BraveOptions)?.apiKey == searchKey
             }
-
-            let targetProvider: ProviderSetting
-            if let existingProvider {
-                targetProvider = existingProvider
-            } else if kind == "openai" {
-                let created = ProviderSetting.OpenAI(
-                    id: KotlinUuid.companion.random(),
-                    enabled: true,
-                    name: "Synced OpenAI",
-                    models: [],
-                    balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""),
-                    builtIn: false,
-                    descriptionText: nil,
-                    shortDescriptionText: nil,
-                    apiKey: apiKey,
-                    baseUrl: baseUrl.isEmpty ? "https://api.openai.com/v1" : baseUrl,
-                    chatCompletionsPath: "/chat/completions",
-                    useResponseApi: false,
-                    authMode: resolvedOpenAIAuthMode(payload.model.authMode),
-                    brand: OpenAIBrand.generic
-                )
-                targetProvider = sharedSettings.addProvider(created)
-                if !apiKey.isEmpty { importedAnyKey = true }
-            } else {
-                let created = ProviderSetting.Claude(
-                    id: KotlinUuid.companion.random(),
-                    enabled: true,
-                    name: "Synced Claude",
-                    models: [],
-                    balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""),
-                    builtIn: false,
-                    descriptionText: nil,
-                    shortDescriptionText: nil,
-                    apiKey: apiKey,
-                    baseUrl: baseUrl.isEmpty ? "https://api.anthropic.com/v1" : baseUrl,
-                    promptCaching: true
-                )
-                targetProvider = sharedSettings.addProvider(created)
-                if !apiKey.isEmpty { importedAnyKey = true }
-            }
-
-            let providerId = targetProvider.id.description() as String
-            if !apiKey.isEmpty {
-                _ = sharedSettings.updateProviderApiKey(providerId: providerId, apiKey: apiKey)
-                importedAnyKey = true
-            }
-            if !baseUrl.isEmpty {
-                if let openAI = targetProvider as? ProviderSetting.OpenAI {
-                    _ = sharedSettings.updateProviderEndpoint(
-                        providerId: providerId,
-                        baseUrl: baseUrl,
-                        chatCompletionsPath: openAI.chatCompletionsPath,
-                        useResponseApi: openAI.useResponseApi,
-                        promptCaching: false
-                    )
-                } else if let claude = targetProvider as? ProviderSetting.Claude {
-                    _ = sharedSettings.updateProviderEndpoint(
-                        providerId: providerId,
-                        baseUrl: baseUrl,
-                        chatCompletionsPath: "",
-                        useResponseApi: false,
-                        promptCaching: claude.promptCaching
-                    )
-                }
-            }
-            if kind == "openai" {
-                _ = sharedSettings.setOpenAIAuthMode(
-                    providerId: providerId,
-                    authMode: resolvedOpenAIAuthMode(payload.model.authMode)
-                )
-            }
-            if !modelId.isEmpty {
-                if let updated = sharedSettings.upsertProviderChatModel(
-                    providerId: providerId,
-                    modelUuid: nil,
-                    modelId: modelId,
-                    displayName: modelId,
-                    contextWindowTokens: nil,
-                    modelType: .chat,
-                    headers: []
-                ),
-                   let matchedModel = updated.models.first(where: { $0.modelId == modelId }) {
-                    sharedSettings.selectChatModelAsDefault(matchedModel.id.description() as String)
-                }
-            }
+            if alreadyImported { continue }
+            let service = mutations.buildSearchService(serviceType: type, apiKey: searchKey)
+            settings = mutations.addSearchServiceAndSelect(settings: settings, service: service)
+            importedSearchProviders.append([
+                "id": UUID().uuidString, "name": "\(type.capitalized) (Synced)", "apiKey": IOSCredentialRedactor.mask,
+                "serviceType": type, "serviceId": service.id.description(),
+            ])
         }
-
-        if let exaKey = payload.credentials.exaApiKey?.trimmingCharacters(in: .whitespacesAndNewlines), !exaKey.isEmpty {
-            sharedSettings.addSearchProvider(name: "Exa (Synced)", apiKey: exaKey, serviceType: "exa")
-            importedAnyKey = true
+        // The settings store commits its redacted configuration only after every credential write succeeds.
+        guard sharedSettings.restoreSnapshot(settings) else { throw IOSPairingBootstrapError.settingsSaveFailed }
+        if !importedSearchProviders.isEmpty {
+            sharedSettings.savedSearchProviders += importedSearchProviders
         }
-        if let braveKey = payload.credentials.braveApiKey?.trimmingCharacters(in: .whitespacesAndNewlines), !braveKey.isEmpty {
-            sharedSettings.addSearchProvider(name: "Brave (Synced)", apiKey: braveKey, serviceType: "brave")
-            importedAnyKey = true
-        }
-        return importedAnyKey
+        return (hasCredentials, requiresLocalSignIn)
     }
 
-    private static func resolvedOpenAIAuthMode(_ raw: String) -> OpenAIAuthMode {
-        switch raw.trimmingCharacters(in: .whitespacesAndNewlines) {
-        case "chatgptSiwc":
-            return .chatgptSiwc
-        default:
-            return .apiKey
+    @MainActor
+    private static func importChatModel(
+        _ model: IOSBootstrapModelSettings, apiKey: String, settings: inout Settings
+    ) throws -> Bool {
+        let mutations = IosSettingsMutations.shared
+        let target = try importProvider(model, apiKey: apiKey, settings: &settings)
+        let requiresLocalSignIn = IOSCodexProviderResolver.isChatGptSiwcProvider(target)
+            && !IOSCodexProviderResolver.isSignedIn(target)
+        let providerId = target.id.description()
+        let modelId = model.modelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        func chatModel(in provider: ProviderSetting?) -> Model? {
+            provider?.models.first { $0.type == .chat && $0.modelId == modelId }
         }
+        var selectedModel = chatModel(in: target)
+        if selectedModel == nil {
+            settings = mutations.upsertProviderChatModel(
+                settings: settings, providerId: providerId, modelUuid: nil,
+                modelId: modelId, displayName: modelId, contextWindowTokens: nil,
+                modelType: .chat, inputModalities: [.text], headerPairs: []
+            )
+            selectedModel = chatModel(in: settings.providers.first { $0.id.description() == providerId })
+        }
+        if !requiresLocalSignIn, let selectedModel {
+            let id = selectedModel.id.description()
+            settings = mutations.setCurrentAssistantChatModelId(settings: settings, modelId: id)
+            settings = mutations.setChatModelId(settings: settings, modelId: id)
+        }
+        return requiresLocalSignIn
+    }
+
+    private static func importProvider(
+        _ model: IOSBootstrapModelSettings, apiKey: String, settings: inout Settings
+    ) throws -> ProviderSetting {
+        let kind = model.provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let baseUrl = IOSCloudConfigWire.effectiveBaseUrl(provider: kind, baseUrl: model.baseUrl)
+        guard !model.modelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              IOSProviderEndpointPolicy.isValidBaseURL(baseUrl),
+              let components = URLComponents(string: baseUrl), components.user == nil,
+              components.password == nil, components.query == nil, components.fragment == nil else {
+            throw IOSPairingBootstrapError.invalidEnvelopeStructure
+        }
+        // "plan" carries an API key and endpoint on the daemon wire, without a vendor-specific login.
+        let authMode: OpenAIAuthMode = model.authMode == "chatgptSiwc" ? .chatgptSiwc : .apiKey
+        let mutations = IosSettingsMutations.shared
+        let matched = settings.providers.first { provider in
+            guard provider.enabled else { return false }
+            let localKey: String
+            let localUrl: String
+            if kind == "openai", let openAI = provider as? ProviderSetting.OpenAI, openAI.authMode == authMode {
+                localKey = openAI.apiKey
+                localUrl = openAI.baseUrl
+            } else if kind == "claude", let claude = provider as? ProviderSetting.Claude {
+                localKey = claude.apiKey
+                localUrl = claude.baseUrl
+            } else {
+                return false
+            }
+            return IOSCloudConfigWire.effectiveBaseUrl(provider: kind, baseUrl: localUrl) == baseUrl
+                && (apiKey.isEmpty || localKey.isEmpty || localKey == apiKey)
+        }
+        if let matched {
+            if !apiKey.isEmpty {
+                settings = mutations.updateProviderApiKey(settings: settings, providerId: matched.id.description(), apiKey: apiKey)
+            }
+            return matched
+        }
+
+        let id = KotlinUuid.companion.random()
+        let balance = BalanceOption(enabled: false, apiPath: "", resultPath: "")
+        let created: ProviderSetting
+        if kind == "openai" {
+            created = ProviderSetting.OpenAI(
+                id: id, enabled: true, name: "Synced OpenAI", models: [], balanceOption: balance, builtIn: false,
+                descriptionText: nil, shortDescriptionText: nil, apiKey: apiKey, baseUrl: baseUrl,
+                chatCompletionsPath: "/chat/completions", useResponseApi: false, authMode: authMode,
+                brand: baseUrl == IOSChatGptSiwcConstants.apiBaseUrl ? .openai : .generic
+            )
+        } else {
+            created = ProviderSetting.Claude(
+                id: id, enabled: true, name: "Synced Claude", models: [], balanceOption: balance, builtIn: false,
+                descriptionText: nil, shortDescriptionText: nil, apiKey: apiKey, baseUrl: baseUrl, promptCaching: true
+            )
+        }
+        settings = mutations.addProvider(settings: settings, provider: created)
+        return created
     }
 
     private static func buildSummaryText(
@@ -673,6 +684,7 @@ enum IOSPairingBootstrapImporter {
         modelId: String,
         authMode: String,
         siwcConfigured: Bool,
+        requiresLocalSignIn: Bool,
         credentialsImported: Bool,
         soulSynced: Bool,
         activeRulesImported: Int
@@ -680,14 +692,15 @@ enum IOSPairingBootstrapImporter {
         var parts: [String] = []
         if !provider.isEmpty || !modelId.isEmpty {
             let label = [provider, modelId].filter { !$0.isEmpty }.joined(separator: " · ")
-            if authMode == "chatgptSiwc" || siwcConfigured {
+            if requiresLocalSignIn {
+                parts.append("模型 \(label)（需在本机登录 SIWC）")
+            } else if authMode == "chatgptSiwc" || siwcConfigured {
                 parts.append("模型 \(label)（SIWC）")
-            } else if credentialsImported {
-                parts.append("模型 \(label)（已加密导入凭据）")
             } else {
                 parts.append("模型 \(label)")
             }
-        } else if credentialsImported {
+        }
+        if credentialsImported {
             parts.append("已加密导入凭据")
         }
         if soulSynced {

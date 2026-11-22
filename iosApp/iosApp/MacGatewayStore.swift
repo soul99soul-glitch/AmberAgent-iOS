@@ -368,25 +368,30 @@ final class MacGatewayStore {
         sharedSettings: IOSSharedSettingsStore? = nil,
         soulStore: AgentSoulStore? = nil,
         ruleStore: IOSProceduralRuleStore? = nil,
-        pairingClientOverride: MacGatewayClient? = nil,
+        pairingTransport: MacGatewayClient.Transport? = nil,
         storeToken: ((String, String) -> Bool)? = nil
     ) async {
         guard let payload = pendingPairing, !isBusy else { return }
         isBusy = true
         defer { isBusy = false }
-        let pairingClient = pairingClientOverride
-            ?? MacGatewayClient(addrs: payload.addrs, port: payload.port, fingerprint: payload.fp, token: nil)
-        let wantsBootstrapSync = payload.bootstrap?.syncSupported ?? true
-        let ephemeralKeyPair: IOSPairingBootstrapKeyPair? = wantsBootstrapSync
-            ? (try? IOSPairingBootstrapCrypto.generateEphemeralKeyPair())
-            : nil
+        let pairingClient = MacGatewayClient(
+            addrs: payload.addrs, port: payload.port, fingerprint: payload.fp, token: nil, transport: pairingTransport
+        )
         do {
+            let wantsBootstrapSync = payload.bootstrap?.syncSupported == true
+            let ephemeralKeyPair = wantsBootstrapSync ? try await Task.detached(priority: .userInitiated) {
+                try IOSPairingBootstrapCrypto.generateEphemeralKeyPair()
+            }.value : nil
             let response = try await pairingClient.pair(
                 secret: payload.s,
                 deviceName: UIDevice.current.name,
                 requestBootstrapSync: wantsBootstrapSync,
                 clientPublicJwk: ephemeralKeyPair?.publicJwk
             )
+            guard !payload.id.isEmpty, response.gatewayId == payload.id else {
+                throw IOSPairingBootstrapError.gatewayMismatch
+            }
+            guard !response.deviceId.isEmpty, !response.token.isEmpty else { throw MacGatewayError.invalidResponse }
             let tokenWriter = storeToken ?? { key, value in
                 IOSCredentialSideTable.store(key: key, value: value)
             }
@@ -407,21 +412,23 @@ final class MacGatewayStore {
                 sendableDefaults.set(savedData, forKey: Self.connectionKey)
             }
             connection = saved
-            let pairedClient = MacGatewayClient(addrs: saved.addrs, port: saved.port, fingerprint: saved.fingerprint, token: response.token)
+            let pairedClient = MacGatewayClient(
+                addrs: saved.addrs, port: saved.port, fingerprint: saved.fingerprint, token: response.token, transport: pairingTransport
+            )
             client = pairedClient
             loadPersistedCloudTasks()
             loadPersistedCloudDialogueState()
-            pendingPairing = nil
+            if pendingPairing == payload { pendingPairing = nil }
 
-            var bootstrapSnapshot = response.bootstrap
-            if bootstrapSnapshot == nil, payload.bootstrap?.syncSupported == true {
-                bootstrapSnapshot = try? await pairedClient.requestPairingBootstrapSync(
-                    clientPublicJwk: ephemeralKeyPair?.publicJwk
-                )
-            }
-
-            if let bootstrapSnapshot {
-                do {
+            lastBootstrapSyncSummary = nil
+            notice = nil
+            do {
+                var bootstrapSnapshot = response.bootstrap
+                if bootstrapSnapshot == nil, wantsBootstrapSync {
+                    bootstrapSnapshot = try await pairedClient.requestPairingBootstrapSync(clientPublicJwk: ephemeralKeyPair?.publicJwk)
+                    guard self.client === pairedClient else { return }
+                }
+                if let bootstrapSnapshot {
                     let applied = try IOSPairingBootstrapImporter.apply(
                         snapshot: bootstrapSnapshot,
                         privateKey: ephemeralKeyPair?.privateKey,
@@ -436,19 +443,16 @@ final class MacGatewayStore {
                     }
                     lastBootstrapSyncSummary = applied.summary
                     notice = Notice(text: applied.summary.summaryText, isError: false)
-                } catch {
-                    lastBootstrapSyncSummary = nil
-                    notice = Notice(
-                        text: localized("配对成功，但加密配置同步未完成：") + error.localizedDescription,
-                        isError: true
-                    )
                 }
-            } else {
-                lastBootstrapSyncSummary = nil
-                notice = nil
+            } catch {
+                guard self.client === pairedClient else { return }
+                notice = Notice(
+                    text: localized("配对成功，但加密配置同步未完成：") + error.localizedDescription,
+                    isError: true
+                )
             }
 
-            if pairingClientOverride == nil {
+            if pairingTransport == nil {
                 await enablePush()
                 await refresh()
             }

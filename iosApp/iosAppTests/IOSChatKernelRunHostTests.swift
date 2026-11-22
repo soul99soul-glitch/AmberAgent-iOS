@@ -104,7 +104,9 @@ final class IOSChatKernelRunHostTests: IOSChatKernelRunHostTestCase {
             return result
         }
         var injectionOverrides: [ChatMemoryContextBuilder.RecallResult?] = []
-        harness.bindings.messagesByInjectingRuntimeContextForRun = { messages, _, override in
+        var ruleHitRecording: [Bool] = []
+        harness.bindings.messagesByInjectingRuntimeContextForRun = { messages, _, override, recordRuleHits in
+            ruleHitRecording.append(recordRuleHits)
             injectionOverrides.append(override)
             return messages
         }
@@ -123,6 +125,7 @@ final class IOSChatKernelRunHostTests: IOSChatKernelRunHostTestCase {
         let idle = await waitForHostIdle(host)
         XCTAssertTrue(idle)
 
+        XCTAssertEqual(ruleHitRecording, [false, true], "压缩预算探测只读，最终注入才能计数")
         XCTAssertEqual(computations.count, 2, "基线注入与最终注入各算一次，usage marking 不再单独计算")
         XCTAssertEqual(injectionOverrides.map { $0?.prompt }, ["recall-1", "recall-2"], "最终注入必须用注入时刻现算的结果")
         XCTAssertEqual(recordIdsOverrides.map { $0?.prompt }, ["recall-2"], "标记的记忆必须与最终注入一致")

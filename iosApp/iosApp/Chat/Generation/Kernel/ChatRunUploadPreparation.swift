@@ -53,9 +53,10 @@ final class ChatRunUploadPreparation {
 
     private func messagesByInjectingRuntimeContext(
         _ messages: [UIMessage],
-        memoryRecallOverride: ChatMemoryContextBuilder.RecallResult? = nil
+        memoryRecallOverride: ChatMemoryContextBuilder.RecallResult?,
+        recordRuleHits: Bool
     ) -> [UIMessage] {
-        bindings.messagesByInjectingRuntimeContextForRun?(messages, mcpEnabled(), memoryRecallOverride)
+        bindings.messagesByInjectingRuntimeContextForRun?(messages, mcpEnabled(), memoryRecallOverride, recordRuleHits)
             ?? bindings.messagesByInjectingRuntimeContext(messages)
     }
 
@@ -140,7 +141,8 @@ final class ChatRunUploadPreparation {
         // 原行为一致（等价于 Phase 1 之前 Host 的估算方式）。
         let runtimeBaseline = messagesByInjectingRuntimeContext(
             requestMessages,
-            memoryRecallOverride: fallbackMemoryRecallResult
+            memoryRecallOverride: fallbackMemoryRecallResult,
+            recordRuleHits: false
         )
         let transcriptCapabilities = PromptTranscriptCapabilities.companion.resolve(
             setting: provider,
@@ -243,7 +245,7 @@ final class ChatRunUploadPreparation {
         let memoryRecallOverride = isFastFirstUpload
             ? fallbackMemoryRecallResult : (recallBox.value ?? bindings.memoryRecallResultForRun(projectedMessages))
         let runtimePreparedMessages = try await bindings.prepareImageAttachments(
-            messagesByInjectingRuntimeContext(projectedMessages, memoryRecallOverride: memoryRecallOverride),
+            messagesByInjectingRuntimeContext(projectedMessages, memoryRecallOverride: memoryRecallOverride, recordRuleHits: true),
             effectiveParams.model,
             settings,
             conversationId

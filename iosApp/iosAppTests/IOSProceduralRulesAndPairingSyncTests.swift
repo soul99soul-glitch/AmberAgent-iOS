@@ -25,6 +25,89 @@ struct IOSProceduralRulesAndPairingSyncTests {
 
     // MARK: - 1. Lifecycle, Hit Count, and 100% Stop Injection After Archive/Revoke
 
+    @Test @MainActor func delayedActiveListCannotUndoRetirement() async throws {
+        let store = IOSProceduralRuleStore(storageURL: nil, clockMs: { 9_000 })
+        let active = IOSProceduralRule(id: "rule_gateway", title: "Review", instruction: "Review the changes.",
+                                       status: .active, createdAt: 10, updatedAt: 20)
+        store.mergeRemoteRules([active])
+        _ = store.selectActiveForInjection(recordHit: true)
+
+        let (started, notifyStart) = AsyncStream<Void>.makeStream()
+        let (release, resume) = AsyncStream<Void>.makeStream()
+        let client = MacGatewayClient(addrs: ["localhost"], port: 1, fingerprint: "", token: nil) { request, _ in
+            let response = makeHTTPResponse(url: request.url!, status: 200)
+            if request.httpMethod == "GET" {
+                notifyStart.finish()
+                for await _ in release {}
+                return (Data(#"{"rules":[{"id":"rule_gateway","title":"Review","instruction":"Review the changes.","status":"active","updatedAt":20}],"activeCount":1,"proposedCount":0}"#.utf8), response)
+            }
+            return (Data(#"{"rule":{"id":"rule_gateway","title":"Review","instruction":"Review the changes.","status":"revoked","updatedAt":21}}"#.utf8), response)
+        }
+        let refresh = Task { await store.syncFromGateway(syncClient: client) }
+        for await _ in started {}
+        defer { resume.finish() }
+        _ = try await store.revoke(id: active.id, syncClient: client)
+        resume.finish()
+        await refresh.value
+
+        #expect(store.rules.first?.status == .revoked)
+        #expect(store.rules.first?.hitCount == 1)
+        #expect(store.applyBootstrapActiveRules([active]) == 0)
+        #expect(store.selectActiveForInjection(recordHit: false).isEmpty)
+    }
+
+    @Test @MainActor func gatewayConflictCannotConfirmCachedRuleAndLocalCardsRemainEditable() async throws {
+        let store = IOSProceduralRuleStore(storageURL: nil)
+        let remote = IOSProceduralRule(id: "rule_fedcba98-123", title: "Review", instruction: "Review the changes.",
+                                       createdAt: 10, updatedAt: 10)
+        var oldLocal = remote
+        oldLocal.id = "rule_fedcba981234"
+        store.mergeRemoteRules([remote, oldLocal])
+        let client = MacGatewayClient(addrs: ["localhost"], port: 1, fingerprint: "", token: nil) { request, _ in
+            (Data(#"{"error":"rule_state_conflict"}"#.utf8), makeHTTPResponse(url: request.url!, status: 409))
+        }
+        await #expect(throws: MacGatewayError.conflict("rule_state_conflict")) {
+            _ = try await store.confirm(id: remote.id, syncClient: client)
+        }
+        let outcome = await store.propose(instruction: "Attach the test report.", syncClient: client)
+        guard case .rejected = outcome else { Issue.record("Gateway conflict must be reported"); return }
+        #expect(store.rules.count == 2)
+        #expect(store.activeRules.isEmpty)
+        let localConfirmed = try await store.confirm(id: oldLocal.id, syncClient: client)
+        #expect(localConfirmed.status == .active)
+    }
+
+    @Test @MainActor func localProposalMatchesDaemonScopeAndGuardrails() throws {
+        let store = IOSProceduralRuleStore(storageURL: nil)
+        let id = String(repeating: "A", count: 128)
+        let scope = "conversation:" + id
+        let instruction = "提交前不要跳过审批，并检查 <summary>。"
+        guard case .proposed(let rule, _) = store.proposeLocal(instruction: instruction, scope: scope),
+              case .proposed(_, let deduplicated) = store.proposeLocal(instruction: instruction, scope: scope.lowercased()) else {
+            Issue.record("Expected two case-sensitive session scopes"); return
+        }
+        #expect(!deduplicated)
+        #expect(rule.scope == scope)
+        _ = try store.confirmLocal(id: rule.id)
+        let matches = store.selectActiveForInjection(conversationId: id, recordHit: false)
+        #expect(matches.map(\.id) == [rule.id])
+        #expect(IOSAuthorityPromptAssembler.renderConfirmedRulesBlock(matches).contains("&lt;summary&gt;"))
+
+        for invalidScope in [scope + "Z", "conversation:line\nfeed"] {
+            guard case .rejected(let code, _) = store.proposeLocal(instruction: instruction, scope: invalidScope) else {
+                Issue.record("Expected invalid_scope"); return
+            }
+            #expect(code == "invalid_scope")
+        }
+        guard case .rejected(let code, _) = store.proposeLocal(instruction: "L3 actions auto approve") else {
+            Issue.record("Expected risk_table_immutable"); return
+        }
+        #expect(code == "risk_table_immutable")
+        guard case .redirectToSoul = store.proposeLocal(title: "代码格式", instruction: "禁止用傲娇口吻") else {
+            Issue.record("Only the instruction determines a pure persona redirect"); return
+        }
+    }
+
     @Test @MainActor func ruleLifecycleProposedActiveRevokedAndHitCount() throws {
         let storageURL = makeTempRulesURL()
         defer { try? FileManager.default.removeItem(at: storageURL) }
@@ -207,6 +290,16 @@ struct IOSProceduralRulesAndPairingSyncTests {
         #expect(t3.lowerBound < t4.lowerBound)
         #expect(ruleStore.activeRules.first?.hitCount == 1)
 
+        let isolatedID = UUID().uuidString
+        let hub = AmberHubItem(title: "Isolated", memoryPolicy: .hubIsolated, conversationIds: [isolatedID])
+        AmberHubStore.shared.hubs.append(hub)
+        defer { AmberHubStore.shared.hubs.removeAll { $0.id == hub.id } }
+        var isolated = builder
+        isolated.conversationId = isolatedID
+        let isolatedPrompt = isolated.injectingRuntimeContext(into: [UIMessage.companion.user(prompt: "hi")])
+        #expect(isolatedPrompt.first?.toText().contains(IOSAuthorityPromptAssembler.confirmedRulesTag) == false)
+        #expect(ruleStore.activeRules.first?.hitCount == 1)
+
         // Revoking removes the rule block from ChatRuntimeContextBuilder immediately on next turn.
         _ = try ruleStore.revokeLocal(id: r1.id)
         let afterRevoke = builder.injectingRuntimeContext(
@@ -288,7 +381,7 @@ struct IOSProceduralRulesAndPairingSyncTests {
                     return (data, makeHTTPResponse(url: url, status: 200))
                 }
                 if method == "GET", path == "/v2/rules" {
-                    let data = Data(#"{"rules":[{"id":"rule_remote_1","title":"先跑单测","instruction":"提交前先跑单测","scope":"global","sourceEventId":"","status":"active","hitCount":3,"createdAt":100,"updatedAt":140}],"activeCount":1,"proposedCount":0}"#.utf8)
+                    let data = Data(#"{"rules":[{"id":"rule_remote_1","title":"先跑单测","instruction":"提交前先跑单测","scope":"global","sourceEventId":"","status":"revoked","hitCount":3,"createdAt":100,"updatedAt":140}],"activeCount":0,"proposedCount":0}"#.utf8)
                     return (data, makeHTTPResponse(url: url, status: 200))
                 }
                 return (Data(#"{"error":"not_found"}"#.utf8), makeHTTPResponse(url: url, status: 404))
@@ -327,7 +420,8 @@ struct IOSProceduralRulesAndPairingSyncTests {
         #expect(revoked.status == .revoked)
 
         await store.syncFromGateway(syncClient: client)
-        #expect(store.activeRules.first?.hitCount == 3)
+        #expect(store.archivedOrRevokedRules.first?.hitCount == 3)
+        #expect(store.activeRules.isEmpty)
 
         let recorded = await recorder.paths
         #expect(recorded.contains("POST /v2/rules/propose"))
@@ -338,6 +432,47 @@ struct IOSProceduralRulesAndPairingSyncTests {
     }
 
     // MARK: - 4. Single-Scan QR Payload Parsing & Legacy v1 Backward Compatibility
+
+    @Test @MainActor func legacyPairingChecksTicketIdentityBeforeSavingConnection() async throws {
+        let suite = "stage3d.legacy.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = MacGatewayStore(defaults: defaults)
+        let ticket = MacGatewayPairingPayload(
+            v: 1, id: "expected", name: "Studio", addrs: ["proxy.local"],
+            port: 5443, fp: "proxy-pin", s: "test-ticket"
+        )
+        store.pendingPairing = ticket
+        var tokenWrites = 0
+        for returnedGateway in ["different", "expected"] {
+            let transport: MacGatewayClient.Transport = { request, _ in
+                let url = try #require(request.url)
+                #expect(url.absoluteString == "https://proxy.local:5443/v1/pair")
+                let body = try JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]
+                #expect(body?["clientPublicJwk"] == nil && body?["requestBootstrapSync"] == nil)
+                let data = try JSONEncoder().encode([
+                    "deviceId": "paired-phone", "token": "fixture", "gatewayId": returnedGateway, "gatewayName": "Studio",
+                ])
+                return (data, makeHTTPResponse(url: url, status: 200))
+            }
+            await store.confirmPairing(pairingTransport: transport, storeToken: { _, _ in
+                tokenWrites += 1
+                return true
+            })
+            if returnedGateway != ticket.id {
+                #expect(store.connection == nil)
+                #expect(tokenWrites == 0)
+                #expect(store.pendingPairing == ticket)
+                #expect(store.notice?.isError == true)
+            }
+        }
+        #expect(tokenWrites == 1)
+        #expect(store.connection?.gatewayId == ticket.id)
+        #expect(store.connection?.fingerprint == ticket.fp)
+        #expect(store.connection?.port == ticket.port)
+        #expect(store.pendingPairing == nil)
+        #expect(store.lastBootstrapSyncSummary == nil)
+    }
 
     @Test func pairingPayloadParsesBootstrapHintAndKeepsLegacyV1Compatibility() throws {
         // Legacy v1 payload (no `bootstrap` key) still parses cleanly.
@@ -492,7 +627,8 @@ struct IOSProceduralRulesAndPairingSyncTests {
 
     // MARK: - 6. End-to-End Single-Scan Pairing Sync Flow (No Plaintext Secrets in Summary)
 
-    @Test @MainActor func singleScanPairingImportsEncryptedConfigSoulAndActiveRulesWithoutLeakingSecrets() async throws {
+    @Test(arguments: [false, true]) @MainActor
+    func singleScanPairingImportsEncryptedConfigSoulAndActiveRulesWithoutLeakingSecrets(separateBootstrap: Bool) async throws {
         let suite = "stage3d.pairing.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -539,107 +675,108 @@ struct IOSProceduralRulesAndPairingSyncTests {
         }
         let capture = PairRequestCapture()
 
-        let mockPairingClient = MacGatewayClient(
-            addrs: ["127.0.0.1"],
-            port: 47821,
-            fingerprint: "fp-sync-1",
-            token: nil,
-            transport: { request, _ in
-                let url = request.url!
-                let body = (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]) ?? [:]
-                let flag = (body["requestBootstrapSync"] as? Bool) == true
-                let jwk = body["clientPublicJwk"] as? [String: String]
+        let transport: MacGatewayClient.Transport = { request, _ in
+            let url = request.url!
+            let body = (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]) ?? [:]
+            let flag = (body["requestBootstrapSync"] as? Bool) == true
+            let jwk = body["clientPublicJwk"] as? [String: String]
+            let pair = ["deviceId": "dev-sync-ios", "token": "tok-paired-1", "gatewayId": "gw-sync-1", "gatewayName": "Studio Cloud"]
+            if url.path == "/v1/pair" {
                 await capture.set(flag: flag, jwk: jwk)
-
-                let now = Int64(Date().timeIntervalSince1970)
-                let envelope = IOSBootstrapEnvelopePayload(
-                    version: 1,
-                    gatewayId: "gw-sync-1",
-                    deviceId: "dev-sync-ios",
-                    issuedAt: now,
-                    expiresAt: now + 300,
-                    configRevision: 3,
-                    model: .init(
-                        provider: "openai",
-                        modelId: "gpt-5.4",
-                        baseUrl: "https://api.openai.com/v1",
-                        authMode: "chatgptSiwc",
-                        siwcConfigured: true
-                    ),
-                    search: .init(sources: ["bing", "duckduckgo"], mode: "fallback"),
-                    credentials: .init(modelApiKey: secretApiKey, exaApiKey: nil, braveApiKey: nil)
-                )
-                let jwe = try IOSPairingBootstrapCrypto.seal(envelope, publicJwk: jwk ?? [:])
-
-                let responseObj: [String: Any] = [
-                    "deviceId": "dev-sync-ios",
-                    "token": "tok-paired-1",
-                    "gatewayId": "gw-sync-1",
-                    "gatewayName": "Studio Cloud",
-                    "bootstrap": [
-                        "version": 1,
-                        "encryptedConfigJwe": jwe,
-                        "configuration": [
-                            "gatewayId": "gw-sync-1",
-                            "revision": 3,
-                            "model": [
-                                "provider": "openai",
-                                "modelId": "gpt-5.4",
-                                "baseUrl": "https://api.openai.com/v1",
-                                "authMode": "chatgptSiwc",
-                                "siwcConfigured": true,
-                            ],
-                            "search": [
-                                "sources": ["bing", "duckduckgo"],
-                                "mode": "fallback",
-                            ],
-                            "credentials": [
-                                "modelApiKey": ["configured": true],
-                                "exaApiKey": ["configured": false],
-                                "braveApiKey": ["configured": false],
-                            ],
-                        ],
-                        "soul": [
-                            "revision": 2,
-                            "updatedAtMs": 1_700_000_500_000,
-                            "displayName": "琥珀搭档",
-                            "tagline": "简洁务实",
-                            "soulMarkdown": "始终保持克制、清晰的工程回复。",
-                            "isDefault": false,
-                            "source": "cloud_sync",
-                            "history": [],
-                        ],
-                        "activeRules": [
-                            [
-                                "id": "rule_boot_1",
-                                "title": "先核查再修改",
-                                "instruction": "修改配置文件前先完整检查已有键位。",
-                                "scope": "global",
-                                "sourceEventId": "evt-boot",
-                                "status": "active",
-                                "hitCount": 2,
-                                "createdAt": 100,
-                                "updatedAt": 200,
-                            ],
-                            // Proposed rule in snapshot must NOT be auto-activated.
-                            [
-                                "id": "rule_boot_proposed",
-                                "title": "不应自动导入",
-                                "instruction": "未确认规则不得自动生效。",
-                                "scope": "global",
-                                "sourceEventId": "",
-                                "status": "proposed",
-                                "hitCount": 0,
-                                "createdAt": 100,
-                                "updatedAt": 200,
-                            ],
-                        ],
-                    ],
-                ]
-                let data = try JSONSerialization.data(withJSONObject: responseObj)
-                return (data, makeHTTPResponse(url: url, status: 200))
+                if separateBootstrap {
+                    return (try JSONEncoder().encode(pair), makeHTTPResponse(url: url, status: 200))
+                }
+            } else {
+                #expect(separateBootstrap && url.path == "/v2/pairing/bootstrap-sync")
+                #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer tok-paired-1")
+                let pairPublicKey = await capture.clientPublicJwk
+                #expect(jwk == pairPublicKey)
             }
-        )
+
+            let now = Int64(Date().timeIntervalSince1970)
+            let envelope = IOSBootstrapEnvelopePayload(
+                version: 1,
+                gatewayId: "gw-sync-1",
+                deviceId: "dev-sync-ios",
+                issuedAt: now,
+                expiresAt: now + 300,
+                configRevision: 3,
+                model: .init(
+                    provider: "openai",
+                    modelId: "gpt-5.4",
+                    baseUrl: "https://api.openai.com/v1",
+                    authMode: "chatgptSiwc",
+                    siwcConfigured: true
+                ),
+                search: .init(sources: ["bing", "duckduckgo"], mode: "fallback"),
+                credentials: .init(modelApiKey: secretApiKey, exaApiKey: nil, braveApiKey: nil)
+            )
+            let jwe = try IOSPairingBootstrapCrypto.seal(envelope, publicJwk: jwk ?? [:])
+
+            let bootstrap: [String: Any] = [
+                "version": 1,
+                "encryptedConfigJwe": jwe,
+                "configuration": [
+                    "gatewayId": "gw-sync-1",
+                    "revision": 3,
+                    "model": [
+                        "provider": "openai",
+                        "modelId": "gpt-5.4",
+                        "baseUrl": "https://api.openai.com/v1",
+                        "authMode": "chatgptSiwc",
+                        "siwcConfigured": true,
+                    ],
+                    "search": [
+                        "sources": ["bing", "duckduckgo"],
+                        "mode": "fallback",
+                    ],
+                    "credentials": [
+                        "modelApiKey": ["configured": true],
+                        "exaApiKey": ["configured": false],
+                        "braveApiKey": ["configured": false],
+                    ],
+                ],
+                "soul": [
+                    "revision": 2,
+                    "updatedAtMs": 1_700_000_500_000,
+                    "displayName": "琥珀搭档",
+                    "tagline": "简洁务实",
+                    "soulMarkdown": "始终保持克制、清晰的工程回复。",
+                    "isDefault": false,
+                    "source": "cloud_sync",
+                    "history": [],
+                ],
+                "activeRules": [
+                    [
+                        "id": "rule_boot_1",
+                        "title": "先核查再修改",
+                        "instruction": "修改配置文件前先完整检查已有键位。",
+                        "scope": "global",
+                        "sourceEventId": "evt-boot",
+                        "status": "active",
+                        "hitCount": 2,
+                        "createdAt": 100,
+                        "updatedAt": 200,
+                    ],
+                    // Proposed rule in snapshot must NOT be auto-activated.
+                    [
+                        "id": "rule_boot_proposed",
+                        "title": "不应自动导入",
+                        "instruction": "未确认规则不得自动生效。",
+                        "scope": "global",
+                        "sourceEventId": "",
+                        "status": "proposed",
+                        "hitCount": 0,
+                        "createdAt": 100,
+                        "updatedAt": 200,
+                    ],
+                ],
+            ]
+            var response: [String: Any] = pair
+            response["bootstrap"] = bootstrap
+            let data = try JSONSerialization.data(withJSONObject: separateBootstrap ? bootstrap : response)
+            return (data, makeHTTPResponse(url: url, status: 200))
+        }
 
         var storedCreds: [String: String] = [:]
         let sharedSettings = IOSSharedSettingsStore(
@@ -655,12 +792,13 @@ struct IOSProceduralRulesAndPairingSyncTests {
             }
         )
 
+        let previousDefault = sharedSettings.snapshot.chatModelId
         var storedPairingToken: String?
         await gatewayStore.confirmPairing(
             sharedSettings: sharedSettings,
             soulStore: soulStore,
             ruleStore: ruleStore,
-            pairingClientOverride: mockPairingClient,
+            pairingTransport: transport,
             storeToken: { _, value in
                 storedPairingToken = value
                 return true
@@ -675,7 +813,9 @@ struct IOSProceduralRulesAndPairingSyncTests {
 
         // Verify decrypted provider config & secret reached local settings store.
         #expect(storedCreds.values.contains(secretApiKey))
-        let syncedOpenAI = sharedSettings.snapshot.providers.compactMap { $0 as? ProviderSetting.OpenAI }.first { $0.models.contains { $0.modelId == "gpt-5.4" } }
+        let syncedOpenAI = sharedSettings.snapshot.providers.compactMap { $0 as? ProviderSetting.OpenAI }.first { $0.apiKey == secretApiKey }
+        #expect(syncedOpenAI?.models.contains { $0.modelId == "gpt-5.4" } == true)
+        #expect(sharedSettings.snapshot.chatModelId == previousDefault)
         #expect(syncedOpenAI != nil)
         #expect(syncedOpenAI?.authMode == OpenAIAuthMode.chatgptSiwc)
 
@@ -692,9 +832,141 @@ struct IOSProceduralRulesAndPairingSyncTests {
         #expect(summary.soulSynced == true)
         #expect(summary.activeRulesImported == 1)
         #expect(summary.credentialsImported == true)
+        #expect(summary.summaryText.contains("需在本机登录 SIWC"))
         #expect(!summary.summaryText.contains(secretApiKey))
         let noticeText = try #require(gatewayStore.notice?.text)
         #expect(noticeText == summary.summaryText)
         #expect(!noticeText.contains(secretApiKey))
+    }
+
+    @Test @MainActor func bootstrapImportPreservesOtherProvidersAndCommitsCredentialsTogether() throws {
+        let suite = "stage3d.accounts.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var credentials: [String: String] = [:]
+        var rejectSearchKey = true
+        let store = IOSSharedSettingsStore(
+            userDefaults: defaults, loadCredential: { credentials[$0] },
+            storeCredential: { key, value in
+                if rejectSearchKey && value == "search-key" { return false }
+                credentials[key] = value
+                return true
+            }, deleteCredential: { credentials.removeValue(forKey: $0); return true }
+        )
+        let endpoint = "https://custom.example/v1"
+        let oauth = IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "My account", apiKey: "existing-key", baseUrl: endpoint, modelName: "Local", modelId: "local"
+        )
+        store.addProvider(oauth)
+        store.setOpenAIAuthMode(providerId: oauth.id.description(), authMode: .codexOauth)
+        let original = store.snapshot
+        let originalKeys = credentials
+        let pair = try IOSPairingBootstrapCrypto.generateEphemeralKeyPair()
+        let payload = IOSBootstrapEnvelopePayload(
+            version: 1, gatewayId: "gateway", deviceId: "device", issuedAt: 100, expiresAt: 400,
+            configRevision: 1, model: .init(provider: "openai", modelId: "remote", baseUrl: endpoint),
+            search: .init(sources: ["exa"]), credentials: .init(modelApiKey: "new-key", exaApiKey: "search-key")
+        )
+        let encrypted = try IOSPairingBootstrapCrypto.seal(payload, publicJwk: pair.publicJwk)
+        let rulesURL = makeTempRulesURL()
+        defer { try? FileManager.default.removeItem(at: rulesURL) }
+        let rules = IOSProceduralRuleStore(storageURL: rulesURL)
+        let soul = AgentSoulStore(userDefaults: defaults)
+        func apply() throws {
+            _ = try IOSPairingBootstrapImporter.apply(
+                snapshot: .init(encryptedConfigJwe: encrypted), privateKey: pair.privateKey,
+                gatewayId: "gateway", deviceId: "device", sharedSettings: store,
+                soulStore: soul, ruleStore: rules, nowSeconds: 101
+            )
+        }
+        #expect(throws: IOSPairingBootstrapError.settingsSaveFailed) { try apply() }
+        #expect(store.snapshot === original)
+        #expect(credentials == originalKeys)
+
+        rejectSearchKey = false
+        try apply()
+        let synced = try #require(store.snapshot.providers.compactMap { $0 as? ProviderSetting.OpenAI }.first { $0.apiKey == "new-key" })
+        let originalAccount = try #require(store.snapshot.providers.first { $0.id == oauth.id } as? ProviderSetting.OpenAI)
+        #expect(originalAccount.apiKey == "existing-key" && originalAccount.authMode == .codexOauth)
+        #expect(synced.id != oauth.id && synced.baseUrl == endpoint)
+        let selected = try #require(synced.models.first { $0.modelId == "remote" })
+        #expect(store.snapshot.chatModelId == selected.id)
+        store.upsertProviderChatModel(
+            providerId: synced.id.description(), modelUuid: selected.id.description(), modelId: "remote",
+            displayName: "My model", contextWindowTokens: 99_000, modelType: .chat,
+            inputModalities: [.text, .image], headers: [("X-Custom", "local-header")]
+        )
+        let previousCount = store.snapshot.providers.count
+        let previousSearchCount = store.snapshot.searchServices.count
+        try apply()
+        #expect(store.snapshot.providers.count == previousCount && store.snapshot.searchServices.count == previousSearchCount)
+        let model = try #require(store.snapshot.providers.first { $0.id == synced.id }?.models.first { $0.id == selected.id })
+        #expect(model.displayName == "My model" && model.inputModalities.contains(.image))
+        #expect(model.contextWindowTokens?.intValue == 99_000 && model.customHeaders.first?.name == "X-Custom")
+    }
+
+    @Test @MainActor func rejectedBootstrapLeavesSettingsSoulAndRulesIntact() throws {
+        let suite = "stage3d.invalid.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = IOSSharedSettingsStore(userDefaults: defaults, loadCredential: { _ in nil },
+                                              storeCredential: { _, _ in false }, deleteCredential: { _ in true })
+        let soul = AgentSoulStore(userDefaults: defaults)
+        let originalName = soul.displayName
+        let originalSettings = settings.snapshot
+        let rulesURL = makeTempRulesURL()
+        defer { try? FileManager.default.removeItem(at: rulesURL) }
+        let rules = IOSProceduralRuleStore(storageURL: rulesURL)
+        let pair = try IOSPairingBootstrapCrypto.generateEphemeralKeyPair()
+        let payload = IOSBootstrapEnvelopePayload(
+            version: 1, gatewayId: "gateway", deviceId: "device", issuedAt: 100, expiresAt: 400,
+            configRevision: 1, model: .init(provider: "claude", modelId: "demo"),
+            search: .init(), credentials: .init()
+        )
+        let sealed = try IOSPairingBootstrapCrypto.seal(payload, publicJwk: pair.publicJwk)
+        var parts = sealed.components(separatedBy: ".")
+        var tag = try #require(IOSPairingBootstrapCrypto.base64urlDecode(parts[4]))
+        tag[0] ^= 1
+        parts[4] = IOSCloudConfigEnvelope.base64url(tag)
+        let cases: [(String, SecKey?, String, String, Int64, IOSPairingBootstrapError)] = [
+            ("", pair.privateKey, "gateway", "device", 101, .invalidEnvelopeStructure),
+            (sealed, nil, "gateway", "device", 101, .decryptionFailed),
+            (parts.joined(separator: "."), pair.privateKey, "gateway", "device", 101, .decryptionFailed),
+            (sealed, pair.privateKey, "other", "device", 101, .gatewayMismatch),
+            (sealed, pair.privateKey, "gateway", "other", 101, .deviceMismatch),
+            (sealed, pair.privateKey, "gateway", "device", 400, .envelopeExpired),
+        ]
+        for (jwe, key, gateway, device, now, error) in cases {
+            let snapshot = IOSPairingBootstrapSnapshot(
+                encryptedConfigJwe: jwe, soul: .init(revision: 2, updatedAtMs: 200, displayName: "Remote"),
+                activeRules: [.init(id: "rule_test", title: "Remote", instruction: "Use lists",
+                                    status: .active, createdAt: 100, updatedAt: 200)]
+            )
+            #expect(throws: error) {
+                _ = try IOSPairingBootstrapImporter.apply(
+                    snapshot: snapshot, privateKey: key, gatewayId: gateway, deviceId: device,
+                    sharedSettings: settings, soulStore: soul, ruleStore: rules, nowSeconds: now
+                )
+            }
+            #expect(settings.snapshot === originalSettings && soul.displayName == originalName && rules.activeRules.isEmpty)
+        }
+
+        let wrongGateway = IOSCloudConfigViewDTO(
+            gatewayId: "other", revision: 1, model: .init(provider: "claude", modelId: "demo"),
+            search: .init(sources: [], mode: "fallback"),
+            credentials: .init(modelApiKey: .init(configured: false), exaApiKey: .init(configured: false),
+                               braveApiKey: .init(configured: false))
+        )
+        var metadata = IOSPairingBootstrapSnapshot(configuration: wrongGateway, soul: .init(revision: 1, updatedAtMs: 100, displayName: "Remote"))
+        #expect(throws: IOSPairingBootstrapError.gatewayMismatch) {
+            _ = try IOSPairingBootstrapImporter.apply(snapshot: metadata, privateKey: nil, gatewayId: "gateway",
+                                                       deviceId: "device", soulStore: soul, ruleStore: rules)
+        }
+        #expect(soul.displayName == originalName)
+        metadata.configuration = nil
+        let applied = try IOSPairingBootstrapImporter.apply(snapshot: metadata, privateKey: nil, gatewayId: "gateway",
+                                                             deviceId: "device", soulStore: soul, ruleStore: rules)
+        #expect(applied.summary.soulSynced && soul.displayName == "Remote")
+        #expect(!applied.summary.credentialsImported && !applied.summary.encryptedConfigDecrypted)
     }
 }

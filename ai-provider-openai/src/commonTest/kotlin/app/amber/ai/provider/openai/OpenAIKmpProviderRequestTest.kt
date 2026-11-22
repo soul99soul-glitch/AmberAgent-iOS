@@ -657,6 +657,22 @@ class OpenAIKmpProviderRequestTest {
     }
 
     @Test
+    fun retiredProceduralRuleIsAbsentFromTheNextResponsesPayload() {
+        val user = UIMessage.user("hello")
+        val initial = PromptTranscript.prepare(
+            listOf(user), listOf(PromptTranscript.sectionMessage("proceduralRules", "retired-rule-text"), user), emptyList(),
+        )
+        val history = listOf(user, PromptTranscript.recordResponse(UIMessage.assistant("ready"), initial), UIMessage.user("continue"))
+        for (active in listOf(emptyList(), listOf(PromptTranscript.sectionMessage("proceduralRules", "still-active-rule")))) {
+            val next = PromptTranscript.prepare(history, active + history, emptyList())
+            val body = provider.buildResponsesRequestBody(setting.copy(useResponseApi = true), next.messages,
+                TextGenerationParams(model = Model(modelId = "gpt-5.5")), false).toString()
+            assertFalse("retired-rule-text" in body)
+            assertEquals(active.isNotEmpty(), "still-active-rule" in body)
+        }
+    }
+
+    @Test
     fun restoredTranscriptKeepsTheActualResponsesWirePrefix() {
         val initialTool = toolFrom(promptTool("base_tool"))
         val lateTool = toolFrom(promptTool("late_tool"))

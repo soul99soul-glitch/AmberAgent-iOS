@@ -269,7 +269,7 @@ final class IOSMemoryExtractionTests: XCTestCase {
         harness.bindings.memoryRecallResultForRun = { _ in
             ChatMemoryContextBuilder.RecallResult(prompt: "local-selection", records: [])
         }
-        harness.bindings.messagesByInjectingRuntimeContextForRun = { messages, _, override in
+        harness.bindings.messagesByInjectingRuntimeContextForRun = { messages, _, override, _ in
             injected.append(override?.prompt ?? "nil")
             return messages
         }

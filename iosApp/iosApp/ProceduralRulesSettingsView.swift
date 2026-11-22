@@ -539,7 +539,7 @@ private struct ProceduralRuleProposeSheet: View {
                                 .foregroundStyle(AmberTheme.foreground)
                                 .padding(12)
                                 .background(AmberTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            Text(verbatim: L("填 global 对所有会话生效，也可填具体项目名或会话 ID。"))
+                            Text(verbatim: L("填 global 可用于共享记忆的会话。只想用于一个会话时，填写该会话的 ID。"))
                                 .font(.caption)
                                 .foregroundStyle(AmberTheme.muted)
                         }

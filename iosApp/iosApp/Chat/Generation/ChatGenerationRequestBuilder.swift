@@ -90,7 +90,8 @@ extension ChatViewModel {
         _ messages: [UIMessage],
         mcpEnabledOverride: Bool? = nil,
         state: ChatConversationRunState? = nil,
-        memoryRecallOverride: ChatMemoryContextBuilder.RecallResult? = nil
+        memoryRecallOverride: ChatMemoryContextBuilder.RecallResult? = nil,
+        recordRuleHits: Bool = false
     ) -> [UIMessage] {
         let state = state ?? currentRun.state
         let uploadableMessages = messages.filter { !Self.isLocalGenerationError($0) }
@@ -154,7 +155,8 @@ extension ChatViewModel {
             miniAppRuntimeEnabled: isMiniAppRuntimeEnabled,
             soulStore: agentSoulStore,
             conversationId: state.conversationId?.toHexDashString(),
-            isOrchestratedChild: state.isOrchestratedChild
+            isOrchestratedChild: state.isOrchestratedChild,
+            recordRuleHits: recordRuleHits
         ).injectingRuntimeContext(
             into: uploadableWithGuidance,
             coalesceSystemMessages: false,
@@ -174,8 +176,7 @@ extension ChatViewModel {
             mcpTools: mcpManager.tools,
             miniAppRepository: miniAppRepository,
             miniAppRuntimeEnabled: isMiniAppRuntimeEnabled,
-            conversationId: (state ?? currentRun.state).conversationId?.toHexDashString(),
-            recordRuleHits: false
+            conversationId: (state ?? currentRun.state).conversationId?.toHexDashString()
         ).memoryRecallResult(for: uploadableMessages, override: override).ids
     }
 
@@ -188,8 +189,7 @@ extension ChatViewModel {
             mcpTools: mcpManager.tools,
             miniAppRepository: miniAppRepository,
             miniAppRuntimeEnabled: isMiniAppRuntimeEnabled,
-            conversationId: (state ?? currentRun.state).conversationId?.toHexDashString(),
-            recordRuleHits: false
+            conversationId: (state ?? currentRun.state).conversationId?.toHexDashString()
         ).memoryRecallResult(for: uploadableMessages)
     }
 

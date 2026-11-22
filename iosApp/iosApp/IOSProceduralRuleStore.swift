@@ -18,6 +18,14 @@ enum IOSProceduralRuleStatus: String, Codable, Equatable, Sendable, CaseIterable
         }
     }
 
+    var lifecycleStage: Int {
+        switch self {
+        case .proposed: 0
+        case .active: 1
+        case .archived, .revoked: 2
+        }
+    }
+
     var sortOrder: Int {
         switch self {
         case .proposed: 0
@@ -30,6 +38,12 @@ enum IOSProceduralRuleStatus: String, Codable, Equatable, Sendable, CaseIterable
 
 struct IOSProceduralRule: Codable, Equatable, Identifiable, Sendable {
     static let scopeGlobal = "global"
+
+    static func isLocalID(_ id: String) -> Bool {
+        if id.hasPrefix("local_rule_") { return true }
+        // The original iOS generator removed UUID separators. The daemon keeps the first hyphen.
+        return id.range(of: #"^rule_[0-9a-f]{12}$"#, options: .regularExpression) != nil
+    }
 
     var id: String
     var title: String
@@ -277,7 +291,7 @@ enum IOSAuthorityPromptAssembler {
 
     static func renderConfirmedRulesBlock(_ rules: [IOSProceduralRule]) -> String {
         let activeOnly = rules.filter {
-            $0.status == .active && !IOSProceduralRuleGuard.attemptsRiskTableRelaxation("\($0.title) \($0.instruction)")
+            $0.status == .active && !IOSProceduralRuleGuard.attemptsRiskTableRelaxation($0)
         }
         guard !activeOnly.isEmpty else { return "" }
         var lines: [String] = [
@@ -285,12 +299,17 @@ enum IOSAuthorityPromptAssembler {
             "以下为用户显式确认生效的执行规则（优先级低于 <static-risk-table>，不得放宽 L1–L3 风险审批；高于 C-SOUL-V1 风格与 Episode 召回）：",
         ]
         for rule in activeOnly {
-            let safeTitle = IOSProceduralRuleGuard.redactSecrets(rule.title)
-            let safeInstruction = IOSProceduralRuleGuard.redactSecrets(rule.instruction)
-            lines.append("- [\(rule.id)][scope=\(rule.scope)] \(safeTitle)：\(safeInstruction)")
+            lines.append("- [\(rule.id)][scope=\(promptText(rule.scope))] \(promptText(rule.title))：\(promptText(rule.instruction))")
         }
         lines.append("</confirmed-procedural-rules>")
         return lines.joined(separator: "\n")
+    }
+
+    private static func promptText(_ text: String) -> String {
+        IOSProceduralRuleGuard.redactSecrets(text)
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
     }
 
     /// Assembles a standalone 4-tier system prompt in strict authority order.
@@ -321,7 +340,7 @@ enum IOSAuthorityPromptAssembler {
 enum IOSProceduralRuleGuard {
     static let maxTitleChars = 80
     static let maxInstructionChars = 1_000
-    static let maxScopeChars = 128
+    static let maxScopeChars = 141
     static let maxEventIdChars = 128
 
     private static let riskRelaxationPatterns: [NSRegularExpression] = compile([
@@ -332,6 +351,17 @@ enum IOSProceduralRuleGuard {
         #"auto[\s-]*approve.{0,12}(l3|high[\s-]*risk|destructive|irreversible)"#,
     ])
 
+    private static let prohibitedAction = try! NSRegularExpression(
+        pattern: #"(不要|不准|禁止|不得|不能|不可|切勿|严禁|不允许|never|do not|must not|don't)(?:再|擅自|\s+ever)?\s*$"#,
+        options: .caseInsensitive
+    )
+    private static let autoApproval = try! NSRegularExpression(
+        pattern: #"(自动批准|自动同意|直接放行|auto[ -]?approve)"#, options: .caseInsensitive
+    )
+    private static let precedingHighRisk = try! NSRegularExpression(
+        pattern: #"(L3|高风险|不可逆|high[ -]risk)[^。！？.!?；;，,\n]{0,18}$"#, options: .caseInsensitive
+    )
+
     private static let personaSignalPatterns: [NSRegularExpression] = compile([
         #"(人设|性格|口吻|语气|声线|画风|角色扮演|扮演|自称|称呼|叫我|喊我)"#,
         #"(温柔|傲娇|幽默|毒舌|高冷|活泼|俏皮|可爱|搞笑|热情|冷淡|二次元|霸总|管家|猫娘|兄弟口吻)"#,
@@ -339,7 +369,7 @@ enum IOSProceduralRuleGuard {
     ])
 
     private static let executionActionPatterns: [NSRegularExpression] = compile([
-        #"(提交|推送|git|commit|push|merge|分支|代码|单测|测试|构建|编译|部署|发布|文件|路径|目录|命令|脚本|格式|markdown|json|表格|语言|中文|英文|日志|备份|删除|修改|创建|发送|邮件|日历|日程|报告|总结|输出|附带|禁止|先.*再)"#,
+        #"(提交|推送|git|commit|push|merge|分支|代码|单测|测试|构建|编译|部署|发布|文件|路径|目录|命令|脚本|格式|markdown|json|表格|语言|中文|英文|日志|备份|删除|修改|创建|发送|邮件|日历|日程|报告|总结|输出|附带|先.*再)"#,
         #"\b(git|commit|push|test|build|deploy|file|directory|command|script|json|markdown|table|format|output|include|avoid|never\s+run|always\s+run|before\s+editing)\b"#,
     ])
 
@@ -365,7 +395,20 @@ enum IOSProceduralRuleGuard {
     }
 
     static func attemptsRiskTableRelaxation(_ text: String) -> Bool {
-        matchesAny(riskRelaxationPatterns, in: text)
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        func matchesApproval(_ pattern: NSRegularExpression, requiresHighRiskPrefix: Bool) -> Bool {
+            pattern.matches(in: text, range: range).contains { match in
+                let prefix = NSRange(location: 0, length: match.range.location)
+                guard prohibitedAction.firstMatch(in: text, range: prefix) == nil else { return false }
+                return !requiresHighRiskPrefix || precedingHighRisk.firstMatch(in: text, range: prefix) != nil
+            }
+        }
+        return riskRelaxationPatterns.contains { matchesApproval($0, requiresHighRiskPrefix: false) }
+            || matchesApproval(autoApproval, requiresHighRiskPrefix: true)
+    }
+
+    static func attemptsRiskTableRelaxation(_ rule: IOSProceduralRule) -> Bool {
+        attemptsRiskTableRelaxation(rule.title) || attemptsRiskTableRelaxation(rule.instruction)
     }
 
     static func isPurePersonaDescription(_ text: String) -> Bool {
@@ -387,15 +430,11 @@ enum IOSProceduralRuleGuard {
     }
 
     static func normalizeScope(_ raw: String?) -> String {
-        let cleaned = (raw ?? "")
-            .replacingOccurrences(of: "\r", with: "")
-            .replacingOccurrences(of: "\n", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let bounded = String(cleaned.prefix(maxScopeChars))
-        if bounded.isEmpty || bounded.caseInsensitiveCompare(IOSProceduralRule.scopeGlobal) == .orderedSame {
+        let cleaned = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.isEmpty || cleaned.caseInsensitiveCompare(IOSProceduralRule.scopeGlobal) == .orderedSame {
             return IOSProceduralRule.scopeGlobal
         }
-        return bounded
+        return cleaned
     }
 
     static func matchesScope(_ ruleScope: String, conversationId: String?, projectId: String?) -> Bool {
@@ -518,12 +557,8 @@ final class IOSProceduralRuleStore {
             )
         }
 
-        let combinedForGuard = [title?.trimmingCharacters(in: .whitespacesAndNewlines), cleanInstruction]
-            .compactMap { $0 }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-
-        if IOSProceduralRuleGuard.attemptsRiskTableRelaxation(combinedForGuard) {
+        if IOSProceduralRuleGuard.attemptsRiskTableRelaxation(title ?? "") ||
+            IOSProceduralRuleGuard.attemptsRiskTableRelaxation(cleanInstruction) {
             return .rejected(
                 code: "risk_table_immutable",
                 message: IOSAppLocalization.string(
@@ -533,7 +568,7 @@ final class IOSProceduralRuleStore {
             )
         }
 
-        if IOSProceduralRuleGuard.isPurePersonaDescription(combinedForGuard) {
+        if IOSProceduralRuleGuard.isPurePersonaDescription(cleanInstruction) {
             return .redirectToSoul(
                 target: "C-SOUL-V1",
                 message: IOSAppLocalization.string(
@@ -544,6 +579,12 @@ final class IOSProceduralRuleStore {
         }
 
         let resolvedScope = IOSProceduralRuleGuard.normalizeScope(scope)
+        guard resolvedScope.utf16.count <= IOSProceduralRuleGuard.maxScopeChars,
+              !resolvedScope.unicodeScalars.contains(where: { $0.value <= 31 || (127...159).contains($0.value) }) else {
+            return .rejected(code: "invalid_scope", message: IOSAppLocalization.string(
+                "作用域不可包含控制字符或超过 141 个字符", defaultValue: "作用域不可包含控制字符或超过 141 个字符"
+            ))
+        }
         let sanitizedTitle = IOSProceduralRuleGuard.sanitizeSingleLine(title, maxChars: IOSProceduralRuleGuard.maxTitleChars)
         let cleanTitle = sanitizedTitle.isEmpty ? IOSProceduralRuleGuard.deriveTitle(from: cleanInstruction) : sanitizedTitle
         let cleanSourceEventId = IOSProceduralRuleGuard.sanitizeSingleLine(
@@ -553,7 +594,7 @@ final class IOSProceduralRuleStore {
 
         if let existing = rules.first(where: {
             ($0.status == .proposed || $0.status == .active) &&
-                $0.scope.caseInsensitiveCompare(resolvedScope) == .orderedSame &&
+                IOSProceduralRuleGuard.normalizeScope($0.scope) == resolvedScope &&
                 $0.instruction.caseInsensitiveCompare(cleanInstruction) == .orderedSame
         }) {
             return .proposed(existing, deduplicated: true)
@@ -561,7 +602,7 @@ final class IOSProceduralRuleStore {
 
         let now = clockMs()
         let record = IOSProceduralRule(
-            id: "rule_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(12))",
+            id: "local_rule_\(UUID().uuidString.lowercased())",
             title: cleanTitle,
             instruction: cleanInstruction,
             scope: resolvedScope,
@@ -588,7 +629,7 @@ final class IOSProceduralRuleStore {
                 IOSAppLocalization.string("已归档或已撤销的规则卡不可直接重新生效，请重新提议。", defaultValue: "已归档或已撤销的规则卡不可直接重新生效，请重新提议。")
             )
         }
-        if IOSProceduralRuleGuard.attemptsRiskTableRelaxation("\(target.title) \(target.instruction)") {
+        if IOSProceduralRuleGuard.attemptsRiskTableRelaxation(target) {
             throw IOSProceduralRuleStoreError.riskTableImmutable(
                 IOSAppLocalization.string("静态风险表（L1–L3）不可被规则卡放宽。", defaultValue: "静态风险表（L1–L3）不可被规则卡放宽。")
             )
@@ -644,7 +685,7 @@ final class IOSProceduralRuleStore {
     // MARK: - Gateway-Synced Operations
 
     func syncFromGateway(syncClient: (any IOSProceduralRulesSyncing)?) async {
-        guard let syncClient else { return }
+        guard let syncClient, !isSyncing else { return }
         isSyncing = true
         defer { isSyncing = false }
         do {
@@ -679,10 +720,11 @@ final class IOSProceduralRuleStore {
                     upsertRule(rule)
                 }
                 return outcome
+            } catch MacGatewayError.unreachable {
+                lastSyncError = MacGatewayError.unreachable.localizedDescription
             } catch {
-                // Only fall back to local proposal when gateway is unreachable;
-                // semantic rejections (422) return via `IOSRuleProposalOutcome` above.
                 lastSyncError = error.localizedDescription
+                return .rejected(code: "gateway_request_failed", message: error.localizedDescription)
             }
         }
         return proposeLocal(title: title, instruction: instruction, scope: resolvedScope, sourceEventId: sourceEventId)
@@ -693,17 +735,17 @@ final class IOSProceduralRuleStore {
         id: String,
         syncClient: (any IOSProceduralRulesSyncing)? = nil
     ) async throws -> IOSProceduralRule {
-        if let syncClient {
-            do {
-                let confirmed = try await syncClient.confirmProceduralRule(id: id)
-                lastSyncError = nil
-                upsertRule(confirmed)
-                return confirmed
-            } catch {
-                lastSyncError = error.localizedDescription
-            }
+        guard let syncClient, !IOSProceduralRule.isLocalID(id) else {
+            return try confirmLocal(id: id)
         }
-        return try confirmLocal(id: id)
+        do {
+            let confirmed = try await syncClient.confirmProceduralRule(id: id)
+            lastSyncError = nil
+            return upsertRule(confirmed)
+        } catch {
+            lastSyncError = error.localizedDescription
+            throw error
+        }
     }
 
     @discardableResult
@@ -711,17 +753,17 @@ final class IOSProceduralRuleStore {
         id: String,
         syncClient: (any IOSProceduralRulesSyncing)? = nil
     ) async throws -> IOSProceduralRule {
-        if let syncClient {
-            do {
-                let archived = try await syncClient.archiveProceduralRule(id: id)
-                lastSyncError = nil
-                upsertRule(archived)
-                return archived
-            } catch {
-                lastSyncError = error.localizedDescription
-            }
+        guard let syncClient, !IOSProceduralRule.isLocalID(id) else {
+            return try archiveLocal(id: id)
         }
-        return try archiveLocal(id: id)
+        do {
+            let archived = try await syncClient.archiveProceduralRule(id: id)
+            lastSyncError = nil
+            return upsertRule(archived)
+        } catch {
+            lastSyncError = error.localizedDescription
+            throw error
+        }
     }
 
     @discardableResult
@@ -729,17 +771,17 @@ final class IOSProceduralRuleStore {
         id: String,
         syncClient: (any IOSProceduralRulesSyncing)? = nil
     ) async throws -> IOSProceduralRule {
-        if let syncClient {
-            do {
-                let revoked = try await syncClient.revokeProceduralRule(id: id)
-                lastSyncError = nil
-                upsertRule(revoked)
-                return revoked
-            } catch {
-                lastSyncError = error.localizedDescription
-            }
+        guard let syncClient, !IOSProceduralRule.isLocalID(id) else {
+            return try revokeLocal(id: id)
         }
-        return try revokeLocal(id: id)
+        do {
+            let revoked = try await syncClient.revokeProceduralRule(id: id)
+            lastSyncError = nil
+            return upsertRule(revoked)
+        } catch {
+            lastSyncError = error.localizedDescription
+            throw error
+        }
     }
 
     // MARK: - Prompt Injection Selection & Hit Counting
@@ -754,7 +796,7 @@ final class IOSProceduralRuleStore {
     ) -> [IOSProceduralRule] {
         let matched = rules
             .filter { $0.status == .active }
-            .filter { !IOSProceduralRuleGuard.attemptsRiskTableRelaxation("\($0.title) \($0.instruction)") }
+            .filter { !IOSProceduralRuleGuard.attemptsRiskTableRelaxation($0) }
             .filter { IOSProceduralRuleGuard.matchesScope($0.scope, conversationId: conversationId, projectId: projectId) }
             .sorted { lhs, rhs in
                 let lhsGlobal = lhs.scope.caseInsensitiveCompare(IOSProceduralRule.scopeGlobal) == .orderedSame
@@ -787,18 +829,15 @@ final class IOSProceduralRuleStore {
     @discardableResult
     func applyBootstrapActiveRules(_ snapshotRules: [IOSProceduralRule]) -> Int {
         let validActive = snapshotRules.filter {
-            $0.status == .active && !IOSProceduralRuleGuard.attemptsRiskTableRelaxation("\($0.title) \($0.instruction)")
+            $0.status == .active && !IOSProceduralRuleGuard.attemptsRiskTableRelaxation($0)
         }
         guard !validActive.isEmpty else { return 0 }
         var byId = Dictionary(uniqueKeysWithValues: rules.map { ($0.id, $0) })
         var importedCount = 0
         for remote in validActive {
             if let existing = byId[remote.id] {
-                if (existing.status == .revoked || existing.status == .archived) && existing.updatedAt > remote.updatedAt {
-                    continue
-                }
-                var merged = remote
-                merged.hitCount = max(existing.hitCount, remote.hitCount)
+                let merged = Self.merging(remote, into: existing)
+                guard merged.status == .active else { continue }
                 byId[remote.id] = merged
             } else {
                 byId[remote.id] = remote
@@ -813,9 +852,7 @@ final class IOSProceduralRuleStore {
         var byId = Dictionary(uniqueKeysWithValues: rules.map { ($0.id, $0) })
         for remote in remoteRules {
             if let local = byId[remote.id] {
-                var merged = remote
-                merged.hitCount = max(local.hitCount, remote.hitCount)
-                byId[remote.id] = merged
+                byId[remote.id] = Self.merging(remote, into: local)
             } else {
                 byId[remote.id] = remote
             }
@@ -829,16 +866,28 @@ final class IOSProceduralRuleStore {
 
     // MARK: - Persistence Helpers
 
-    private func upsertRule(_ rule: IOSProceduralRule) {
+    @discardableResult
+    private func upsertRule(_ rule: IOSProceduralRule) -> IOSProceduralRule {
         var next = rules
         if let idx = next.firstIndex(where: { $0.id == rule.id }) {
-            var merged = rule
-            merged.hitCount = max(next[idx].hitCount, rule.hitCount)
+            let merged = Self.merging(rule, into: next[idx])
             next[idx] = merged
-        } else {
-            next.append(rule)
+            commit(next)
+            return merged
         }
+        next.append(rule)
         commit(next)
+        return rule
+    }
+
+    private static func merging(_ incoming: IOSProceduralRule, into current: IOSProceduralRule) -> IOSProceduralRule {
+        // Confirmation and retirement are one-way. Hit timestamps can come from either device's clock.
+        let retainCurrent = current.status.lifecycleStage == incoming.status.lifecycleStage
+            ? current.updatedAt > incoming.updatedAt
+            : current.status.lifecycleStage > incoming.status.lifecycleStage
+        var result = retainCurrent ? current : incoming
+        result.hitCount = max(current.hitCount, incoming.hitCount)
+        return result
     }
 
     private func commit(_ candidate: [IOSProceduralRule]) {
@@ -875,7 +924,7 @@ final class IOSProceduralRuleStore {
         Self.persistenceQueue.sync {}
     }
 
-    private static func atomicWrite(data: Data, to url: URL) {
+    private nonisolated static func atomicWrite(data: Data, to url: URL) {
         let directory = url.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? data.write(to: url, options: [.atomic])

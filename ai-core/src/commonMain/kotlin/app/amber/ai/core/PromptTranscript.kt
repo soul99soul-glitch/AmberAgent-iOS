@@ -17,6 +17,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonPrimitive
 
 const val PROMPT_SECTION_METADATA = "amber_prompt_section"
+const val PROCEDURAL_RULES_SECTION = "proceduralRules"
 private const val PROMPT_EVENT_METADATA = "amber_prompt_transition_v1"
 
 /** Only declarations cross the persistence boundary; executable closures never do. */
@@ -155,13 +156,26 @@ object PromptTranscript {
             return PromptTranscriptRequest(listOf(message(initial)) + conversation, initial)
         }
         val state = baseline.copyState()
-        val output = mutableListOf(message(baseline.checkpoint()))
+        val output = mutableListOf<UIMessage>()
+        fun appendHistoricalEvent(event: PromptTranscriptEvent) {
+            // Revocation applies to the entire outgoing request, including replayed system messages.
+            val previous = event.sections[PROCEDURAL_RULES_SECTION]
+            if (previous == null || previous == desired.sections[PROCEDURAL_RULES_SECTION]) {
+                output += message(event)
+                return
+            }
+            val remaining = event.sections - PROCEDURAL_RULES_SECTION
+            if (event.initial || remaining.isNotEmpty() || event.toolsAdded.isNotEmpty() || event.toolsRemoved.isNotEmpty()) {
+                output += message(event.copy(sections = remaining, sectionMetadata = event.sectionMetadata - PROCEDURAL_RULES_SECTION))
+            }
+        }
+        appendHistoricalEvent(baseline.checkpoint())
         for (item in conversation) {
             val update = retainedEvents[item.id]
             if (update != null && !(before == null && item.id == firstInitial?.id)) {
                 val delta = if (update.initial) state.diff(State().apply { apply(update) }) else update
                 if (delta != null) {
-                    output += message(delta)
+                    appendHistoricalEvent(delta)
                     state.apply(delta)
                 }
             }

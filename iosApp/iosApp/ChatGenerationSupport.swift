@@ -120,7 +120,7 @@ struct ChatGenerationBindings {
     let saveMiniAppIfPresent: ([UIMessage], KotlinUuid?) -> ChatMiniAppOutputApplication?
     let messagesByInjectingRuntimeContext: ([UIMessage]) -> [UIMessage]
     /// 第三个参数为 Jev 统一选中集合（本轮一次计算），注入与 usage marking 共用。
-    var messagesByInjectingRuntimeContextForRun: (([UIMessage], Bool, ChatMemoryContextBuilder.RecallResult?) -> [UIMessage])? = nil
+    var messagesByInjectingRuntimeContextForRun: ((_ messages: [UIMessage], _ mcpEnabled: Bool, _ memoryRecall: ChatMemoryContextBuilder.RecallResult?, _ recordRuleHits: Bool) -> [UIMessage])? = nil
     var prepareImageAttachments: @MainActor ([UIMessage], Model, Settings, KotlinUuid?) async throws -> [UIMessage] = {
         messages, _, _, _ in messages
     }
