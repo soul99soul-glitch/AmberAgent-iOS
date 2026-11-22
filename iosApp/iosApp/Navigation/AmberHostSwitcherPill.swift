@@ -574,15 +574,31 @@ struct AmberInlineCloudMainDialogueView: View {
                         }
                     )
                     if item.needsOutcomeUnknownAction, let workItemId = item.workItemId {
-                        HStack(spacing: 8) {
-                            outcomeUnknownActionPill(macGatewayL("重查状态"), tint: AmberTheme.accent) {
-                                Task { _ = await store.recheckOutcomeUnknownCloudWorkItem(workItemId: workItemId) }
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 8) {
+                                outcomeUnknownActionPill(macGatewayL("重查状态"), tint: AmberTheme.accent, isProminent: true) {
+                                    Task { _ = await store.recheckOutcomeUnknownCloudWorkItem(workItemId: workItemId) }
+                                }
+                                Spacer(minLength: 6)
+                                outcomeUnknownActionPill(macGatewayL("确认未执行后重试"), tint: MacDelegationSemanticInk.warning, fillTint: AmberTheme.accentAmber) {
+                                    Task { _ = await store.retryOutcomeUnknownCloudWorkItem(workItemId: workItemId) }
+                                }
+                                outcomeUnknownActionPill(macGatewayL("放弃"), tint: AmberTheme.muted) {
+                                    _ = store.abandonOutcomeUnknownCloudWorkItem(workItemId: workItemId)
+                                }
                             }
-                            outcomeUnknownActionPill(macGatewayL("确认未执行后重试"), tint: AmberTheme.accentAmber) {
-                                Task { _ = await store.retryOutcomeUnknownCloudWorkItem(workItemId: workItemId) }
-                            }
-                            outcomeUnknownActionPill(macGatewayL("放弃"), tint: AmberTheme.muted) {
-                                _ = store.abandonOutcomeUnknownCloudWorkItem(workItemId: workItemId)
+                            VStack(alignment: .leading, spacing: 2) {
+                                outcomeUnknownActionPill(macGatewayL("重查状态"), tint: AmberTheme.accent, isProminent: true) {
+                                    Task { _ = await store.recheckOutcomeUnknownCloudWorkItem(workItemId: workItemId) }
+                                }
+                                HStack(spacing: 8) {
+                                    outcomeUnknownActionPill(macGatewayL("确认未执行后重试"), tint: MacDelegationSemanticInk.warning, fillTint: AmberTheme.accentAmber) {
+                                        Task { _ = await store.retryOutcomeUnknownCloudWorkItem(workItemId: workItemId) }
+                                    }
+                                    outcomeUnknownActionPill(macGatewayL("放弃"), tint: AmberTheme.muted) {
+                                        _ = store.abandonOutcomeUnknownCloudWorkItem(workItemId: workItemId)
+                                    }
+                                }
                             }
                         }
                         .padding(.leading, 4)
@@ -592,14 +608,27 @@ struct AmberInlineCloudMainDialogueView: View {
         }
     }
 
-    private func outcomeUnknownActionPill(_ title: String, tint: Color, action: @escaping () -> Void) -> some View {
+    private func outcomeUnknownActionPill(
+        _ title: String,
+        tint: Color,
+        fillTint: Color? = nil,
+        isProminent: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Text(verbatim: title)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(tint)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(tint.opacity(0.12), in: Capsule(style: .continuous))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(isProminent ? AmberTheme.accentInk : tint)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 32)
+                .background(
+                    isProminent ? tint : (fillTint ?? tint).opacity(0.12),
+                    in: Capsule(style: .continuous)
+                )
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -726,11 +755,12 @@ private struct AmberCloudFollowupBubbleRow: View {
             if let statusText, !statusText.isEmpty {
                 Text(verbatim: statusText)
                     .font(.caption2.weight(.medium))
-                    .foregroundStyle(isCancelled ? AmberTheme.accentAmber : AmberTheme.muted)
+                    .foregroundStyle(isCancelled ? MacDelegationSemanticInk.warning : AmberTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 2.5)
+                    .padding(.vertical, 3)
                     .background(
-                        (isCancelled ? AmberTheme.accentAmber : AmberTheme.surface2).opacity(isCancelled ? 0.12 : 0.7),
+                        (isCancelled ? AmberTheme.accentAmber : AmberTheme.surface2).opacity(isCancelled ? 0.14 : 0.7),
                         in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                     )
             }
@@ -768,7 +798,7 @@ struct CloudDialogueMessageRow: View {
                             ForEach(event.displaySourceAnnotations, id: \.self) { source in
                                 HStack(spacing: 4) {
                                     Image(systemName: "doc.text")
-                                        .font(.system(size: 10))
+                                        .font(.caption2)
                                     Text(verbatim: source)
                                         .font(.caption2.monospaced())
                                         .lineLimit(1)
@@ -909,7 +939,8 @@ struct MacGatewayCloudDialogueSheet: View {
                     if let errorMessage {
                         Text(verbatim: errorMessage)
                             .font(.caption)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(MacDelegationSemanticInk.warning)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     HStack(spacing: 8) {
                         TextField(

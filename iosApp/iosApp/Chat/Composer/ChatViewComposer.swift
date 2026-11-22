@@ -301,7 +301,7 @@ extension ChatView {
                             if !isCloudMainDialogueActive,
                                !collapsesComposerForDuetPanel,
                                MacGatewayStore.shared.connection != nil || isUnifiedMacDelegationTargeted {
-                                HStack(spacing: 8) {
+                                HStack(alignment: .center, spacing: 8) {
                                     if let followupId = composerState.unifiedMacFollowupWorkItemId {
                                         HStack(spacing: 6) {
                                             Image(systemName: "arrow.turn.down.right")
@@ -311,17 +311,23 @@ extension ChatView {
                                                 .font(.caption.weight(.semibold))
                                                 .foregroundStyle(AmberTheme.foreground)
                                                 .lineLimit(1)
+                                                .truncationMode(.tail)
                                             Button {
                                                 composerState.unifiedMacFollowupWorkItemId = nil
                                             } label: {
                                                 Image(systemName: "xmark.circle.fill")
+                                                    .font(.caption)
                                                     .foregroundStyle(AmberTheme.muted)
+                                                    .padding(.horizontal, 4)
+                                                    .padding(.vertical, 4)
+                                                    .contentShape(Rectangle())
                                             }
                                             .buttonStyle(.plain)
                                             .accessibilityLabel(macGatewayL("取消点名补充"))
                                         }
-                                        .padding(.horizontal, 11)
-                                        .padding(.vertical, 6)
+                                        .padding(.leading, 11)
+                                        .padding(.trailing, 7)
+                                        .frame(minHeight: 30)
                                         .background(AmberTheme.surface, in: Capsule(style: .continuous))
                                         .overlay {
                                             Capsule(style: .continuous)
@@ -339,16 +345,22 @@ extension ChatView {
                                         }
                                     }
 
-                                    if let shareNotice = composerState.sharePrefillNotice, !shareNotice.isEmpty {
-                                        Text(verbatim: shareNotice)
-                                            .font(.caption2)
-                                            .foregroundStyle(AmberTheme.muted)
-                                            .lineLimit(1)
-                                    }
-
                                     Spacer(minLength: 0)
                                 }
                                 .padding(.horizontal, 2)
+                            }
+
+                            if !isCloudMainDialogueActive,
+                               !collapsesComposerForDuetPanel,
+                               let shareNotice = composerState.sharePrefillNotice,
+                               !shareNotice.isEmpty {
+                                Text(verbatim: shareNotice)
+                                    .font(.caption2)
+                                    .foregroundStyle(AmberTheme.muted)
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 4)
                             }
 
                             if isCloudMainDialogueActive,
@@ -389,8 +401,11 @@ extension ChatView {
                                !collapsesComposerForDuetPanel {
                                 Text(verbatim: cloudError)
                                     .font(.caption)
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(MacDelegationSemanticInk.warning)
                                     .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 4)
                             }
 
                             // Apple Music dock：左侧输入胶囊 + 右侧发送键；

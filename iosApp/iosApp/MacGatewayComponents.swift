@@ -155,41 +155,32 @@ struct MacGatewayApprovalRow: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(verbatim: approval.tool)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle((approval.highRisk || isLocalOnly) ? AmberTheme.accentRed : AmberTheme.accent)
+                .foregroundStyle((approval.highRisk || isLocalOnly) ? MacDelegationSemanticInk.danger : AmberTheme.accent)
             if let detail = approval.detail, !detail.isEmpty {
                 Text(verbatim: detail)
                     .font(.caption.monospaced())
                     .foregroundStyle(AmberTheme.muted)
                     .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
             }
-            HStack(spacing: 10) {
+            Group {
                 if store.decidingCalls.contains(approval.toolCallId) {
                     ProgressView().frame(minHeight: 44)
                 } else {
-                    MacGatewayCapsuleButton(
-                        title: macGatewayL("查看差异"),
-                        accessibilityLabel: macGatewayL("查看差异") + " " + approval.tool
-                    ) { presentingDiffSheet = true }
-
-                    MacGatewayCapsuleButton(
-                        title: macGatewayL("拒绝"),
-                        accessibilityLabel: macGatewayL("拒绝") + " " + approval.tool,
-                        accessibilityHint: approval.highRisk ? macGatewayL("高风险操作，需在本机前台通过生物识别核对后才可批准") : nil
-                    ) { decide(false) }
-
-                    if !isLocalOnly {
-                        MacGatewayCapsuleButton(
-                            title: macGatewayL(approval.highRisk ? "验证并批准" : "批准"),
-                            accessibilityLabel: macGatewayL(approval.highRisk ? "验证并批准" : "批准") + " " + approval.tool
-                        ) { decide(true) }
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) {
+                            approvalButtons
+                            Spacer(minLength: 0)
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            approvalButtons
+                        }
                     }
                 }
-                Spacer(minLength: 0)
             }
             if isLocalOnly {
                 Text(verbatim: macGatewayL("此高危操作请在 Mac 上批准"))
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(AmberTheme.accentRed)
+                    .foregroundStyle(MacDelegationSemanticInk.danger)
                     .fixedSize(horizontal: false, vertical: true)
             } else if approval.highRisk {
                 Text(verbatim: macGatewayL("高风险操作，需在本机前台通过生物识别核对后批准（通知栏仅可拒绝）"))
@@ -210,6 +201,27 @@ struct MacGatewayApprovalRow: View {
                 onRequestModification: onRequestModification
             )
             .amberFloatingSheet(detents: [.medium, .large])
+        }
+    }
+
+    @ViewBuilder
+    private var approvalButtons: some View {
+        MacGatewayCapsuleButton(
+            title: macGatewayL("查看差异"),
+            accessibilityLabel: macGatewayL("查看差异") + " " + approval.tool
+        ) { presentingDiffSheet = true }
+
+        MacGatewayCapsuleButton(
+            title: macGatewayL("拒绝"),
+            accessibilityLabel: macGatewayL("拒绝") + " " + approval.tool,
+            accessibilityHint: approval.highRisk ? macGatewayL("高风险操作，需在本机前台通过生物识别核对后才可批准") : nil
+        ) { decide(false) }
+
+        if !isLocalOnly {
+            MacGatewayCapsuleButton(
+                title: macGatewayL(approval.highRisk ? "验证并批准" : "批准"),
+                accessibilityLabel: macGatewayL(approval.highRisk ? "验证并批准" : "批准") + " " + approval.tool
+            ) { decide(true) }
         }
     }
 
