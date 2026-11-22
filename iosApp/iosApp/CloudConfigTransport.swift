@@ -6,7 +6,40 @@ import Security
 
 /// `ConfigurationView` — GET /v2/configuration. Non-secret only.
 struct IOSCloudConfigViewDTO: Decodable, Sendable {
-    struct Model: Decodable, Sendable { var provider: String; var modelId: String; var baseUrl: String }
+    struct Model: Decodable, Sendable {
+        var provider: String
+        var modelId: String
+        var baseUrl: String
+        var authMode: String
+        var siwcConfigured: Bool
+
+        private enum CodingKeys: String, CodingKey {
+            case provider, modelId, baseUrl, authMode, siwcConfigured
+        }
+
+        init(
+            provider: String,
+            modelId: String,
+            baseUrl: String = "",
+            authMode: String = "apiKey",
+            siwcConfigured: Bool = false
+        ) {
+            self.provider = provider
+            self.modelId = modelId
+            self.baseUrl = baseUrl
+            self.authMode = authMode
+            self.siwcConfigured = siwcConfigured
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            provider = try container.decodeIfPresent(String.self, forKey: .provider) ?? ""
+            modelId = try container.decodeIfPresent(String.self, forKey: .modelId) ?? ""
+            baseUrl = try container.decodeIfPresent(String.self, forKey: .baseUrl) ?? ""
+            authMode = try container.decodeIfPresent(String.self, forKey: .authMode) ?? "apiKey"
+            siwcConfigured = try container.decodeIfPresent(Bool.self, forKey: .siwcConfigured) ?? false
+        }
+    }
     struct Search: Decodable, Sendable { var sources: [String]; var mode: String }
     struct Configured: Decodable, Sendable { var configured: Bool }
     struct Credentials: Decodable, Sendable {
@@ -21,6 +54,39 @@ struct IOSCloudConfigViewDTO: Decodable, Sendable {
     var credentials: Credentials
     var supportedModelProviders: [String] = ["openai", "claude"]
     var supportedSearchSources: [String] = ["bing", "duckduckgo", "exa", "brave"]
+
+    private enum CodingKeys: String, CodingKey {
+        case gatewayId, revision, model, search, credentials, supportedModelProviders, supportedSearchSources
+    }
+
+    init(
+        gatewayId: String,
+        revision: Int,
+        model: Model,
+        search: Search,
+        credentials: Credentials,
+        supportedModelProviders: [String] = ["openai", "claude"],
+        supportedSearchSources: [String] = ["bing", "duckduckgo", "exa", "brave"]
+    ) {
+        self.gatewayId = gatewayId
+        self.revision = revision
+        self.model = model
+        self.search = search
+        self.credentials = credentials
+        self.supportedModelProviders = supportedModelProviders
+        self.supportedSearchSources = supportedSearchSources
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        gatewayId = try container.decode(String.self, forKey: .gatewayId)
+        revision = try container.decode(Int.self, forKey: .revision)
+        model = try container.decode(Model.self, forKey: .model)
+        search = try container.decode(Search.self, forKey: .search)
+        credentials = try container.decode(Credentials.self, forKey: .credentials)
+        supportedModelProviders = try container.decodeIfPresent([String].self, forKey: .supportedModelProviders) ?? ["openai", "claude"]
+        supportedSearchSources = try container.decodeIfPresent([String].self, forKey: .supportedSearchSources) ?? ["bing", "duckduckgo", "exa", "brave"]
+    }
 }
 
 /// `ConfigurationImportKey` — GET /v2/configuration/import-key. Public key
@@ -410,7 +476,7 @@ actor IOSCloudConfigClient: IOSCloudConfigTransport {
 
     // MARK: - Mapping
 
-    private func snapshot(_ dto: IOSCloudConfigViewDTO) -> IOSCloudConfigSnapshot {
+    static func makeSnapshot(from dto: IOSCloudConfigViewDTO) -> IOSCloudConfigSnapshot {
         func configured(_ key: String) -> Bool {
             switch key {
             case "modelApiKey": dto.credentials.modelApiKey.configured
@@ -422,7 +488,8 @@ actor IOSCloudConfigClient: IOSCloudConfigTransport {
         let model: IOSCloudConfigSnapshot.Model? =
             (dto.model.provider.isEmpty && dto.model.modelId.isEmpty) ? nil : .init(
                 provider: dto.model.provider, modelId: dto.model.modelId,
-                baseUrl: dto.model.baseUrl, keyConfigured: configured("modelApiKey")
+                baseUrl: dto.model.baseUrl, keyConfigured: configured("modelApiKey"),
+                authMode: dto.model.authMode, siwcConfigured: dto.model.siwcConfigured
             )
         return IOSCloudConfigSnapshot(
             gatewayId: dto.gatewayId,
@@ -442,6 +509,10 @@ actor IOSCloudConfigClient: IOSCloudConfigTransport {
             supportedModelProviders: dto.supportedModelProviders,
             supportedSearchSources: dto.supportedSearchSources
         )
+    }
+
+    private func snapshot(_ dto: IOSCloudConfigViewDTO) -> IOSCloudConfigSnapshot {
+        Self.makeSnapshot(from: dto)
     }
 
     /// Contract error contract → typed errors; 401 stays `MacGatewayError.unauthorized`

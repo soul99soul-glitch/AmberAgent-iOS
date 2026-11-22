@@ -174,7 +174,8 @@ extension ChatViewModel {
             mcpTools: mcpManager.tools,
             miniAppRepository: miniAppRepository,
             miniAppRuntimeEnabled: isMiniAppRuntimeEnabled,
-            conversationId: (state ?? currentRun.state).conversationId?.toHexDashString()
+            conversationId: (state ?? currentRun.state).conversationId?.toHexDashString(),
+            recordRuleHits: false
         ).memoryRecallResult(for: uploadableMessages, override: override).ids
     }
 
@@ -187,7 +188,8 @@ extension ChatViewModel {
             mcpTools: mcpManager.tools,
             miniAppRepository: miniAppRepository,
             miniAppRuntimeEnabled: isMiniAppRuntimeEnabled,
-            conversationId: (state ?? currentRun.state).conversationId?.toHexDashString()
+            conversationId: (state ?? currentRun.state).conversationId?.toHexDashString(),
+            recordRuleHits: false
         ).memoryRecallResult(for: uploadableMessages)
     }
 

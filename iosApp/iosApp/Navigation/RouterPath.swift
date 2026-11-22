@@ -104,6 +104,8 @@ enum Route: Hashable {
     case macTasks
     /// Cloud configuration of the paired Mac (provider/model/search, local import).
     case cloudConfig
+    /// Procedural rule cards (Stage 3-D): local + paired gateway `/v2/rules`.
+    case proceduralRules
     case subscription
     case capabilities
     case memoryEdit(recordId: Int?, text: String, scope: String, pinned: Bool)

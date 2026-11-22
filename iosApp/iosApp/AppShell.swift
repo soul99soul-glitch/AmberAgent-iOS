@@ -204,6 +204,7 @@ struct AppShell: View {
                 }
                 IOSMemoryExtractionCoordinator.shared.resume()
                 IOSMemoryConsolidationCoordinator.shared.resume()
+                MacGatewayStore.shared.boundSharedSettings = sharedSettings
                 Task { await MacGatewayStore.shared.handleForegroundBecameActive() }
             }
         }
@@ -722,6 +723,7 @@ struct AppShell: View {
             pendingAppDeepLinkDestination = .conversation(id: task.conversationID)
             return
         case .gatewayPair(let payload):
+            MacGatewayStore.shared.boundSharedSettings = sharedSettings
             MacGatewayStore.shared.receivePairingLink(payload)
             rootRouter.path = [.settings, .macGateway]
         case .macTasks:
@@ -1068,6 +1070,8 @@ private extension View {
                 SearchProviderView(sharedSettings: sharedSettings)
             case .cloudConfig:
                 CloudConfigSettingsView(sharedSettings: sharedSettings)
+            case .proceduralRules:
+                ProceduralRulesSettingsView(sharedSettings: sharedSettings)
             case .ttsSettings:
                 TTSSettingsView(sharedSettings: sharedSettings)
             case .miniApps:

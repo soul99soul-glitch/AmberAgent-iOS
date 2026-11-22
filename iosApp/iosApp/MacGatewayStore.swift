@@ -171,6 +171,8 @@ final class MacGatewayStore {
     /// A successful receipt ends the operation — the next submit gets a new id.
     @ObservationIgnored var pendingImportOperation = IOSCloudPendingOperation()
     var pendingPairing: MacGatewayPairingPayload?
+    /// Non-secret summary of the most recent single-scan pairing bootstrap sync.
+    var lastBootstrapSyncSummary: IOSPairingBootstrapSyncSummary?
     var notice: Notice?
 
     @ObservationIgnored var client: MacGatewayClient?
@@ -182,6 +184,8 @@ final class MacGatewayStore {
     @ObservationIgnored var requestGeneration = (status: 0, schedules: 0, board: 0, cloudAgents: 0)
     @ObservationIgnored var hasCheckedCloudSoulOnConnect = false
     @ObservationIgnored weak var boundSoulStore: AgentSoulStore?
+    @ObservationIgnored weak var boundSharedSettings: IOSSharedSettingsStore?
+    @ObservationIgnored var boundRuleStore: IOSProceduralRuleStore = .shared
     @ObservationIgnored let persistenceCoordinator = MacGatewayPersistenceCoordinator()
     @ObservationIgnored let defaults: UserDefaults
     @ObservationIgnored private let biometricAuthenticator: any MacGatewayBiometricAuthenticating
@@ -360,14 +364,33 @@ final class MacGatewayStore {
         receivePairingLink(UIPasteboard.general.string ?? "")
     }
 
-    func confirmPairing() async {
+    func confirmPairing(
+        sharedSettings: IOSSharedSettingsStore? = nil,
+        soulStore: AgentSoulStore? = nil,
+        ruleStore: IOSProceduralRuleStore? = nil,
+        pairingClientOverride: MacGatewayClient? = nil,
+        storeToken: ((String, String) -> Bool)? = nil
+    ) async {
         guard let payload = pendingPairing, !isBusy else { return }
         isBusy = true
         defer { isBusy = false }
-        let pairingClient = MacGatewayClient(addrs: payload.addrs, port: payload.port, fingerprint: payload.fp, token: nil)
+        let pairingClient = pairingClientOverride
+            ?? MacGatewayClient(addrs: payload.addrs, port: payload.port, fingerprint: payload.fp, token: nil)
+        let wantsBootstrapSync = payload.bootstrap?.syncSupported ?? true
+        let ephemeralKeyPair: IOSPairingBootstrapKeyPair? = wantsBootstrapSync
+            ? (try? IOSPairingBootstrapCrypto.generateEphemeralKeyPair())
+            : nil
         do {
-            let response = try await pairingClient.pair(secret: payload.s, deviceName: UIDevice.current.name)
-            guard IOSCredentialSideTable.store(key: Self.tokenKey, value: response.token) else {
+            let response = try await pairingClient.pair(
+                secret: payload.s,
+                deviceName: UIDevice.current.name,
+                requestBootstrapSync: wantsBootstrapSync,
+                clientPublicJwk: ephemeralKeyPair?.publicJwk
+            )
+            let tokenWriter = storeToken ?? { key, value in
+                IOSCredentialSideTable.store(key: key, value: value)
+            }
+            guard tokenWriter(Self.tokenKey, response.token) else {
                 notice = Notice(text: localized("无法把配对凭据写入钥匙串"), isError: true)
                 return
             }
@@ -384,13 +407,51 @@ final class MacGatewayStore {
                 sendableDefaults.set(savedData, forKey: Self.connectionKey)
             }
             connection = saved
-            client = MacGatewayClient(addrs: saved.addrs, port: saved.port, fingerprint: saved.fingerprint, token: response.token)
+            let pairedClient = MacGatewayClient(addrs: saved.addrs, port: saved.port, fingerprint: saved.fingerprint, token: response.token)
+            client = pairedClient
             loadPersistedCloudTasks()
             loadPersistedCloudDialogueState()
             pendingPairing = nil
-            notice = nil
-            await enablePush()
-            await refresh()
+
+            var bootstrapSnapshot = response.bootstrap
+            if bootstrapSnapshot == nil, payload.bootstrap?.syncSupported == true {
+                bootstrapSnapshot = try? await pairedClient.requestPairingBootstrapSync(
+                    clientPublicJwk: ephemeralKeyPair?.publicJwk
+                )
+            }
+
+            if let bootstrapSnapshot {
+                do {
+                    let applied = try IOSPairingBootstrapImporter.apply(
+                        snapshot: bootstrapSnapshot,
+                        privateKey: ephemeralKeyPair?.privateKey,
+                        gatewayId: response.gatewayId,
+                        deviceId: response.deviceId,
+                        sharedSettings: sharedSettings ?? boundSharedSettings,
+                        soulStore: soulStore ?? boundSoulStore ?? .shared,
+                        ruleStore: ruleStore ?? boundRuleStore
+                    )
+                    if let remoteConfig = applied.remoteConfigSnapshot {
+                        cloudConfig = remoteConfig
+                    }
+                    lastBootstrapSyncSummary = applied.summary
+                    notice = Notice(text: applied.summary.summaryText, isError: false)
+                } catch {
+                    lastBootstrapSyncSummary = nil
+                    notice = Notice(
+                        text: localized("配对成功，但加密配置同步未完成：") + error.localizedDescription,
+                        isError: true
+                    )
+                }
+            } else {
+                lastBootstrapSyncSummary = nil
+                notice = nil
+            }
+
+            if pairingClientOverride == nil {
+                await enablePush()
+                await refresh()
+            }
         } catch {
             notice = Notice(text: error.localizedDescription, isError: true)
         }
@@ -433,6 +494,7 @@ final class MacGatewayStore {
             )
             await refreshCloudAgents()
             await refreshCloudConfig()
+            await boundRuleStore.syncFromGateway(syncClient: client)
             _ = await pollCloudDialogueEvents()
             await refreshActiveCloudTasks()
             startCloudTaskPollingIfNeeded()
@@ -805,6 +867,7 @@ final class MacGatewayStore {
         cloudConfigLoading = false
         cloudImporting = false
         cloudImportKeyChanged = false
+        lastBootstrapSyncSummary = nil
         pendingImportOperation = IOSCloudPendingOperation()
         cloudDialogueTransportState = .unknown
         hasCheckedCloudSoulOnConnect = false

@@ -12,6 +12,9 @@ struct MacGatewayPairingPayload: Codable, Equatable, Sendable {
     /// base64 SHA-256 of the gateway certificate's SubjectPublicKeyInfo.
     var fp: String
     var s: String
+    /// Optional non-secret single-scan bootstrap sync metadata (Stage 3-A / 3-D).
+    /// Legacy v1 payloads omit this key and decode with `bootstrap == nil`.
+    var bootstrap: MacGatewayPairingBootstrapHint?
 
     static let maximumLinkLength = 4_096
 
@@ -21,6 +24,8 @@ struct MacGatewayPairingPayload: Codable, Equatable, Sendable {
         guard !trimmed.isEmpty, trimmed.count <= maximumLinkLength else { return nil }
         let encoded = URLComponents(string: trimmed)?.queryItems?.first(where: { $0.name == "p" })?.value ?? trimmed
         guard let data = Data(base64URLEncoded: encoded),
+              let rawString = String(data: data, encoding: .utf8),
+              !IOSPairingBootstrapCrypto.containsForbiddenSecretPattern(rawString),
               let payload = try? JSONDecoder().decode(MacGatewayPairingPayload.self, from: data),
               payload.v == 1, !payload.addrs.isEmpty, (1...65_535).contains(payload.port),
               !payload.fp.isEmpty, !payload.s.isEmpty
@@ -448,10 +453,36 @@ actor MacGatewayClient {
         var token: String
         var gatewayId: String
         var gatewayName: String
+        var bootstrap: IOSPairingBootstrapSnapshot?
     }
 
-    func pair(secret: String, deviceName: String) async throws -> PairResponse {
-        try decode(await send("POST", "/v1/pair", body: ["secret": secret, "platform": "ios", "deviceName": deviceName]))
+    func pair(
+        secret: String,
+        deviceName: String,
+        requestBootstrapSync: Bool = false,
+        clientPublicJwk: [String: String]? = nil
+    ) async throws -> PairResponse {
+        var body: [String: Any] = [
+            "secret": secret,
+            "platform": "ios",
+            "deviceName": deviceName,
+            "trustedApprovalSurface": true,
+        ]
+        if requestBootstrapSync || clientPublicJwk != nil {
+            body["requestBootstrapSync"] = true
+        }
+        if let clientPublicJwk {
+            body["clientPublicJwk"] = clientPublicJwk
+        }
+        return try decode(await send("POST", "/v1/pair", body: body))
+    }
+
+    func requestPairingBootstrapSync(clientPublicJwk: [String: String]?) async throws -> IOSPairingBootstrapSnapshot {
+        var body: [String: Any] = [:]
+        if let clientPublicJwk {
+            body["clientPublicJwk"] = clientPublicJwk
+        }
+        return try decode(await send("POST", "/v2/pairing/bootstrap-sync", body: body))
     }
 
     func status() async throws -> MacGatewayStatus {

@@ -8,6 +8,7 @@ struct MacGatewaySettingsView: View {
     @State private var presentingCloudCompose = false
 
     private let store = MacGatewayStore.shared
+    private let ruleStore = IOSProceduralRuleStore.shared
     private static let refreshInterval: Duration = .seconds(10)
 
     var body: some View {
@@ -110,6 +111,16 @@ struct MacGatewaySettingsView: View {
                 MacGatewayRow(icon: "checkmark.shield", title: L("证书指纹"), detail: payload.fp) {
                     EmptyView()
                 }
+                if let hint = payload.bootstrap {
+                    MacGatewayRowDivider()
+                    MacGatewayRow(
+                        icon: "lock.shield",
+                        title: L("单次扫码加密同步"),
+                        detail: bootstrapHintSummary(hint)
+                    ) {
+                        EmptyView()
+                    }
+                }
             }
             MacGatewaySectionFooter(text: L("请核对与 Mac 终端显示的证书指纹一致。"))
             AmberFormGroup {
@@ -159,6 +170,16 @@ struct MacGatewaySettingsView: View {
                         MacGatewayCapsuleButton(title: L("开启")) { Task { await store.enablePush() } }
                     }
                 }
+                if let syncSummary = store.lastBootstrapSyncSummary {
+                    MacGatewayRowDivider()
+                    MacGatewayRow(
+                        icon: "checkmark.seal",
+                        title: L("最近一次配对同步"),
+                        detail: syncSummary.summaryText
+                    ) {
+                        EmptyView()
+                    }
+                }
             }
             noticeFooter(fallback: store.isReachable == false
                 ? L("云端或 Mac 睡眠、断网时无法推送，也无法在这里查看状态。")
@@ -196,8 +217,46 @@ struct MacGatewaySettingsView: View {
                               action: { router.navigate(to: .cloudConfig) }) {
                     MacGatewayChevron()
                 }
+                MacGatewayRowDivider()
+                MacGatewayRow(icon: "list.bullet.rectangle", title: L("执行规则卡"),
+                              detail: proceduralRulesSummary,
+                              action: { router.navigate(to: .proceduralRules) }) {
+                    MacGatewayChevron()
+                }
             }
         }
+    }
+
+    private var proceduralRulesSummary: String {
+        let proposed = ruleStore.proposedCount
+        let active = ruleStore.activeCount
+        if proposed > 0 {
+            return L("待确认 \(proposed) 条 · 生效中 \(active) 条")
+        }
+        if active > 0 {
+            return L("生效中 \(active) 条 · 遵循四层权威注入")
+        }
+        return L("查看、确认或撤销从纠正沉淀的执行规则")
+    }
+
+    private func bootstrapHintSummary(_ hint: MacGatewayPairingBootstrapHint) -> String {
+        var parts: [String] = []
+        if !hint.provider.isEmpty {
+            let auth = hint.siwcConfigured || hint.authMode == "chatgptSiwc" ? "SIWC" : hint.authMode
+            parts.append("\(hint.provider) (\(auth))")
+        }
+        if hint.hasEncryptedCredentials {
+            parts.append(L("含端到端加密凭据"))
+        }
+        if hint.soulRevision > 0 {
+            parts.append(L("形象人设 v\(hint.soulRevision)"))
+        }
+        if hint.activeRulesCount > 0 {
+            parts.append(L("\(hint.activeRulesCount) 条生效规则卡"))
+        }
+        return parts.isEmpty
+            ? L("配对后将使用临时 RSA 密钥自动同步云端配置")
+            : parts.joined(separator: " · ")
     }
 
     private var deviceContextSharingSection: some View {

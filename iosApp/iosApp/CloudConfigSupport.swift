@@ -15,6 +15,10 @@ struct IOSCloudConfigSnapshot: Equatable, Sendable {
         var baseUrl: String
         /// `credentials.modelApiKey.configured` — status flag only, never the key.
         var keyConfigured: Bool
+        /// Remote authentication mode ("apiKey" / "chatgptSiwc" / "plan").
+        var authMode: String = "apiKey"
+        /// Whether Sign in with ChatGPT (SIWC) is configured on the gateway.
+        var siwcConfigured: Bool = false
     }
 
     /// One supported search source row: the contract's fixed whitelist.

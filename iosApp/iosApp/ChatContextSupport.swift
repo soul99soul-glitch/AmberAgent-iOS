@@ -353,8 +353,11 @@ struct ChatRuntimeContextBuilder {
     var skillFileStore = IOSSkillFileStore()
     var workspaceStore: IOSWorkspaceStore? = nil
     var soulStore: AgentSoulStore? = nil
+    var ruleStore: IOSProceduralRuleStore? = nil
     var conversationId: String? = nil
+    var projectId: String? = nil
     var isOrchestratedChild: Bool = false
+    var recordRuleHits: Bool = true
 
     @MainActor
     func injectingRuntimeContext(
@@ -362,7 +365,14 @@ struct ChatRuntimeContextBuilder {
         coalesceSystemMessages: Bool = true,
         memoryRecallOverride: ChatMemoryContextBuilder.RecallResult? = nil
     ) -> [UIMessage] {
+        // 4-tier context authority order (Stage 3-A / 3-D):
+        // Tier 1: Static risk table (L1–L3, highest)
+        // Tier 2: Confirmed active procedural rules (`status == .active`)
+        // Tier 3: C-SOUL-V1 persona & style
+        // Tier 4: Episode / Memory recall (inserted after Tiers 1–3)
         var prepared = messagesByInjectingSoul(messages)
+        prepared = messagesByInjectingProceduralRules(prepared)
+        prepared = messagesByInjectingStaticRiskTable(prepared)
         prepared = [PromptTranscript.shared.sectionMessage(name: "chatMedia", text: Self.mediaCapabilityPrompt)] + prepared
         prepared = messagesByInjectingMiniAppInstruction(prepared)
         prepared = messagesByInjectingMcpContext(prepared)
@@ -373,6 +383,24 @@ struct ChatRuntimeContextBuilder {
         prepared = messagesByInjectingWorkspaceToolPolicy(prepared)
         prepared = messagesByInjectingSystemPrompt(prepared)
         return coalesceSystemMessages ? Self.coalescingSystemMessages(prepared) : prepared
+    }
+
+    private func messagesByInjectingStaticRiskTable(_ messages: [UIMessage]) -> [UIMessage] {
+        let block = IOSAuthorityPromptAssembler.renderStaticRiskTableBlock()
+        return [PromptTranscript.shared.sectionMessage(name: "staticRiskTable", text: block)] + messages
+    }
+
+    @MainActor
+    private func messagesByInjectingProceduralRules(_ messages: [UIMessage]) -> [UIMessage] {
+        let effectiveRuleStore = ruleStore ?? .shared
+        let active = effectiveRuleStore.selectActiveForInjection(
+            conversationId: conversationId,
+            projectId: projectId,
+            recordHit: recordRuleHits
+        )
+        let block = IOSAuthorityPromptAssembler.renderConfirmedRulesBlock(active)
+        guard !block.isEmpty else { return messages }
+        return [PromptTranscript.shared.sectionMessage(name: "proceduralRules", text: block)] + messages
     }
 
     @MainActor
