@@ -47,6 +47,7 @@ class PromptCacheBaselineBenchmarkTest {
         val toolName: String? = null,
         val toolOutput: String? = null,
         val gapMinutesSincePrev: Double = 0.5,
+        val retryAfterBilledInput: Boolean = false,
     )
 
     private data class SessionFixture(
@@ -63,6 +64,7 @@ class PromptCacheBaselineBenchmarkTest {
         val fixture: SessionFixture,
         val turnCount: Int,
         val compactionCount: Int,
+        val retryInputTokens: Int,
         val usage: TokenUsage,
         val netDeltaRatio5m: Double,
         val effectiveMultiplier5m: Double,
@@ -191,6 +193,7 @@ class PromptCacheBaselineBenchmarkTest {
                     assistantText = "步骤 $i 执行完成。",
                     toolName = "workspace_file_read",
                     toolOutput = padBlock("s10-step-$i", 250),
+                    retryAfterBilledInput = i == 5,
                     gapMinutesSincePrev = when (i) {
                         1 -> 0.0
                         5 -> 7.0 // Simulates user pausing >5m during an approval
@@ -395,6 +398,7 @@ class PromptCacheBaselineBenchmarkTest {
         var cachedPrefixFingerprint: List<String> = emptyList()
         var cachedPrefixTokens = 0
         var compactionCount = 0
+        var retryInputTokens = 0
         var lastProjectedMessages: List<UIMessage> = emptyList()
 
         for ((idx, turn) in fixture.turns.withIndex()) {
@@ -434,7 +438,7 @@ class PromptCacheBaselineBenchmarkTest {
             if (prefixStillMatches) {
                 cacheReadTokens = cachedPrefixTokens.coerceAtMost(totalPromptTokens)
                 val newPrefixGrowth = (currentPrefixTokens - cachedPrefixTokens).coerceAtLeast(0)
-                // Claude incremental ephemeral cache writes new prefix delta when >= 128 tokens; rest is uncached tail
+                // The fixture models the matching prefix and writes its growth.
                 cacheWriteTokens = newPrefixGrowth.coerceAtMost(totalPromptTokens - cacheReadTokens)
                 uncachedTokens = (totalPromptTokens - cacheReadTokens - cacheWriteTokens).coerceAtLeast(0)
             } else {
@@ -448,13 +452,24 @@ class PromptCacheBaselineBenchmarkTest {
             cachedPrefixTokens = currentPrefixTokens
 
             val completionTokens = contextManager.estimateTokens(UIMessage.assistant(turn.assistantText))
+            val firstCompletion = if (turn.retryAfterBilledInput) 0 else completionTokens
             perTurnUsages += TokenUsage(
                 promptTokens = totalPromptTokens,
-                completionTokens = completionTokens,
+                completionTokens = firstCompletion,
                 cachedTokens = cacheReadTokens,
-                totalTokens = totalPromptTokens + completionTokens,
+                totalTokens = totalPromptTokens + firstCompletion,
                 cacheCreationTokens = cacheWriteTokens,
             )
+
+            // The first attempt populated the prefix before the connection dropped. The immediate
+            // retry reads that prefix and pays the uncached tail again, on the same history.
+            if (turn.retryAfterBilledInput) {
+                retryInputTokens += totalPromptTokens
+                perTurnUsages += TokenUsage(
+                    promptTokens = totalPromptTokens, cachedTokens = currentPrefixTokens,
+                    completionTokens = completionTokens, totalTokens = totalPromptTokens + completionTokens,
+                )
+            }
 
             // Append assistant response (and optional tool part) to stored history
             val parts = buildList<UIMessagePart> {
@@ -486,6 +501,7 @@ class PromptCacheBaselineBenchmarkTest {
             fixture = fixture,
             turnCount = fixture.turns.size,
             compactionCount = compactionCount,
+            retryInputTokens = retryInputTokens,
             usage = aggregated,
             netDeltaRatio5m = estimate5m.netDeltaRatio,
             effectiveMultiplier5m = estimate5m.effectiveMultiplier,
@@ -504,6 +520,12 @@ class PromptCacheBaselineBenchmarkTest {
         assertEquals(20, fixtures.size, "Baseline must cover exactly 20 desensitized sessions")
 
         val results = fixtures.map(::runFixture)
+
+        val retry = results.single { it.retryInputTokens > 0 }
+        val noRetry = runFixture(retry.fixture.copy(turns = retry.fixture.turns.map { it.copy(retryAfterBilledInput = false) }))
+        assertEquals(retry.retryInputTokens, retry.usage.promptTokens - noRetry.usage.promptTokens)
+        assertEquals(noRetry.usage.cacheCreationTokens, retry.usage.cacheCreationTokens)
+        assertTrue(retry.usage.cachedTokens > noRetry.usage.cachedTokens)
 
         // Verify per-category structural expectations
         val shortSparse = results.filter { it.fixture.category == Category.SHORT_OR_SPARSE }
@@ -545,7 +567,7 @@ class PromptCacheBaselineBenchmarkTest {
             println(
                 "${r.fixture.id}|${r.fixture.category.label}|${r.fixture.title}|turns=${r.turnCount}|compacts=${r.compactionCount}|" +
                     "prompt=${r.usage.promptTokens}|read=${r.usage.cachedTokens}|write=${r.usage.cacheCreationTokens}|uncached=${r.usage.uncachedInputTokens}|" +
-                    "delta5m=$pct|mult5m=$mult|constraints=$cons"
+                    "delta5m=$pct|mult5m=$mult|constraints=$cons|retryInput=${r.retryInputTokens}"
             )
         }
         println("--- CATEGORY_SUMMARY ---")

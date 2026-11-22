@@ -135,6 +135,8 @@ public enum AmberControl {
             public var tool: String
             public var detail: String?
             public var highRisk: Bool
+            public let summary: String?
+            public let targetDeviceName: String?
             public var riskLevel: String?
             public var targetDevice: String?
             public var targetSummary: String?
@@ -144,6 +146,7 @@ public enum AmberControl {
                         riskLevel: String? = nil, targetDevice: String? = nil, targetSummary: String? = nil,
                         diffPreview: String? = nil, requiresLocalApproval: Bool? = nil) {
                 self.sessionKey = sessionKey; self.toolCallId = toolCallId; self.tool = tool; self.detail = detail; self.highRisk = highRisk
+                self.summary = targetSummary; self.targetDeviceName = targetDevice
                 self.riskLevel = riskLevel; self.targetDevice = targetDevice; self.targetSummary = targetSummary
                 self.diffPreview = diffPreview; self.requiresLocalApproval = requiresLocalApproval
             }

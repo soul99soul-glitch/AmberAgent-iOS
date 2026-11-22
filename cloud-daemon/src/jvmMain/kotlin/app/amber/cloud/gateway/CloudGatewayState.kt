@@ -65,7 +65,15 @@ data class PendingApprovalDto(
     val targetSummary: String? = null,
     val diffPreview: String? = null,
     val requiresLocalApproval: Boolean? = null,
-)
+) {
+    // Stage 2-B reads these display keys in the status and board cards.
+    val summary = targetSummary
+    val targetDeviceName = targetDevice
+}
+
+private val PendingApprovalDto.needsLocalDecision: Boolean
+    get() = requiresLocalApproval == true ||
+        (targetDevice != null && targetDevice != "cloud-daemon" && (riskLevel == "L3" || (riskLevel == null && highRisk)))
 
 @Serializable
 data class SessionDto(
@@ -127,7 +135,11 @@ data class BoardApprovalDto(
     val targetSummary: String? = null,
     val diffPreview: String? = null,
     val requiresLocalApproval: Boolean? = null,
-)
+) {
+    // Stage 2-B reads these display keys in the status and board cards.
+    val summary = targetSummary
+    val targetDeviceName = targetDevice
+}
 
 @Serializable
 data class BoardItemDto(
@@ -530,7 +542,12 @@ class CloudGatewayState(
     @Synchronized
     fun upsertSession(session: SessionDto) {
         val safeApproval = session.pendingApproval?.let {
-            it.copy(detail = it.detail?.let(CredentialRedactor::redact))
+            it.copy(
+                detail = it.detail?.let(CredentialRedactor::redact),
+                targetDevice = it.targetDevice?.let(CredentialRedactor::redact),
+                targetSummary = it.targetSummary?.let(CredentialRedactor::redact),
+                diffPreview = it.diffPreview?.let(CredentialRedactor::redact),
+            )
         }
         sessions[session.key] = session.copy(
             subject = CredentialRedactor.redact(session.subject),
@@ -614,7 +631,7 @@ class CloudGatewayState(
                     targetDevice = it.targetDevice,
                     targetSummary = it.targetSummary?.let(CredentialRedactor::redact),
                     diffPreview = it.diffPreview?.let(CredentialRedactor::redact),
-                    requiresLocalApproval = it.requiresLocalApproval ?: it.highRisk,
+                    requiresLocalApproval = it.needsLocalDecision,
                 )
             }
             val detail = when {
@@ -670,13 +687,8 @@ class CloudGatewayState(
     }
 
     /**
-     * Processes a tool approval decision according to C3 v1 & C3 v2 rules:
-     * - When `approval.highRisk == true` and `allow == true`:
-     *   ONLY requests from a paired, trusted native App in the unlocked foreground
-     *   (`trustedForeground == true`) are allowed (`200`).
-     *   All untrusted or non-foreground sources (mobile remote without foreground proof,
-     *   lock screen, notifications, IM channels, cloud self) receive `HTTP 403` and
-     *   `outcome = "rejected_high_risk"`.
+     * Mac-local approval stays on the target. A paired, biometrically verified foreground
+     * client may approve ordinary or cloud operations. Remote denial is always available.
      */
     suspend fun processDecision(
         sessionKey: String?,
@@ -722,37 +734,35 @@ class CloudGatewayState(
             return DecisionHttpResult(409, "这次审批已经结束", outcome = "stale")
         }
 
-        // C3 v2 + Defect #1: High-risk or IM `allow=true` from any non-trusted or non-foreground source -> 403!
-        if (allow && (pending.highRisk || !trustedForegroundSource)) {
-            if (!trustedForegroundSource) {
-                val resolvedRiskLevel = pending.riskLevel ?: if (pending.highRisk) "L3" else "L2"
-                val requiresLocal = pending.requiresLocalApproval ?: pending.highRisk
-                recordAudit(
-                    "amber-decision-result",
-                    mapOf(
-                        "task" to sessionKey,
-                        "run" to runId,
-                        "tool" to pending.tool,
-                        "toolCallId" to toolCallId,
-                        "allow" to "true",
-                        "decision" to "allow",
-                        "riskLevel" to resolvedRiskLevel,
-                        "requiresLocalApproval" to requiresLocal.toString(),
-                        "outcome" to "rejected_high_risk",
-                        "device" to actorDevice,
-                    ),
-                )
-                return DecisionHttpResult(
-                    status = 403,
-                    error = "操作（$resolvedRiskLevel）只能在已配对、解锁且经过生物识别的原生 App 前台核对后批准（IM 仅可拒绝）",
-                    outcome = "rejected_high_risk",
-                    riskLevel = resolvedRiskLevel,
-                    targetDevice = pending.targetDevice,
-                    targetSummary = pending.targetSummary,
-                    diffPreview = pending.diffPreview,
-                    requiresLocalApproval = requiresLocal,
-                )
-            }
+        val requiresLocal = pending.needsLocalDecision
+        if (allow && (requiresLocal || !trustedForegroundSource)) {
+            val resolvedRiskLevel = pending.riskLevel ?: if (pending.highRisk) "L3" else "L2"
+            recordAudit(
+                "amber-decision-result",
+                mapOf(
+                    "task" to sessionKey,
+                    "run" to runId,
+                    "tool" to pending.tool,
+                    "toolCallId" to toolCallId,
+                    "allow" to "true",
+                    "decision" to "allow",
+                    "riskLevel" to resolvedRiskLevel,
+                    "requiresLocalApproval" to requiresLocal.toString(),
+                    "outcome" to "rejected_high_risk",
+                    "device" to actorDevice,
+                ),
+            )
+            return DecisionHttpResult(
+                status = 403,
+                error = if (requiresLocal) "操作（$resolvedRiskLevel）只能在目标设备本机核对后批准"
+                    else "操作（$resolvedRiskLevel）需要已配对、解锁且经过生物识别的原生 App 前台核对批准",
+                outcome = "rejected_high_risk",
+                riskLevel = resolvedRiskLevel,
+                targetDevice = pending.targetDevice,
+                targetSummary = pending.targetSummary,
+                diffPreview = pending.diffPreview,
+                requiresLocalApproval = requiresLocal,
+            )
         }
 
         val listeners = synchronized(this) { decisionListeners.toList() }

@@ -24,12 +24,16 @@ extension Daemon {
             var updatedAt: Date
             /// Amber scheduled runs waiting on a tool call: what the phone shows and answers.
             var pendingApproval: PendingApproval?
+            var sourceRefs: [String]?
+            var sourcePaths: [String]?
         }
         struct PendingApproval: Encodable {
             var toolCallId: String
             var tool: String
             var detail: String?
             var highRisk: Bool
+            var summary: String?
+            var targetDeviceName: String?
             var riskLevel: String?
             var targetDevice: String?
             var targetSummary: String?
@@ -192,7 +196,7 @@ extension Daemon {
                 StatusResponse.Session(key: $0.key, agent: $0.agent, subject: Registry.subject(for: $0), summary: $0.generatedTitle ?? $0.summary, origin: $0.origin,
                                        host: $0.host, state: $0.state, waitReason: $0.waitReason, abnormal: $0.abnormal,
                                        monitored: $0.monitored, updatedAt: $0.updatedAt,
-                                       pendingApproval: Self.pendingApproval($0))
+                                       pendingApproval: Self.pendingApproval($0), sourceRefs: $0.sourceRefs, sourcePaths: $0.sourcePaths)
             }
         let response = StatusResponse(
             gateway: .init(id: identity.id, name: identity.name),
@@ -269,6 +273,8 @@ extension Daemon {
             tool: tool,
             detail: rec.waitingDetail,
             highRisk: highRisk,
+            summary: rec.waitingTargetSummary,
+            targetDeviceName: rec.waitingTargetDevice,
             riskLevel: rec.waitingRiskLevel ?? (highRisk ? "L3" : "L2"),
             targetDevice: rec.waitingTargetDevice,
             targetSummary: rec.waitingTargetSummary,

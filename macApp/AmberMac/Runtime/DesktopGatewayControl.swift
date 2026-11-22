@@ -179,8 +179,8 @@ import Foundation
             ])
             return .failure(409, "这次审批已经结束")
         }
-        if allow, DesktopToolRegistry.isHighRisk(approval.name) {
-            let meta = DesktopToolRegistry.approvalMetadata(for: approval.name, arguments: approval.arguments)
+        let meta = DesktopToolRegistry.approvalMetadata(for: approval.name, arguments: approval.arguments)
+        if allow && meta.requiresLocalApproval {
             audit.record("amber-decision-result", [
                 "task": key,
                 "run": run.id.uuidString.lowercased(),

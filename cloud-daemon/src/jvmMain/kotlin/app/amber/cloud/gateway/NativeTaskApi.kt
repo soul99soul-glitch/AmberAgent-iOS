@@ -49,7 +49,11 @@ class NativeTaskApi(private val api: AgentCentricApi) {
         val sourceText = json.encodeToString(request)
         val fingerprint = OrchestrationHash.sha256Hex(sourceText)
         val source = store.getSourceMessage(operationId)
-        if (source != null && source.rawTextHash != fingerprint) throw NativeTaskConflict()
+        if (source != null && source.rawTextHash != fingerprint) {
+            // Before Stage 2 these optional routing fields did not exist in the stored JSON.
+            val legacyText = Json(json) { explicitNulls = false }.encodeToString(request)
+            if (source.rawTextHash != OrchestrationHash.sha256Hex(legacyText)) throw NativeTaskConflict()
+        }
         store.getOperationResult(operationId)?.let { previous ->
             val item = store.getWorkItem(previous.items.single().workItemId) ?: error("任务记录不可用")
             return@withLock NativeTaskReceipt(api.publicWork(item), replayed = true)

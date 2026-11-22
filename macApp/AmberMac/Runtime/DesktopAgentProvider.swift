@@ -638,6 +638,7 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
             case "workspace_file_read":
                 let path = try Self.string("path", args)
                 let result = try await files.readUTF8Prefix(conversationID: owner, path: path, maxCharacters: 48_000)
+                await tasks.onWorkspaceRead?(owner, path, result.text)
                 output = try Self.json(["ok": true, "path": path, "content": result.text, "truncated": result.truncated])
             case "workspace_file_write":
                 let path = try Self.string("path", args), text = try Self.string("content", args, allowEmpty: true)

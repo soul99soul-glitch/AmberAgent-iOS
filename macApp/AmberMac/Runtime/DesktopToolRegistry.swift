@@ -172,7 +172,7 @@ enum DesktopToolRegistry {
         let device = (targetDevice?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
             ?? Host.current().localizedName
             ?? "Mac"
-        let requiresLocal = isHighRisk(name)
+        let requiresLocal = level == .l3
         let redactedJSON = IOSCredentialRedactor.redact(arguments)
         let argsObj = (redactedJSON.data(using: .utf8)
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) ?? [:]

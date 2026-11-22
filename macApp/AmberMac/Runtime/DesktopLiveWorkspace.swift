@@ -64,6 +64,7 @@ import Foundation
         self.gateway = gateway
         let reporter = DesktopGatewayReporter { gateway.isEnabled }
         gatewayReporter = reporter
+        tasks.onWorkspaceRead = { reporter.recordRead(conversationID: $0, path: $1, text: $2) }
         tasks.onUnattendedApproval = { reporter.approval(conversationID: $0, $1) }
         let control = DesktopGatewayControl(tasks: tasks, reporter: reporter, scheduler: scheduler)
         control.board = { [weak self] in self?.boardItems() ?? [] }

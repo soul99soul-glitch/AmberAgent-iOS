@@ -713,7 +713,7 @@ class CloudAgentKernel(
                 highRisk = highRisk,
                 status = AgentRunStatus.AWAITING_PERMISSION,
             )
-            val approvalPreview = toolRegistry.approvalPreview(toolCall.toolName, parsedArgs, targetDevice = "cloud-daemon")
+            val approvalPreview = toolRegistry.approvalPreview(toolCall.toolName, parsedArgs, targetDevice = "cloud-daemon", cloudExecution = true)
             approvalHelper.upsertPendingApprovalSession(
                 sessionKey = sessionKey,
                 agent = "amber",

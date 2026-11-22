@@ -42,7 +42,8 @@ import XCTest
         XCTAssertEqual(ask.tool, "terminal_exec")
         XCTAssertEqual(ask.toolCallId, "call-1")
         XCTAssertEqual(ask.highRisk, true)
-        XCTAssertEqual(ask.detail, "{ \"command\": \"ls -la\" }")
+        let detail = try JSONDecoder().decode([String: String].self, from: Data(XCTUnwrap(ask.detail).utf8))
+        XCTAssertEqual(detail["command"], "ls -la")
         XCTAssertEqual(events[2].toolCallId, "call-1", "the answer names the call it resolves")
         XCTAssertEqual(events[2].tool, "terminal_exec")
         XCTAssertEqual(events[3].exitCode, 1)
@@ -93,6 +94,7 @@ import XCTest
 
     func testExcerptIsCollapsedAndCapped() {
         XCTAssertNil(DesktopGatewayReporter.excerpt("{}"))
+        XCTAssertFalse(DesktopGatewayReporter.excerpt(#"{"password":"private-fixture"}"#)?.contains("private-fixture") == true)
         XCTAssertNil(DesktopGatewayReporter.excerpt("  "))
         let long = DesktopGatewayReporter.excerpt(String(repeating: "长", count: 300))
         XCTAssertEqual(long?.count, DesktopGatewayReporter.detailLimit)
@@ -119,12 +121,9 @@ import XCTest
             )
         )
         reporter.approval(conversationID: conversation, nil)
-        reporter.runFinished(
-            conversationID: conversation,
-            succeeded: true,
-            sourceRefs: ["notes/weekly.md: 第二条：已完成接口迁移"],
-            sourcePaths: ["notes/weekly.md"]
-        )
+        reporter.recordRead(conversationID: conversation, path: "notes/weekly.md", text: "第二条：已完成接口迁移")
+        reporter.recordRead(conversationID: conversation, path: "notes/weekly.md", text: "第二条：已完成接口迁移")
+        reporter.runFinished(conversationID: conversation, succeeded: true)
 
         let events = await drained(spool, count: 4)
         XCTAssertEqual(events.map(\.kind), [.runStart, .permissionRequest, .toolDone, .runExit])
@@ -141,7 +140,8 @@ import XCTest
 
         let exit = events[3]
         XCTAssertEqual(exit.sourcePaths, ["notes/weekly.md"])
-        XCTAssertEqual(exit.sourceRefs, ["notes/weekly.md: 第二条：已完成接口迁移"])
+        XCTAssertEqual(exit.sourceRefs?.count, 1)
+        XCTAssertTrue(exit.sourceRefs?.first?.hasPrefix("notes/weekly.md · sha256:") == true)
         XCTAssertEqual(exit.parentRunId, "ios-run-7")
         XCTAssertEqual(exit.workItemId, "work:abc123")
     }

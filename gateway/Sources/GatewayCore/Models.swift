@@ -154,6 +154,8 @@ public struct SessionRecord: Codable, Sendable, Equatable {
     public var waitingTargetSummary: String?
     public var waitingDiffPreview: String?
     public var waitingRequiresLocalApproval: Bool?
+    public var sourceRefs: [String]?
+    public var sourcePaths: [String]?
     public var abnormal: Bool
     /// A `Stop` or `SessionEnd` was seen; distinguishes clean headless exits from crashes.
     public var sawTurnEnd: Bool

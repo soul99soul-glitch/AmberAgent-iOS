@@ -69,7 +69,7 @@ import XCTest
         XCTAssertTrue(done[1].failed)
     }
 
-    func testLiveRunWaitingOnApprovalNeedsYouAndCarriesTheAnswerKey() {
+    func testLiveRunWaitingOnApprovalNeedsYouAndCarriesTheAnswerKey() throws {
         let daily = task("每日汇总")
         let approval = DesktopToolApproval(id: "call-1", name: "terminal_exec", arguments: "{\n \"command\": \"ls\"\n}", reason: "")
         let conversation = UUID()
@@ -78,6 +78,10 @@ import XCTest
         XCTAssertEqual(items.map(\.column), [.needsYou], "a running task is not also listed as scheduled")
         XCTAssertEqual(items[0].approval?.sessionKey, "amber:r1")
         XCTAssertEqual(items[0].approval?.highRisk, true)
+        let encoded = try JSONEncoder().encode(XCTUnwrap(items[0].approval))
+        let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(fields["summary"] as? String, "terminal_exec: ls")
+        XCTAssertEqual(fields["targetDeviceName"] as? String, items[0].approval?.targetDevice)
         XCTAssertEqual(items[0].approval?.detail, "{ \"command\": \"ls\" }")
         XCTAssertEqual(items[0].conversationId, conversation.uuidString)
 

@@ -2,9 +2,9 @@ package app.amber.cloud.runtime
 
 import app.amber.cloud.security.CredentialRedactor
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Static L1/L2/L3 risk tier (deliberately static, never auto-learned):
@@ -72,25 +72,11 @@ object ToolRiskPolicy {
         definition: CloudToolDefinition? = null,
         args: JsonObject = JsonObject(emptyMap()),
     ): ToolRiskLevel {
-        if (toolName in L3_IRREVERSIBLE_OR_EXTERNAL_TOOLS) return ToolRiskLevel.L3
-        if (toolName.startsWith("plugin__")) {
-            return if (definition != null && !definition.highRisk && (definition.effect == ToolEffect.PURE || definition.effect == ToolEffect.NETWORK_READ)) {
-                ToolRiskLevel.L1
-            } else {
-                ToolRiskLevel.L3
-            }
-        }
-        if (definition != null) {
-            if (definition.highRisk) return ToolRiskLevel.L3
-            if (toolName in L1_READ_ONLY_TOOLS || definition.effect == ToolEffect.PURE || definition.effect == ToolEffect.NETWORK_READ) {
-                return ToolRiskLevel.L1
-            }
-            if (toolName in L2_REVERSIBLE_WRITE_TOOLS || definition.effect == ToolEffect.TASK_LOCAL || definition.effect == ToolEffect.SIDE_EFFECT) {
-                return ToolRiskLevel.L2
-            }
-        }
-        if (toolName in L1_READ_ONLY_TOOLS) return ToolRiskLevel.L1
-        if (toolName in L2_REVERSIBLE_WRITE_TOOLS) return ToolRiskLevel.L2
+        if (definition?.highRisk == true || toolName in L3_IRREVERSIBLE_OR_EXTERNAL_TOOLS) return ToolRiskLevel.L3
+        val declaredRead = definition?.effect == ToolEffect.PURE || definition?.effect == ToolEffect.NETWORK_READ
+        if (toolName.startsWith("plugin__")) return if (declaredRead) ToolRiskLevel.L1 else ToolRiskLevel.L3
+        if (toolName in L1_READ_ONLY_TOOLS || declaredRead) return ToolRiskLevel.L1
+        if (toolName in L2_REVERSIBLE_WRITE_TOOLS || definition?.effect == ToolEffect.TASK_LOCAL) return ToolRiskLevel.L2
         // Unknown tools fail closed to L3.
         return ToolRiskLevel.L3
     }
@@ -100,10 +86,11 @@ object ToolRiskPolicy {
         definition: CloudToolDefinition? = null,
         args: JsonObject = JsonObject(emptyMap()),
         targetDevice: String? = null,
+        cloudExecution: Boolean = false,
     ): ToolApprovalPreview {
         val level = classify(toolName, definition, args)
         val resolvedDevice = targetDevice?.trim()?.takeIf { it.isNotEmpty() } ?: "cloud-daemon"
-        val requiresLocal = level == ToolRiskLevel.L3 || definition?.highRisk == true || toolName in CloudToolRegistry.BUILTIN_HIGH_RISK_NAMES
+        val requiresLocal = level == ToolRiskLevel.L3 && (!cloudExecution || definition == null)
         return ToolApprovalPreview(
             riskLevel = level.wireName,
             targetDevice = resolvedDevice,
@@ -114,7 +101,7 @@ object ToolRiskPolicy {
     }
 
     fun reversibleWriteNotification(toolName: String, args: JsonObject): String {
-        val path = args["path"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+        val path = args.text("path")?.trim().orEmpty()
         return when (toolName) {
             "workspace_file_write" -> "已写入可逆文件 ${CredentialRedactor.redact(path.ifBlank { "(未命名)" })}（L2：可通过覆盖写回或恢复上一版撤回）"
             "workspace_file_edit" -> "已编辑可逆文件 ${CredentialRedactor.redact(path.ifBlank { "(未命名)" })}（L2：可反向替换撤回）"
@@ -131,10 +118,12 @@ object ToolRiskPolicy {
         return if (safe.length > limit) safe.take(limit - 1) + "…" else safe
     }
 
+    private fun JsonObject.text(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
+
     private fun buildTargetSummary(toolName: String, args: JsonObject): String? {
-        val path = args["path"]?.jsonPrimitive?.contentOrNull?.trim()
-        val command = args["command"]?.jsonPrimitive?.contentOrNull?.trim()
-        val host = args["host"]?.jsonPrimitive?.contentOrNull?.trim()
+        val path = args.text("path")?.trim()
+        val command = args.text("command")?.trim()
+        val host = args.text("host")?.trim()
         val raw = when {
             !path.isNullOrEmpty() -> "$toolName: $path"
             !command.isNullOrEmpty() -> "$toolName: ${command.replace(Regex("\\s+"), " ")}"
@@ -145,11 +134,11 @@ object ToolRiskPolicy {
     }
 
     private fun buildDiffPreview(toolName: String, args: JsonObject): String? {
-        val oldText = args["old"]?.jsonPrimitive?.contentOrNull
-        val replacement = args["replacement"]?.jsonPrimitive?.contentOrNull
-        val content = args["content"]?.jsonPrimitive?.contentOrNull
-        val command = args["command"]?.jsonPrimitive?.contentOrNull
-        val path = args["path"]?.jsonPrimitive?.contentOrNull
+        val oldText = args.text("old")
+        val replacement = args.text("replacement")
+        val content = args.text("content")
+        val command = args.text("command")
+        val path = args.text("path")
         val raw = when {
             oldText != null && replacement != null -> "- $oldText\n+ $replacement"
             !content.isNullOrEmpty() -> buildString {

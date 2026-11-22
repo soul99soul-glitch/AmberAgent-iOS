@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 @preconcurrency import GatewayCore
 @preconcurrency import GatewayTransport
@@ -17,6 +18,8 @@ import Foundation
         var name: String
         var parentRunId: String?
         var workItemId: String?
+        var sourceRefs: [String] = []
+        var sourcePaths: [String] = []
     }
     private var runs: [UUID: RunMetadata] = [:]
     /// `toolDone` must name the call it answers: the last one asked per conversation.
@@ -54,7 +57,7 @@ import Foundation
                 $0.tool = approval.name
                 $0.toolCallId = approval.id
                 $0.detail = Self.excerpt(approval.arguments)
-                $0.highRisk = DesktopToolRegistry.isHighRisk(approval.name)
+                $0.highRisk = meta.riskLevel == .l3
                 $0.riskLevel = meta.riskLevel.rawValue
                 $0.targetDevice = meta.targetDevice
                 $0.targetSummary = meta.targetSummary
@@ -66,20 +69,28 @@ import Foundation
         }
     }
 
+    func recordRead(conversationID: UUID, path: String, text: String) {
+        guard var run = runs[conversationID] else { return }
+        let safePath = DesktopHistoryRedaction.redact(path)
+        let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+        let reference = "\(safePath) · sha256:\(digest)"
+        if !run.sourcePaths.contains(safePath) { run.sourcePaths.append(safePath) }
+        if !run.sourceRefs.contains(reference) { run.sourceRefs.append(reference) }
+        runs[conversationID] = run
+    }
+
     /// `quiet`: completed with nothing new, so the gateway records it without pushing (failures push regardless).
     func runFinished(
         conversationID: UUID?,
         succeeded: Bool,
-        quiet: Bool = false,
-        sourceRefs: [String]? = nil,
-        sourcePaths: [String]? = nil
+        quiet: Bool = false
     ) {
-        guard let conversationID else { return }
+        guard let conversationID, let run = runs[conversationID] else { return }
         send(.runExit, conversationID: conversationID) {
             $0.exitCode = succeeded ? 0 : 1
             if quiet { $0.quiet = true }
-            if let sourceRefs, !sourceRefs.isEmpty { $0.sourceRefs = sourceRefs }
-            if let sourcePaths, !sourcePaths.isEmpty { $0.sourcePaths = sourcePaths }
+            if !run.sourceRefs.isEmpty { $0.sourceRefs = run.sourceRefs }
+            if !run.sourcePaths.isEmpty { $0.sourcePaths = run.sourcePaths }
         }
         runs[conversationID] = nil
         pendingCall[conversationID] = nil
@@ -104,7 +115,10 @@ import Foundation
 
     /// Whitespace-collapsed argument excerpt. Over TLS only (`/v1/status`), never in a push body.
     static func excerpt(_ arguments: String) -> String? {
-        let collapsed = arguments.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        var maskedCredential = false
+        let redacted = IOSCredentialRedactor.redact(arguments) { _, _ in maskedCredential = true }
+        let safe = DesktopHistoryRedaction.redact(maskedCredential ? redacted : arguments)
+        let collapsed = safe.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !collapsed.isEmpty, collapsed != "{}" else { return nil }
         return collapsed.count > detailLimit ? String(collapsed.prefix(detailLimit - 1)) + "…" : collapsed
     }

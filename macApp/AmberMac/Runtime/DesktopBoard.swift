@@ -31,7 +31,7 @@ import Foundation
                         toolCallId: approval.id,
                         tool: approval.name,
                         detail: DesktopGatewayReporter.excerpt(approval.arguments),
-                        highRisk: DesktopToolRegistry.isHighRisk(approval.name),
+                        highRisk: meta.riskLevel == .l3,
                         riskLevel: meta.riskLevel.rawValue,
                         targetDevice: meta.targetDevice,
                         targetSummary: meta.targetSummary,

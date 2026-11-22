@@ -221,6 +221,7 @@ import XCTest
         XCTAssertEqual(DesktopToolRegistry.riskLevel(for: "terminal_exec"), .l3)
         XCTAssertEqual(DesktopToolRegistry.riskLevel(for: "workspace_artifact_delete"), .l3)
         XCTAssertEqual(DesktopToolRegistry.riskLevel(for: "plugin__feishu_bot__send_message"), .l3)
+        XCTAssertTrue(DesktopToolRegistry.approvalMetadata(for: "unknown_future_tool", arguments: "{}").requiresLocalApproval)
         XCTAssertEqual(DesktopToolRegistry.riskLevel(for: "unknown_future_tool"), .l3)
 
         // Secret redaction & truncation on structured preview
@@ -233,19 +234,21 @@ import XCTest
         XCTAssertLessThanOrEqual(meta.diffPreview?.count ?? 0, DesktopToolRegistry.diffPreviewLimit)
 
         // High-risk remote approval returns 403 with requiresLocalApproval = true & riskLevel = "L3"
-        let (control, tasks, _, paths, conversation) = try await make()
-        let key = await sessionKey(paths)
-        let run = try await tasks.begin(conversationID: conversation, title: "清理脚本", cancel: {})
-        try await tasks.requestApproval(
-            runID: run,
-            approval: DesktopToolApproval(id: "call-l3", name: "terminal_exec", arguments: #"{"command":"rm -rf /tmp/demo"}"#, reason: "执行")
-        )
-        let refused = await control.handle(.init(action: .decide, sessionKey: key, toolCallId: "call-l3", allow: true, deviceName: "iPhone"))
-        XCTAssertEqual(refused.status, 403)
-        XCTAssertEqual(refused.requiresLocalApproval, true)
-        XCTAssertEqual(refused.riskLevel, "L3")
-        XCTAssertNotNil(refused.targetDevice)
-        XCTAssertEqual(refused.targetSummary, "terminal_exec: rm -rf /tmp/demo")
-        XCTAssertEqual(tasks.records.first { $0.id == run }?.status, .waiting)
+        for tool in ["terminal_exec", "unknown_future_tool"] {
+            let (control, tasks, _, paths, conversation) = try await make()
+            let key = await sessionKey(paths)
+            let run = try await tasks.begin(conversationID: conversation, title: "清理脚本", cancel: {})
+            try await tasks.requestApproval(
+                runID: run,
+                approval: DesktopToolApproval(id: "call-l3", name: tool, arguments: #"{"command":"rm -rf /tmp/demo"}"#, reason: "执行")
+            )
+            let refused = await control.handle(.init(action: .decide, sessionKey: key, toolCallId: "call-l3", allow: true, deviceName: "iPhone"))
+            XCTAssertEqual(refused.status, 403)
+            XCTAssertEqual(refused.requiresLocalApproval, true)
+            XCTAssertEqual(refused.riskLevel, "L3")
+            XCTAssertNotNil(refused.targetDevice)
+            XCTAssertEqual(refused.targetSummary, "\(tool): rm -rf /tmp/demo")
+            XCTAssertEqual(tasks.records.first { $0.id == run }?.status, .waiting)
+        }
     }
 }

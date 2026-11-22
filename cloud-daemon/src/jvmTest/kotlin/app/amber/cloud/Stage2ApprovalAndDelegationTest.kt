@@ -14,6 +14,7 @@ import app.amber.cloud.gateway.PublicWorkDetail
 import app.amber.cloud.gateway.configureCloudGateway
 import app.amber.cloud.gateway.configureDialogueRoutes
 import app.amber.cloud.orchestration.DialogueEventKinds
+import app.amber.cloud.orchestration.OrchestrationHash
 import app.amber.cloud.orchestration.DialoguePage
 import app.amber.cloud.orchestration.DialogueReceipt
 import app.amber.cloud.runtime.CloudAgentKernel
@@ -43,7 +44,6 @@ import kotlinx.serialization.json.put
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
-import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -168,7 +168,13 @@ class Stage2ApprovalAndDelegationTest {
         )
         val card = assertNotNull(outbound.approvalCard)
         assertEquals("L3", card.riskLevel)
-        assertEquals(true, card.requiresLocalApproval)
+        assertEquals(false, card.requiresLocalApproval)
+        // The same tool on a paired Mac belongs to that execution device, even for a trusted phone.
+        val session = assertNotNull(kernel.gatewayState.getSession(card.sessionKey))
+        val pending = assertNotNull(session.pendingApproval)
+        kernel.gatewayState.upsertSession(session.copy(pendingApproval = pending.copy(
+            targetDevice = "mac-studio", requiresLocalApproval = true,
+        )))
         assertEquals("cloud-daemon", card.targetDevice)
         assertEquals("ssh_profile_create: prod.internal", card.targetSummary)
         assertFalse(card.diffPreview.orEmpty().contains("super-secret-password-99"))
@@ -177,12 +183,16 @@ class Stage2ApprovalAndDelegationTest {
         val boardJson = json.parseToJsonElement(boardResp.bodyAsText()).jsonObject
         val approvalObj = boardJson.getValue("board").jsonArray.first().jsonObject.getValue("approval").jsonObject
         assertEquals("L3", approvalObj["riskLevel"]?.jsonPrimitive?.contentOrNull)
+        assertEquals(approvalObj["targetSummary"], approvalObj["summary"])
+        assertEquals(approvalObj["targetDevice"], approvalObj["targetDeviceName"])
         assertEquals(true, approvalObj["requiresLocalApproval"]?.jsonPrimitive?.booleanOrNull)
         assertEquals("ssh_profile_create: prod.internal", approvalObj["targetSummary"]?.jsonPrimitive?.contentOrNull)
 
-        // Untrusted/remote allow=true returns 403 with structured requiresLocalApproval=true
+        // Local-only requests stay pending even for a biometrically verified foreground client.
         val deny403 = client.post("/v1/amber/decision") {
             bearerAuth(token)
+            header("X-Amber-Trusted-Foreground", "true")
+            header("X-Amber-Biometric-Verified", "true")
             contentType(ContentType.Application.Json)
             setBody("""{"sessionKey":"${card.sessionKey}","toolCallId":"${card.toolCallId}","allow":true}""")
         }
@@ -191,6 +201,8 @@ class Stage2ApprovalAndDelegationTest {
         assertEquals(true, errJson["requiresLocalApproval"]?.jsonPrimitive?.booleanOrNull)
         assertEquals("L3", errJson["riskLevel"]?.jsonPrimitive?.contentOrNull)
         assertEquals("ssh_profile_create: prod.internal", errJson["targetSummary"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("mac-studio", errJson["targetDevice"]?.jsonPrimitive?.contentOrNull)
+        assertEquals(card.diffPreview, errJson["diffPreview"]?.jsonPrimitive?.contentOrNull)
         assertTrue(errJson["error"]?.jsonPrimitive?.contentOrNull.orEmpty().contains("L3"))
     }
 
@@ -199,7 +211,6 @@ class Stage2ApprovalAndDelegationTest {
         val dir = tempDir("stage2-delegation-")
         val workerStarted = CompletableDeferred<Unit>()
         val allowWorkerFinish = CompletableDeferred<Unit>()
-        val workerRound = AtomicInteger(0)
 
         val model = fakeModel { messages, tools ->
             if (messages.firstOrNull()?.toText()?.contains("<native-wait-feedback>") == true) {
@@ -228,33 +239,36 @@ class Stage2ApprovalAndDelegationTest {
                 return@fakeModel UIMessage.assistant("""{"tags":[]}""")
             }
             // Worker turns
-            when (workerRound.incrementAndGet()) {
-                1 -> {
-                    workerStarted.complete(Unit)
-                    allowWorkerFinish.await()
-                    UIMessage(
-                        role = MessageRole.ASSISTANT,
-                        parts = listOf(
-                            UIMessagePart.Tool(
-                                toolCallId = "read-1",
-                                toolName = "workspace_file_read",
-                                input = """{"path":"notes/weekly.md"}""",
-                            )
+            val hasRead = messages.any { message -> message.getTools().any { it.toolCallId == "read-1" && it.output.isNotEmpty() } }
+            if (!hasRead) {
+                workerStarted.complete(Unit)
+                allowWorkerFinish.await()
+                UIMessage(
+                    role = MessageRole.ASSISTANT,
+                    parts = listOf(
+                        UIMessagePart.Tool(
+                            toolCallId = "read-1",
+                            toolName = "workspace_file_read",
+                            input = """{"path":"notes/weekly.md"}""",
                         ),
-                    )
-                }
-                else -> {
-                    UIMessage(
-                        role = MessageRole.ASSISTANT,
-                        parts = listOf(
-                            UIMessagePart.Tool(
-                                toolCallId = "finish-1",
-                                toolName = "task_finish",
-                                input = """{"outcome":"completed","summary":"1. 完成了 Stage 1 汇流；2. 完成了 Stage 2-A 的 L1-L3 审批协议与 20 条基线。","sourcePaths":["notes/weekly.md"],"sourceRefs":["notes/weekly.md: 本周进度原文"]}""",
-                            )
-                        ),
-                    )
-                }
+                        UIMessagePart.Tool(
+                            toolCallId = "search-1",
+                            toolName = "workspace_file_search",
+                            input = """{"query":"第二条"}""",
+                        )
+                    ),
+                )
+            } else {
+                UIMessage(
+                    role = MessageRole.ASSISTANT,
+                    parts = listOf(
+                        UIMessagePart.Tool(
+                            toolCallId = "finish-1",
+                            toolName = "task_finish",
+                            input = """{"outcome":"completed","summary":"1. 完成了 Stage 1 汇流；2. 完成了 Stage 2-A 的 L1-L3 审批协议与 20 条基线。","sourcePaths":["/unobserved/private.md"],"sourceRefs":["invented source"]}""",
+                        )
+                    ),
+                )
             }
         }
 
@@ -374,16 +388,17 @@ class Stage2ApprovalAndDelegationTest {
             assertEquals("conv-shared-42", taskResultEvent.conversationId)
             assertEquals("ios-run-99", taskResultEvent.parentRunId)
             assertEquals(workItem.workItemId, taskResultEvent.workItemId)
-            assertTrue(taskResultEvent.sourcePaths.orEmpty().contains("notes/weekly.md"))
-            assertTrue(taskResultEvent.sourceRefs.orEmpty().any { it.contains("notes/weekly.md") })
+            assertEquals(listOf("notes/weekly.md"), taskResultEvent.sourcePaths)
+            val digest = OrchestrationHash.sha256Hex(workspaceFile.readText())
+            assertEquals(listOf("notes/weekly.md · sha256:$digest", "notes/weekly.md:2"), taskResultEvent.sourceRefs)
 
             val detailResp = client.get("/v2/work-items/${workItem.workItemId}") { bearerAuth(token) }
             assertEquals(200, detailResp.status.value)
             val detail = json.decodeFromString<PublicWorkDetail>(detailResp.bodyAsText())
             assertEquals("conv-shared-42", detail.conversationId)
             assertEquals("ios-run-99", detail.parentRunId)
-            assertTrue(detail.sourcePaths.contains("notes/weekly.md"))
-            assertTrue(detail.sourceRefs.any { it.contains("notes/weekly.md") })
+            assertEquals(taskResultEvent.sourcePaths, detail.sourcePaths)
+            assertEquals(taskResultEvent.sourceRefs, detail.sourceRefs)
             assertTrue(detail.resultMarkdown.orEmpty().contains("## Sources"))
 
             // 5. Targeted edit referencing the settled workItem as parentRunId in the same conversationId

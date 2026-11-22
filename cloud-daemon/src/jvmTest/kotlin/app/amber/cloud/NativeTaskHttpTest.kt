@@ -5,6 +5,7 @@ import app.amber.cloud.agents.AgentProfile
 import app.amber.cloud.gateway.AgentCentricApi
 import app.amber.cloud.gateway.CloudGatewayState
 import app.amber.cloud.gateway.configureCloudGateway
+import app.amber.cloud.orchestration.OrchestrationHash
 import app.amber.cloud.orchestration.CloudPrincipal
 import app.amber.cloud.orchestration.WorkerSettlementReport
 import app.amber.cloud.orchestration.WorkItemState
@@ -90,6 +91,14 @@ class NativeTaskHttpTest {
                 assertEquals(if (provider == "openai") "/v1/chat/completions" else "/v1/messages", worker.path)
                 assertEquals(if (provider == "openai") "Bearer $key" else key, worker.credential)
                 assertEquals("native-stub-model", worker.body["model"]!!.jsonPrimitive.content)
+                if (provider == "openai") {
+                    // Model the persisted fingerprint from the four-field request before Stage 2.
+                    val id = "c3-task:" + OrchestrationHash.sha256Hex("${paired.deviceId}\u0000phone-retry-1")
+                    val store = kernel.orchestrationStore
+                    val legacy = """{"requestId":"phone-retry-1","text":"只分析专题资料","agentId":"research","title":"分析"}"""
+                    val source = assertNotNull(store.getSourceMessage(id))
+                    store.recordSourceMessage(source.copy(rawTextHash = OrchestrationHash.sha256Hex(legacy)), legacy)
+                }
             } finally { close(kernel) }
 
             val calls = stub.requests.size

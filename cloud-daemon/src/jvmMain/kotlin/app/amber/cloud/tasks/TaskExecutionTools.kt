@@ -38,19 +38,15 @@ class TaskExecutionTools(val workspace: TaskWorkspace, val processes: TaskProces
             put("os",System.getProperty("os.name"));put("arch",System.getProperty("os.arch"));put("isolation",processes.isolation)
             put("python",processes.python);put("pythonExists",File(processes.python).canExecute());put("networkInScripts",false);put("fileLimitBytes",33554432);put("processTimeoutSeconds",600)
         } }
-        register("task_finish", "显式结算：completed=目标已完成且已检查输出；blocked=缺少能力/权限/输入；failed=执行失败。必须给summary，只列实际存在的产物相对路径，可选附带读取来源 sourcePaths/sourceRefs，结束前等待进程", schema("""{"outcome":{"type":"string","enum":["completed","blocked","failed"]},"summary":{"type":"string"},"artifacts":{"type":"array","items":{"type":"string"}},"sourcePaths":{"type":"array","items":{"type":"string"}},"sourceRefs":{"type":"array","items":{"type":"string"}}}""", "outcome","summary")) { a,c ->
+        register("task_finish", "显式结算：completed=目标已完成且已检查输出；blocked=缺少能力/权限/输入；failed=执行失败。必须给summary，只列实际存在的产物相对路径，读取来源由运行时记录，结束前等待进程", schema("""{"outcome":{"type":"string","enum":["completed","blocked","failed"]},"summary":{"type":"string"},"artifacts":{"type":"array","items":{"type":"string"}}}""", "outcome","summary")) { a,c ->
             require(a.string("outcome") in setOf("completed","blocked","failed")); require(a.string("summary").isNotBlank())
             require(!processes.active(c.workItemId)) { "尚有执行中进程，请先等待或取消" }
             val artifacts = a.strings("artifacts").map { workspace.artifact(c.workItemId,it) }
-            val sourcePaths = a.strings("sourcePaths").map(String::trim).filter(String::isNotEmpty).distinct()
-            val sourceRefs = a.strings("sourceRefs").map(String::trim).filter(String::isNotEmpty).distinct()
             buildJsonObject {
                 put("ok",true)
                 put("outcome",a.string("outcome"))
                 put("summary",a.string("summary"))
                 put("artifacts",json.encodeToJsonElement(artifacts))
-                if (sourcePaths.isNotEmpty()) put("sourcePaths", json.encodeToJsonElement(sourcePaths))
-                if (sourceRefs.isNotEmpty()) put("sourceRefs", json.encodeToJsonElement(sourceRefs))
             }
         }
     }

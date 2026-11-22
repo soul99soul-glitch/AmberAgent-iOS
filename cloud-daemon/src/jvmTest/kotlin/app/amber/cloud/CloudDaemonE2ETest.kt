@@ -246,7 +246,7 @@ class CloudDaemonE2ETest {
             masterSecretOverride = "gateway-test-master-key",
         )
         application {
-            configureCloudGateway(kernel.gatewayState)
+            configureCloudGateway(kernel.gatewayState, agentApi = app.amber.cloud.gateway.AgentCentricApi(kernel))
         }
 
         // 1. Test `amber-cli pair` TLS identity + QR + deep link generation

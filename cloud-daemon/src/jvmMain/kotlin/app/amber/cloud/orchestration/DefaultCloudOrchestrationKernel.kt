@@ -34,8 +34,12 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -536,13 +540,42 @@ class DefaultCloudOrchestrationKernel(
         if (toolName !in allowed) throw PrincipalPermissionException("Agent 未获授该工具")
         val context = TaskCallContext(item.workItemId, item.agentId, item.workerSessionId!!, allowed)
         // The gate owns nested recipes and history scoping too; no second, weaker execution path.
-        return toolRegistry.executeGate(
+        val result = toolRegistry.executeGate(
             toolName = toolName,
             args = args,
             scope = ExecutionScope.SUBAGENT,
             context = context,
             approvalGrant = approvalGrant,
         )
+        recordWorkspaceSources(item.workItemId, toolName, args, result)
+        return result
+    }
+
+    private fun recordWorkspaceSources(id: String, tool: String, args: JsonObject, result: JsonElement) {
+        // A read returns the text itself. A search returns verified relative paths and line numbers.
+        // Hash the text the worker actually saw, including partial reads, without exporting file contents.
+        val sources = when {
+            tool == "workspace_file_read" && result is JsonPrimitive && result.isString -> {
+                val path = args.getValue("path").jsonPrimitive.content.split('/').filter { it.isNotEmpty() && it != "." }.joinToString("/")
+                val safePath = CredentialRedactor.redact(path)
+                listOf(safePath to "$safePath · sha256:${OrchestrationHash.sha256Hex(result.content)}")
+            }
+            tool == "workspace_file_search" && result is JsonArray -> result.map { hit ->
+                val path = CredentialRedactor.redact(hit.jsonObject.getValue("path").jsonPrimitive.content)
+                path to "$path:${hit.jsonObject.getValue("line").jsonPrimitive.content}"
+            }
+            else -> return
+        }
+        if (sources.isEmpty()) return
+        synchronized(store) {
+            val current = store.getWorkItem(id) ?: return
+            if (current.state.isTerminal) return
+            val paths = (current.sourcePaths + sources.map { it.first }).distinct()
+            val refs = (current.sourceRefs + sources.map { it.second }).distinct()
+            if (paths != current.sourcePaths || refs != current.sourceRefs) {
+                store.upsertWorkItem(current.copy(sourcePaths = paths, sourceRefs = refs))
+            }
+        }
     }
 
     internal fun v2ApprovalSessionKey(workItemId: String, approvalId: String): String =
@@ -651,7 +684,8 @@ class DefaultCloudOrchestrationKernel(
         val topic = item.subscribedThreadKeys.firstOrNull { it.startsWith("native:") }?.removePrefix("native:") ?: item.workItemId
 
         val targetDevice = (item.targetNode as? ExecutionTargetNode.PairedMacNode)?.deviceId ?: "cloud-daemon"
-        val approvalPreview = toolRegistry.approvalPreview(toolCall.toolName, parsedArgs, targetDevice = targetDevice)
+        val approvalPreview = toolRegistry.approvalPreview(toolCall.toolName, parsedArgs, targetDevice = targetDevice,
+            cloudExecution = item.targetNode !is ExecutionTargetNode.PairedMacNode)
         val createdApproval: WorkerApprovalRecord? = synchronized(store) {
             val live = store.getWorkItem(item.workItemId)
             if (live == null || live.state.isTerminal || workerEvents.isStopping(item.workItemId)) {
