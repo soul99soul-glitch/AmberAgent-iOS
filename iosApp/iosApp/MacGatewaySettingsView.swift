@@ -4,6 +4,8 @@ import UIKit
 
 struct MacGatewaySettingsView: View {
     var sharedSettings: IOSSharedSettingsStore? = nil
+    var embeddedInMultiDevice: Bool = false
+    var onOpenCloudDialogue: (() -> Void)? = nil
 
     private struct LocalSiwcPromptState: Equatable {
         let providerId: String?
@@ -51,40 +53,26 @@ struct MacGatewaySettingsView: View {
     }
 
     var body: some View {
-        ZStack {
-            AmberTheme.background.ignoresSafeArea()
-            VStack(spacing: 0) {
-                header
-                ScrollView {
+        Group {
+            if embeddedInMultiDevice {
+                cloudScrollContent
+            } else {
+                ZStack {
+                    AmberTheme.background.ignoresSafeArea()
                     VStack(spacing: 0) {
-                        if let pending = store.pendingPairing {
-                            confirmSection(pending)
-                        } else if let connection = store.connection {
-                            macSection(connection)
-                            if let siwcPrompt = localSiwcPrompt {
-                                siwcSignInGuidanceSection(siwcPrompt)
-                            }
-                            if let health = store.status?.health { healthSection(health) }
-                            cloudConfigSection
-                            deviceContextSharingSection
-                            boardSection
-                            unpairSection
-                        } else {
-                            pairSection
-                        }
+                        header
+                        cloudScrollContent
                     }
-                    .padding(.bottom, 36)
                 }
-                .scrollIndicators(.hidden)
+                .navigationBarBackButtonHidden(true)
+                .toolbar(.hidden, for: .navigationBar)
             }
         }
-        .navigationBarBackButtonHidden(true)
-        .toolbar(.hidden, for: .navigationBar)
         .tint(AmberTheme.accent)
         .task(id: store.connection?.gatewayId) {
             guard store.connection != nil else { return }
             while !Task.isCancelled {
-                await store.refresh()
+                await store.refresh(role: .cloud)
                 try? await Task.sleep(for: Self.refreshInterval)
             }
         }
@@ -95,11 +83,11 @@ struct MacGatewaySettingsView: View {
             copyFingerprintResetTask?.cancel()
             copyFingerprintResetTask = nil
         }
-        .confirmationDialog(L("取消与这台 Mac 的配对？"), isPresented: $confirmsUnpair, titleVisibility: .visible) {
-            Button(L("取消配对"), role: .destructive) { Task { await store.unpair() } }
+        .confirmationDialog(L("取消与云端的配对？"), isPresented: $confirmsUnpair, titleVisibility: .visible) {
+            Button(L("取消配对"), role: .destructive) { Task { await store.unpair(role: .cloud) } }
             Button(L("保留"), role: .cancel) {}
         } message: {
-            Text(verbatim: L("此设备将不再收到这台 Mac 的推送。"))
+            Text(verbatim: L("仅解除云端配对，不影响本机 Mac 连接。"))
         }
         .sheet(isPresented: $presentingCloudCompose) {
             MacGatewayCloudTaskComposeSheet(store: store) { _ in
@@ -128,6 +116,33 @@ struct MacGatewaySettingsView: View {
                     }
                 )
             }
+        }
+    }
+
+    private var cloudScrollContent: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                if let pending = store.pendingPairing {
+                    confirmSection(pending)
+                } else if let connection = store.connection {
+                    macSection(connection)
+                    if let siwcPrompt = localSiwcPrompt {
+                        siwcSignInGuidanceSection(siwcPrompt)
+                    }
+                    if let health = store.status?.health { healthSection(health) }
+                    cloudConfigSection
+                    deviceContextSharingSection
+                    boardSection
+                    unpairSection
+                } else {
+                    pairSection
+                }
+            }
+            .padding(.bottom, 36)
+        }
+        .scrollIndicators(.hidden)
+        .refreshable {
+            await store.refresh(role: .cloud)
         }
     }
 
@@ -164,7 +179,7 @@ struct MacGatewaySettingsView: View {
                 MacGatewayRowDivider()
                 MacGatewayRow(icon: "doc.on.clipboard", title: L("粘贴配对链接"),
                             detail: L("从 AirDrop 或消息复制的 amber:// 链接"),
-                            action: { store.pasteLinkFromClipboard() }) {
+                            action: { store.pasteLinkFromClipboard(for: .cloud) }) {
                     MacGatewayChevron()
                 }
             }
@@ -278,7 +293,7 @@ struct MacGatewaySettingsView: View {
             MacGatewaySectionFooter(text: L("请完整核对与 Mac 终端显示的 TLS 证书指纹一致后再确认配对。"))
             AmberFormGroup {
                 actionRow(L("配对"), busyTitle: L("正在配对并同步…"), color: AmberTheme.accent, isBusy: store.isBusy) {
-                    Task { await store.confirmPairing() }
+                    Task { await store.confirmPairing(for: .cloud, sharedSettings: resolvedSharedSettings) }
                 }
                 Divider().overlay(AmberTheme.borderSoft)
                 actionRow(L("取消"), color: AmberTheme.muted, isBusy: false) {
@@ -304,7 +319,7 @@ struct MacGatewaySettingsView: View {
                             .fill(sessionStatusDotColor)
                             .frame(width: 7, height: 7)
 
-                        Button { Task { await store.refresh() } } label: {
+                        Button { Task { await store.refresh(role: .cloud) } } label: {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 18, weight: .medium))
                                 .frame(width: 44, height: 44)
@@ -314,6 +329,61 @@ struct MacGatewaySettingsView: View {
                         .foregroundStyle(AmberTheme.accent)
                         .accessibilityLabel(Text(verbatim: L("刷新")))
                     }
+                }
+                MacGatewayRowDivider()
+                MacGatewayRow(
+                    icon: "network",
+                    title: L("代理地址与端口"),
+                    detail: "\(connection.addrs.joined(separator: " · ")):\(connection.port)"
+                ) { EmptyView() }
+                MacGatewayRowDivider()
+                MacGatewayRow(
+                    icon: "checkmark.shield",
+                    title: L("TLS 证书指纹"),
+                    detail: connection.fingerprint.isEmpty ? L("未记录") : String(connection.fingerprint.prefix(24)) + "…"
+                ) {
+                    if !connection.fingerprint.isEmpty {
+                        Button {
+                            copyFingerprint(connection.fingerprint)
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: copiedFingerprint ? "checkmark" : "doc.on.doc")
+                                    .font(.caption.weight(.semibold))
+                                Text(verbatim: copiedFingerprint ? L("已复制") : L("复制"))
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .foregroundStyle(copiedFingerprint ? MacDelegationSemanticInk.success : AmberTheme.accent)
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: 34)
+                            .background(
+                                copiedFingerprint
+                                    ? MacDelegationSemanticInk.success.opacity(colorScheme == .dark ? 0.18 : 0.11)
+                                    : AmberTheme.accentTint,
+                                in: Capsule()
+                            )
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+                MacGatewayRowDivider()
+                MacGatewayRow(
+                    icon: "bubble.left.and.text.bubble.right",
+                    title: L("打开云端常驻对话"),
+                    detail: L("进入已配对云端主对话，支持 24×7 持续任务与多端同步"),
+                    action: {
+                        if let onOpenCloudDialogue {
+                            onOpenCloudDialogue()
+                        } else {
+                            store.setCloudMainDialogueSelected(true)
+                            router.reset()
+                            dismiss()
+                        }
+                    }
+                ) {
+                    MacGatewayChevron()
                 }
                 MacGatewayRowDivider()
                 MacGatewayRow(icon: "bell.badge", title: L("推送通知"), detail: pushDetail) {

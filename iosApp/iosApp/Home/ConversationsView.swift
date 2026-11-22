@@ -184,8 +184,8 @@ struct ConversationsView: View {
         }
         // 首页只在出现时拉一次 Mac 任务看板（徽标 + 继续卡），不轮询。
         .task {
-            guard macGateway.connection != nil else { return }
-            await macGateway.refresh()
+            guard macGateway.hasAnyPairedEndpoint else { return }
+            await macGateway.refreshAll()
         }
         .task(id: homeImageGenerationScanSignature) {
             let context = await chatViewModel.latestImageGenerationResumeContext()
@@ -626,7 +626,7 @@ struct ConversationsView: View {
         }
 
         // Empty while unpaired or unreachable, so stale board items never surface.
-        let macTasks = macGateway.needsYouItems.map(HomeMacTaskRef.init)
+        let macTasks = macGateway.combinedNeedsYouItems.map(HomeMacTaskRef.init)
 
         return HomeContinueCardModel.resolve(
             councilTask: councilTask,

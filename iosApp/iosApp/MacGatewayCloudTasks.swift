@@ -533,11 +533,12 @@ extension MacGatewayStore {
     }
 
     func loadPersistedCloudTasks() {
+        let storageKey = tasksStorageKey
         guard let connection else {
             cloudTasks = []
             return
         }
-        guard let data = defaults.data(forKey: Self.cloudTasksKey),
+        guard let data = defaults.data(forKey: storageKey),
               let decoded = try? JSONDecoder().decode([MacGatewayCloudTaskRecord].self, from: data) else {
             cloudTasks = []
             return
@@ -555,15 +556,16 @@ extension MacGatewayStore {
     func persistCloudTasks(_ records: [MacGatewayCloudTaskRecord]? = nil, forceAsync: Bool = false) {
         let list = records ?? cloudTasks
         let targetDefaults = defaults
+        let storageKey = tasksStorageKey
         let (epoch, identity) = persistenceCoordinator.snapshot()
         let coordinator = persistenceCoordinator
         nonisolated(unsafe) let sendableDefaults = targetDefaults
         let commitBlock: @Sendable () -> Void = {
             guard coordinator.canCommit(epoch: epoch, identity: identity) else { return }
             if list.isEmpty || identity == nil {
-                sendableDefaults.removeObject(forKey: Self.cloudTasksKey)
+                sendableDefaults.removeObject(forKey: storageKey)
             } else if let data = try? JSONEncoder().encode(list) {
-                sendableDefaults.set(data, forKey: Self.cloudTasksKey)
+                sendableDefaults.set(data, forKey: storageKey)
             }
         }
         if forceAsync || targetDefaults === UserDefaults.standard {

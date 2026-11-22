@@ -306,13 +306,14 @@ extension ChatView {
                                         Image(systemName: "arrow.turn.down.right")
                                             .font(.caption.weight(.bold))
                                             .foregroundStyle(AmberTheme.accent)
-                                        Text(verbatim: macGatewayL("向 Mac 任务点名补充修改"))
+                                        Text(verbatim: macGatewayL("向 \(activeUnifiedDelegationRole?.displayName ?? "Mac") 任务点名补充修改"))
                                             .font(.caption.weight(.semibold))
                                             .foregroundStyle(AmberTheme.foreground)
                                             .lineLimit(1)
                                             .truncationMode(.tail)
                                         Button {
                                             composerState.unifiedMacFollowupWorkItemId = nil
+                                            composerState.unifiedFollowupTargetRole = nil
                                         } label: {
                                             Image(systemName: "xmark.circle.fill")
                                                 .font(.caption)
@@ -511,24 +512,33 @@ extension ChatView {
                                             selectDuetTab(.hubs)
                                         }
                                     },
-                                    isDelegateToMacArmed: composerState.isDelegateToMacArmed,
-                                    onToggleDelegateToMac: {
+                                    selectedExecutionTarget: effectiveExecutionTarget,
+                                    onSelectExecutionTarget: { target in
                                         withAnimation(.snappy(duration: 0.2)) {
                                             if composerState.activeDuetTab != .chat {
                                                 selectDuetTab(.chat)
-                                                composerState.isDelegateToMacArmed = true
-                                            } else {
-                                                composerState.isDelegateToMacArmed.toggle()
                                             }
+                                            composerState.executionTarget = target
+                                            composerState.unifiedMacFollowupWorkItemId = nil
+                                            composerState.unifiedFollowupTargetRole = nil
                                             composerState.cloudDialogueErrorMessage = nil
                                         }
-                                    },
-                                    onSelectHost: { useCloud in
-                                        withAnimation(.snappy(duration: 0.24)) {
-                                            selectMainDialogueHost(useCloud: useCloud)
+                                        if let role = target.endpointRole {
+                                            let slot = MacGatewayStore.shared.slot(for: role)
+                                            if slot.isReachable == nil {
+                                                Task { @MainActor in
+                                                    await slot.refresh(role: role)
+                                                }
+                                            }
                                         }
                                     },
-                                    onOpenCloudPairingSettings: {
+                                    onExitCloudMainDialogue: {
+                                        withAnimation(.snappy(duration: 0.24)) {
+                                            selectMainDialogueHost(useCloud: false)
+                                        }
+                                    },
+                                    onOpenMultiDeviceSettings: { tab in
+                                        multiDeviceSettingsInitialTab = tab
                                         isPresentingCloudGatewaySettings = true
                                     }
                                 )
@@ -708,8 +718,30 @@ extension ChatView {
         MacGatewayStore.shared.connection != nil && MacGatewayStore.shared.isCloudMainDialogueSelected
     }
 
+    var effectiveExecutionTarget: AmberComposerExecutionTarget {
+        AmberHostSwitcherPillPolicy.normalizedTarget(
+            composerState.executionTarget,
+            cloudPaired: MacGatewayStore.shared.hasCloudConnection,
+            macPaired: MacGatewayStore.shared.hasMacConnection
+        )
+    }
+
+    var activeUnifiedDelegationRole: MacGatewayEndpointRole? {
+        guard !isCloudMainDialogueActive else { return nil }
+        if composerState.unifiedMacFollowupWorkItemId != nil {
+            if let role = composerState.unifiedFollowupTargetRole {
+                return role
+            }
+            if let selectedRole = effectiveExecutionTarget.endpointRole {
+                return selectedRole
+            }
+            return MacGatewayStore.shared.hasMacConnection ? .mac : .cloud
+        }
+        return effectiveExecutionTarget.endpointRole
+    }
+
     var isUnifiedMacDelegationTargeted: Bool {
-        !isCloudMainDialogueActive && (composerState.isDelegateToMacArmed || composerState.unifiedMacFollowupWorkItemId != nil)
+        activeUnifiedDelegationRole != nil
     }
 
     private func sendEnabled(for text: String) -> Bool {
@@ -741,15 +773,15 @@ extension ChatView {
         viewModel.sendMessage(startsGenerationAfterInsertion: true)
     }
 
-    /// Explicit single-owner delegation to Mac from the unified main timeline.
-    /// Carries stable `conversationId` + `X-Amber-Dialogue-Version: 1`, immediately inserts
-    /// a `[Mac 执行中]` run card into the current timeline, resets back to local mode for
-    /// subsequent messages (so local B runs unblocked while Mac runs A), and NEVER silently
-    /// falls back to local execution on weak network / receipt loss.
+    /// Explicit single-owner delegation to either Cloud or Mac from the unified main timeline.
+    /// Routes directly to the selected slot's `MacGatewayClient`, preserves the pending submission
+    /// on weak network / receipt loss, and NEVER silently falls back to local execution.
     private func delegateToMacFromUnifiedTimeline(text: String) {
         let store = MacGatewayStore.shared
-        guard let conversationId = currentConversationIdString, store.client != nil else {
-            composerState.cloudDialogueErrorMessage = macGatewayL("会话或配对尚未就绪，草稿已保留")
+        guard let targetRole = activeUnifiedDelegationRole else { return }
+        let targetSlot = store.slot(for: targetRole)
+        guard let conversationId = currentConversationIdString, targetSlot.client != nil else {
+            composerState.cloudDialogueErrorMessage = macGatewayL("会话或 \(targetRole.displayName) 配对尚未就绪，草稿已保留")
             return
         }
         let request = MacGatewayCloudDialogueInputRequest(text: text, conversationId: conversationId)
@@ -758,18 +790,19 @@ extension ChatView {
             return
         }
 
-        let target = composerState.takeUnifiedMacTarget()
+        let taken = composerState.takeUnifiedRemoteTarget()
         viewModel.inputText = ""
         // Start on the current actor so the validated pairing and draft are still the ones selected at tap.
         Task.immediate { @MainActor in
-            let result = await store.delegateToMacInUnifiedTimeline(
+            let result = await store.delegateInUnifiedTimeline(
+                to: targetRole,
                 text: text,
                 conversationId: conversationId,
                 requestId: request.requestId,
-                targetWorkItemId: target
+                targetWorkItemId: taken.workItemId
             )
             if case .failure(let error) = result, currentConversationIdString == conversationId,
-               !store.cloudDialogueSubmissions.contains(where: { $0.requestId == request.requestId }) {
+               !targetSlot.cloudDialogueSubmissions.contains(where: { $0.requestId == request.requestId }) {
                 composerState.cloudDialogueErrorMessage = error.localizedDescription
             }
         }
@@ -779,7 +812,7 @@ extension ChatView {
         guard let workItemId = approval.workItemId else { return }
         composerState.activeDuetTab = .chat
         composerState.unifiedMacFollowupWorkItemId = workItemId
-        composerState.isDelegateToMacArmed = false
+        composerState.unifiedFollowupTargetRole = approval.endpointRole
         if viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             viewModel.inputText = "修改「\(approval.summary)」："
         }
@@ -855,11 +888,13 @@ extension ChatView {
     }
 
     private var inputPlaceholder: String {
-        if isUnifiedMacDelegationTargeted {
-            let macKey = composerState.unifiedMacFollowupWorkItemId == nil
-                ? "交代给 Mac 后台执行（完成后回到当前时间线）…"
-                : "输入给 Mac 任务的补充修改要求…"
-            return IOSAppLocalization.string(macKey, defaultValue: macKey)
+        if let targetRole = activeUnifiedDelegationRole {
+            let placeholderKey: String = if composerState.unifiedMacFollowupWorkItemId != nil {
+                "输入给 \(targetRole.displayName) 任务的补充修改要求…"
+            } else {
+                "交代给 \(targetRole.displayName) 后台执行（完成后回到当前时间线）…"
+            }
+            return IOSAppLocalization.string(placeholderKey, defaultValue: placeholderKey)
         }
         if isCloudMainDialogueActive {
             let cloudKey = MacGatewayStore.shared.selectedCloudDialogueWorkItemId == nil
@@ -1059,8 +1094,8 @@ extension ChatView {
         }
         store.setCloudMainDialogueSelected(useCloud)
         if useCloud {
-            composerState.isDelegateToMacArmed = false
             composerState.unifiedMacFollowupWorkItemId = nil
+            composerState.unifiedFollowupTargetRole = nil
         }
         composerState.cloudDialogueErrorMessage = nil
         if composerState.activeDuetTab != .chat {

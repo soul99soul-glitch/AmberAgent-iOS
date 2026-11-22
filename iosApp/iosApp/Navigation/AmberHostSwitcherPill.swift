@@ -1,52 +1,146 @@
 import Shared
 import SwiftUI
 
-// MARK: - Argon 3+1 Right-Side Action Pill (短按交给 Mac · 长按切换本机/云端)
+// MARK: - Unified Main-Timeline Execution Target Pill (方向 1: 本机 / 云端 / Mac)
 
-enum AmberHostSwitcherPillAction: Equatable {
-    case openPairingSettings
-    case toggleDelegateToMac
-    case switchHost(useCloud: Bool)
-    case focusCloudDialogue
+/// Execution target selected in the unified main chat composer.
+/// Never switches away from the unified main timeline and never presents a `.contextMenu`.
+enum AmberComposerExecutionTarget: String, CaseIterable, Identifiable, Equatable, Hashable, Sendable {
+    case local
+    case cloud
+    case mac
+
+    var id: String { rawValue }
+
+    var endpointRole: MacGatewayEndpointRole? {
+        switch self {
+        case .local: nil
+        case .cloud: .cloud
+        case .mac: .mac
+        }
+    }
+
+    var shortTitle: String {
+        switch self {
+        case .local: IOSAppLocalization.string("本机", defaultValue: "本机")
+        case .cloud: IOSAppLocalization.string("云端", defaultValue: "云端")
+        case .mac: IOSAppLocalization.string("Mac", defaultValue: "Mac")
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .local: "iphone"
+        case .cloud: "icloud"
+        case .mac: "desktopcomputer"
+        }
+    }
+
+    init(role: MacGatewayEndpointRole) {
+        switch role {
+        case .cloud: self = .cloud
+        case .mac: self = .mac
+        }
+    }
+}
+
+enum AmberHostSwitcherPillAction: Equatable, Sendable {
+    case openMultiDeviceSettings(tab: AmberMultiDeviceTab)
+    case selectExecutionTarget(AmberComposerExecutionTarget)
+    case exitCloudMainDialogue
 }
 
 enum AmberHostSwitcherPillPolicy {
-    static func resolveShortTap(isPaired: Bool, isCloudSelected: Bool) -> AmberHostSwitcherPillAction {
-        guard isPaired else { return .openPairingSettings }
-        return isCloudSelected ? .focusCloudDialogue : .toggleDelegateToMac
+    /// Deterministic single-hand cycle order:
+    /// - 0 remotes: `[.local]`
+    /// - Cloud only: `[.local, .cloud]` (`本机 ⇄ 云端`)
+    /// - Mac only: `[.local, .mac]` (`本机 ⇄ Mac`)
+    /// - Cloud + Mac both paired: `[.local, .cloud, .mac]` (`本机 → 云端 → Mac → 本机`)
+    static func availableTargets(cloudPaired: Bool, macPaired: Bool) -> [AmberComposerExecutionTarget] {
+        var targets: [AmberComposerExecutionTarget] = [.local]
+        if cloudPaired { targets.append(.cloud) }
+        if macPaired { targets.append(.mac) }
+        return targets
     }
 
-    static func resolveLongPress(isPaired: Bool, isCloudSelected: Bool) -> AmberHostSwitcherPillAction {
-        guard isPaired else { return .openPairingSettings }
-        return .switchHost(useCloud: !isCloudSelected)
+    static func normalizedTarget(
+        _ current: AmberComposerExecutionTarget,
+        cloudPaired: Bool,
+        macPaired: Bool
+    ) -> AmberComposerExecutionTarget {
+        switch current {
+        case .local:
+            return .local
+        case .cloud:
+            return cloudPaired ? .cloud : .local
+        case .mac:
+            return macPaired ? .mac : .local
+        }
+    }
+
+    static func resolveShortTap(
+        current: AmberComposerExecutionTarget,
+        cloudPaired: Bool,
+        macPaired: Bool,
+        isInCloudMainDialogue: Bool = false
+    ) -> AmberHostSwitcherPillAction {
+        if isInCloudMainDialogue {
+            guard cloudPaired || macPaired else {
+                return .openMultiDeviceSettings(tab: .cloud)
+            }
+            return .exitCloudMainDialogue
+        }
+        let targets = availableTargets(cloudPaired: cloudPaired, macPaired: macPaired)
+        guard targets.count > 1 else {
+            return .openMultiDeviceSettings(tab: .cloud)
+        }
+        let normalized = normalizedTarget(current, cloudPaired: cloudPaired, macPaired: macPaired)
+        let currentIndex = targets.firstIndex(of: normalized) ?? 0
+        let next = targets[(currentIndex + 1) % targets.count]
+        return .selectExecutionTarget(next)
+    }
+
+    static func resolveLongPress(
+        current: AmberComposerExecutionTarget,
+        cloudPaired: Bool,
+        macPaired: Bool
+    ) -> AmberHostSwitcherPillAction {
+        let normalized = normalizedTarget(current, cloudPaired: cloudPaired, macPaired: macPaired)
+        if normalized == .mac || (!cloudPaired && macPaired) {
+            return .openMultiDeviceSettings(tab: .mac)
+        }
+        return .openMultiDeviceSettings(tab: .cloud)
     }
 }
 
 struct AmberHostSwitcherPill: View {
     let gateway: MacGatewayStore
-    var isDelegateToMacArmed: Bool = false
-    var onToggleDelegateToMac: (() -> Void)? = nil
-    let onSelectHost: (Bool) -> Void
-    let onOpenPairingSettings: () -> Void
-    var onFocusCloudDialogue: (() -> Void)? = nil
+    var selectedTarget: AmberComposerExecutionTarget = .local
+    var onSelectExecutionTarget: ((AmberComposerExecutionTarget) -> Void)? = nil
+    var onExitCloudMainDialogue: (() -> Void)? = nil
+    let onOpenPairingSettings: (AmberMultiDeviceTab) -> Void
 
     @State private var isPressed = false
     @State private var didTriggerLongPress = false
 
-    private var isPaired: Bool {
-        gateway.connection != nil
+    private var cloudPaired: Bool { gateway.hasCloudConnection }
+    private var macPaired: Bool { gateway.hasMacConnection }
+    private var hasAnyPaired: Bool { cloudPaired || macPaired }
+
+    private var isInCloudMainDialogue: Bool {
+        cloudPaired && gateway.isCloudMainDialogueSelected
     }
 
-    private var isCloudSelected: Bool {
-        isPaired && gateway.isCloudMainDialogueSelected
-    }
-
-    private var isMacDelegationActive: Bool {
-        isPaired && !isCloudSelected && isDelegateToMacArmed
+    private var effectiveTarget: AmberComposerExecutionTarget {
+        AmberHostSwitcherPillPolicy.normalizedTarget(
+            selectedTarget,
+            cloudPaired: cloudPaired,
+            macPaired: macPaired
+        )
     }
 
     private var isHighlighted: Bool {
-        isCloudSelected || isMacDelegationActive
+        isInCloudMainDialogue || effectiveTarget != .local
     }
 
     var body: some View {
@@ -70,7 +164,7 @@ struct AmberHostSwitcherPill: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 9.5)
         .background {
-            if isMacDelegationActive {
+            if isHighlighted {
                 Capsule(style: .continuous)
                     .fill(AmberTheme.accent.opacity(0.14))
             }
@@ -85,7 +179,14 @@ struct AmberHostSwitcherPill: View {
                 didTriggerLongPress = false
                 return
             }
-            performAction(AmberHostSwitcherPillPolicy.resolveShortTap(isPaired: isPaired, isCloudSelected: isCloudSelected))
+            performAction(
+                AmberHostSwitcherPillPolicy.resolveShortTap(
+                    current: effectiveTarget,
+                    cloudPaired: cloudPaired,
+                    macPaired: macPaired,
+                    isInCloudMainDialogue: isInCloudMainDialogue
+                )
+            )
         }
         .onLongPressGesture(
             minimumDuration: 0.45,
@@ -93,7 +194,11 @@ struct AmberHostSwitcherPill: View {
             perform: {
                 didTriggerLongPress = true
                 performAction(
-                    AmberHostSwitcherPillPolicy.resolveLongPress(isPaired: isPaired, isCloudSelected: isCloudSelected),
+                    AmberHostSwitcherPillPolicy.resolveLongPress(
+                        current: effectiveTarget,
+                        cloudPaired: cloudPaired,
+                        macPaired: macPaired
+                    ),
                     isLongPress: true
                 )
             },
@@ -107,9 +212,13 @@ struct AmberHostSwitcherPill: View {
         .accessibilityElement(children: .ignore)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(accessibilityLabelText)
-        .accessibilityAction(named: Text(accessibilitySwitchHostActionTitle)) {
+        .accessibilityAction(named: Text(accessibilitySecondaryActionTitle)) {
             performAction(
-                AmberHostSwitcherPillPolicy.resolveLongPress(isPaired: isPaired, isCloudSelected: isCloudSelected),
+                AmberHostSwitcherPillPolicy.resolveLongPress(
+                    current: effectiveTarget,
+                    cloudPaired: cloudPaired,
+                    macPaired: macPaired
+                ),
                 isLongPress: true
             )
         }
@@ -118,83 +227,102 @@ struct AmberHostSwitcherPill: View {
 
     private func performAction(_ action: AmberHostSwitcherPillAction, isLongPress: Bool = false) {
         switch action {
-        case .openPairingSettings:
+        case .openMultiDeviceSettings(let tab):
             AmberHaptics.trigger(isLongPress ? .mediumImpact : .selection)
-            onOpenPairingSettings()
-        case .toggleDelegateToMac:
+            onOpenPairingSettings(tab)
+        case .selectExecutionTarget(let target):
             AmberHaptics.trigger(.selection)
-            onToggleDelegateToMac?()
-        case .switchHost(let useCloud):
+            onSelectExecutionTarget?(target)
+        case .exitCloudMainDialogue:
             AmberHaptics.trigger(.mediumImpact)
-            onSelectHost(useCloud)
-        case .focusCloudDialogue:
-            onFocusCloudDialogue?()
+            onExitCloudMainDialogue?()
         }
     }
 
     private var iconName: String {
-        if isCloudSelected {
+        if !hasAnyPaired {
+            return "laptopcomputer.and.iphone"
+        }
+        if isInCloudMainDialogue {
             return "icloud"
         }
-        return isMacDelegationActive ? "desktopcomputer.and.arrow.down" : "desktopcomputer"
+        return effectiveTarget.iconName
     }
 
     private var titleText: String {
-        if isCloudSelected {
-            return IOSAppLocalization.string("云端", defaultValue: "云端")
+        if !hasAnyPaired {
+            return macGatewayL("多终端")
         }
-        if isMacDelegationActive {
-            return macGatewayL("本次交给 Mac")
+        if isInCloudMainDialogue {
+            return macGatewayL("云端")
         }
-        return macGatewayL("交给 Mac")
+        return effectiveTarget.shortTitle
     }
 
     private var titleColor: Color {
-        if !isPaired {
+        if !hasAnyPaired {
             return AmberTheme.muted
         }
-        if isMacDelegationActive {
+        if isHighlighted {
             return AmberTheme.accent
         }
         return AmberTheme.foreground
     }
 
     private var iconColor: Color {
-        if isCloudSelected {
-            return gateway.cloudDialogueSessionHealth.isReady ? AmberTheme.accent : AmberTheme.foreground2
+        if !hasAnyPaired {
+            return AmberTheme.muted
         }
-        if isMacDelegationActive {
+        if isHighlighted {
             return AmberTheme.accent
         }
-        return isPaired ? AmberTheme.foreground2 : AmberTheme.muted
+        return AmberTheme.foreground2
     }
 
     private var statusDotColor: Color? {
-        guard isPaired else { return nil }
-        let baseColor = gateway.cloudDialogueSessionHealth.semanticDotColor
-        return isHighlighted ? baseColor : baseColor.opacity(0.8)
+        guard hasAnyPaired else { return nil }
+        if isInCloudMainDialogue {
+            return gateway.endpointHealth(for: .cloud).semanticDotColor
+        }
+        switch effectiveTarget {
+        case .cloud:
+            return gateway.endpointHealth(for: .cloud).semanticDotColor
+        case .mac:
+            return gateway.endpointHealth(for: .mac).semanticDotColor
+        case .local:
+            let cloudHealth = cloudPaired ? gateway.endpointHealth(for: .cloud) : nil
+            let macHealth = macPaired ? gateway.endpointHealth(for: .mac) : nil
+            if cloudHealth?.isReady == true || macHealth?.isReady == true {
+                return AmberTheme.accentGreen.opacity(0.75)
+            }
+            if case .checking = cloudHealth { return AmberTheme.accentAmber.opacity(0.75) }
+            if case .checking = macHealth { return AmberTheme.accentAmber.opacity(0.75) }
+            return AmberTheme.accentRed.opacity(0.75)
+        }
     }
 
     private var accessibilityLabelText: String {
-        if !isPaired {
-            return IOSAppLocalization.string("交给 Mac，尚未配对，点按或长按打开云端配对设置", defaultValue: "交给 Mac，尚未配对，点按或长按打开云端配对设置")
+        if !hasAnyPaired {
+            return macGatewayL("Amber 多终端，尚未配对，点按打开配对设置")
         }
-        if isCloudSelected {
-            return IOSAppLocalization.string("当前云端对话，长按切回本机对话", defaultValue: "当前云端对话，长按切回本机对话")
+        if isInCloudMainDialogue {
+            return macGatewayL("当前位于云端常驻对话，点按返回统一主时间线，长按打开 Amber 多终端设置")
         }
-        if isMacDelegationActive {
-            return IOSAppLocalization.string("已选中本次交给 Mac，点按取消并恢复本机发送，长按切换云端对话", defaultValue: "已选中本次交给 Mac，点按取消并恢复本机发送，长按切换云端对话")
+        let nextAction = AmberHostSwitcherPillPolicy.resolveShortTap(
+            current: effectiveTarget,
+            cloudPaired: cloudPaired,
+            macPaired: macPaired
+        )
+        let nextLabel: String = if case .selectExecutionTarget(let next) = nextAction {
+            next.shortTitle
+        } else {
+            macGatewayL("下一终端")
         }
-        return IOSAppLocalization.string("交给 Mac，点按勾选本次交由 Mac 执行，长按切换云端对话", defaultValue: "交给 Mac，点按勾选本次交由 Mac 执行，长按切换云端对话")
+        return macGatewayL("当前执行去向：\(effectiveTarget.shortTitle)，点按切换到 \(nextLabel)，长按打开 Amber 多终端设置")
     }
 
-    private var accessibilitySwitchHostActionTitle: String {
-        if !isPaired {
-            return IOSAppLocalization.string("打开云端配对设置", defaultValue: "打开云端配对设置")
-        }
-        return isCloudSelected
-            ? IOSAppLocalization.string("切回本机对话", defaultValue: "切回本机对话")
-            : IOSAppLocalization.string("切换到云端对话", defaultValue: "切换到云端对话")
+    private var accessibilitySecondaryActionTitle: String {
+        macGatewayL("打开 Amber 多终端设置")
     }
 }
 

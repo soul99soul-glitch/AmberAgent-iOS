@@ -2,6 +2,133 @@ import CryptoKit
 import Foundation
 import Security
 
+/// Independent paired endpoint role so Cloud (`amberd`) and local Mac (`amber-gateway`)
+/// can stay paired and online simultaneously without overwriting each other.
+enum MacGatewayEndpointRole: String, Codable, CaseIterable, Identifiable, Hashable, Sendable {
+    case cloud
+    case mac
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .cloud:
+            IOSAppLocalization.string("云端", defaultValue: "云端")
+        case .mac:
+            IOSAppLocalization.string("Mac", defaultValue: "Mac")
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .cloud: "icloud"
+        case .mac: "desktopcomputer"
+        }
+    }
+
+    var connectionStorageKey: String {
+        switch self {
+        case .cloud: "macGateway.connection.cloud.v2"
+        case .mac: "macGateway.connection.mac.v2"
+        }
+    }
+
+    var tokenStorageKey: String {
+        switch self {
+        case .cloud: "macGateway.deviceToken.cloud"
+        case .mac: "macGateway.deviceToken.mac"
+        }
+    }
+
+    var dialogueStorageKey: String {
+        switch self {
+        case .cloud: "macGateway.cloudDialogue.v1"
+        case .mac: "macGateway.macDialogue.v1"
+        }
+    }
+
+    var tasksStorageKey: String {
+        switch self {
+        case .cloud: "macGateway.cloudTasks.v1"
+        case .mac: "macGateway.macTasks.v1"
+        }
+    }
+
+    /// Infers which dual-slot endpoint should inherit a legacy v1 single-slot pairing.
+    /// Defaults to `.cloud` unless explicit metadata or Mac hardware + LAN heuristics clearly indicate a local Mac.
+    static func inferMigrationRole(for connection: MacGatewayConnection) -> MacGatewayEndpointRole {
+        if let explicit = connection.role {
+            return explicit
+        }
+        return inferRole(name: connection.name, addrs: connection.addrs)
+    }
+
+    /// Infers target slot for an incoming QR / deep link when the user hasn't picked a tab explicitly.
+    static func inferPairingRole(for payload: MacGatewayPairingPayload) -> MacGatewayEndpointRole {
+        if let explicit = payload.role {
+            return explicit
+        }
+        return inferRole(name: payload.name, addrs: payload.addrs)
+    }
+
+    private static func inferRole(name: String, addrs: [String]) -> MacGatewayEndpointRole {
+        let lower = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let cloudKeywords = ["cloud", "amberd", "云端", "服务器", "server", "vps", "linux"]
+        if cloudKeywords.contains(where: { lower.contains($0) }) {
+            return .cloud
+        }
+        let macHardwareKeywords = ["macbook", "imac", "mac studio", "mac mini", "mac pro", "studio mac"]
+        if macHardwareKeywords.contains(where: { lower.contains($0) }) {
+            return .mac
+        }
+        if lower.contains("mac"), !addrs.isEmpty, addrs.allSatisfy(Self.isLocalOrPrivateAddress) {
+            return .mac
+        }
+        return .cloud
+    }
+
+    private static func isLocalOrPrivateAddress(_ raw: String) -> Bool {
+        let host = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if host == "localhost" || host == "127.0.0.1" || host == "::1" || host.hasSuffix(".local") {
+            return true
+        }
+        if host.hasPrefix("192.168.") || host.hasPrefix("10.") || host.hasPrefix("100.") {
+            return true
+        }
+        if host.hasPrefix("172.") {
+            let parts = host.split(separator: ".")
+            if parts.count >= 2, let second = Int(parts[1]), (16...31).contains(second) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+/// Segmented tab for the unified "Amber 多终端" settings page.
+enum AmberMultiDeviceTab: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case cloud
+    case mac
+    case watch
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .cloud: IOSAppLocalization.string("云端", defaultValue: "云端")
+        case .mac: IOSAppLocalization.string("Mac", defaultValue: "Mac")
+        case .watch: IOSAppLocalization.string("Watch", defaultValue: "Watch")
+        }
+    }
+
+    init(role: MacGatewayEndpointRole) {
+        switch role {
+        case .cloud: self = .cloud
+        case .mac: self = .mac
+        }
+    }
+}
+
 /// Contents of the `amber-gateway pair` QR code / `amber://gateway/pair?p=` link.
 struct MacGatewayPairingPayload: Codable, Equatable, Sendable {
     var v: Int
@@ -15,6 +142,8 @@ struct MacGatewayPairingPayload: Codable, Equatable, Sendable {
     /// Optional non-secret single-scan bootstrap sync metadata (Stage 3-A / 3-D).
     /// Legacy v1 payloads omit this key and decode with `bootstrap == nil`.
     var bootstrap: MacGatewayPairingBootstrapHint?
+    /// Optional endpoint role (`cloud` / `mac`) when advertised by newer gateways.
+    var role: MacGatewayEndpointRole? = nil
 
     static let maximumLinkLength = 4_096
 
@@ -42,6 +171,7 @@ struct MacGatewayConnection: Codable, Equatable, Sendable {
     var port: Int
     var fingerprint: String
     var deviceId: String
+    var role: MacGatewayEndpointRole? = nil
 }
 
 struct MacGatewayStatus: Decodable, Equatable, Sendable {
@@ -474,7 +604,50 @@ actor MacGatewayClient {
         if let clientPublicJwk {
             body["clientPublicJwk"] = clientPublicJwk
         }
-        return try decode(await send("POST", "/v1/pair", body: body))
+        let bodyData = try JSONSerialization.data(withJSONObject: body)
+        let response = try await requestData("POST", "/v1/pair", bodyData: bodyData)
+        if (200..<300).contains(response.status) {
+            return try decode(response.data)
+        }
+        if response.status == 400, Self.isInvalidRequestResponse(response) {
+            // Legacy gateways that strictly reject unknown fields (`trustedApprovalSurface`,
+            // `requestBootstrapSync`, `clientPublicJwk`) with HTTP 400 `invalid_request`:
+            // fall back cleanly to the minimal v1 pairing body.
+            let legacyBody: [String: Any] = [
+                "secret": secret,
+                "platform": "ios",
+                "deviceName": deviceName,
+            ]
+            return try decode(await send("POST", "/v1/pair", body: legacyBody))
+        }
+        throw Self.mappedHTTPError(from: response)
+    }
+
+    private static func isInvalidRequestResponse(_ response: MacGatewayRawResponse) -> Bool {
+        if response.errorCode?.lowercased() == "invalid_request" {
+            return true
+        }
+        if let extracted = extractErrorMessage(from: response.data)?.lowercased(),
+           extracted.contains("invalid_request") {
+            return true
+        }
+        return false
+    }
+
+    private static func mappedHTTPError(from response: MacGatewayRawResponse) -> MacGatewayError {
+        switch response.status {
+        case 401:
+            return .unauthorized
+        case 403:
+            let message = extractErrorMessage(from: response.data) ?? response.errorCode
+            return .forbidden(message ?? "HTTP \(response.status)")
+        case 409:
+            let message = extractErrorMessage(from: response.data) ?? response.errorCode
+            return .conflict(message ?? "HTTP \(response.status)")
+        default:
+            let message = extractErrorMessage(from: response.data) ?? response.errorCode
+            return .server(message ?? "HTTP \(response.status)")
+        }
     }
 
     func requestPairingBootstrapSync(clientPublicJwk: [String: String]?) async throws -> IOSPairingBootstrapSnapshot {

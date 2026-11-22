@@ -957,12 +957,16 @@ private extension View {
                     systemPermissionCoordinator: systemPermissionCoordinator
                 )
             case .appleWatch:
-                IOSWatchSettingsView(
+                AmberMultiDeviceSettingsView(
+                    sharedSettings: sharedSettings,
+                    conversationStore: conversationStore,
+                    initialTab: .watch
+                )
+            case .macGateway:
+                AmberMultiDeviceSettingsView(
                     sharedSettings: sharedSettings,
                     conversationStore: conversationStore
                 )
-            case .macGateway:
-                MacGatewaySettingsView(sharedSettings: sharedSettings)
             case .macTasks:
                 MacTasksBoardView()
             case .phoneControl:

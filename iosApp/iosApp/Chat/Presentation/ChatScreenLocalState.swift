@@ -36,19 +36,27 @@ struct ChatComposerLocalState {
     var lastCloudDialogueFingerprint: String?
     var cloudDialogueSubmitGeneration = 0
 
-    // Stage 2-B: Unified Timeline Explicit "交给 Mac" Delegation State
-    var isDelegateToMacArmed = false
+    // Plan 2: Unified Main-Timeline 3-Way Execution Target (本机 / 云端 / Mac) & Targeted Follow-up
+    var executionTarget: AmberComposerExecutionTarget = .local
     var unifiedMacFollowupWorkItemId: String? = nil
+    var unifiedFollowupTargetRole: MacGatewayEndpointRole? = nil
     var sharePrefillNotice: String? = nil
 
-    /// Transfer exactly one send to the remote owner before waiting for its receipt.
-    mutating func takeUnifiedMacTarget() -> String? {
-        let target = unifiedMacFollowupWorkItemId
+    /// Consumes an explicit card follow-up target (if armed) while keeping the user's selected
+    /// bottom-bar execution target intact for subsequent sends.
+    mutating func takeUnifiedRemoteTarget() -> (workItemId: String?, role: MacGatewayEndpointRole?) {
+        let targetWorkItemId = unifiedMacFollowupWorkItemId
+        let targetRole = unifiedFollowupTargetRole ?? executionTarget.endpointRole
         unifiedMacFollowupWorkItemId = nil
-        isDelegateToMacArmed = false
+        unifiedFollowupTargetRole = nil
         cloudDialogueErrorMessage = nil
         sharePrefillNotice = nil
-        return target
+        return (targetWorkItemId, targetRole)
+    }
+
+    /// Legacy compatibility helper used on conversation switch / share prefill reset.
+    mutating func takeUnifiedMacTarget() -> String? {
+        takeUnifiedRemoteTarget().workItemId
     }
 
     static func cloudDialogueFingerprint(text: String, targetWorkItemId: String?) -> String {

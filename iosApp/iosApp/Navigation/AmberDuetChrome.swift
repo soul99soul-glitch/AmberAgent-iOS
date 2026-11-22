@@ -64,10 +64,10 @@ struct AmberDuetBottomSwitcher: View {
     var onSelectTab: ((AmberDuetModeTab) -> Void)? = nil
     let onOpenTasks: () -> Void
     let onOpenWorkspace: () -> Void
-    var isDelegateToMacArmed: Bool = false
-    var onToggleDelegateToMac: (() -> Void)? = nil
-    var onSelectHost: ((Bool) -> Void)? = nil
-    var onOpenCloudPairingSettings: (() -> Void)? = nil
+    var selectedExecutionTarget: AmberComposerExecutionTarget = .local
+    var onSelectExecutionTarget: ((AmberComposerExecutionTarget) -> Void)? = nil
+    var onExitCloudMainDialogue: (() -> Void)? = nil
+    var onOpenMultiDeviceSettings: ((AmberMultiDeviceTab) -> Void)? = nil
 
     @Namespace private var glassNamespace
     @State private var tabFrames: [AmberDuetModeTab: CGRect] = [:]
@@ -104,28 +104,25 @@ struct AmberDuetBottomSwitcher: View {
 
                 Spacer(minLength: 4)
 
-                // Right (+1): 交给 Mac 胶囊（短按切换单次交给 Mac，长按直切本机 ⇄ 云端）
+                // Right (+1): 统一主时间线三向执行去向胶囊（本机 / 云端 / Mac，单手循环直切，无 .contextMenu）
                 AmberHostSwitcherPill(
                     gateway: gateway,
-                    isDelegateToMacArmed: isDelegateToMacArmed,
-                    onToggleDelegateToMac: onToggleDelegateToMac,
-                    onSelectHost: { useCloud in
-                        if let onSelectHost {
-                            onSelectHost(useCloud)
+                    selectedTarget: selectedExecutionTarget,
+                    onSelectExecutionTarget: { target in
+                        onSelectExecutionTarget?(target)
+                    },
+                    onExitCloudMainDialogue: {
+                        if let onExitCloudMainDialogue {
+                            onExitCloudMainDialogue()
                         } else {
-                            gateway.setCloudMainDialogueSelected(useCloud)
+                            gateway.setCloudMainDialogueSelected(false)
                             if selectedTab != .chat {
                                 onSelectTab?(.chat)
                             }
                         }
                     },
-                    onOpenPairingSettings: {
-                        onOpenCloudPairingSettings?()
-                    },
-                    onFocusCloudDialogue: {
-                        if selectedTab != .chat {
-                            onSelectTab?(.chat)
-                        }
+                    onOpenPairingSettings: { tab in
+                        onOpenMultiDeviceSettings?(tab)
                     }
                 )
             }
