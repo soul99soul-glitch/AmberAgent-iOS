@@ -1,12 +1,37 @@
 import Shared
 import SwiftUI
 
-// MARK: - Argon 3+1 Right-Side Host Switcher Pill (本机 ⇄ 云端)
+// MARK: - Argon 3+1 Right-Side Action Pill (短按交给 Mac · 长按切换本机/云端)
+
+enum AmberHostSwitcherPillAction: Equatable {
+    case openPairingSettings
+    case toggleDelegateToMac
+    case switchHost(useCloud: Bool)
+    case focusCloudDialogue
+}
+
+enum AmberHostSwitcherPillPolicy {
+    static func resolveShortTap(isPaired: Bool, isCloudSelected: Bool) -> AmberHostSwitcherPillAction {
+        guard isPaired else { return .openPairingSettings }
+        return isCloudSelected ? .focusCloudDialogue : .toggleDelegateToMac
+    }
+
+    static func resolveLongPress(isPaired: Bool, isCloudSelected: Bool) -> AmberHostSwitcherPillAction {
+        guard isPaired else { return .openPairingSettings }
+        return .switchHost(useCloud: !isCloudSelected)
+    }
+}
 
 struct AmberHostSwitcherPill: View {
     let gateway: MacGatewayStore
+    var isDelegateToMacArmed: Bool = false
+    var onToggleDelegateToMac: (() -> Void)? = nil
     let onSelectHost: (Bool) -> Void
     let onOpenPairingSettings: () -> Void
+    var onFocusCloudDialogue: (() -> Void)? = nil
+
+    @State private var isPressed = false
+    @State private var didTriggerLongPress = false
 
     private var isPaired: Bool {
         gateway.connection != nil
@@ -16,101 +41,130 @@ struct AmberHostSwitcherPill: View {
         isPaired && gateway.isCloudMainDialogueSelected
     }
 
-    private var isCloudReachable: Bool {
-        gateway.isReachable != false
+    private var isMacDelegationActive: Bool {
+        isPaired && !isCloudSelected && isDelegateToMacArmed
+    }
+
+    private var isHighlighted: Bool {
+        isCloudSelected || isMacDelegationActive
     }
 
     var body: some View {
-        Button {
-            AmberHaptics.trigger(.selection)
-            if isPaired {
-                onSelectHost(!isCloudSelected)
-            } else {
-                onOpenPairingSettings()
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: isCloudSelected ? "icloud" : "iphone")
-                    .font(.system(size: 11.5, weight: isCloudSelected ? .semibold : .medium))
-                    .foregroundStyle(iconColor)
+        HStack(spacing: 5) {
+            Image(systemName: iconName)
+                .font(.system(size: 11.5, weight: isHighlighted ? .semibold : .medium))
+                .foregroundStyle(iconColor)
 
-                Text(
-                    isCloudSelected
-                        ? IOSAppLocalization.string("云端", defaultValue: "云端")
-                        : IOSAppLocalization.string("本机", defaultValue: "本机")
-                )
-                .font(.system(size: 12.5, weight: isCloudSelected ? .semibold : .medium))
-                .foregroundStyle(isPaired || !isCloudSelected ? AmberTheme.foreground : AmberTheme.muted)
+            Text(verbatim: titleText)
+                .font(.system(size: 12.5, weight: isHighlighted ? .semibold : .medium))
+                .foregroundStyle(titleColor)
                 .lineLimit(1)
 
-                if let dotColor = statusDotColor {
-                    Circle()
-                        .fill(dotColor)
-                        .frame(width: 5.5, height: 5.5)
-                }
+            if let dotColor = statusDotColor {
+                Circle()
+                    .fill(dotColor)
+                    .frame(width: 5.5, height: 5.5)
             }
-            .fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9.5)
-            .modifier(DuetBottomCapsuleGlass(isHighlighted: isCloudSelected))
-            .contentShape(Capsule(style: .continuous))
         }
-        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.97, haptic: .none))
-        .contentShape(.contextMenuPreview, Capsule(style: .continuous))
-        .contextMenu {
-            Button {
-                AmberHaptics.trigger(.selection)
-                onSelectHost(false)
-            } label: {
-                HStack {
-                    Text(IOSAppLocalization.string("📱 本机 Amber", defaultValue: "📱 本机 Amber"))
-                    if !isCloudSelected {
-                        Image(systemName: "checkmark")
-                    }
-                }
+        .fixedSize(horizontal: true, vertical: false)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9.5)
+        .background {
+            if isMacDelegationActive {
+                Capsule(style: .continuous)
+                    .fill(AmberTheme.accent.opacity(0.14))
             }
-
-            Button {
-                AmberHaptics.trigger(.selection)
-                if isPaired {
-                    onSelectHost(true)
-                } else {
-                    onOpenPairingSettings()
-                }
-            } label: {
-                HStack {
-                    Text(IOSAppLocalization.string("☁️ 云端真身", defaultValue: "☁️ 云端真身"))
-                    if isCloudSelected {
-                        Image(systemName: "checkmark")
-                    }
-                }
+        }
+        .modifier(DuetBottomCapsuleGlass(isHighlighted: isHighlighted))
+        .scaleEffect(isPressed ? 0.96 : 1.0)
+        .animation(.easeOut(duration: 0.14), value: isPressed)
+        .frame(minWidth: 44, minHeight: 44)
+        .contentShape(Capsule(style: .continuous))
+        .onTapGesture {
+            guard !didTriggerLongPress else {
+                didTriggerLongPress = false
+                return
             }
-
-            Divider()
-
-            Button {
-                AmberHaptics.trigger(.selection)
-                onOpenPairingSettings()
-            } label: {
-                Label(
-                    IOSAppLocalization.string("云端配对与连接设置…", defaultValue: "云端配对与连接设置…"),
-                    systemImage: "slider.horizontal.3"
+            performAction(AmberHostSwitcherPillPolicy.resolveShortTap(isPaired: isPaired, isCloudSelected: isCloudSelected))
+        }
+        .onLongPressGesture(
+            minimumDuration: 0.45,
+            maximumDistance: 24,
+            perform: {
+                didTriggerLongPress = true
+                performAction(
+                    AmberHostSwitcherPillPolicy.resolveLongPress(isPaired: isPaired, isCloudSelected: isCloudSelected),
+                    isLongPress: true
                 )
+            },
+            onPressingChanged: { pressing in
+                isPressed = pressing
+                if pressing {
+                    didTriggerLongPress = false
+                }
             }
-        }
-        .accessibilityLabel(
-            isCloudSelected
-                ? IOSAppLocalization.string("当前云端对话，点按切回本机，长按打开宿主菜单", defaultValue: "当前云端对话，点按切回本机，长按打开宿主菜单")
-                : (isPaired
-                    ? IOSAppLocalization.string("当前本机对话，点按切到云端真身，长按打开宿主菜单", defaultValue: "当前本机对话，点按切到云端真身，长按打开宿主菜单")
-                    : IOSAppLocalization.string("当前本机对话，点按配对云端，长按打开宿主菜单", defaultValue: "当前本机对话，点按配对云端，长按打开宿主菜单"))
         )
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(accessibilityLabelText)
+        .accessibilityAction(named: Text(accessibilitySwitchHostActionTitle)) {
+            performAction(
+                AmberHostSwitcherPillPolicy.resolveLongPress(isPaired: isPaired, isCloudSelected: isCloudSelected),
+                isLongPress: true
+            )
+        }
         .accessibilityIdentifier("chat.duet.hostSwitcherPill")
+    }
+
+    private func performAction(_ action: AmberHostSwitcherPillAction, isLongPress: Bool = false) {
+        switch action {
+        case .openPairingSettings:
+            AmberHaptics.trigger(isLongPress ? .mediumImpact : .selection)
+            onOpenPairingSettings()
+        case .toggleDelegateToMac:
+            AmberHaptics.trigger(.selection)
+            onToggleDelegateToMac?()
+        case .switchHost(let useCloud):
+            AmberHaptics.trigger(.mediumImpact)
+            onSelectHost(useCloud)
+        case .focusCloudDialogue:
+            onFocusCloudDialogue?()
+        }
+    }
+
+    private var iconName: String {
+        if isCloudSelected {
+            return "icloud"
+        }
+        return isMacDelegationActive ? "desktopcomputer.and.arrow.down" : "desktopcomputer"
+    }
+
+    private var titleText: String {
+        if isCloudSelected {
+            return IOSAppLocalization.string("云端", defaultValue: "云端")
+        }
+        if isMacDelegationActive {
+            return macGatewayL("本次交给 Mac")
+        }
+        return macGatewayL("交给 Mac")
+    }
+
+    private var titleColor: Color {
+        if !isPaired {
+            return AmberTheme.muted
+        }
+        if isMacDelegationActive {
+            return AmberTheme.accent
+        }
+        return AmberTheme.foreground
     }
 
     private var iconColor: Color {
         if isCloudSelected {
             return gateway.cloudDialogueSessionHealth.isReady ? AmberTheme.accent : AmberTheme.foreground2
+        }
+        if isMacDelegationActive {
+            return AmberTheme.accent
         }
         return isPaired ? AmberTheme.foreground2 : AmberTheme.muted
     }
@@ -118,7 +172,29 @@ struct AmberHostSwitcherPill: View {
     private var statusDotColor: Color? {
         guard isPaired else { return nil }
         let baseColor = gateway.cloudDialogueSessionHealth.semanticDotColor
-        return isCloudSelected ? baseColor : baseColor.opacity(0.8)
+        return isHighlighted ? baseColor : baseColor.opacity(0.8)
+    }
+
+    private var accessibilityLabelText: String {
+        if !isPaired {
+            return IOSAppLocalization.string("交给 Mac，尚未配对，点按或长按打开云端配对设置", defaultValue: "交给 Mac，尚未配对，点按或长按打开云端配对设置")
+        }
+        if isCloudSelected {
+            return IOSAppLocalization.string("当前云端对话，长按切回本机对话", defaultValue: "当前云端对话，长按切回本机对话")
+        }
+        if isMacDelegationActive {
+            return IOSAppLocalization.string("已选中本次交给 Mac，点按取消并恢复本机发送，长按切换云端对话", defaultValue: "已选中本次交给 Mac，点按取消并恢复本机发送，长按切换云端对话")
+        }
+        return IOSAppLocalization.string("交给 Mac，点按勾选本次交由 Mac 执行，长按切换云端对话", defaultValue: "交给 Mac，点按勾选本次交由 Mac 执行，长按切换云端对话")
+    }
+
+    private var accessibilitySwitchHostActionTitle: String {
+        if !isPaired {
+            return IOSAppLocalization.string("打开云端配对设置", defaultValue: "打开云端配对设置")
+        }
+        return isCloudSelected
+            ? IOSAppLocalization.string("切回本机对话", defaultValue: "切回本机对话")
+            : IOSAppLocalization.string("切换到云端对话", defaultValue: "切换到云端对话")
     }
 }
 
@@ -666,8 +742,8 @@ struct AmberInlineCloudMainDialogueView: View {
             } else {
                 Text(
                     IOSAppLocalization.string(
-                        "当前主界面已直连 24h 云端真身，共享同一份形象人设。直接在下方输入框发消息即可交代长任务或连续对话；点按右下角「云端」胶囊可随时一键切回本机。",
-                        defaultValue: "当前主界面已直连 24h 云端真身，共享同一份形象人设。直接在下方输入框发消息即可交代长任务或连续对话；点按右下角「云端」胶囊可随时一键切回本机。"
+                        "当前主界面已直连 24h 云端真身，共享同一份形象人设。直接在下方输入框发消息即可交代长任务或连续对话；长按右下角「云端」胶囊可随时切回本机。",
+                        defaultValue: "当前主界面已直连 24h 云端真身，共享同一份形象人设。直接在下方输入框发消息即可交代长任务或连续对话；长按右下角「云端」胶囊可随时切回本机。"
                     )
                 )
                 .font(.footnote)

@@ -354,6 +354,7 @@ struct ChatContextControl: View {
                 jevRunSummary: jevSummaryRunId.map { IOSJevMetricsStore.runSummary(runId: $0) }
             )
             .presentationCompactAdaptation(.popover)
+            .presentationCornerRadius(16)
         }
     }
 }

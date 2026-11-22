@@ -54,13 +54,16 @@ final class ChatSuggestionTests: XCTestCase {
                        ["把本轮修改列给我看看，先别提交"])
     }
 
-    func testAlternativesKeepOrderRemoveDuplicatesAndStopAtThree() {
+    func testAlternativesKeepOrderRemoveDuplicatesAndStopAtFive() {
         let context = ChatSuggestionContext(source: source, entries: [
             .init(role: "User", text: "给我几个可行方案"),
             .init(role: "Assistant", text: "可以先修输入，或者先调样式，也可以暂缓修改。")
         ])
-        let raw = "好的\n1. 先修输入\n2. 先修输入！\n3. 先调样式\n4. 暂缓修改\n5. 再给个方案"
-        XCTAssertEqual(ChatSuggestionFilter.candidates(from: raw, context: context), ["先修输入", "先调样式", "暂缓修改"])
+        let raw = "好的\n1. 先修输入\n2. 先修输入！\n3. 先调样式\n4. 暂缓修改\n5. 再给个方案\n6. 先看日志\n7. 超出上限的第六条"
+        XCTAssertEqual(
+            ChatSuggestionFilter.candidates(from: raw, context: context),
+            ["先修输入", "先调样式", "暂缓修改", "再给个方案", "先看日志"]
+        )
         XCTAssertEqual(ChatSuggestionFilter.candidates(from: "先修输入\n先调样式", context: context), ["先修输入", "先调样式"])
         XCTAssertTrue(ChatSuggestionFilter.candidates(from: "[NO_SUGGESTION]\n先修输入", context: context).isEmpty)
     }
@@ -86,7 +89,7 @@ final class ChatSuggestionTests: XCTestCase {
         try await waitUntil { !vm.chatSuggestions.isEmpty }
         XCTAssertEqual(vm.chatSuggestions, ["把本轮修改列给我看看，先别提交"])
         XCTAssertTrue(provider.prompt.contains("不要推送"))
-        XCTAssertTrue(provider.prompt.contains("Default to one prediction"))
+        XCTAssertTrue(provider.prompt.contains("3 to 5"))
         XCTAssertEqual(provider.calls, 1)
         vm.generateChatSuggestions(state: vm.currentRun.state)
         XCTAssertEqual(provider.calls, 1)

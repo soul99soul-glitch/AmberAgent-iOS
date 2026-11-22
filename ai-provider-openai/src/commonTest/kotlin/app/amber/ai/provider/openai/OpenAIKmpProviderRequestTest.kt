@@ -404,13 +404,13 @@ class OpenAIKmpProviderRequestTest {
     }
 
     @Test
-    fun codexGpt6SolAndLunaExposeReasoningAndSendSelectedEffort() {
+    fun codexGpt6VariantsExcludeOffMapOffToLowAndSendSelectedEffort() {
         val codex = setting.copy(
             baseUrl = "https://chatgpt.com/backend-api/codex",
             authMode = OpenAIAuthMode.CODEX_OAUTH,
             useResponseApi = true,
         )
-        for (modelId in listOf("gpt-6-sol", "gpt-6-luna")) {
+        for (modelId in listOf("gpt-6.2-sol", "gpt-6-sol", "gpt-6-luna")) {
             val model = Model(
                 modelId = modelId,
                 displayName = modelId,
@@ -419,7 +419,6 @@ class OpenAIKmpProviderRequestTest {
             assertTrue(ModelAbility.REASONING in model.abilities, modelId)
             assertEquals(
                 listOf(
-                    ReasoningLevel.OFF,
                     ReasoningLevel.LOW,
                     ReasoningLevel.MEDIUM,
                     ReasoningLevel.HIGH,
@@ -430,6 +429,19 @@ class OpenAIKmpProviderRequestTest {
                 modelId,
             )
             assertEquals(ReasoningLevel.MEDIUM, model.defaultReasoningLevel(codex), modelId)
+
+            val offBody = provider.buildResponsesRequestBody(
+                providerSetting = codex,
+                messages = listOf(UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("hi")))),
+                params = TextGenerationParams(
+                    model = model,
+                    temperature = 0.7f,
+                    reasoningLevel = ReasoningLevel.OFF,
+                ),
+                stream = true,
+            )
+            assertFalse("temperature" in offBody, modelId)
+            assertEquals("low", offBody.getValue("reasoning").jsonObject.getValue("effort").jsonPrimitive.content, modelId)
 
             val body = provider.buildResponsesRequestBody(
                 providerSetting = codex,

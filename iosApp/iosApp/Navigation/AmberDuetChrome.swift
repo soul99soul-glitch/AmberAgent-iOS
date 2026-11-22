@@ -64,6 +64,8 @@ struct AmberDuetBottomSwitcher: View {
     var onSelectTab: ((AmberDuetModeTab) -> Void)? = nil
     let onOpenTasks: () -> Void
     let onOpenWorkspace: () -> Void
+    var isDelegateToMacArmed: Bool = false
+    var onToggleDelegateToMac: (() -> Void)? = nil
     var onSelectHost: ((Bool) -> Void)? = nil
     var onOpenCloudPairingSettings: (() -> Void)? = nil
 
@@ -102,9 +104,11 @@ struct AmberDuetBottomSwitcher: View {
 
                 Spacer(minLength: 4)
 
-                // Right (+1): 本机 ⇄ 云端 宿主切换胶囊（短按一键直切，长按快捷菜单）
+                // Right (+1): 交给 Mac 胶囊（短按切换单次交给 Mac，长按直切本机 ⇄ 云端）
                 AmberHostSwitcherPill(
                     gateway: gateway,
+                    isDelegateToMacArmed: isDelegateToMacArmed,
+                    onToggleDelegateToMac: onToggleDelegateToMac,
                     onSelectHost: { useCloud in
                         if let onSelectHost {
                             onSelectHost(useCloud)
@@ -117,6 +121,11 @@ struct AmberDuetBottomSwitcher: View {
                     },
                     onOpenPairingSettings: {
                         onOpenCloudPairingSettings?()
+                    },
+                    onFocusCloudDialogue: {
+                        if selectedTab != .chat {
+                            onSelectTab?(.chat)
+                        }
                     }
                 )
             }

@@ -8,13 +8,16 @@ import kotlin.test.assertTrue
 
 class ReasoningPolicyTest {
     @Test
-    fun kimiK3IsAlwaysLowHighMax() {
-        val options = options("kimi-k3", kimi())
-        assertEquals(
-            listOf(ReasoningLevel.LOW, ReasoningLevel.HIGH, ReasoningLevel.MAX),
-            options,
-        )
-        assertEquals(ReasoningLevel.MAX, default("kimi-k3", kimi()))
+    fun kimiK3AndK31VariantsAreAlwaysLowHighMax() {
+        for (id in listOf("kimi-k3", "kimi-k3.1", "k3", "k3.1", "k3.1-pro", "k3-pro", "moonshot/k3.1-pro")) {
+            val options = options(id, kimi())
+            assertEquals(
+                listOf(ReasoningLevel.LOW, ReasoningLevel.HIGH, ReasoningLevel.MAX),
+                options,
+                id,
+            )
+            assertEquals(ReasoningLevel.MAX, default(id, kimi()), id)
+        }
     }
 
     @Test
@@ -110,6 +113,43 @@ class ReasoningPolicyTest {
     }
 
     @Test
+    fun openAiGpt6ModelsExcludeOffAndCoerceOffToLow() {
+        for (id in listOf(
+            "gpt-6",
+            "gpt-6.2",
+            "gpt-6.2-sol",
+            "gpt-6.2-astra",
+            "gpt-6.1-sol",
+            "gpt-6.1-terra",
+            "gpt-6-astra",
+            "gpt-6-sol",
+            "gpt-6-terra",
+            "gpt-6-luna",
+            "openai/gpt-6.2-sol",
+        )) {
+            val opts = options(id, openai())
+            assertEquals(
+                listOf(
+                    ReasoningLevel.LOW,
+                    ReasoningLevel.MEDIUM,
+                    ReasoningLevel.HIGH,
+                    ReasoningLevel.XHIGH,
+                    ReasoningLevel.MAX,
+                ),
+                opts,
+                id,
+            )
+            assertFalse(ReasoningLevel.OFF in opts, id)
+            assertEquals(ReasoningLevel.MEDIUM, default(id, openai()), id)
+            assertEquals(
+                ReasoningLevel.LOW,
+                ReasoningLevel.OFF.coerceToReasoningOptions(model(id).reasoningOptions(openai()), default(id, openai())),
+                id,
+            )
+        }
+    }
+
+    @Test
     fun gemini37FlashIsLowMediumHigh() {
         assertEquals(
             listOf(ReasoningLevel.AUTO, ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH),
@@ -144,14 +184,37 @@ class ReasoningPolicyTest {
     }
 
     @Test
-    fun grok46ApiHasXhighAndNoOff() {
+    fun grok46And47ApiHaveXhighAndNoOff() {
+        for (id in listOf("grok-4.6", "grok-4.7", "grok-4-7")) {
+            assertEquals(
+                listOf(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.XHIGH),
+                options(id, xai()),
+                id,
+            )
+            assertEquals(
+                listOf(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.XHIGH),
+                options(id, grokCliProxy()),
+                id,
+            )
+        }
+    }
+
+    @Test
+    fun frontier2026FamilyCoverageMatchesConfiguredOptions() {
+        assertEquals(listOf(ReasoningLevel.OFF, ReasoningLevel.AUTO), options("MiniMax-M3.1", minimax()))
         assertEquals(
-            listOf(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.XHIGH),
-            options("grok-4.6", xai()),
+            listOf(ReasoningLevel.LOW, ReasoningLevel.HIGH, ReasoningLevel.MAX),
+            options("glm-5.3-flash", zhipu()),
+        )
+        assertFalse(ReasoningLevel.OFF in options("claude-opus-5-5", claude()))
+        assertTrue(ReasoningLevel.OFF in options("claude-sonnet-5-5", claude()))
+        assertEquals(
+            listOf(ReasoningLevel.OFF, ReasoningLevel.AUTO, ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH),
+            options("gemini-4-neon", gemini()),
         )
         assertEquals(
-            listOf(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.XHIGH),
-            options("grok-4.6", grokCliProxy()),
+            listOf(ReasoningLevel.OFF, ReasoningLevel.AUTO),
+            options("doubao-seed-2.1-pro", ProviderSetting.OpenAI(baseUrl = "https://ark.cn-beijing.volces.com/api/v3")),
         )
     }
 

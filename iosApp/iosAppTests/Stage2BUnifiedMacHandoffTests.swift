@@ -715,4 +715,20 @@ struct Stage2BUnifiedMacHandoffTests {
         #expect(latest.id == "share-fallback-1")
         #expect(latest.formattedPrefillText == "https://apple.com")
     }
+
+    // MARK: - 6. Bottom-Right "交给 Mac" / Host Switcher Pill Gesture Policy
+
+    @Test func hostSwitcherPillRoutesShortTapToDelegateAndLongPressToHostSwitch() {
+        // Unpaired: both short tap and long press open pairing settings.
+        #expect(AmberHostSwitcherPillPolicy.resolveShortTap(isPaired: false, isCloudSelected: false) == .openPairingSettings)
+        #expect(AmberHostSwitcherPillPolicy.resolveLongPress(isPaired: false, isCloudSelected: false) == .openPairingSettings)
+
+        // Paired local: short tap toggles one-shot Mac delegation; long press switches to cloud main dialogue.
+        #expect(AmberHostSwitcherPillPolicy.resolveShortTap(isPaired: true, isCloudSelected: false) == .toggleDelegateToMac)
+        #expect(AmberHostSwitcherPillPolicy.resolveLongPress(isPaired: true, isCloudSelected: false) == .switchHost(useCloud: true))
+
+        // Paired cloud: short tap stays on cloud dialogue (never switches host); long press switches back to local.
+        #expect(AmberHostSwitcherPillPolicy.resolveShortTap(isPaired: true, isCloudSelected: true) == .focusCloudDialogue)
+        #expect(AmberHostSwitcherPillPolicy.resolveLongPress(isPaired: true, isCloudSelected: true) == .switchHost(useCloud: false))
+    }
 }

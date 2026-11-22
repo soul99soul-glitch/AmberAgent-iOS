@@ -34,15 +34,16 @@ class ReasoningWireTest {
     }
 
     @Test
-    fun kimiK3DoesNotSendDisabledThinking() {
-        val fields = plan(
-            host = "api.moonshot.ai",
-            brand = OpenAIBrand.KIMI,
-            modelId = "kimi-k3",
-            level = ReasoningLevel.OFF,
-        )
-        assertNull(fields.thinkingType)
-        assertEquals("low", fields.reasoningEffort)
+    fun kimiK3AndK31DoNotSendDisabledThinking() {
+        for (id in listOf("kimi-k3", "k3.1-pro", "k3")) {
+            val off = plan("api.moonshot.ai", OpenAIBrand.KIMI, id, ReasoningLevel.OFF)
+            assertNull(off.thinkingType, id)
+            assertEquals("low", off.reasoningEffort, id)
+
+            val max = plan("api.moonshot.cn", OpenAIBrand.KIMI, id, ReasoningLevel.MAX)
+            assertNull(max.thinkingType, id)
+            assertEquals("max", max.reasoningEffort, id)
+        }
     }
 
     @Test
@@ -141,6 +142,16 @@ class ReasoningWireTest {
         assertEquals("max", max.reasoningEffort)
         val none = plan("api.openai.com", OpenAIBrand.OPENAI, "gpt-5.6", ReasoningLevel.OFF)
         assertEquals("none", none.reasoningEffort)
+    }
+
+    @Test
+    fun openAiGpt6MapsOffToLowAndGrok47UsesGrokEffort() {
+        for (id in listOf("gpt-6.2-sol", "gpt-6.2-astra", "gpt-6-sol", "gpt-6-luna")) {
+            assertEquals("low", plan("api.openai.com", OpenAIBrand.OPENAI, id, ReasoningLevel.OFF).reasoningEffort, id)
+            assertEquals("high", plan("api.openai.com", OpenAIBrand.OPENAI, id, ReasoningLevel.HIGH).reasoningEffort, id)
+        }
+        assertEquals("low", plan("api.x.ai", OpenAIBrand.GENERIC, "grok-4.7", ReasoningLevel.OFF).reasoningEffort)
+        assertEquals("xhigh", plan("api.x.ai", OpenAIBrand.GENERIC, "grok-4.7", ReasoningLevel.XHIGH).reasoningEffort)
     }
 
     @Test

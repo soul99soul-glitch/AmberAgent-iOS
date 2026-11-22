@@ -300,50 +300,39 @@ extension ChatView {
                         VStack(spacing: 6) {
                             if !isCloudMainDialogueActive,
                                !collapsesComposerForDuetPanel,
-                               MacGatewayStore.shared.connection != nil || isUnifiedMacDelegationTargeted {
+                               let followupId = composerState.unifiedMacFollowupWorkItemId {
                                 HStack(alignment: .center, spacing: 8) {
-                                    if let followupId = composerState.unifiedMacFollowupWorkItemId {
-                                        HStack(spacing: 6) {
-                                            Image(systemName: "arrow.turn.down.right")
-                                                .font(.caption.weight(.bold))
-                                                .foregroundStyle(AmberTheme.accent)
-                                            Text(verbatim: macGatewayL("向 Mac 任务点名补充修改"))
-                                                .font(.caption.weight(.semibold))
-                                                .foregroundStyle(AmberTheme.foreground)
-                                                .lineLimit(1)
-                                                .truncationMode(.tail)
-                                            Button {
-                                                composerState.unifiedMacFollowupWorkItemId = nil
-                                            } label: {
-                                                Image(systemName: "xmark.circle.fill")
-                                                    .font(.caption)
-                                                    .foregroundStyle(AmberTheme.muted)
-                                                    .padding(.horizontal, 4)
-                                                    .padding(.vertical, 4)
-                                                    .contentShape(Rectangle())
-                                            }
-                                            .buttonStyle(.plain)
-                                            .accessibilityLabel(macGatewayL("取消点名补充"))
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "arrow.turn.down.right")
+                                            .font(.caption.weight(.bold))
+                                            .foregroundStyle(AmberTheme.accent)
+                                        Text(verbatim: macGatewayL("向 Mac 任务点名补充修改"))
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(AmberTheme.foreground)
+                                            .lineLimit(1)
+                                            .truncationMode(.tail)
+                                        Button {
+                                            composerState.unifiedMacFollowupWorkItemId = nil
+                                        } label: {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .font(.caption)
+                                                .foregroundStyle(AmberTheme.muted)
+                                                .padding(.horizontal, 4)
+                                                .padding(.vertical, 4)
+                                                .contentShape(Rectangle())
                                         }
-                                        .padding(.leading, 11)
-                                        .padding(.trailing, 7)
-                                        .frame(minHeight: 30)
-                                        .background(AmberTheme.surface, in: Capsule(style: .continuous))
-                                        .overlay {
-                                            Capsule(style: .continuous)
-                                                .stroke(AmberTheme.accent.opacity(0.35), lineWidth: 0.75)
-                                        }
-                                        .accessibilityIdentifier("chat.composer.macFollowupChip.\(followupId)")
-                                    } else {
-                                        ComposerDelegateToMacPill(
-                                            isArmed: composerState.isDelegateToMacArmed,
-                                            deviceName: MacGatewayStore.shared.connection?.name ?? "Mac",
-                                            isReachable: MacGatewayStore.shared.isReachable != false
-                                        ) {
-                                            composerState.isDelegateToMacArmed.toggle()
-                                            composerState.cloudDialogueErrorMessage = nil
-                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityLabel(macGatewayL("取消点名补充"))
                                     }
+                                    .padding(.leading, 11)
+                                    .padding(.trailing, 7)
+                                    .frame(minHeight: 30)
+                                    .background(AmberTheme.surface, in: Capsule(style: .continuous))
+                                    .overlay {
+                                        Capsule(style: .continuous)
+                                            .stroke(AmberTheme.accent.opacity(0.35), lineWidth: 0.75)
+                                    }
+                                    .accessibilityIdentifier("chat.composer.macFollowupChip.\(followupId)")
 
                                     Spacer(minLength: 0)
                                 }
@@ -482,6 +471,7 @@ extension ChatView {
                                                         isAvailable: reasoningIsAvailable
                                                     ) { _ in composerState.activeComposerPanel = nil }
                                                     .presentationCompactAdaptation(.popover)
+                                                    .presentationCornerRadius(16)
                                                 }
 
                                                 ChatContextControl(
@@ -519,6 +509,18 @@ extension ChatView {
                                     onOpenWorkspace: {
                                         withAnimation(.snappy(duration: 0.24)) {
                                             selectDuetTab(.hubs)
+                                        }
+                                    },
+                                    isDelegateToMacArmed: composerState.isDelegateToMacArmed,
+                                    onToggleDelegateToMac: {
+                                        withAnimation(.snappy(duration: 0.2)) {
+                                            if composerState.activeDuetTab != .chat {
+                                                selectDuetTab(.chat)
+                                                composerState.isDelegateToMacArmed = true
+                                            } else {
+                                                composerState.isDelegateToMacArmed.toggle()
+                                            }
+                                            composerState.cloudDialogueErrorMessage = nil
                                         }
                                     },
                                     onSelectHost: { useCloud in
@@ -1056,6 +1058,10 @@ extension ChatView {
             return
         }
         store.setCloudMainDialogueSelected(useCloud)
+        if useCloud {
+            composerState.isDelegateToMacArmed = false
+            composerState.unifiedMacFollowupWorkItemId = nil
+        }
         composerState.cloudDialogueErrorMessage = nil
         if composerState.activeDuetTab != .chat {
             composerState.activeDuetTab = .chat

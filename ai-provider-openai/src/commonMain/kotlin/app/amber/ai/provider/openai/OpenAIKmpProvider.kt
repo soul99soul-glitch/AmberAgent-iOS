@@ -1140,7 +1140,7 @@ class OpenAIKmpProvider internal constructor(
                         params.model.modelId,
                         params.reasoningLevel,
                     ).reasoningEffort
-                } else if (isAstraModel(params.model.modelId) && params.reasoningLevel == ReasoningLevel.OFF) {
+                } else if (isGpt6NoNoneReasoningModel(params.model.modelId) && params.reasoningLevel == ReasoningLevel.OFF) {
                     "low"
                 } else {
                     openAIResponsesReasoningEffort(params.reasoningLevel)
@@ -1837,15 +1837,17 @@ class OpenAIKmpProvider internal constructor(
 
     private fun responsesIsModelAllowTemperature(model: Model): Boolean {
         val modelId = model.modelId.lowercase()
-        return !isAstraModel(model.modelId) &&
+        return !isGpt6NoNoneReasoningModel(model.modelId) &&
             !ModelRegistry.OPENAI_O_MODELS.match(model.modelId) &&
             !ModelRegistry.GPT_5.match(model.modelId) &&
             !modelId.startsWith("gpt-5") &&
             !modelId.contains("codex")
     }
 
-    private fun isAstraModel(modelId: String): Boolean =
-        modelId.substringAfterLast('/').lowercase().startsWith("gpt-6-astra")
+    private fun isGpt6NoNoneReasoningModel(modelId: String): Boolean {
+        val base = modelId.substringAfterLast('/').lowercase()
+        return base == "gpt-6" || base.startsWith("gpt-6-") || base.startsWith("gpt-6.")
+    }
 
     /** 仅 MiMo 且本次声明了工具时启用正文 XML 工具调用兜底，见 [MiMoTextToolCallRecovery]。 */
     private fun mimoTextToolCallRecovery(

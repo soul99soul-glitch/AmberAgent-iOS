@@ -84,7 +84,7 @@ struct ChatSuggestionStrip: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                ForEach(Array(suggestions.prefix(4).enumerated()), id: \.offset) { index, suggestion in
+                ForEach(Array(suggestions.prefix(5).enumerated()), id: \.offset) { index, suggestion in
                     Button { onSelect(suggestion) } label: {
                         Text(suggestion)
                             .font(.caption)
@@ -213,11 +213,11 @@ struct ComposerThinkingPanel: View {
     let onPick: (ComposerReasoningOption) -> Void
 
     var body: some View {
-        ComposerPopoverSurface(width: 180) {
+        Group {
             if isAvailable {
                 VStack(spacing: 0) {
                     ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
-                        ComposerPopoverDivider(index: index)
+                        ComposerPopoverDivider(index: index, leadingInset: 16)
 
                         Button {
                             selectedOption = option
@@ -243,6 +243,7 @@ struct ComposerThinkingPanel: View {
                         .buttonStyle(.plain)
                     }
                 }
+                .padding(.vertical, 4)
             } else {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Reasoning 未启用")
@@ -257,6 +258,7 @@ struct ComposerThinkingPanel: View {
                 .padding(14)
             }
         }
+        .frame(width: 180)
     }
 }
 

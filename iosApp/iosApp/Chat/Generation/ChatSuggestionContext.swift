@@ -114,7 +114,7 @@ struct ChatSuggestionContext: Sendable {
 }
 
 enum ChatSuggestionFilter {
-    static let maximumCount = 3
+    static let maximumCount = 5
 
     static func candidates(from raw: String, context: ChatSuggestionContext) -> [String] {
         guard !raw.contains("```"), !raw.contains("[NO_SUGGESTION]") else { return [] }

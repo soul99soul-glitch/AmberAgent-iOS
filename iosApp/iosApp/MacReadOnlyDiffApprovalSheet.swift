@@ -398,69 +398,6 @@ private struct ReadOnlyDiffLine: Identifiable {
     }
 }
 
-// MARK: - Composer Explicit "交给 Mac" Capsule
-
-struct ComposerDelegateToMacPill: View {
-    let isArmed: Bool
-    let deviceName: String
-    let isReachable: Bool
-    let onToggle: () -> Void
-
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-    var body: some View {
-        Button {
-            AmberHaptics.trigger(.selection)
-            onToggle()
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: isArmed ? "desktopcomputer.and.arrow.down" : "desktopcomputer")
-                    .font(.caption.weight(.semibold))
-                Text(verbatim: isArmed
-                     ? macGatewayL("本次交给 Mac")
-                     : macGatewayL("交给 Mac"))
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
-                if isArmed {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.caption)
-                        .opacity(0.85)
-                } else {
-                    Circle()
-                        .fill(isReachable ? AmberTheme.accentGreen : AmberTheme.accentAmber)
-                        .frame(width: 6, height: 6)
-                }
-            }
-            .foregroundStyle(isArmed ? AmberTheme.accentInk : AmberTheme.foreground2)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .frame(minHeight: 30)
-            .background(
-                isArmed ? AmberTheme.accent : AmberTheme.surface,
-                in: Capsule(style: .continuous)
-            )
-            .overlay {
-                Capsule(style: .continuous)
-                    .stroke(
-                        isArmed ? AmberTheme.accent : AmberTheme.borderSoft,
-                        lineWidth: 0.75
-                    )
-            }
-            .frame(minHeight: 40)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .none))
-        .fixedSize(horizontal: !dynamicTypeSize.isAccessibilitySize, vertical: false)
-        .padding(.vertical, -5)
-        .accessibilityLabel(
-            isArmed
-                ? "\(macGatewayL("已选中本次交给 Mac"))（\(deviceName)），点按取消并恢复本机发送"
-                : "\(macGatewayL("交给 Mac"))（\(deviceName)），点按后本次发送由 Mac 后台执行"
-        )
-        .accessibilityIdentifier("chat.composer.delegateToMacPill")
-    }
-}
-
 // MARK: - Unified Timeline Mac Delegation Cards
 
 struct UnifiedMacDelegationTimelineSection: View {

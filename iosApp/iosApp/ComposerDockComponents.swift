@@ -670,12 +670,13 @@ struct ComposerContextCompactStatRow: View {
 
 struct ComposerPopoverDivider: View {
     let index: Int
+    var leadingInset: CGFloat = 44
 
     var body: some View {
         if index > 0 {
             Divider()
                 .overlay(AmberTheme.borderSoft)
-                .padding(.leading, 44)
+                .padding(.leading, leadingInset)
         }
     }
 }
