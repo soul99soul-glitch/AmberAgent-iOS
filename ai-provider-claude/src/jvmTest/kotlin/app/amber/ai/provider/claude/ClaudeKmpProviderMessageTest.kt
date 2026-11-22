@@ -36,6 +36,7 @@ import kotlin.test.assertFalse
 class ClaudeKmpProviderMessageTest {
 
     private val provider = ClaudeKmpProvider()
+    private val parser = provider.StreamEventParser()
 
     private val claudeSetting = ProviderSetting.Claude(
         id = kotlin.uuid.Uuid.parse("00000000-0000-0000-0000-000000000001"),
@@ -75,7 +76,7 @@ class ClaudeKmpProviderMessageTest {
 
     @Test
     fun `message delta preserves stop reason`() {
-        val chunk = provider.parseStreamEvent(
+        val chunk = parser.parse(
             id = "msg_1",
             type = "message_delta",
             data = """{"delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":32}}""",
@@ -93,7 +94,7 @@ class ClaudeKmpProviderMessageTest {
             """{"type":"tool_use","id":"tool-1","name":"lookup","input":{"query":"answer"}}""",
         )
         blocks.forEachIndexed { index, block ->
-            provider.parseStreamEvent(
+            parser.parse(
                 id = "msg-1",
                 type = "content_block_start",
                 data = """{"index":$index,"content_block":$block}""",
@@ -124,7 +125,7 @@ class ClaudeKmpProviderMessageTest {
             """{"type":"redacted_thinking","data":"encrypted-second"}""",
         )
         blocks.forEachIndexed { index, block ->
-            provider.parseStreamEvent(
+            parser.parse(
                 id = "msg-1", type = "content_block_start",
                 data = """{"index":$index,"content_block":$block}""",
             )?.let(accumulator::append)
@@ -141,7 +142,7 @@ class ClaudeKmpProviderMessageTest {
     @Test
     fun `empty thinking with signature survives snapshot and request replay`() {
         val accumulator = MessageStreamAccumulator(listOf(UIMessage.user("continue")))
-        val chunk = provider.parseStreamEvent(
+        val chunk = parser.parse(
             id = "msg-1", type = "content_block_delta",
             data = """{"index":0,"delta":{"type":"signature_delta","signature":"sig-empty"}}""",
         )
@@ -171,7 +172,7 @@ class ClaudeKmpProviderMessageTest {
             "content_block_delta" to """{"index":1,"delta":{"type":"signature_delta","signature":"sig-second"}}""",
         )
         events.forEach { (type, data) ->
-            provider.parseStreamEvent(id = "msg-1", type = type, data = data)?.let(accumulator::append)
+            parser.parse(id = "msg-1", type = type, data = data)?.let(accumulator::append)
         }
         val messages = accumulator.snapshot()
         val reasoning = messages.last().parts.filterIsInstance<UIMessagePart.Reasoning>()

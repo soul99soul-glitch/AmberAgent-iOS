@@ -204,12 +204,13 @@ class ClaudeKmpProvider internal constructor(
         }
         return flow {
             val terminal = ClaudeStreamTerminalState()
+            val parser = StreamEventParser()
             events.collect { event ->
                 when (event) {
                     is SseEvent.Open -> Unit
                     is SseEvent.Event -> {
                         terminal.observe(event.type, event.data)
-                        parseStreamEvent(event.id, event.type, event.data)?.let { emit(it) }
+                        parser.parse(event.id, event.type, event.data)?.let { emit(it) }
                     }
 
                     is SseEvent.Closed -> terminal.requireCompleted()
@@ -275,49 +276,55 @@ class ClaudeKmpProvider internal constructor(
         return throwable ?: Exception("SSE connection failed")
     }
 
-    internal fun parseStreamEvent(
-        id: String?,
-        type: String?,
-        data: String,
-    ): MessageChunk? {
-        if (data == "[DONE]") return null
-        val dataJson = json.parseToJsonElement(data).jsonObject
-        when (type) {
-            "message_stop" -> return null
-            "error" -> {
-                val error = dataJson["error"]?.parseErrorDetail()
-                throw error ?: Exception("Stream error event: $data")
-            }
-        }
+    internal inner class StreamEventParser {
+        private var previousUsage: TokenUsage? = null
 
-        val deltaMessage = parseMessage(buildJsonArray {
-            val contentBlockObj = dataJson["content_block"]?.jsonObject
-            val deltaObj = dataJson["delta"]?.jsonObject
-            if (contentBlockObj != null) {
-                add(contentBlockObj)
+        fun parse(
+            id: String?,
+            type: String?,
+            data: String,
+        ): MessageChunk? {
+            if (data == "[DONE]") return null
+            val dataJson = json.parseToJsonElement(data).jsonObject
+            when (type) {
+                "message_stop" -> return null
+                "error" -> {
+                    val error = dataJson["error"]?.parseErrorDetail()
+                    throw error ?: Exception("Stream error event: $data")
+                }
             }
-            if (deltaObj != null) {
-                add(deltaObj)
-            }
-        }, streamBlockIndex = dataJson["index"]?.jsonPrimitive?.intOrNull)
-        val tokenUsage = parseTokenUsage(dataJson)
-        val finishReason = dataJson["delta"]?.jsonObject
-            ?.get("stop_reason")?.jsonPrimitive?.contentOrNull
-        if (deltaMessage.parts.isEmpty() && tokenUsage == null && finishReason == null) return null
 
-        return MessageChunk(
-            id = id ?: "",
-            model = "",
-            choices = listOf(
-                UIMessageChoice(
-                    index = 0,
-                    delta = deltaMessage,
-                    message = null,
-                    finishReason = finishReason,
+            val deltaMessage = parseMessage(buildJsonArray {
+                val contentBlockObj = dataJson["content_block"]?.jsonObject
+                val deltaObj = dataJson["delta"]?.jsonObject
+                if (contentBlockObj != null) {
+                    add(contentBlockObj)
+                }
+                if (deltaObj != null) {
+                    add(deltaObj)
+                }
+            }, streamBlockIndex = dataJson["index"]?.jsonPrimitive?.intOrNull)
+            val tokenUsage = parseTokenUsage(dataJson, previousUsage)
+            if (tokenUsage != null) previousUsage = tokenUsage
+            val finishReason = dataJson["delta"]?.jsonObject
+                ?.get("stop_reason")?.jsonPrimitive?.contentOrNull
+            if (deltaMessage.parts.isEmpty() && tokenUsage == null && finishReason == null) return null
+
+            return MessageChunk(
+                id = id ?: "",
+                model = "",
+                choices = listOf(
+                    UIMessageChoice(
+                        index = 0,
+                        // The message carries a complete snapshot, including any explicitly reported zero.
+                        delta = if (tokenUsage == null) deltaMessage else deltaMessage.copy(usage = tokenUsage),
+                        message = null,
+                        finishReason = finishReason,
+                    ),
                 ),
-            ),
-            usage = tokenUsage,
-        )
+                usage = tokenUsage,
+            )
+        }
     }
 
     private fun configureReferHeaders(
@@ -945,21 +952,23 @@ class ClaudeKmpProvider internal constructor(
         )
     }
 
-    private fun parseTokenUsage(bodyJson: JsonObject?): TokenUsage? {
+    private fun parseTokenUsage(bodyJson: JsonObject?, previous: TokenUsage? = null): TokenUsage? {
         if (bodyJson == null) return null
         val usageJson = bodyJson["usage"]?.jsonObject
             ?: bodyJson["message"]?.jsonObject?.get("usage")?.jsonObject
             ?: return null
-        val inputTokens = usageJson["input_tokens"]?.jsonPrimitive?.intOrNull ?: 0
-        val cachedInputTokens = usageJson["cache_read_input_tokens"]?.jsonPrimitive?.intOrNull ?: 0
-        val cachedCreationTokens = usageJson["cache_creation_input_tokens"]?.jsonPrimitive?.intOrNull ?: 0
-        val completionTokens = usageJson["output_tokens"]?.jsonPrimitive?.intOrNull ?: 0
+        // Anthropic reports cumulative counters independently. An omitted field retains its previous value.
+        val inputTokens = usageJson["input_tokens"]?.jsonPrimitive?.intOrNull ?: previous?.uncachedInputTokens ?: 0
+        val cachedInputTokens = usageJson["cache_read_input_tokens"]?.jsonPrimitive?.intOrNull ?: previous?.cachedTokens ?: 0
+        val cachedCreationTokens = usageJson["cache_creation_input_tokens"]?.jsonPrimitive?.intOrNull ?: previous?.cacheCreationTokens ?: 0
+        val completionTokens = usageJson["output_tokens"]?.jsonPrimitive?.intOrNull ?: previous?.completionTokens ?: 0
         val promptTokens = inputTokens + cachedInputTokens + cachedCreationTokens
         return TokenUsage(
             promptTokens = promptTokens,
             completionTokens = completionTokens,
             totalTokens = promptTokens + completionTokens,
             cachedTokens = cachedInputTokens,
+            cacheCreationTokens = cachedCreationTokens,
         )
     }
 
