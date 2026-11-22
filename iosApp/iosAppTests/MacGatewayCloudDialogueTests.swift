@@ -363,7 +363,7 @@ struct MacGatewayCloudDialogueTests {
                         {
                           "items": [
                             {"seq":4,"id":"evt-in-1","kind":"followup","role":"user","text":"补充：重点看磁盘空间","topicId":"topic-1","workItemId":"work:1","outcome":null},
-                            {"seq":5,"id":"evt-consumed-1","kind":"input_consumed","role":"assistant","text":"补充：重点看磁盘空间","topicId":"topic-1","workItemId":"work:1","outcome":null},
+                            {"seq":5,"id":"consumed:evt-in-1","kind":"input_consumed","role":"system","text":"补充已被任务消费","topicId":"topic-1","workItemId":"work:1","outcome":null},
                             {"seq":6,"id":"evt-proc-3","kind":"process_event","role":"assistant","text":"已根据补充聚焦磁盘空间…","topicId":"topic-1","workItemId":"work:1","outcome":null},
                             {"seq":7,"id":"evt-in-2","kind":"followup","role":"user","text":"再补充：顺便看归档日志","topicId":"topic-1","workItemId":"work:1","outcome":null}
                           ],
@@ -375,7 +375,7 @@ struct MacGatewayCloudDialogueTests {
                         {
                           "items": [
                             {"seq":8,"id":"evt-stop-1","kind":"stop_requested","role":"user","text":"停止任务","topicId":"topic-1","workItemId":"work:1","outcome":"cancelled"},
-                            {"seq":9,"id":"evt-cancel-2","kind":"input_cancelled","role":"assistant","text":"再补充：顺便看归档日志","topicId":"topic-1","workItemId":"work:1","outcome":"cancelled"},
+                            {"seq":9,"id":"cancelled:evt-in-2","kind":"input_cancelled","role":"system","text":"任务已停止，这条补充未执行","topicId":"topic-1","workItemId":"work:1","outcome":"cancelled"},
                             {"seq":10,"id":"evt-res-1","kind":"task_result","role":"assistant","text":"任务已按请求停止","topicId":"topic-1","workItemId":"work:1","outcome":"cancelled"}
                           ],
                           "nextCursor": 10

@@ -5,22 +5,29 @@ import SwiftUI
 // MARK: - Cloud Dialogue v1 Contract (/v2/dialogue/* & /v2/work-items/{id}/inputs|stop)
 
 /// Request body for `POST /v2/dialogue/messages` and `POST /v2/work-items/{id}/inputs`.
-/// Strictly encodes only `requestId` and `text`.
+/// Encodes `requestId`, `text`, and optional `conversationId` (omitted when `nil` for legacy server compatibility).
 struct MacGatewayCloudDialogueInputRequest: Codable, Equatable, Sendable {
     var requestId: String
     var text: String
+    var conversationId: String?
 
     init(
         requestId: String = UUID().uuidString.lowercased(),
-        text: String
+        text: String,
+        conversationId: String? = nil
     ) {
         self.requestId = requestId
         self.text = text
+        let trimmedConversationId = conversationId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.conversationId = (trimmedConversationId?.isEmpty == false) ? trimmedConversationId : nil
     }
 
     var validationError: String? {
         guard MacGatewayCloudTaskRequest.isValidRequestId(requestId) else {
             return IOSAppLocalization.string("请求 ID 格式无效", defaultValue: "请求 ID 格式无效")
+        }
+        if let conversationId, conversationId.utf16.count > 128 {
+            return IOSAppLocalization.string("会话 ID 格式无效", defaultValue: "会话 ID 格式无效")
         }
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else {
@@ -34,17 +41,26 @@ struct MacGatewayCloudDialogueInputRequest: Codable, Equatable, Sendable {
 }
 
 /// Request body for `POST /v2/work-items/{id}/stop`.
-/// Strictly encodes only `requestId`.
+/// Encodes `requestId` and optional `conversationId` (omitted when `nil` for legacy server compatibility).
 struct MacGatewayCloudDialogueStopRequest: Codable, Equatable, Sendable {
     var requestId: String
+    var conversationId: String?
 
-    init(requestId: String = UUID().uuidString.lowercased()) {
+    init(
+        requestId: String = UUID().uuidString.lowercased(),
+        conversationId: String? = nil
+    ) {
         self.requestId = requestId
+        let trimmedConversationId = conversationId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.conversationId = (trimmedConversationId?.isEmpty == false) ? trimmedConversationId : nil
     }
 
     var validationError: String? {
         guard MacGatewayCloudTaskRequest.isValidRequestId(requestId) else {
             return IOSAppLocalization.string("请求 ID 格式无效", defaultValue: "请求 ID 格式无效")
+        }
+        if let conversationId, conversationId.utf16.count > 128 {
+            return IOSAppLocalization.string("会话 ID 格式无效", defaultValue: "会话 ID 格式无效")
         }
         return nil
     }
@@ -83,12 +99,61 @@ struct MacGatewayCloudDialogueReceipt: Codable, Equatable, Sendable {
     var state: MacGatewayCloudDialogueReceiptState
     var replayed: Bool
     var soulRevision: Int64?
+    var conversationId: String? = nil
+    var causedByInputId: String? = nil
+    var causedByRequestId: String? = nil
+    var parentRunId: String? = nil
+    var executorKind: String? = nil
+    var executorId: String? = nil
+    var epoch: Int64? = nil
+    var observedSeq: Int64? = nil
+    var ledgerId: String? = nil
+    var outcomeUnknown: Bool? = nil
+
+    init(
+        eventId: String,
+        requestId: String,
+        topicId: String,
+        workItemIds: [String],
+        state: MacGatewayCloudDialogueReceiptState,
+        replayed: Bool,
+        soulRevision: Int64? = nil,
+        conversationId: String? = nil,
+        causedByInputId: String? = nil,
+        causedByRequestId: String? = nil,
+        parentRunId: String? = nil,
+        executorKind: String? = nil,
+        executorId: String? = nil,
+        epoch: Int64? = nil,
+        observedSeq: Int64? = nil,
+        ledgerId: String? = nil,
+        outcomeUnknown: Bool? = nil
+    ) {
+        self.eventId = eventId
+        self.requestId = requestId
+        self.topicId = topicId
+        self.workItemIds = workItemIds
+        self.state = state
+        self.replayed = replayed
+        self.soulRevision = soulRevision
+        self.conversationId = conversationId
+        self.causedByInputId = causedByInputId
+        self.causedByRequestId = causedByRequestId
+        self.parentRunId = parentRunId
+        self.executorKind = executorKind
+        self.executorId = executorId
+        self.epoch = epoch
+        self.observedSeq = observedSeq
+        self.ledgerId = ledgerId
+        self.outcomeUnknown = outcomeUnknown
+    }
 }
 
 enum MacGatewayCloudDialogueEventKind: String, Codable, Equatable, CaseIterable, Sendable {
     case userMessage = "user_message"
     case followup = "followup"
     case stopRequested = "stop_requested"
+    case stopTooLate = "stop_too_late"
     case assistantReply = "assistant_reply"
     case inputConsumed = "input_consumed"
     case inputCancelled = "input_cancelled"
@@ -143,9 +208,78 @@ struct MacGatewayCloudDialogueEvent: Codable, Equatable, Identifiable, Sendable 
     var workItemId: String?
     var outcome: MacGatewayCloudDialogueOutcome?
     var soulRevision: Int64?
+    var conversationId: String? = nil
+    var causedByInputId: String? = nil
+    var causedByRequestId: String? = nil
+    var parentRunId: String? = nil
+    var executorKind: String? = nil
+    var executorId: String? = nil
+    var epoch: Int64? = nil
+    var observedSeq: Int64? = nil
+    var ledgerId: String? = nil
+    var outcomeUnknown: Bool? = nil
+
+    init(
+        seq: Int64,
+        id: String,
+        kind: MacGatewayCloudDialogueEventKind,
+        role: String,
+        text: String,
+        topicId: String,
+        workItemId: String? = nil,
+        outcome: MacGatewayCloudDialogueOutcome? = nil,
+        soulRevision: Int64? = nil,
+        conversationId: String? = nil,
+        causedByInputId: String? = nil,
+        causedByRequestId: String? = nil,
+        parentRunId: String? = nil,
+        executorKind: String? = nil,
+        executorId: String? = nil,
+        epoch: Int64? = nil,
+        observedSeq: Int64? = nil,
+        ledgerId: String? = nil,
+        outcomeUnknown: Bool? = nil
+    ) {
+        self.seq = seq
+        self.id = id
+        self.kind = kind
+        self.role = role
+        self.text = text
+        self.topicId = topicId
+        self.workItemId = workItemId
+        self.outcome = outcome
+        self.soulRevision = soulRevision
+        self.conversationId = conversationId
+        self.causedByInputId = causedByInputId
+        self.causedByRequestId = causedByRequestId
+        self.parentRunId = parentRunId
+        self.executorKind = executorKind
+        self.executorId = executorId
+        self.epoch = epoch
+        self.observedSeq = observedSeq
+        self.ledgerId = ledgerId
+        self.outcomeUnknown = outcomeUnknown
+    }
+
+    /// Parses deterministic server causal event IDs (`consumed:<inputId>` / `cancelled:<inputId>`).
+    var deterministicCausalInputId: String? {
+        let prefix: String
+        switch kind {
+        case .inputConsumed:
+            prefix = "consumed:"
+        case .inputCancelled:
+            prefix = "cancelled:"
+        default:
+            return nil
+        }
+        guard id.hasPrefix(prefix) else { return nil }
+        let suffix = String(id.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        return suffix.isEmpty ? nil : suffix
+    }
 
     var isSuccessfulReplyCompletion: Bool {
         guard role == "assistant", !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              outcomeUnknown != true,
               !isUpfrontAcknowledgement, !ChatTaskCommentaryCoalescer.isZeroInformationWaitingText(text) else { return false }
         return (kind == .taskResult && outcome == .completed) ||
             (kind == .assistantReply && (outcome == nil || outcome == .completed))
@@ -173,6 +307,31 @@ struct MacGatewayCloudDialogueEventsPage: Codable, Equatable, Sendable {
     var items: [MacGatewayCloudDialogueEvent]
     var nextCursor: Int64
     var soulRevision: Int64?
+    var conversationId: String? = nil
+    var epoch: Int64? = nil
+    var observedSeq: Int64? = nil
+
+    init(
+        items: [MacGatewayCloudDialogueEvent],
+        nextCursor: Int64,
+        soulRevision: Int64? = nil,
+        conversationId: String? = nil,
+        epoch: Int64? = nil,
+        observedSeq: Int64? = nil
+    ) {
+        self.items = items
+        self.nextCursor = nextCursor
+        self.soulRevision = soulRevision
+        self.conversationId = conversationId
+        self.epoch = epoch
+        self.observedSeq = observedSeq
+    }
+}
+
+enum MacGatewayCloudDialogueOutcomeUnknownResolution: String, Codable, Equatable, Sendable {
+    case rechecked
+    case retried
+    case abandoned
 }
 
 /// Tracks a single in-place dynamic progress line for a cloud `workItemId`.
@@ -186,16 +345,59 @@ struct MacGatewayCloudDialogueWorkItemProgress: Codable, Equatable, Identifiable
     var lastEventSeq: Int64
     var outcome: MacGatewayCloudDialogueOutcome?
     var isStopRequested: Bool = false
+    var isStopTooLate: Bool = false
+    var isOutcomeUnknown: Bool = false
+    var outcomeUnknownResolution: MacGatewayCloudDialogueOutcomeUnknownResolution? = nil
+    var conversationId: String? = nil
+    var parentRunId: String? = nil
+    var executorKind: String? = nil
+    var executorId: String? = nil
+    var epoch: Int64? = nil
+    var observedSeq: Int64? = nil
+    var ledgerId: String? = nil
 
-    init(workItemId: String, topicId: String, statusLine: String, processEventCount: Int,
-         lastEventSeq: Int64, outcome: MacGatewayCloudDialogueOutcome?, isStopRequested: Bool = false) {
-        self.workItemId = workItemId; self.topicId = topicId; self.statusLine = statusLine
-        self.processEventCount = processEventCount; self.lastEventSeq = lastEventSeq
-        self.outcome = outcome; self.isStopRequested = isStopRequested
+    init(
+        workItemId: String,
+        topicId: String,
+        statusLine: String,
+        processEventCount: Int,
+        lastEventSeq: Int64,
+        outcome: MacGatewayCloudDialogueOutcome?,
+        isStopRequested: Bool = false,
+        isStopTooLate: Bool = false,
+        isOutcomeUnknown: Bool = false,
+        outcomeUnknownResolution: MacGatewayCloudDialogueOutcomeUnknownResolution? = nil,
+        conversationId: String? = nil,
+        parentRunId: String? = nil,
+        executorKind: String? = nil,
+        executorId: String? = nil,
+        epoch: Int64? = nil,
+        observedSeq: Int64? = nil,
+        ledgerId: String? = nil
+    ) {
+        self.workItemId = workItemId
+        self.topicId = topicId
+        self.statusLine = statusLine
+        self.processEventCount = processEventCount
+        self.lastEventSeq = lastEventSeq
+        self.outcome = outcome
+        self.isStopRequested = isStopRequested
+        self.isStopTooLate = isStopTooLate
+        self.isOutcomeUnknown = isOutcomeUnknown
+        self.outcomeUnknownResolution = outcomeUnknownResolution
+        self.conversationId = conversationId
+        self.parentRunId = parentRunId
+        self.executorKind = executorKind
+        self.executorId = executorId
+        self.epoch = epoch
+        self.observedSeq = observedSeq
+        self.ledgerId = ledgerId
     }
 
     private enum CodingKeys: String, CodingKey {
-        case workItemId, topicId, statusLine, processEventCount, lastEventSeq, outcome, isStopRequested
+        case workItemId, topicId, statusLine, processEventCount, lastEventSeq, outcome
+        case isStopRequested, isStopTooLate, isOutcomeUnknown, outcomeUnknownResolution
+        case conversationId, parentRunId, executorKind, executorId, epoch, observedSeq, ledgerId
     }
 
     init(from decoder: Decoder) throws {
@@ -207,13 +409,54 @@ struct MacGatewayCloudDialogueWorkItemProgress: Codable, Equatable, Identifiable
         lastEventSeq = try c.decode(Int64.self, forKey: .lastEventSeq)
         outcome = try c.decodeIfPresent(MacGatewayCloudDialogueOutcome.self, forKey: .outcome)
         isStopRequested = try c.decodeIfPresent(Bool.self, forKey: .isStopRequested) ?? false
+        isStopTooLate = try c.decodeIfPresent(Bool.self, forKey: .isStopTooLate) ?? false
+        isOutcomeUnknown = try c.decodeIfPresent(Bool.self, forKey: .isOutcomeUnknown) ?? false
+        outcomeUnknownResolution = try c.decodeIfPresent(
+            MacGatewayCloudDialogueOutcomeUnknownResolution.self,
+            forKey: .outcomeUnknownResolution
+        )
+        conversationId = try c.decodeIfPresent(String.self, forKey: .conversationId)
+        parentRunId = try c.decodeIfPresent(String.self, forKey: .parentRunId)
+        executorKind = try c.decodeIfPresent(String.self, forKey: .executorKind)
+        executorId = try c.decodeIfPresent(String.self, forKey: .executorId)
+        epoch = try c.decodeIfPresent(Int64.self, forKey: .epoch)
+        observedSeq = try c.decodeIfPresent(Int64.self, forKey: .observedSeq)
+        ledgerId = try c.decodeIfPresent(String.self, forKey: .ledgerId)
     }
 
-    var isLive: Bool { outcome == nil || outcome == .unknown }
+    /// True when the work item entered `outcomeUnknown` and still awaits an explicit recheck/retry/abandon action.
+    var needsOutcomeUnknownAction: Bool {
+        isOutcomeUnknown && outcomeUnknownResolution == nil
+    }
+
+    var isLive: Bool {
+        if outcomeUnknownResolution == .abandoned || outcomeUnknownResolution == .retried {
+            return false
+        }
+        return outcome == nil || outcome == .unknown
+    }
 
     var displaySingleLine: String {
+        if needsOutcomeUnknownAction {
+            let prefix = IOSAppLocalization.string("结果待确认", defaultValue: "结果待确认")
+            let trimmed = statusLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (trimmed.isEmpty || trimmed == prefix) ? prefix : "\(prefix) · \(trimmed)"
+        }
+        if outcomeUnknownResolution == .abandoned {
+            return IOSAppLocalization.string("已放弃（结果未确认）", defaultValue: "已放弃（结果未确认）")
+        }
+        if outcomeUnknownResolution == .retried && (outcome == nil || outcome == .unknown) {
+            return IOSAppLocalization.string("已发起重试（原任务结果未确认）", defaultValue: "已发起重试（原任务结果未确认）")
+        }
         if let outcome, outcome != .unknown {
             let trimmed = statusLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if isStopTooLate && outcome == .completed {
+                let stopLabel = IOSAppLocalization.string("已请求停止", defaultValue: "已请求停止")
+                if trimmed.isEmpty || trimmed == outcome.displayTitle || trimmed == stopLabel {
+                    let suffix = IOSAppLocalization.string("停止前已完成", defaultValue: "停止前已完成")
+                    return "\(outcome.displayTitle) · \(suffix)"
+                }
+            }
             return (trimmed.isEmpty || trimmed == outcome.displayTitle) ? outcome.displayTitle : "\(outcome.displayTitle) · \(trimmed)"
         }
         return isStopRequested ? IOSAppLocalization.string("已请求停止", defaultValue: "已请求停止") : statusLine
@@ -230,12 +473,71 @@ struct MacGatewayCloudDialogueFollowupRecord: Codable, Equatable, Identifiable, 
     var text: String
     var state: MacGatewayCloudDialogueReceiptState
     var lastError: String?
+    var needsReceiptReconciliation: Bool = false
+    var isOutcomeUnknown: Bool = false
+    var conversationId: String? = nil
+    var ledgerId: String? = nil
+
+    /// Semantic alias for the server-assigned input/event ID matched against `causedByInputId`.
+    var inputId: String? { eventId }
+
+    init(
+        requestId: String,
+        eventId: String?,
+        workItemId: String,
+        topicId: String?,
+        text: String,
+        state: MacGatewayCloudDialogueReceiptState,
+        lastError: String?,
+        needsReceiptReconciliation: Bool = false,
+        isOutcomeUnknown: Bool = false,
+        conversationId: String? = nil,
+        ledgerId: String? = nil
+    ) {
+        self.requestId = requestId
+        self.eventId = eventId
+        self.workItemId = workItemId
+        self.topicId = topicId
+        self.text = text
+        self.state = state
+        self.lastError = lastError
+        self.needsReceiptReconciliation = needsReceiptReconciliation
+        self.isOutcomeUnknown = isOutcomeUnknown
+        self.conversationId = conversationId
+        self.ledgerId = ledgerId
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case requestId, eventId, workItemId, topicId, text, state, lastError
+        case needsReceiptReconciliation, isOutcomeUnknown, conversationId, ledgerId
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        requestId = try c.decode(String.self, forKey: .requestId)
+        eventId = try c.decodeIfPresent(String.self, forKey: .eventId)
+        workItemId = try c.decode(String.self, forKey: .workItemId)
+        topicId = try c.decodeIfPresent(String.self, forKey: .topicId)
+        text = try c.decode(String.self, forKey: .text)
+        state = try c.decode(MacGatewayCloudDialogueReceiptState.self, forKey: .state)
+        lastError = try c.decodeIfPresent(String.self, forKey: .lastError)
+        needsReceiptReconciliation = try c.decodeIfPresent(Bool.self, forKey: .needsReceiptReconciliation) ?? false
+        isOutcomeUnknown = try c.decodeIfPresent(Bool.self, forKey: .isOutcomeUnknown) ?? false
+        conversationId = try c.decodeIfPresent(String.self, forKey: .conversationId)
+        ledgerId = try c.decodeIfPresent(String.self, forKey: .ledgerId)
+    }
 
     /// True ONLY when consumed at the worker's next model reasoning boundary.
     /// Unconsumed follow-ups cancelled by stopping the task return `false`.
-    var isShownAsExecuted: Bool { state == .consumed }
+    var isShownAsExecuted: Bool { state == .consumed && !isOutcomeUnknown }
 
     func deliveryStatus(isSending: Bool) -> String {
+        if isOutcomeUnknown {
+            return IOSAppLocalization.string("结果待确认（可重查/重试/放弃）", defaultValue: "结果待确认（可重查/重试/放弃）")
+        }
+        if needsReceiptReconciliation && state == .received {
+            return IOSAppLocalization.string("已送达 · 待按原请求核对回执", defaultValue: "已送达 · 待按原请求核对回执")
+        }
         if eventId != nil || state != .received { return state.displayBadgeText }
         if isSending { return "发送中…" }
         if let lastError {
@@ -264,17 +566,43 @@ struct MacGatewayCloudDialoguePersistedSubmission: Codable, Equatable, Identifia
     var lastError: String?
     var updatedAt: Date
     var isConfirmedNotExecuted: Bool = false
+    var conversationId: String? = nil
+    var isOutcomeUnknown: Bool = false
+    var isAbandoned: Bool = false
 
-    init(gatewayId: String, deviceId: String, kind: Kind, requestId: String, workItemId: String?,
-         text: String?, receipt: MacGatewayCloudDialogueReceipt?, lastError: String?, updatedAt: Date,
-         isConfirmedNotExecuted: Bool = false) {
-        self.gatewayId = gatewayId; self.deviceId = deviceId; self.kind = kind; self.requestId = requestId
-        self.workItemId = workItemId; self.text = text; self.receipt = receipt; self.lastError = lastError
-        self.updatedAt = updatedAt; self.isConfirmedNotExecuted = isConfirmedNotExecuted
+    init(
+        gatewayId: String,
+        deviceId: String,
+        kind: Kind,
+        requestId: String,
+        workItemId: String?,
+        text: String?,
+        receipt: MacGatewayCloudDialogueReceipt?,
+        lastError: String?,
+        updatedAt: Date,
+        isConfirmedNotExecuted: Bool = false,
+        conversationId: String? = nil,
+        isOutcomeUnknown: Bool = false,
+        isAbandoned: Bool = false
+    ) {
+        self.gatewayId = gatewayId
+        self.deviceId = deviceId
+        self.kind = kind
+        self.requestId = requestId
+        self.workItemId = workItemId
+        self.text = text
+        self.receipt = receipt
+        self.lastError = lastError
+        self.updatedAt = updatedAt
+        self.isConfirmedNotExecuted = isConfirmedNotExecuted
+        self.conversationId = conversationId
+        self.isOutcomeUnknown = isOutcomeUnknown
+        self.isAbandoned = isAbandoned
     }
 
     private enum CodingKeys: String, CodingKey {
-        case gatewayId, deviceId, kind, requestId, workItemId, text, receipt, lastError, updatedAt, isConfirmedNotExecuted
+        case gatewayId, deviceId, kind, requestId, workItemId, text, receipt, lastError, updatedAt
+        case isConfirmedNotExecuted, conversationId, isOutcomeUnknown, isAbandoned
     }
 
     init(from decoder: Decoder) throws {
@@ -289,11 +617,14 @@ struct MacGatewayCloudDialoguePersistedSubmission: Codable, Equatable, Identifia
         lastError = try c.decodeIfPresent(String.self, forKey: .lastError)
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         isConfirmedNotExecuted = try c.decodeIfPresent(Bool.self, forKey: .isConfirmedNotExecuted) ?? false
+        conversationId = try c.decodeIfPresent(String.self, forKey: .conversationId)
+        isOutcomeUnknown = try c.decodeIfPresent(Bool.self, forKey: .isOutcomeUnknown) ?? false
+        isAbandoned = try c.decodeIfPresent(Bool.self, forKey: .isAbandoned) ?? false
     }
 
     /// True ONLY when there is no trusted execution receipt yet and the request has not been deterministically rejected.
     var isAwaitingReceiptConfirmation: Bool {
-        receipt == nil && !isConfirmedNotExecuted
+        receipt == nil && !isConfirmedNotExecuted && !isAbandoned
     }
 }
 
@@ -316,6 +647,7 @@ struct MacGatewayCloudDialoguePersistedEnvelope: Codable, Equatable, Sendable {
     var followups: [MacGatewayCloudDialogueFollowupRecord]
     var progressByWorkItem: [String: MacGatewayCloudDialogueWorkItemProgress]
     var submissions: [MacGatewayCloudDialoguePersistedSubmission]
+    var conversationId: String? = nil
 }
 
 /// Transport state of the `/v2/dialogue/*` session channel on the paired gateway.
@@ -399,8 +731,15 @@ extension MacGatewayClient {
     }
 
     /// `POST /v2/work-items/{id}/stop`
-    func stopWorkItem(workItemId: String, requestId: String = UUID().uuidString.lowercased()) async throws -> MacGatewayCloudDialogueReceipt {
-        let stopRequest = MacGatewayCloudDialogueStopRequest(requestId: requestId)
+    func stopWorkItem(
+        workItemId: String,
+        requestId: String = UUID().uuidString.lowercased(),
+        conversationId: String? = nil
+    ) async throws -> MacGatewayCloudDialogueReceipt {
+        let stopRequest = MacGatewayCloudDialogueStopRequest(
+            requestId: requestId,
+            conversationId: conversationId
+        )
         if let validationError = stopRequest.validationError {
             throw MacGatewayError.server(validationError)
         }
@@ -572,9 +911,34 @@ extension MacGatewayStore {
     /// - `input_consumed` and `input_cancelled` update the corresponding follow-up state in place rather than cluttering the stream.
     @discardableResult
     func prepareCloudDialogueTaskInput(workItemId: String) -> Bool {
-        let acceptsInput = cloudDialogueProgressByWorkItem[workItemId]?.outcome == nil
+        let acceptsInput: Bool = {
+            guard let progress = cloudDialogueProgressByWorkItem[workItemId] else { return true }
+            return progress.outcome == nil && !progress.isOutcomeUnknown && progress.outcomeUnknownResolution == nil
+        }()
         selectedCloudDialogueWorkItemId = acceptsInput ? workItemId : nil
         return acceptsInput
+    }
+
+    var outcomeUnknownCloudDialogueProgressItems: [MacGatewayCloudDialogueWorkItemProgress] {
+        cloudDialogueProgressByWorkItem.values
+            .filter(\.needsOutcomeUnknownAction)
+            .sorted { $0.lastEventSeq > $1.lastEventSeq }
+    }
+
+    var followupsNeedingReceiptReconciliation: [MacGatewayCloudDialogueFollowupRecord] {
+        cloudDialogueFollowups.filter { $0.needsReceiptReconciliation && $0.state == .received }
+    }
+
+    /// Strict causal lookup of a local follow-up record for a `followup` event (never matches by text).
+    func cloudDialogueFollowup(for event: MacGatewayCloudDialogueEvent) -> MacGatewayCloudDialogueFollowupRecord? {
+        if let byEventId = cloudDialogueFollowups.first(where: { $0.eventId == event.id }) {
+            return byEventId
+        }
+        if let requestId = Self.nonEmptyTrimmed(event.causedByRequestId),
+           let byRequestId = cloudDialogueFollowups.first(where: { $0.requestId == requestId }) {
+            return byRequestId
+        }
+        return nil
     }
 
     func cloudDialogueDisplayText(for event: MacGatewayCloudDialogueEvent) -> String {
@@ -610,7 +974,7 @@ extension MacGatewayStore {
             switch event.kind {
             case .userMessage, .followup, .assistantReply, .taskResult, .stopRequested:
                 true
-            case .processEvent, .inputConsumed, .inputCancelled, .unknown:
+            case .stopTooLate, .processEvent, .inputConsumed, .inputCancelled, .unknown:
                 false
             }
         }
@@ -636,8 +1000,12 @@ extension MacGatewayStore {
             }
         }
         return ordered.filter { id in
-            if let progress = cloudDialogueProgressByWorkItem[id], progress.outcome?.isTerminal == true {
-                return false
+            if let progress = cloudDialogueProgressByWorkItem[id] {
+                if progress.outcome?.isTerminal == true
+                    || progress.outcomeUnknownResolution == .abandoned
+                    || progress.outcomeUnknownResolution == .retried {
+                    return false
+                }
             }
             if let task = cloudTasks.first(where: { $0.workItemId == id }), task.isTerminal {
                 return false
@@ -658,9 +1026,7 @@ extension MacGatewayStore {
             }
             return "cloud-user:\(requestId)"
         case .followup:
-            guard let requestId = cloudDialogueFollowups.first(where: {
-                $0.eventId == event.id || ($0.workItemId == event.workItemId && $0.text == event.text)
-            })?.requestId else {
+            guard let requestId = cloudDialogueFollowup(for: event)?.requestId else {
                 return nil
             }
             return "cloud-user:\(requestId)"
@@ -922,6 +1288,7 @@ extension MacGatewayStore {
         cloudDialogueEncodedBytes = data.count
         Self.recordCloudDialogueSizeDiagnostic(byteCount: data.count)
         isCloudMainDialogueSelected = normalized.isCloudMainDialogueSelected
+        cloudDialogueConversationId = Self.nonEmptyTrimmed(normalized.conversationId)
         cloudDialogueCursor = normalized.cursor
         cloudDialogueEvents = normalized.events
         cloudDialogueReceipts = normalized.receipts
@@ -955,7 +1322,8 @@ extension MacGatewayStore {
             gatewayId: connection.gatewayId, deviceId: connection.deviceId,
             isCloudMainDialogueSelected: isCloudMainDialogueSelected, cursor: cloudDialogueCursor,
             events: cloudDialogueEvents, receipts: cloudDialogueReceipts, followups: cloudDialogueFollowups,
-            progressByWorkItem: cloudDialogueProgressByWorkItem, submissions: cloudDialogueSubmissions
+            progressByWorkItem: cloudDialogueProgressByWorkItem, submissions: cloudDialogueSubmissions,
+            conversationId: cloudDialogueConversationId
         )
         let writeBlock: @Sendable () -> Void = {
             guard coordinator.canCommit(epoch: epoch, identity: identity) else { return }
@@ -993,6 +1361,7 @@ extension MacGatewayStore {
     func resetCloudDialogueMemoryState() {
         stopCloudDialoguePolling()
         isCloudMainDialogueSelected = false
+        cloudDialogueConversationId = nil
         cloudDialogueCursor = 0
         cloudDialogueEvents = []
         cloudDialogueEntranceEventIds.removeAll()
@@ -1014,7 +1383,8 @@ extension MacGatewayStore {
     @discardableResult
     func sendCloudDialogueMessage(
         text: String,
-        requestId: String = UUID().uuidString.lowercased()
+        requestId: String = UUID().uuidString.lowercased(),
+        conversationId: String? = nil
     ) async -> Result<MacGatewayCloudDialogueReceipt, Error> {
         guard let connection, let client else {
             return .failure(MacGatewayError.server(localized("未与云端或 Mac 配对")))
@@ -1023,7 +1393,14 @@ extension MacGatewayStore {
             $0.requestId == requestId && $0.kind == .mainMessage
         }
         let effectiveText = existing?.text ?? text
-        let request = MacGatewayCloudDialogueInputRequest(requestId: requestId, text: effectiveText)
+        let effectiveConversationId = Self.nonEmptyTrimmed(existing?.conversationId)
+            ?? Self.nonEmptyTrimmed(conversationId)
+            ?? Self.nonEmptyTrimmed(cloudDialogueConversationId)
+        let request = MacGatewayCloudDialogueInputRequest(
+            requestId: requestId,
+            text: effectiveText,
+            conversationId: effectiveConversationId
+        )
         if let validationError = request.validationError {
             return .failure(MacGatewayError.server(validationError))
         }
@@ -1039,7 +1416,8 @@ extension MacGatewayStore {
                 receipt: existing?.receipt,
                 lastError: nil,
                 updatedAt: Date(),
-                isConfirmedNotExecuted: false
+                isConfirmedNotExecuted: false,
+                conversationId: request.conversationId
             )
         )
         persistCloudDialogueState(immediately: true)
@@ -1081,7 +1459,8 @@ extension MacGatewayStore {
     func sendCloudWorkItemInput(
         workItemId: String,
         text: String,
-        requestId: String = UUID().uuidString.lowercased()
+        requestId: String = UUID().uuidString.lowercased(),
+        conversationId: String? = nil
     ) async -> Result<MacGatewayCloudDialogueReceipt, Error> {
         guard let connection, let client else {
             return .failure(MacGatewayError.server(localized("未与云端或 Mac 配对")))
@@ -1091,7 +1470,15 @@ extension MacGatewayStore {
         }
         let effectiveWorkItemId = existing?.workItemId ?? workItemId
         let effectiveText = existing?.text ?? text
-        let request = MacGatewayCloudDialogueInputRequest(requestId: requestId, text: effectiveText)
+        let effectiveConversationId = Self.nonEmptyTrimmed(existing?.conversationId)
+            ?? Self.nonEmptyTrimmed(conversationId)
+            ?? Self.nonEmptyTrimmed(cloudDialogueProgressByWorkItem[effectiveWorkItemId]?.conversationId)
+            ?? Self.nonEmptyTrimmed(cloudDialogueConversationId)
+        let request = MacGatewayCloudDialogueInputRequest(
+            requestId: requestId,
+            text: effectiveText,
+            conversationId: effectiveConversationId
+        )
         if let validationError = request.validationError {
             return .failure(MacGatewayError.server(validationError))
         }
@@ -1107,7 +1494,8 @@ extension MacGatewayStore {
                 receipt: existing?.receipt,
                 lastError: nil,
                 updatedAt: Date(),
-                isConfirmedNotExecuted: false
+                isConfirmedNotExecuted: false,
+                conversationId: request.conversationId
             )
         )
         upsertFollowupRecord(
@@ -1117,7 +1505,8 @@ extension MacGatewayStore {
             topicId: existing?.receipt?.topicId,
             text: effectiveText,
             state: existing?.receipt?.state ?? .received,
-            lastError: nil
+            lastError: nil,
+            conversationId: request.conversationId
         )
         persistCloudDialogueState(immediately: true)
 
@@ -1151,11 +1540,12 @@ extension MacGatewayStore {
 
     /// Stops a running cloud task via the independent control path (`POST /v2/work-items/{id}/stop`).
     /// Immediately surfaces the intermediate `"已请求停止"` state and cancels unconsumed follow-ups,
-    /// while leaving the final outcome to the executor's authoritative `task_result`.
+    /// while leaving the final outcome to the executor's authoritative `task_result` or `stop_too_late`.
     @discardableResult
     func stopCloudWorkItem(
         workItemId: String,
-        requestId: String = UUID().uuidString.lowercased()
+        requestId: String = UUID().uuidString.lowercased(),
+        conversationId: String? = nil
     ) async -> Result<MacGatewayCloudDialogueReceipt, Error> {
         guard let connection, let client else {
             return .failure(MacGatewayError.server(localized("未与云端或 Mac 配对")))
@@ -1164,7 +1554,14 @@ extension MacGatewayStore {
             $0.requestId == requestId && $0.kind == .stopWorkItem
         }
         let effectiveWorkItemId = existing?.workItemId ?? workItemId
-        if let validationError = MacGatewayCloudDialogueStopRequest(requestId: requestId).validationError {
+        let effectiveConversationId = Self.nonEmptyTrimmed(existing?.conversationId)
+            ?? Self.nonEmptyTrimmed(conversationId)
+            ?? Self.nonEmptyTrimmed(cloudDialogueProgressByWorkItem[effectiveWorkItemId]?.conversationId)
+            ?? Self.nonEmptyTrimmed(cloudDialogueConversationId)
+        if let validationError = MacGatewayCloudDialogueStopRequest(
+            requestId: requestId,
+            conversationId: effectiveConversationId
+        ).validationError {
             return .failure(MacGatewayError.server(validationError))
         }
 
@@ -1179,7 +1576,8 @@ extension MacGatewayStore {
                 receipt: existing?.receipt,
                 lastError: nil,
                 updatedAt: Date(),
-                isConfirmedNotExecuted: false
+                isConfirmedNotExecuted: false,
+                conversationId: effectiveConversationId
             )
         )
         markWorkItemStopRequested(
@@ -1196,7 +1594,11 @@ extension MacGatewayStore {
         defer { busyCloudDialogueRequestIds.remove(requestId) }
 
         do {
-            let receipt = try await client.stopWorkItem(workItemId: effectiveWorkItemId, requestId: requestId)
+            let receipt = try await client.stopWorkItem(
+                workItemId: effectiveWorkItemId,
+                requestId: requestId,
+                conversationId: effectiveConversationId
+            )
             guard self.client === client else { return .failure(CancellationError()) }
             applyReceipt(receipt, kind: .stopWorkItem, workItemId: effectiveWorkItemId, text: nil)
             markWorkItemStopRequested(
@@ -1231,15 +1633,43 @@ extension MacGatewayStore {
         do {
             let receipt = try await client.dialogueReceipt(requestId: requestId)
             guard self.client === client else { return .failure(CancellationError()) }
+            adoptConversationIdIfPresent(receipt.conversationId)
             cloudDialogueReceipts[requestId] = receipt
             if let idx = cloudDialogueSubmissions.firstIndex(where: { $0.requestId == requestId }) {
                 cloudDialogueSubmissions[idx].receipt = receipt
                 cloudDialogueSubmissions[idx].lastError = nil
+                cloudDialogueSubmissions[idx].isOutcomeUnknown = (receipt.outcomeUnknown == true)
+                if let convId = Self.nonEmptyTrimmed(receipt.conversationId) {
+                    cloudDialogueSubmissions[idx].conversationId = convId
+                }
             }
             if let fIdx = cloudDialogueFollowups.firstIndex(where: { $0.requestId == requestId || $0.eventId == receipt.eventId }) {
                 cloudDialogueFollowups[fIdx].eventId = receipt.eventId
                 cloudDialogueFollowups[fIdx].topicId = receipt.topicId
                 cloudDialogueFollowups[fIdx].state = receipt.state
+                cloudDialogueFollowups[fIdx].needsReceiptReconciliation = false
+                cloudDialogueFollowups[fIdx].isOutcomeUnknown = (receipt.outcomeUnknown == true)
+                if let convId = Self.nonEmptyTrimmed(receipt.conversationId) {
+                    cloudDialogueFollowups[fIdx].conversationId = convId
+                }
+                if let ledgerId = Self.nonEmptyTrimmed(receipt.ledgerId) {
+                    cloudDialogueFollowups[fIdx].ledgerId = ledgerId
+                }
+            }
+            if receipt.outcomeUnknown == true, let workItemId = receipt.workItemIds.first {
+                markWorkItemOutcomeUnknown(
+                    workItemId: workItemId,
+                    topicId: receipt.topicId,
+                    statusLine: nil,
+                    eventSeq: receipt.observedSeq,
+                    conversationId: receipt.conversationId,
+                    parentRunId: receipt.parentRunId,
+                    executorKind: receipt.executorKind,
+                    executorId: receipt.executorId,
+                    epoch: receipt.epoch,
+                    observedSeq: receipt.observedSeq,
+                    ledgerId: receipt.ledgerId
+                )
             }
             persistCloudDialogueState()
             let soulStore = boundSoulStore ?? .shared
@@ -1254,6 +1684,156 @@ extension MacGatewayStore {
             }
             return .failure(error)
         }
+    }
+
+    /// Explicit recovery action #1 for `outcomeUnknown`: recheck receipts, dialogue events, and work item detail.
+    @discardableResult
+    func recheckOutcomeUnknownCloudWorkItem(
+        workItemId: String
+    ) async -> Result<MacGatewayCloudDialogueWorkItemProgress?, Error> {
+        guard let client else {
+            return .failure(MacGatewayError.server(localized("未与云端或 Mac 配对")))
+        }
+        var lastError: Error?
+
+        // 1. Refresh receipts associated with this workItemId
+        let relatedRequestIds = Set(
+            cloudDialogueSubmissions
+                .filter { $0.workItemId == workItemId || ($0.receipt?.workItemIds.contains(workItemId) ?? false) }
+                .map(\.requestId)
+            + cloudDialogueFollowups
+                .filter { $0.workItemId == workItemId && !$0.requestId.hasPrefix("event:") }
+                .map(\.requestId)
+        )
+        for reqId in relatedRequestIds {
+            guard self.client === client else { return .failure(CancellationError()) }
+            if case .failure(let error) = await refreshCloudDialogueReceipt(requestId: reqId) {
+                if case MacGatewayError.unauthorized = error { return .failure(error) }
+                lastError = error
+            }
+        }
+
+        // 2. Poll dialogue events to catch any authoritative task_result / stop_too_late
+        let pollResult = await pollCloudDialogueEvents()
+        guard self.client === client else { return .failure(CancellationError()) }
+        if case .failure(let error) = pollResult {
+            if case MacGatewayError.unauthorized = error { return .failure(error) }
+            lastError = error
+        }
+
+        // 3. If still outcomeUnknown, query authoritative GET /v2/work-items/{id}
+        if cloudDialogueProgressByWorkItem[workItemId]?.needsOutcomeUnknownAction == true {
+            do {
+                let detail = try await client.workItem(id: workItemId)
+                guard self.client === client else { return .failure(CancellationError()) }
+                adoptConversationIdIfPresent(detail.conversationId ?? detail.workItem.conversationId)
+                let stillUnknown = detail.outcomeUnknown == true || detail.workItem.outcomeUnknown == true
+                if !stillUnknown, detail.workItem.state.isTerminal,
+                   var progress = cloudDialogueProgressByWorkItem[workItemId] {
+                    let mappedOutcome: MacGatewayCloudDialogueOutcome
+                    switch detail.workItem.state {
+                    case .completed: mappedOutcome = .completed
+                    case .failed: mappedOutcome = .failed
+                    case .cancelled: mappedOutcome = .cancelled
+                    default: mappedOutcome = .unknown
+                    }
+                    if mappedOutcome != .unknown {
+                        progress.outcome = mappedOutcome
+                        progress.isOutcomeUnknown = false
+                        progress.outcomeUnknownResolution = .rechecked
+                        progress.isStopRequested = false
+                        let summary = Self.nonEmptyTrimmed(detail.resultMarkdown)
+                            ?? Self.nonEmptyTrimmed(detail.failure)
+                            ?? Self.nonEmptyTrimmed(detail.workItem.progress)
+                        if let summary { progress.statusLine = summary }
+                        cloudDialogueProgressByWorkItem[workItemId] = progress
+                        clearOutcomeUnknownFlagsForWorkItem(workItemId, abandoned: false)
+                        persistCloudDialogueState()
+                    }
+                }
+                return .success(cloudDialogueProgressByWorkItem[workItemId])
+            } catch {
+                guard self.client === client else { return .failure(CancellationError()) }
+                if forgetIfRevoked(error, for: client) {
+                    return .failure(MacGatewayError.unauthorized)
+                }
+                lastError = error
+            }
+        }
+
+        if let lastError, cloudDialogueProgressByWorkItem[workItemId]?.needsOutcomeUnknownAction == true {
+            return .failure(lastError)
+        }
+        return .success(cloudDialogueProgressByWorkItem[workItemId])
+    }
+
+    /// Explicit recovery action #2 for `outcomeUnknown`: submit a fresh retry turn with a new `requestId`
+    /// and stable `conversationId`, resolving the stuck unknown state on the prior work item.
+    @discardableResult
+    func retryOutcomeUnknownCloudWorkItem(
+        workItemId: String,
+        text: String? = nil,
+        requestId: String = UUID().uuidString.lowercased()
+    ) async -> Result<MacGatewayCloudDialogueReceipt, Error> {
+        let progress = cloudDialogueProgressByWorkItem[workItemId]
+        let explicitRetryText = Self.nonEmptyTrimmed(text)
+        let submissionRetryText: String? = {
+            let matched = cloudDialogueSubmissions.first { submission in
+                guard submission.kind == .mainMessage else { return false }
+                if submission.workItemId == workItemId { return true }
+                return submission.receipt?.workItemIds.contains(workItemId) == true
+            }
+            return Self.nonEmptyTrimmed(matched?.text)
+        }()
+        let eventRetryText: String? = {
+            let progressTopicId = progress?.topicId ?? ""
+            let matched = cloudDialogueEvents.last { event in
+                guard event.kind == .userMessage || event.kind == .followup else { return false }
+                if event.workItemId == workItemId { return true }
+                return !progressTopicId.isEmpty && event.topicId == progressTopicId
+            }
+            return Self.nonEmptyTrimmed(matched?.text)
+        }()
+        guard let retryText = explicitRetryText ?? submissionRetryText ?? eventRetryText else {
+            return .failure(MacGatewayError.server(localized("缺少可重试的消息内容")))
+        }
+        let targetConversationId = Self.nonEmptyTrimmed(progress?.conversationId) ?? cloudDialogueConversationId
+        let result = await sendCloudDialogueMessage(
+            text: retryText,
+            requestId: requestId,
+            conversationId: targetConversationId
+        )
+        if case .success = result {
+            if var existing = cloudDialogueProgressByWorkItem[workItemId] {
+                existing.outcomeUnknownResolution = .retried
+                existing.isStopRequested = false
+                cloudDialogueProgressByWorkItem[workItemId] = existing
+            }
+            clearOutcomeUnknownFlagsForWorkItem(workItemId, abandoned: false)
+            if selectedCloudDialogueWorkItemId == workItemId {
+                selectedCloudDialogueWorkItemId = nil
+            }
+            persistCloudDialogueState()
+        }
+        return result
+    }
+
+    /// Explicit recovery action #3 for `outcomeUnknown`: abandon the uncertain work item so the client never remains stuck.
+    @discardableResult
+    func abandonOutcomeUnknownCloudWorkItem(workItemId: String) -> Bool {
+        guard var progress = cloudDialogueProgressByWorkItem[workItemId],
+              progress.isOutcomeUnknown else {
+            return false
+        }
+        progress.outcomeUnknownResolution = .abandoned
+        progress.isStopRequested = false
+        cloudDialogueProgressByWorkItem[workItemId] = progress
+        clearOutcomeUnknownFlagsForWorkItem(workItemId, abandoned: true)
+        if selectedCloudDialogueWorkItemId == workItemId {
+            selectedCloudDialogueWorkItemId = nil
+        }
+        persistCloudDialogueState()
+        return true
     }
 
     /// Polls `GET /v2/dialogue/events?after=<cursor>&limit=<limit>`.
@@ -1271,6 +1851,7 @@ extension MacGatewayStore {
         do {
             let page = try await client.dialogueEvents(after: currentCursor, limit: limit)
             guard self.client === client else { return .failure(CancellationError()) }
+            adoptConversationIdIfPresent(page.conversationId)
             if cloudDialogueTransportState != .healthy {
                 cloudDialogueTransportState = .healthy
             }
@@ -1354,6 +1935,18 @@ extension MacGatewayStore {
                 }
             }
         }
+
+        // Reconcile follow-ups flagged for receipt verification (e.g. legacy server emitted input_consumed without causal IDs)
+        let followupsNeedingCheck = cloudDialogueFollowups.filter {
+            $0.needsReceiptReconciliation
+                && $0.state == .received
+                && !$0.requestId.hasPrefix("event:")
+                && !busyCloudDialogueRequestIds.contains($0.requestId)
+        }
+        for followup in followupsNeedingCheck {
+            guard self.client === client else { return }
+            _ = await refreshCloudDialogueReceipt(requestId: followup.requestId)
+        }
     }
 
     @discardableResult
@@ -1363,6 +1956,7 @@ extension MacGatewayStore {
         skipSoulSync: Bool = false
     ) -> Bool {
         // Empty page must NOT advance cursor.
+        adoptConversationIdIfPresent(page.conversationId)
         guard !page.items.isEmpty else { return false }
         let pageHasAuthoritativeSoulRevision = page.soulRevision != nil
 
@@ -1475,17 +2069,50 @@ extension MacGatewayStore {
                 current = MacGatewayCloudDialogueWorkItemProgress(
                     workItemId: workItemId, topicId: event.topicId, statusLine: provisional.statusLine,
                     processEventCount: provisional.processEventCount, lastEventSeq: provisional.lastEventSeq,
-                    outcome: provisional.outcome, isStopRequested: provisional.isStopRequested
+                    outcome: provisional.outcome, isStopRequested: provisional.isStopRequested,
+                    isStopTooLate: provisional.isStopTooLate, isOutcomeUnknown: provisional.isOutcomeUnknown,
+                    outcomeUnknownResolution: provisional.outcomeUnknownResolution,
+                    conversationId: provisional.conversationId, parentRunId: provisional.parentRunId,
+                    executorKind: provisional.executorKind, executorId: provisional.executorId,
+                    epoch: provisional.epoch, observedSeq: provisional.observedSeq, ledgerId: provisional.ledgerId
                 )
             } else {
                 current?.processEventCount += provisional.processEventCount
             }
         }
-        let resolved = current ?? MacGatewayCloudDialogueWorkItemProgress(
+        var resolved = current ?? MacGatewayCloudDialogueWorkItemProgress(
             workItemId: key, topicId: event.topicId, statusLine: event.text,
             processEventCount: 0, lastEventSeq: event.seq, outcome: defaultOutcome, isStopRequested: false
         )
+        applyContractMetadata(from: event, to: &resolved)
         return (key, resolved)
+    }
+
+    private func applyContractMetadata(
+        from event: MacGatewayCloudDialogueEvent,
+        to progress: inout MacGatewayCloudDialogueWorkItemProgress
+    ) {
+        if let conversationId = Self.nonEmptyTrimmed(event.conversationId) {
+            progress.conversationId = conversationId
+        }
+        if let parentRunId = Self.nonEmptyTrimmed(event.parentRunId) {
+            progress.parentRunId = parentRunId
+        }
+        if let executorKind = Self.nonEmptyTrimmed(event.executorKind) {
+            progress.executorKind = executorKind
+        }
+        if let executorId = Self.nonEmptyTrimmed(event.executorId) {
+            progress.executorId = executorId
+        }
+        if let epoch = event.epoch {
+            progress.epoch = epoch
+        }
+        if let observedSeq = event.observedSeq {
+            progress.observedSeq = observedSeq
+        }
+        if let ledgerId = Self.nonEmptyTrimmed(event.ledgerId) {
+            progress.ledgerId = ledgerId
+        }
     }
 
     private func applyCloudDialogueEvent(
@@ -1493,27 +2120,56 @@ extension MacGatewayStore {
         allowHeuristicSoulFallback: Bool = true,
         skipSoulSync: Bool = false
     ) {
+        adoptConversationIdIfPresent(event.conversationId)
         switch event.kind {
         case .processEvent:
             var (key, resolved) = resolveWorkItemProgress(for: event, defaultOutcome: nil)
             // Ignore out-of-order stale process events or events arriving after terminal settlement.
             guard event.seq >= resolved.lastEventSeq, resolved.outcome == nil else { break }
-            if !resolved.isStopRequested {
+            if event.outcomeUnknown == true {
+                resolved.isOutcomeUnknown = true
+                resolved.outcomeUnknownResolution = nil
+                resolved.isStopRequested = false
+                if !event.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    resolved.statusLine = event.text
+                }
+            } else if !resolved.isStopRequested {
                 resolved.statusLine = event.text
             }
             resolved.processEventCount += 1
             resolved.lastEventSeq = max(resolved.lastEventSeq, event.seq)
-            if let outcome = event.outcome, outcome != .unknown {
+            if event.outcomeUnknown != true, let outcome = event.outcome, outcome != .unknown {
+                if resolved.isOutcomeUnknown {
+                    resolved.isOutcomeUnknown = false
+                    resolved.outcomeUnknownResolution = .rechecked
+                }
                 resolved.outcome = outcome
                 resolved.isStopRequested = false
             }
             cloudDialogueProgressByWorkItem[key] = resolved
 
         case .taskResult:
+            if event.outcomeUnknown == true {
+                var (key, resolved) = resolveWorkItemProgress(for: event, defaultOutcome: nil)
+                resolved.lastEventSeq = max(resolved.lastEventSeq, event.seq)
+                resolved.isOutcomeUnknown = true
+                resolved.outcomeUnknownResolution = nil
+                resolved.isStopRequested = false
+                resolved.outcome = nil
+                if !event.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    resolved.statusLine = event.text
+                }
+                cloudDialogueProgressByWorkItem[key] = resolved
+                break
+            }
             let resolvedOutcome = event.outcome == .unknown ? nil : (event.outcome ?? .completed)
             var (key, resolved) = resolveWorkItemProgress(for: event, defaultOutcome: resolvedOutcome)
             resolved.lastEventSeq = max(resolved.lastEventSeq, event.seq)
             if let resolvedOutcome {
+                if resolved.isOutcomeUnknown {
+                    resolved.isOutcomeUnknown = false
+                    resolved.outcomeUnknownResolution = .rechecked
+                }
                 resolved.outcome = resolvedOutcome
                 resolved.isStopRequested = false
             }
@@ -1534,18 +2190,67 @@ extension MacGatewayStore {
                 markWorkItemStopRequested(workItemId: workItemId, topicId: event.topicId, eventSeq: event.seq)
             }
 
+        case .stopTooLate:
+            var (key, resolved) = resolveWorkItemProgress(for: event, defaultOutcome: nil)
+            resolved.lastEventSeq = max(resolved.lastEventSeq, event.seq)
+            resolved.isStopRequested = false
+            resolved.isStopTooLate = true
+            if event.outcomeUnknown == true {
+                resolved.isOutcomeUnknown = true
+                resolved.outcomeUnknownResolution = nil
+                resolved.outcome = nil
+            } else {
+                if resolved.isOutcomeUnknown {
+                    resolved.isOutcomeUnknown = false
+                    resolved.outcomeUnknownResolution = .rechecked
+                }
+                if let existingOutcome = resolved.outcome, existingOutcome != .unknown, existingOutcome != .cancelled {
+                    resolved.outcome = existingOutcome
+                } else if let eventOutcome = event.outcome, eventOutcome != .unknown, eventOutcome != .cancelled {
+                    resolved.outcome = eventOutcome
+                } else {
+                    resolved.outcome = .completed
+                }
+            }
+            let stopRequestedLabel = localized("已请求停止")
+            let trimmedEventText = event.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let currentTrimmed = resolved.statusLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedEventText.isEmpty && (currentTrimmed.isEmpty || currentTrimmed == stopRequestedLabel) {
+                resolved.statusLine = trimmedEventText
+            } else if currentTrimmed.isEmpty || currentTrimmed == stopRequestedLabel {
+                resolved.statusLine = localized("停止前已完成")
+            }
+            cloudDialogueProgressByWorkItem[key] = resolved
+            markMainMessageReceiptsConsumed(forTopicId: event.topicId, upToSeq: event.seq)
+
         case .followup:
             if let workItemId = event.workItemId {
-                if let idx = cloudDialogueFollowups.firstIndex(where: {
-                    $0.eventId == event.id || ($0.eventId == nil && $0.workItemId == workItemId && $0.text == event.text)
-                }) {
+                let causedByRequestId = Self.nonEmptyTrimmed(event.causedByRequestId)
+                let matchedIdx = cloudDialogueFollowups.firstIndex(where: { $0.eventId == event.id })
+                    ?? causedByRequestId.flatMap { reqId in
+                        cloudDialogueFollowups.firstIndex(where: { $0.requestId == reqId })
+                    }
+                if let idx = matchedIdx {
                     cloudDialogueFollowups[idx].eventId = event.id
                     cloudDialogueFollowups[idx].topicId = event.topicId
+                    if let convId = Self.nonEmptyTrimmed(event.conversationId) {
+                        cloudDialogueFollowups[idx].conversationId = convId
+                    }
+                    if let ledgerId = Self.nonEmptyTrimmed(event.ledgerId) {
+                        cloudDialogueFollowups[idx].ledgerId = ledgerId
+                    }
                 } else {
                     cloudDialogueFollowups.append(
                         MacGatewayCloudDialogueFollowupRecord(
-                            requestId: "event:\(event.id)", eventId: event.id, workItemId: workItemId,
-                            topicId: event.topicId, text: event.text, state: .received, lastError: nil
+                            requestId: causedByRequestId ?? "event:\(event.id)",
+                            eventId: event.id,
+                            workItemId: workItemId,
+                            topicId: event.topicId,
+                            text: event.text,
+                            state: .received,
+                            lastError: nil,
+                            conversationId: Self.nonEmptyTrimmed(event.conversationId),
+                            ledgerId: Self.nonEmptyTrimmed(event.ledgerId)
                         )
                     )
                 }
@@ -1561,7 +2266,21 @@ extension MacGatewayStore {
             break
 
         case .assistantReply:
-            if !event.isUpfrontAcknowledgement {
+            if event.outcomeUnknown == true, let workItemId = event.workItemId {
+                markWorkItemOutcomeUnknown(
+                    workItemId: workItemId,
+                    topicId: event.topicId,
+                    statusLine: event.text,
+                    eventSeq: event.seq,
+                    conversationId: event.conversationId,
+                    parentRunId: event.parentRunId,
+                    executorKind: event.executorKind,
+                    executorId: event.executorId,
+                    epoch: event.epoch,
+                    observedSeq: event.observedSeq,
+                    ledgerId: event.ledgerId
+                )
+            } else if !event.isUpfrontAcknowledgement {
                 markMainMessageReceiptsConsumed(forTopicId: event.topicId, upToSeq: event.seq)
                 if !skipSoulSync {
                     syncCloudDialogueSoulIfNeeded(for: event, allowHeuristicFallback: allowHeuristicSoulFallback)
@@ -1573,18 +2292,78 @@ extension MacGatewayStore {
         }
     }
 
+    private func markWorkItemOutcomeUnknown(
+        workItemId: String,
+        topicId: String?,
+        statusLine: String?,
+        eventSeq: Int64?,
+        conversationId: String?,
+        parentRunId: String?,
+        executorKind: String?,
+        executorId: String?,
+        epoch: Int64?,
+        observedSeq: Int64?,
+        ledgerId: String?
+    ) {
+        var current = cloudDialogueProgressByWorkItem[workItemId] ?? MacGatewayCloudDialogueWorkItemProgress(
+            workItemId: workItemId,
+            topicId: topicId ?? "",
+            statusLine: Self.nonEmptyTrimmed(statusLine) ?? localized("结果待确认"),
+            processEventCount: 0,
+            lastEventSeq: eventSeq ?? cloudDialogueCursor,
+            outcome: nil,
+            isStopRequested: false
+        )
+        if let eventSeq { current.lastEventSeq = max(current.lastEventSeq, eventSeq) }
+        if let topicId, !topicId.isEmpty { current.topicId = topicId }
+        if let statusLine = Self.nonEmptyTrimmed(statusLine) { current.statusLine = statusLine }
+        current.isOutcomeUnknown = true
+        current.outcomeUnknownResolution = nil
+        current.isStopRequested = false
+        current.outcome = nil
+        if let conversationId = Self.nonEmptyTrimmed(conversationId) { current.conversationId = conversationId }
+        if let parentRunId = Self.nonEmptyTrimmed(parentRunId) { current.parentRunId = parentRunId }
+        if let executorKind = Self.nonEmptyTrimmed(executorKind) { current.executorKind = executorKind }
+        if let executorId = Self.nonEmptyTrimmed(executorId) { current.executorId = executorId }
+        if let epoch { current.epoch = epoch }
+        if let observedSeq { current.observedSeq = observedSeq }
+        if let ledgerId = Self.nonEmptyTrimmed(ledgerId) { current.ledgerId = ledgerId }
+        cloudDialogueProgressByWorkItem[workItemId] = current
+    }
+
+    private func clearOutcomeUnknownFlagsForWorkItem(_ workItemId: String, abandoned: Bool) {
+        for idx in cloudDialogueFollowups.indices where cloudDialogueFollowups[idx].workItemId == workItemId {
+            cloudDialogueFollowups[idx].isOutcomeUnknown = false
+        }
+        for idx in cloudDialogueSubmissions.indices {
+            let matchesWorkItem = cloudDialogueSubmissions[idx].workItemId == workItemId
+                || (cloudDialogueSubmissions[idx].receipt?.workItemIds.contains(workItemId) ?? false)
+            if matchesWorkItem {
+                cloudDialogueSubmissions[idx].isOutcomeUnknown = false
+                if abandoned {
+                    cloudDialogueSubmissions[idx].isAbandoned = true
+                }
+            }
+        }
+    }
+
     private func markWorkItemStopRequested(
         workItemId: String,
         topicId: String?,
         eventSeq: Int64?
     ) {
-        markUnconsumedFollowupsCancelled(forWorkItemId: workItemId)
+        let alreadySettled = cloudDialogueProgressByWorkItem[workItemId].map {
+            $0.outcome?.isTerminal == true || $0.isStopTooLate
+        } ?? false
+        if !alreadySettled {
+            markUnconsumedFollowupsCancelled(forWorkItemId: workItemId)
+        }
         if var current = cloudDialogueProgressByWorkItem[workItemId] {
             if let eventSeq {
                 current.lastEventSeq = max(current.lastEventSeq, eventSeq)
             }
-            // Only enter intermediate "已请求停止" if an authoritative task_result has not already settled this WorkItem.
-            if current.outcome == nil {
+            // Only enter intermediate "已请求停止" if an authoritative task_result or stop_too_late has not already settled this WorkItem.
+            if current.outcome == nil && !current.isStopTooLate {
                 current.isStopRequested = true
                 current.statusLine = localized("已请求停止")
             }
@@ -1608,7 +2387,11 @@ extension MacGatewayStore {
                 .filter { $0.kind == .userMessage && $0.topicId == topicId && $0.seq <= upToSeq }
                 .map(\.id)
         )
-        for (reqId, var receipt) in cloudDialogueReceipts {
+        let nonMainRequestIds = Set(
+            cloudDialogueFollowups.map(\.requestId)
+                + cloudDialogueSubmissions.filter { $0.kind != .mainMessage }.map(\.requestId)
+        )
+        for (reqId, var receipt) in cloudDialogueReceipts where !nonMainRequestIds.contains(reqId) {
             if receipt.state == .received,
                (receipt.topicId == topicId || consumedEventIds.contains(receipt.eventId)) {
                 receipt.state = .consumed
@@ -1690,60 +2473,210 @@ extension MacGatewayStore {
         )
     }
 
+    /// Strict causal binding for `input_consumed` and `input_cancelled`:
+    /// 1) exact `causedByInputId` against local follow-up `inputId`/`eventId`
+    /// 2) exact `causedByRequestId` against local `requestId`
+    /// 3) exact deterministic prefix `consumed:<inputId>` / `cancelled:<inputId>`
+    /// 4) NO text or first-pending guessing fallback: when legacy server omits all causal IDs,
+    ///    keep `.received` and flag `needsReceiptReconciliation` to verify via original `requestId`.
     private func updateFollowupStateFromEvent(
         _ event: MacGatewayCloudDialogueEvent,
         newState: MacGatewayCloudDialogueReceiptState
     ) {
-        var matched = false
-        for idx in cloudDialogueFollowups.indices {
-            let record = cloudDialogueFollowups[idx]
-            let matchesEventId = record.eventId == event.id
-            let matchesWorkItemAndText = (event.workItemId != nil && record.workItemId == event.workItemId && record.text == event.text && record.state == .received)
-            if matchesEventId || matchesWorkItemAndText {
+        let causedByInputId = Self.nonEmptyTrimmed(event.causedByInputId)
+        let causedByRequestId = Self.nonEmptyTrimmed(event.causedByRequestId)
+        let deterministicInputId = event.deterministicCausalInputId
+
+        func applyState(
+            toMatchedIndices indices: [Int],
+            resolvedInputId: String?,
+            explicitRequestId: String?
+        ) {
+            var matchedRequestIds = Set<String>()
+            var matchedEventIds = Set<String>()
+            if let explicitRequestId { matchedRequestIds.insert(explicitRequestId) }
+            if let resolvedInputId { matchedEventIds.insert(resolvedInputId) }
+            for idx in indices {
+                if cloudDialogueFollowups[idx].eventId == nil, let resolvedInputId {
+                    cloudDialogueFollowups[idx].eventId = resolvedInputId
+                }
                 cloudDialogueFollowups[idx].state = newState
-                matched = true
+                cloudDialogueFollowups[idx].needsReceiptReconciliation = false
+                if event.outcomeUnknown == true {
+                    cloudDialogueFollowups[idx].isOutcomeUnknown = true
+                }
+                if let convId = Self.nonEmptyTrimmed(event.conversationId) {
+                    cloudDialogueFollowups[idx].conversationId = convId
+                }
+                if let ledgerId = Self.nonEmptyTrimmed(event.ledgerId) {
+                    cloudDialogueFollowups[idx].ledgerId = ledgerId
+                }
+                matchedRequestIds.insert(cloudDialogueFollowups[idx].requestId)
+                if let eventId = cloudDialogueFollowups[idx].eventId {
+                    matchedEventIds.insert(eventId)
+                }
+            }
+            for (reqId, var receipt) in cloudDialogueReceipts {
+                if matchedRequestIds.contains(reqId) || matchedEventIds.contains(receipt.eventId) {
+                    receipt.state = newState
+                    cloudDialogueReceipts[reqId] = receipt
+                }
+            }
+            for idx in cloudDialogueSubmissions.indices {
+                let reqId = cloudDialogueSubmissions[idx].requestId
+                let recEventId = cloudDialogueSubmissions[idx].receipt?.eventId
+                if matchedRequestIds.contains(reqId) || (recEventId.map { matchedEventIds.contains($0) } ?? false) {
+                    cloudDialogueSubmissions[idx].receipt?.state = newState
+                }
             }
         }
-        if !matched, let workItemId = event.workItemId {
-            // If an input_consumed / input_cancelled event references a workItemId with a single received follow-up, update it.
-            if let idx = cloudDialogueFollowups.firstIndex(where: { $0.workItemId == workItemId && $0.state == .received }) {
-                cloudDialogueFollowups[idx].state = newState
+
+        // Priority 1: exact match causedByInputId
+        if let causedByInputId {
+            let matchedIndices = cloudDialogueFollowups.indices.filter {
+                cloudDialogueFollowups[$0].eventId == causedByInputId
+            }
+            if !matchedIndices.isEmpty {
+                applyState(
+                    toMatchedIndices: matchedIndices,
+                    resolvedInputId: causedByInputId,
+                    explicitRequestId: causedByRequestId
+                )
+                return
             }
         }
-        for (reqId, var receipt) in cloudDialogueReceipts {
-            if receipt.eventId == event.id || (event.workItemId != nil && receipt.workItemIds.contains(event.workItemId!) && receipt.state == .received) {
-                receipt.state = newState
-                cloudDialogueReceipts[reqId] = receipt
+
+        // Priority 2: exact match causedByRequestId
+        if let causedByRequestId {
+            let matchedIndices = cloudDialogueFollowups.indices.filter {
+                cloudDialogueFollowups[$0].requestId == causedByRequestId
+            }
+            if !matchedIndices.isEmpty
+                || cloudDialogueReceipts[causedByRequestId] != nil
+                || cloudDialogueSubmissions.contains(where: { $0.requestId == causedByRequestId }) {
+                applyState(
+                    toMatchedIndices: matchedIndices,
+                    resolvedInputId: causedByInputId ?? deterministicInputId,
+                    explicitRequestId: causedByRequestId
+                )
+                return
+            }
+        }
+
+        // Priority 3: exact deterministic event ID prefix `consumed:<inputId>` / `cancelled:<inputId>`
+        if let deterministicInputId {
+            let matchedIndices = cloudDialogueFollowups.indices.filter {
+                cloudDialogueFollowups[$0].eventId == deterministicInputId
+            }
+            if !matchedIndices.isEmpty
+                || cloudDialogueReceipts.values.contains(where: { $0.eventId == deterministicInputId })
+                || cloudDialogueSubmissions.contains(where: { $0.receipt?.eventId == deterministicInputId }) {
+                applyState(
+                    toMatchedIndices: matchedIndices,
+                    resolvedInputId: deterministicInputId,
+                    explicitRequestId: causedByRequestId
+                )
+                return
+            }
+        }
+
+        // If the event carried an explicit causal identifier that does not match any local follow-up,
+        // do not guess or mutate unrelated local records (still sync any directly matching receipt).
+        if causedByInputId != nil || causedByRequestId != nil || deterministicInputId != nil {
+            if let targetId = causedByInputId ?? deterministicInputId {
+                applyState(toMatchedIndices: [], resolvedInputId: targetId, explicitRequestId: causedByRequestId)
+            }
+            return
+        }
+
+        // Priority 4 (legacy server without causal IDs): never guess by text or first pending record.
+        // Keep `.received` and mark pending follow-ups for receipt reconciliation via original `requestId`.
+        for idx in cloudDialogueFollowups.indices where cloudDialogueFollowups[idx].state == .received {
+            let sameWorkItem = event.workItemId != nil && cloudDialogueFollowups[idx].workItemId == event.workItemId
+            let sameTopic = event.workItemId == nil && cloudDialogueFollowups[idx].topicId == event.topicId
+            if sameWorkItem || sameTopic {
+                cloudDialogueFollowups[idx].needsReceiptReconciliation = true
             }
         }
     }
 
     private func markUnconsumedFollowupsCancelled(forWorkItemId workItemId: String) {
+        let followupRequestIds = Set(cloudDialogueFollowups.filter { $0.workItemId == workItemId }.map(\.requestId))
         for idx in cloudDialogueFollowups.indices where cloudDialogueFollowups[idx].workItemId == workItemId {
             if cloudDialogueFollowups[idx].state == .received {
                 cloudDialogueFollowups[idx].state = .cancelled
+                cloudDialogueFollowups[idx].needsReceiptReconciliation = false
             }
         }
         for (reqId, var receipt) in cloudDialogueReceipts {
-            if receipt.workItemIds.contains(workItemId), receipt.state == .received {
+            let isTargetedFollowup = followupRequestIds.contains(reqId)
+                || cloudDialogueSubmissions.contains(where: {
+                    $0.requestId == reqId && $0.kind == .followupInput && $0.workItemId == workItemId
+                })
+            if isTargetedFollowup, receipt.state == .received {
                 receipt.state = .cancelled
                 cloudDialogueReceipts[reqId] = receipt
             }
         }
     }
 
+    private func adoptConversationIdIfPresent(_ candidate: String?) {
+        guard let normalized = Self.nonEmptyTrimmed(candidate) else { return }
+        if cloudDialogueConversationId != normalized {
+            cloudDialogueConversationId = normalized
+        }
+    }
+
+    nonisolated private static func nonEmptyTrimmed(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+
     private func applyReceipt(_ receipt: MacGatewayCloudDialogueReceipt, kind: MacGatewayCloudDialoguePersistedSubmission.Kind,
                               workItemId: String?, text: String?) {
+        adoptConversationIdIfPresent(receipt.conversationId)
         cloudDialogueReceipts[receipt.requestId] = receipt
         if let idx = cloudDialogueSubmissions.firstIndex(where: { $0.requestId == receipt.requestId }) {
             cloudDialogueSubmissions[idx].receipt = receipt
             cloudDialogueSubmissions[idx].lastError = nil
             cloudDialogueSubmissions[idx].isConfirmedNotExecuted = false
+            cloudDialogueSubmissions[idx].isOutcomeUnknown = (receipt.outcomeUnknown == true)
+            if let convId = Self.nonEmptyTrimmed(receipt.conversationId) {
+                cloudDialogueSubmissions[idx].conversationId = convId
+            }
             cloudDialogueSubmissions[idx].updatedAt = Date()
         }
         if kind == .followupInput, let workItemId = workItemId ?? receipt.workItemIds.first {
-            upsertFollowupRecord(requestId: receipt.requestId, eventId: receipt.eventId, workItemId: workItemId,
-                                 topicId: receipt.topicId, text: text ?? "", state: receipt.state, lastError: nil)
+            upsertFollowupRecord(
+                requestId: receipt.requestId,
+                eventId: receipt.eventId,
+                workItemId: workItemId,
+                topicId: receipt.topicId,
+                text: text ?? "",
+                state: receipt.state,
+                lastError: nil,
+                needsReceiptReconciliation: false,
+                isOutcomeUnknown: receipt.outcomeUnknown == true,
+                conversationId: Self.nonEmptyTrimmed(receipt.conversationId),
+                ledgerId: Self.nonEmptyTrimmed(receipt.ledgerId)
+            )
+        }
+        if receipt.outcomeUnknown == true, let targetWorkItemId = workItemId ?? receipt.workItemIds.first {
+            markWorkItemOutcomeUnknown(
+                workItemId: targetWorkItemId,
+                topicId: receipt.topicId,
+                statusLine: nil,
+                eventSeq: receipt.observedSeq,
+                conversationId: receipt.conversationId,
+                parentRunId: receipt.parentRunId,
+                executorKind: receipt.executorKind,
+                executorId: receipt.executorId,
+                epoch: receipt.epoch,
+                observedSeq: receipt.observedSeq,
+                ledgerId: receipt.ledgerId
+            )
         }
         let soulStore = boundSoulStore ?? .shared
         if let rev = receipt.soulRevision {
@@ -1786,17 +2719,56 @@ extension MacGatewayStore {
         }
     }
 
-    private func upsertFollowupRecord(requestId: String, eventId: String?, workItemId: String,
-                                      topicId: String?, text: String, state: MacGatewayCloudDialogueReceiptState, lastError: String?) {
+    private func upsertFollowupRecord(
+        requestId: String,
+        eventId: String?,
+        workItemId: String,
+        topicId: String?,
+        text: String,
+        state: MacGatewayCloudDialogueReceiptState,
+        lastError: String?,
+        needsReceiptReconciliation: Bool = false,
+        isOutcomeUnknown: Bool = false,
+        conversationId: String? = nil,
+        ledgerId: String? = nil
+    ) {
+        var resolvedState = state
+        if let eventId, !requestId.hasPrefix("event:") {
+            let syntheticRequestId = "event:\(eventId)"
+            if let syntheticIdx = cloudDialogueFollowups.firstIndex(where: { $0.requestId == syntheticRequestId }) {
+                let syntheticState = cloudDialogueFollowups[syntheticIdx].state
+                if resolvedState == .received && syntheticState != .received {
+                    resolvedState = syntheticState
+                }
+                cloudDialogueFollowups.remove(at: syntheticIdx)
+            }
+        }
         if let idx = cloudDialogueFollowups.firstIndex(where: { $0.requestId == requestId }) {
             if let eventId { cloudDialogueFollowups[idx].eventId = eventId }
             if let topicId { cloudDialogueFollowups[idx].topicId = topicId }
-            cloudDialogueFollowups[idx].state = state
+            cloudDialogueFollowups[idx].state = resolvedState
             cloudDialogueFollowups[idx].lastError = lastError
+            cloudDialogueFollowups[idx].needsReceiptReconciliation = needsReceiptReconciliation
+            cloudDialogueFollowups[idx].isOutcomeUnknown = isOutcomeUnknown
+            if let conversationId = Self.nonEmptyTrimmed(conversationId) {
+                cloudDialogueFollowups[idx].conversationId = conversationId
+            }
+            if let ledgerId = Self.nonEmptyTrimmed(ledgerId) {
+                cloudDialogueFollowups[idx].ledgerId = ledgerId
+            }
         } else {
             cloudDialogueFollowups.append(MacGatewayCloudDialogueFollowupRecord(
-                requestId: requestId, eventId: eventId, workItemId: workItemId,
-                topicId: topicId, text: text, state: state, lastError: lastError
+                requestId: requestId,
+                eventId: eventId,
+                workItemId: workItemId,
+                topicId: topicId,
+                text: text,
+                state: resolvedState,
+                lastError: lastError,
+                needsReceiptReconciliation: needsReceiptReconciliation,
+                isOutcomeUnknown: isOutcomeUnknown,
+                conversationId: Self.nonEmptyTrimmed(conversationId),
+                ledgerId: Self.nonEmptyTrimmed(ledgerId)
             ))
         }
     }
