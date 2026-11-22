@@ -16,6 +16,7 @@ enum class ReasoningFamily {
     BINARY,
     QWEN_38,
     OPENAI,
+    OPENAI_NO_OFF,
     GEMINI,
     GEMINI_LOW_MEDIUM_HIGH,
     GEMINI_MINIMAL_LOW_MEDIUM_HIGH,
@@ -180,6 +181,14 @@ fun Model?.reasoningOptions(provider: ProviderSetting?): List<ReasoningOption> {
             ReasoningLevel.MAX,
         )
 
+        ReasoningFamily.OPENAI_NO_OFF -> reasoningOptionsOf(
+            ReasoningLevel.LOW,
+            ReasoningLevel.MEDIUM,
+            ReasoningLevel.HIGH,
+            ReasoningLevel.XHIGH,
+            ReasoningLevel.MAX,
+        )
+
         ReasoningFamily.GEMINI_LOW_MEDIUM_HIGH -> reasoningOptionsOf(
             ReasoningLevel.AUTO,
             ReasoningLevel.LOW,
@@ -289,11 +298,12 @@ fun Model.reasoningFamily(provider: ProviderSetting?): ReasoningFamily {
         provider is ProviderSetting.Google || providerKey == "gemini" || id.contains("gemini") ->
             id.geminiFamily()
 
-        id.isGrok46() || (provider.isXaiApiEndpoint() && id.contains("4.6")) -> ReasoningFamily.GROK_XHIGH
+        id.isGrok46() || id.isGrok47() || (provider.isXaiApiEndpoint() && (id.contains("4.6") || id.contains("4.7"))) ->
+            ReasoningFamily.GROK_XHIGH
         id.isGrok45() || (provider.isXaiApiEndpoint() && id.contains("grok")) -> ReasoningFamily.GROK_HIGH
 
-        id.contains("gpt-5") || id.contains("gpt-6-sol") || id.contains("gpt-6-luna") ||
-            id.contains("codex") || Regex("\\bo\\d+").containsMatchIn(id) ->
+        id.isOpenAiGpt6() -> ReasoningFamily.OPENAI_NO_OFF
+        id.contains("gpt-5") || id.contains("codex") || Regex("\\bo\\d+").containsMatchIn(id) ->
             ReasoningFamily.OPENAI
 
         ModelAbility.REASONING in abilities -> ReasoningFamily.GENERIC
@@ -309,7 +319,8 @@ fun ReasoningFamily.defaultLevel(): ReasoningLevel = when (this) {
     ReasoningFamily.GLM_5 -> ReasoningLevel.HIGH
     ReasoningFamily.BINARY -> ReasoningLevel.AUTO
     ReasoningFamily.QWEN_38 -> ReasoningLevel.XHIGH
-    ReasoningFamily.OPENAI -> ReasoningLevel.MEDIUM
+    ReasoningFamily.OPENAI,
+    ReasoningFamily.OPENAI_NO_OFF -> ReasoningLevel.MEDIUM
     ReasoningFamily.GEMINI,
     ReasoningFamily.GEMINI_LOW_MEDIUM_HIGH,
     ReasoningFamily.GEMINI_MINIMAL_LOW_MEDIUM_HIGH -> ReasoningLevel.MEDIUM
@@ -378,9 +389,15 @@ private fun reasoningOptionsOf(vararg levels: ReasoningLevel): List<ReasoningOpt
 internal fun String.normalizedModelId(): String =
     lowercase().replace('_', '-').replace(' ', '-')
 
+fun String.isOpenAiGpt6(): Boolean {
+    val id = normalizedModelId()
+    return Regex("""(^|[^a-z0-9])gpt-6($|[-.])""").containsMatchIn(id)
+}
+
 internal fun String.isKimiK3(): Boolean {
     val id = normalizedModelId()
-    return id.contains("kimi-k3") || id.endsWith("/k3") || id.contains("kimi/k3")
+    val leaf = id.substringAfterLast('/')
+    return id.contains("kimi-k3") || Regex("""^k3($|[-.])""").containsMatchIn(leaf)
 }
 
 internal fun String.isKimiK27Code(): Boolean {
@@ -432,6 +449,11 @@ internal fun String.isMiniMaxM2(): Boolean {
 internal fun String.isGrok46(): Boolean {
     val id = normalizedModelId()
     return id.contains("grok-4.6") || id.contains("grok-4-6")
+}
+
+internal fun String.isGrok47(): Boolean {
+    val id = normalizedModelId()
+    return id.contains("grok-4.7") || id.contains("grok-4-7")
 }
 
 internal fun String.isGrok45(): Boolean {

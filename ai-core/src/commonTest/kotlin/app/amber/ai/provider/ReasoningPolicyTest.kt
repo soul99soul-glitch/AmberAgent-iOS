@@ -9,12 +9,15 @@ import kotlin.test.assertTrue
 class ReasoningPolicyTest {
     @Test
     fun kimiK3IsAlwaysLowHighMax() {
-        val options = options("kimi-k3", kimi())
-        assertEquals(
-            listOf(ReasoningLevel.LOW, ReasoningLevel.HIGH, ReasoningLevel.MAX),
-            options,
-        )
-        assertEquals(ReasoningLevel.MAX, default("kimi-k3", kimi()))
+        for (id in listOf("kimi-k3", "k3", "k3.1", "k3.1-pro", "moonshot/k3.1-pro")) {
+            val options = options(id, kimi())
+            assertEquals(
+                listOf(ReasoningLevel.LOW, ReasoningLevel.HIGH, ReasoningLevel.MAX),
+                options,
+                id,
+            )
+            assertEquals(ReasoningLevel.MAX, default(id, kimi()), id)
+        }
     }
 
     @Test
@@ -110,6 +113,25 @@ class ReasoningPolicyTest {
     }
 
     @Test
+    fun openAiGpt6ExcludesOffAndDefaultsToMedium() {
+        for (id in listOf("gpt-6", "gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-mini", "gpt-6-sol", "gpt-6-luna")) {
+            assertEquals(
+                listOf(
+                    ReasoningLevel.LOW,
+                    ReasoningLevel.MEDIUM,
+                    ReasoningLevel.HIGH,
+                    ReasoningLevel.XHIGH,
+                    ReasoningLevel.MAX,
+                ),
+                options(id, openai()),
+                id,
+            )
+            assertFalse(ReasoningLevel.OFF in options(id, openai()), id)
+            assertEquals(ReasoningLevel.MEDIUM, default(id, openai()), id)
+        }
+    }
+
+    @Test
     fun gemini37FlashIsLowMediumHigh() {
         assertEquals(
             listOf(ReasoningLevel.AUTO, ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH),
@@ -144,15 +166,19 @@ class ReasoningPolicyTest {
     }
 
     @Test
-    fun grok46ApiHasXhighAndNoOff() {
-        assertEquals(
-            listOf(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.XHIGH),
-            options("grok-4.6", xai()),
-        )
-        assertEquals(
-            listOf(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.XHIGH),
-            options("grok-4.6", grokCliProxy()),
-        )
+    fun grok46And47ApiHaveXhighAndNoOff() {
+        for (id in listOf("grok-4.6", "grok-4.7", "grok-4-7")) {
+            assertEquals(
+                listOf(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.XHIGH),
+                options(id, xai()),
+                id,
+            )
+            assertEquals(
+                listOf(ReasoningLevel.LOW, ReasoningLevel.MEDIUM, ReasoningLevel.HIGH, ReasoningLevel.XHIGH),
+                options(id, grokCliProxy()),
+                id,
+            )
+        }
     }
 
     @Test

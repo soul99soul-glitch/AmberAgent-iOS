@@ -412,16 +412,19 @@ class OpenAIKmpProviderRequestTest {
             authMode = OpenAIAuthMode.CODEX_OAUTH,
             useResponseApi = true,
         )
-        for (modelId in listOf("gpt-6-sol", "gpt-6-luna")) {
+        for (modelId in listOf("gpt-6-sol", "gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra")) {
             val model = Model(
                 modelId = modelId,
                 displayName = modelId,
-                abilities = ModelRegistry.MODEL_ABILITIES.getData(modelId),
+                abilities = if (ModelRegistry.MODEL_ABILITIES.getData(modelId).isNotEmpty()) {
+                    ModelRegistry.MODEL_ABILITIES.getData(modelId)
+                } else {
+                    listOf(ModelAbility.REASONING)
+                },
             )
             assertTrue(ModelAbility.REASONING in model.abilities, modelId)
             assertEquals(
                 listOf(
-                    ReasoningLevel.OFF,
                     ReasoningLevel.LOW,
                     ReasoningLevel.MEDIUM,
                     ReasoningLevel.HIGH,
@@ -436,12 +439,35 @@ class OpenAIKmpProviderRequestTest {
             val body = provider.buildResponsesRequestBody(
                 providerSetting = codex,
                 messages = listOf(UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("hi")))),
-                params = TextGenerationParams(model = model, reasoningLevel = ReasoningLevel.HIGH),
+                params = TextGenerationParams(model = model, temperature = 0.5f, reasoningLevel = ReasoningLevel.HIGH),
                 stream = true,
             )
             val reasoning = body.getValue("reasoning").jsonObject
             assertEquals("high", reasoning.getValue("effort").jsonPrimitive.content, modelId)
             assertEquals("auto", reasoning.getValue("summary").jsonPrimitive.content, modelId)
+            assertFalse("temperature" in body, modelId)
+
+            val offResponsesBody = provider.buildResponsesRequestBody(
+                providerSetting = setting.copy(useResponseApi = true),
+                messages = listOf(UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("hi")))),
+                params = TextGenerationParams(model = model, temperature = 0.5f, reasoningLevel = ReasoningLevel.OFF),
+                stream = false,
+            )
+            assertEquals(
+                "low",
+                offResponsesBody.getValue("reasoning").jsonObject.getValue("effort").jsonPrimitive.content,
+                modelId,
+            )
+            assertFalse("temperature" in offResponsesBody, modelId)
+
+            val offChatBody = provider.buildChatCompletionRequest(
+                providerSetting = setting,
+                messages = listOf(UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("hi")))),
+                params = TextGenerationParams(model = model, temperature = 0.5f, reasoningLevel = ReasoningLevel.OFF),
+                stream = false,
+            )
+            assertEquals("low", offChatBody.getValue("reasoning_effort").jsonPrimitive.content, modelId)
+            assertFalse("temperature" in offChatBody, modelId)
         }
     }
 

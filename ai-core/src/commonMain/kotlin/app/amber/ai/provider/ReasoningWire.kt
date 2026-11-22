@@ -41,7 +41,7 @@ fun planOpenAICompatibleThinking(
         id.isQwen38Max() -> qwen38Fields(level)
         id.isMiniMaxM3() -> miniMaxM3Fields(level)
         id.isMiniMaxM2() -> OpenAICompatibleThinkingFields(thinkingType = "adaptive")
-        id.isGrok46() || id.isGrok45() || host == "api.x.ai" || host == "cli-chat-proxy.grok.com" ->
+        id.isGrok46() || id.isGrok47() || id.isGrok45() || host == "api.x.ai" || host == "cli-chat-proxy.grok.com" ->
             grokFields(id, level)
         isMiMoHost(host, brand, id) -> OpenAICompatibleThinkingFields(
             thinkingType = if (level.isEnabled) "enabled" else "disabled",
@@ -60,7 +60,7 @@ fun planOpenAICompatibleThinking(
         isDeepSeekHost(host, brand) || "deepseek" in id -> OpenAICompatibleThinkingFields(
             thinkingType = if (level.isEnabled) "enabled" else "disabled",
         )
-        else -> openAiOfficialFields(level)
+        else -> openAiOfficialFields(id, level)
     }
 }
 
@@ -142,9 +142,9 @@ fun geminiThinkingConfig(modelId: String, level: ReasoningLevel): GeminiThinking
     }
 }
 
-fun openAIResponsesReasoningEffort(level: ReasoningLevel): String? = when (level) {
+fun openAIResponsesReasoningEffort(level: ReasoningLevel, modelId: String = ""): String? = when (level) {
     ReasoningLevel.AUTO -> null
-    ReasoningLevel.OFF -> "none"
+    ReasoningLevel.OFF -> if (modelId.isOpenAiGpt6()) "low" else "none"
     ReasoningLevel.LOW -> "low"
     ReasoningLevel.MEDIUM -> "medium"
     ReasoningLevel.HIGH -> "high"
@@ -243,8 +243,8 @@ private fun grokFields(modelId: String, level: ReasoningLevel) = OpenAICompatibl
     },
 )
 
-private fun openAiOfficialFields(level: ReasoningLevel) = OpenAICompatibleThinkingFields(
-    reasoningEffort = openAIResponsesReasoningEffort(level),
+private fun openAiOfficialFields(modelId: String, level: ReasoningLevel) = OpenAICompatibleThinkingFields(
+    reasoningEffort = openAIResponsesReasoningEffort(level, modelId),
 )
 
 private fun openRouterFields(level: ReasoningLevel) = when (level) {

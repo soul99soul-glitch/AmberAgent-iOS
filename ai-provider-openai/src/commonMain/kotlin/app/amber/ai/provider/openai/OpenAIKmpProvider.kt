@@ -23,6 +23,7 @@ import app.amber.ai.provider.OpenCodeRequestHeaders
 import app.amber.ai.provider.Provider
 import app.amber.ai.provider.ProviderSetting
 import app.amber.ai.provider.TextGenerationParams
+import app.amber.ai.provider.isOpenAiGpt6
 import app.amber.ai.provider.openAIResponsesReasoningEffort
 import app.amber.ai.provider.planOpenAICompatibleThinking
 import app.amber.ai.provider.putOpenAICompatibleThinking
@@ -407,8 +408,10 @@ class OpenAIKmpProvider internal constructor(
             ),
         )
 
-        if (params.temperature != null) put("temperature", params.temperature)
-        if (params.topP != null) put("top_p", params.topP)
+        if (!params.model.modelId.isOpenAiGpt6()) {
+            if (params.temperature != null) put("temperature", params.temperature)
+            if (params.topP != null) put("top_p", params.topP)
+        }
         if (params.maxTokens != null) put(if (isMiMo) "max_completion_tokens" else "max_tokens", params.maxTokens)
 
         put("stream", stream)
@@ -1163,10 +1166,8 @@ class OpenAIKmpProvider internal constructor(
                         params.model.modelId,
                         params.reasoningLevel,
                     ).reasoningEffort
-                } else if (isAstraModel(params.model.modelId) && params.reasoningLevel == ReasoningLevel.OFF) {
-                    "low"
                 } else {
-                    openAIResponsesReasoningEffort(params.reasoningLevel)
+                    openAIResponsesReasoningEffort(params.reasoningLevel, params.model.modelId)
                 }
                 if (effort != null || params.reasoningLevel == ReasoningLevel.AUTO) {
                     put("reasoning", buildJsonObject {
@@ -1860,7 +1861,7 @@ class OpenAIKmpProvider internal constructor(
 
     private fun responsesIsModelAllowTemperature(model: Model): Boolean {
         val modelId = model.modelId.lowercase()
-        return !isAstraModel(model.modelId) &&
+        return !model.modelId.isOpenAiGpt6() &&
             !ModelRegistry.OPENAI_O_MODELS.match(model.modelId) &&
             !ModelRegistry.GPT_5.match(model.modelId) &&
             !modelId.startsWith("gpt-5") &&

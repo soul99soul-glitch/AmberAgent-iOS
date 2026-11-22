@@ -71,14 +71,14 @@ struct DesktopCloudSelfSettingsView: View {
             Button("保留", role: .cancel) {}
         } message: { Text("本机保存的配对凭据会移除；云端设备列表里的此设备同时吊销。本机 Mac Gateway 与已配对手机不受影响。") }
         .confirmationDialog(
-            "撤销这条执行规则？",
+            "移除这条习惯？",
             isPresented: Binding(
                 get: { rulePendingRevoke != nil },
                 set: { if !$0 { rulePendingRevoke = nil } }
             ),
             titleVisibility: .visible
         ) {
-            Button("撤销规则", role: .destructive) {
+            Button("移除", role: .destructive) {
                 if let rule = rulePendingRevoke {
                     rulePendingRevoke = nil
                     Task { await store.revokeRule(id: rule.id) }
@@ -87,7 +87,7 @@ struct DesktopCloudSelfSettingsView: View {
             Button("取消", role: .cancel) { rulePendingRevoke = nil }
         } message: {
             if let rule = rulePendingRevoke {
-                Text("「\(rule.title)」撤销后将立即失效且不可恢复；如需再次启用，需重新提议并确认。")
+                Text("「\(rule.title)」移除后将立即失效且不可恢复；如需再次启用，需要重新添加并确认。")
             }
         }
     }
@@ -356,7 +356,7 @@ struct DesktopCloudSelfSettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .center, spacing: 8) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("执行规则卡")
+                        Text("行为习惯与规则")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(DesktopTheme.ink)
                         Text(rulesSummaryText(proposed: proposedRules.count, active: activeRules.count, history: historyRules.count))
@@ -364,7 +364,7 @@ struct DesktopCloudSelfSettingsView: View {
                             .foregroundStyle(DesktopTheme.inkTertiary)
                     }
                     Spacer(minLength: 8)
-                    Button(showAddRuleForm ? "收起表单" : "新增提议") {
+                    Button(showAddRuleForm ? "收起" : "添加一条习惯") {
                         showAddRuleForm.toggle()
                     }
                     .buttonStyle(.desktopActionPill)
@@ -381,10 +381,10 @@ struct DesktopCloudSelfSettingsView: View {
                     }
                     .buttonStyle(DesktopQuietButtonStyle())
                     .disabled(store.isRefreshingRules || store.isMutatingRule)
-                    .help("刷新规则卡")
-                    .accessibilityLabel("刷新规则卡")
+                    .help("刷新行为习惯与规则")
+                    .accessibilityLabel("刷新行为习惯与规则")
                 }
-                Text("四层权威：系统风险表（L1–L3 不可绕过）> 形象人设 > 已确认规则 > 当前对话；新提议须确认后生效。")
+                Text("你交代给 Amber 的固定做法，确认后会自动遵守；高风险操作仍会先征得你同意。")
                     .font(.system(size: 11.5))
                     .foregroundStyle(DesktopTheme.inkTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -412,7 +412,7 @@ struct DesktopCloudSelfSettingsView: View {
             }
 
             if store.rules.isEmpty {
-                Text("尚无规则卡。你在对话中的执行纠正会先生成待确认规则卡，显式确认后才会注入上下文。")
+                Text("还没有固定习惯。你在对话中纠正过的做法会先出现在这里，确认后才会长期生效。")
                     .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
@@ -426,7 +426,7 @@ struct DesktopCloudSelfSettingsView: View {
                 if !historyRules.isEmpty {
                     if primaryRules.isEmpty {
                         Divider()
-                        Text("已归档与已撤销（\(historyRules.count)）")
+                        Text("已暂停与已移除（\(historyRules.count)）")
                             .font(.system(size: 11.5, weight: .medium))
                             .foregroundStyle(DesktopTheme.inkTertiary)
                         ForEach(Array(historyRules.enumerated()), id: \.element.id) { index, rule in
@@ -435,7 +435,7 @@ struct DesktopCloudSelfSettingsView: View {
                         }
                     } else {
                         Divider()
-                        DisclosureGroup("已归档与已撤销（\(historyRules.count)）", isExpanded: $showHistoryRules) {
+                        DisclosureGroup("已暂停与已移除（\(historyRules.count)）", isExpanded: $showHistoryRules) {
                             VStack(alignment: .leading, spacing: 10) {
                                 ForEach(Array(historyRules.enumerated()), id: \.element.id) { index, rule in
                                     if index > 0 { Divider() }
@@ -454,22 +454,22 @@ struct DesktopCloudSelfSettingsView: View {
 
     private func rulesSummaryText(proposed: Int, active: Int, history: Int) -> String {
         var parts = ["待确认 \(proposed)", "生效中 \(active)"]
-        if history > 0 { parts.append("历史 \(history)") }
+        if history > 0 { parts.append("已停用 \(history)") }
         return parts.joined(separator: " · ")
     }
 
     private var addRuleForm: some View {
         let trimmedInstruction = newRuleInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
         return VStack(alignment: .leading, spacing: 8) {
-            TextField("规则标题（可选）", text: $newRuleTitle)
+            TextField("简短名称（可选）", text: $newRuleTitle)
                 .textFieldStyle(.desktop)
                 .disabled(store.isMutatingRule)
-            TextField("执行规矩（如：提交代码前先跑定向单测）", text: $newRuleInstruction, axis: .vertical)
+            TextField("固定做法（如：提交代码前先跑定向单测）", text: $newRuleInstruction, axis: .vertical)
                 .lineLimit(2...4)
                 .textFieldStyle(.desktop)
                 .disabled(store.isMutatingRule)
             HStack(alignment: .center, spacing: 8) {
-                Text("纯性格或语气偏好请前往形象人设（C-SOUL-V1）。")
+                Text("如果是语气或性格偏好，请前往「形象人设」调整。")
                     .font(.system(size: 11))
                     .foregroundStyle(DesktopTheme.inkTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -483,7 +483,7 @@ struct DesktopCloudSelfSettingsView: View {
                     showAddRuleForm = false
                 }
                 .disabled(store.isMutatingRule)
-                Button("提议（待确认）") {
+                Button("添加（待确认）") {
                     let title = newRuleTitle.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !trimmedInstruction.isEmpty else { return }
                     Task {
@@ -533,14 +533,14 @@ struct DesktopCloudSelfSettingsView: View {
                             Button("确认生效") { Task { await store.confirmRule(id: rule.id) } }
                                 .buttonStyle(.desktopTintedPill)
                                 .disabled(store.isMutatingRule)
-                            Button("撤销", role: .destructive) { rulePendingRevoke = rule }
+                            Button("移除", role: .destructive) { rulePendingRevoke = rule }
                                 .buttonStyle(RuleDestructivePillButtonStyle())
                                 .disabled(store.isMutatingRule)
                         } else if rule.status == .active {
-                            Button("归档") { Task { await store.archiveRule(id: rule.id) } }
+                            Button("暂停") { Task { await store.archiveRule(id: rule.id) } }
                                 .buttonStyle(.desktopActionPill)
                                 .disabled(store.isMutatingRule)
-                            Button("撤销", role: .destructive) { rulePendingRevoke = rule }
+                            Button("移除", role: .destructive) { rulePendingRevoke = rule }
                                 .buttonStyle(RuleDestructivePillButtonStyle())
                                 .disabled(store.isMutatingRule)
                         }
@@ -555,8 +555,8 @@ struct DesktopCloudSelfSettingsView: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                let scopeLabel = rule.scope == "global" ? "全局" : rule.scope
-                Text("作用域：\(scopeLabel)")
+                let scopeLabel = rule.scope == "global" ? "全部对话" : rule.scope
+                Text("适用范围：\(scopeLabel)")
                     .font(.system(size: 11))
                     .foregroundStyle(DesktopTheme.inkTertiary)
                     .lineLimit(1)
@@ -565,7 +565,7 @@ struct DesktopCloudSelfSettingsView: View {
                 Text("·")
                     .font(.system(size: 11))
                     .foregroundStyle(DesktopTheme.inkTertiary)
-                Text("命中 \(rule.hitCount) 次")
+                Text("已应用 \(rule.hitCount) 次")
                     .font(.system(size: 11).monospacedDigit())
                     .foregroundStyle(DesktopTheme.inkTertiary)
                     .fixedSize()
@@ -576,12 +576,21 @@ struct DesktopCloudSelfSettingsView: View {
 
     private func ruleStatusBadge(_ status: DesktopProceduralRuleStatus) -> some View {
         let style = Self.badgeStyle(for: status)
-        return Text(status.displayTitle)
+        return Text(Self.statusLabel(for: status))
             .font(.system(size: 10.5, weight: .semibold))
             .foregroundStyle(style.foreground)
             .padding(.horizontal, 7).padding(.vertical, 2)
             .background(Capsule().fill(style.background))
             .overlay(Capsule().strokeBorder(style.border, lineWidth: 0.75))
+    }
+
+    private static func statusLabel(for status: DesktopProceduralRuleStatus) -> String {
+        switch status {
+        case .proposed: "待确认"
+        case .active: "生效中"
+        case .archived: "已暂停"
+        case .revoked: "已移除"
+        }
     }
 
     private static func badgeStyle(for status: DesktopProceduralRuleStatus) -> (foreground: Color, background: Color, border: Color) {
@@ -713,7 +722,7 @@ struct DesktopCloudSingleScanPairingSheet: View {
                 Text("单次扫码配对新手机")
                     .font(DesktopTheme.serif(size: 20, weight: .semibold))
                     .foregroundStyle(DesktopTheme.ink)
-                Text("手机一次扫码即可建立配对，并通过加密信道自动同步当前 Provider 配置、C-SOUL-V1 人设与生效规则卡。")
+                Text("手机一次扫码即可建立配对，并通过加密信道自动同步当前模型配置、形象人设与已生效的行为习惯。")
                     .font(.system(size: 12))
                     .foregroundStyle(DesktopTheme.inkSecondary)
                     .multilineTextAlignment(.center)
@@ -897,7 +906,7 @@ struct DesktopCloudSingleScanPairingSheet: View {
     private func syncSummary(_ hint: DesktopPairingBootstrapHint) -> String {
         let auth = hint.siwcConfigured ? "SIWC" : (hint.authMode.isEmpty ? "apiKey" : hint.authMode)
         let provider = hint.provider.isEmpty ? "默认配置" : "\(hint.provider) (\(auth))"
-        return "\(provider) · Soul v\(hint.soulRevision) · \(hint.activeRulesCount) 条生效规则"
+        return "\(provider) · 人设 v\(hint.soulRevision) · \(hint.activeRulesCount) 条生效习惯"
     }
 
     private func infoRow(_ title: String, value: String, mono: Bool, subtle: Bool = false) -> some View {

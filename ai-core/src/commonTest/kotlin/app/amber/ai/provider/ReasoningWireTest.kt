@@ -11,14 +11,16 @@ import kotlinx.serialization.json.jsonPrimitive
 class ReasoningWireTest {
     @Test
     fun kimiK3SendsReasoningEffortAndOmitsThinking() {
-        val fields = plan(
-            host = "api.moonshot.cn",
-            brand = OpenAIBrand.KIMI,
-            modelId = "kimi-k3",
-            level = ReasoningLevel.HIGH,
-        )
-        assertNull(fields.thinkingType)
-        assertEquals("high", fields.reasoningEffort)
+        for (id in listOf("kimi-k3", "k3", "k3.1", "k3.1-pro")) {
+            val fields = plan(
+                host = "api.moonshot.cn",
+                brand = OpenAIBrand.KIMI,
+                modelId = id,
+                level = ReasoningLevel.HIGH,
+            )
+            assertNull(fields.thinkingType, id)
+            assertEquals("high", fields.reasoningEffort, id)
+        }
     }
 
     @Test
@@ -141,6 +143,21 @@ class ReasoningWireTest {
         assertEquals("max", max.reasoningEffort)
         val none = plan("api.openai.com", OpenAIBrand.OPENAI, "gpt-5.6", ReasoningLevel.OFF)
         assertEquals("none", none.reasoningEffort)
+    }
+
+    @Test
+    fun openAiGpt6MapsOffToLow() {
+        for (id in listOf("gpt-6", "gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-mini", "gpt-6-sol")) {
+            assertEquals("low", openAIResponsesReasoningEffort(ReasoningLevel.OFF, id), id)
+            val fields = plan("api.openai.com", OpenAIBrand.OPENAI, id, ReasoningLevel.OFF)
+            assertEquals("low", fields.reasoningEffort, id)
+        }
+    }
+
+    @Test
+    fun grok47UsesXhighEffort() {
+        val fields = plan("api.x.ai", OpenAIBrand.GENERIC, "grok-4.7", ReasoningLevel.XHIGH)
+        assertEquals("xhigh", fields.reasoningEffort)
     }
 
     @Test
