@@ -1158,4 +1158,113 @@ final class AmberPersonaAvatarTests: XCTestCase {
         )
         _ = try await capture("04-top-avatar-foreground-overlap-comparison.png")
     }
+
+    func testResolveImageGenerationRouteCoversCodexSiwcGoogleAndDisabledProviders() async throws {
+        let suite = "AmberPersonaImageRoute.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("amber-persona-route-\(UUID().uuidString)", isDirectory: true)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+
+        let sharedSettings = IOSSharedSettingsStore(userDefaults: defaults)
+        let store = AmberPersonaStore(defaults: defaults, storageDirectory: tempDir)
+
+        // 1. Codex OAuth provider: signed in vs signed out
+        let codexProvider = sharedSettings.addProvider(IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "Codex", apiKey: "", baseUrl: "https://api.openai.com/v1",
+            modelName: "GPT-5", modelId: "gpt-5"
+        ))
+        _ = sharedSettings.setOpenAIAuthMode(
+            providerId: codexProvider.id.description(),
+            authMode: OpenAIAuthMode.codexOauth
+        )
+        let codexChatModelId = try XCTUnwrap(codexProvider.models.first).id.description()
+        sharedSettings.setCurrentChatModelId(codexChatModelId)
+        let codexWithImage = sharedSettings.upsertProviderImageModel(
+            providerId: codexProvider.id.description(),
+            modelId: "gpt-image-2",
+            displayName: "GPT Image 2"
+        )
+        let codexImageModel = try XCTUnwrap(codexWithImage?.models.first { $0.modelId == "gpt-image-2" })
+        sharedSettings.setImageGenerationModelId(codexImageModel.id.description())
+
+        XCTAssertEqual(
+            store.resolveImageGenerationRoute(sharedSettings: sharedSettings, isCodexSignedIn: { _ in true }),
+            .codexOAuth(
+                providerId: codexProvider.id.description(),
+                modelId: "gpt-image-2",
+                preferredRoutingModelID: "gpt-5"
+            )
+        )
+        XCTAssertTrue(
+            store.hasConfiguredImageGenerationProvider(sharedSettings: sharedSettings, isCodexSignedIn: { _ in true })
+        )
+
+        XCTAssertEqual(
+            store.resolveImageGenerationRoute(sharedSettings: sharedSettings, isCodexSignedIn: { _ in false }),
+            .unavailable(reason: .codexNotSignedIn)
+        )
+        XCTAssertFalse(
+            store.hasConfiguredImageGenerationProvider(sharedSettings: sharedSettings, isCodexSignedIn: { _ in false })
+        )
+        XCTAssertTrue(
+            AmberPersonaImageGenerationUnavailableReason.codexNotSignedIn.actionErrorText.contains("登录 Codex")
+        )
+
+        // 2. ChatGPT SIWC preview channel is explicitly reported as unsupported (not unconfigured)
+        _ = sharedSettings.setOpenAIAuthMode(
+            providerId: codexProvider.id.description(),
+            authMode: OpenAIAuthMode.chatgptSiwc
+        )
+        XCTAssertEqual(
+            store.resolveImageGenerationRoute(sharedSettings: sharedSettings),
+            .unavailable(reason: .chatGptSiwcUnsupported)
+        )
+        XCTAssertFalse(store.hasConfiguredImageGenerationProvider(sharedSettings: sharedSettings))
+        await store.generateAvatarWithAI(sharedSettings: sharedSettings)
+        XCTAssertTrue(store.lastGenerationError?.contains("SIWC") == true)
+
+        // 3. Google API Key preserves real provider.baseUrl instead of hardcoding api.openai.com
+        let googleBaseURL = "https://generativelanguage.googleapis.com/v1beta"
+        let googleProvider = sharedSettings.addProvider(IosSettingsMutations.shared.buildGoogleProvider(
+            name: "Gemini",
+            apiKey: "gemini-test-key",
+            baseUrl: googleBaseURL,
+            modelName: "Nano Banana 2",
+            modelId: "gemini-3.1-flash-image-preview"
+        ))
+        defer {
+            _ = sharedSettings.removeProvider(providerId: codexProvider.id.description())
+            _ = sharedSettings.removeProvider(providerId: googleProvider.id.description())
+        }
+        let googleImageModelId = try XCTUnwrap(googleProvider.models.first).id.description()
+        sharedSettings.setImageGenerationModelId(googleImageModelId)
+        XCTAssertEqual(
+            store.resolveImageGenerationRoute(sharedSettings: sharedSettings),
+            .apiKey(
+                modelId: "gemini-3.1-flash-image-preview",
+                apiKey: "gemini-test-key",
+                baseURL: googleBaseURL
+            )
+        )
+        XCTAssertTrue(store.hasConfiguredImageGenerationProvider(sharedSettings: sharedSettings))
+
+        // 4. Disabled provider reports disabled instead of unconfigured
+        _ = sharedSettings.updateProviderBasics(
+            providerId: googleProvider.id.description(),
+            name: "Gemini",
+            enabled: false
+        )
+        XCTAssertEqual(
+            store.resolveImageGenerationRoute(sharedSettings: sharedSettings),
+            .unavailable(reason: .providerDisabled)
+        )
+        XCTAssertFalse(store.hasConfiguredImageGenerationProvider(sharedSettings: sharedSettings))
+        await store.generateAvatarWithAI(sharedSettings: sharedSettings)
+        XCTAssertTrue(store.lastGenerationError?.contains("已停用") == true)
+    }
 }

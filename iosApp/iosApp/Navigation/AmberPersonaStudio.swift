@@ -45,6 +45,88 @@ struct AmberPersonaReferenceItem: Identifiable, Codable, Equatable, Sendable {
     var createdAtMs: Int64
 }
 
+enum AmberPersonaImageGenerationUnavailableReason: CaseIterable, Equatable, Sendable {
+    case notConfigured
+    case providerDisabled
+    case codexNotSignedIn
+    case chatGptSiwcUnsupported
+    case geminiOAuthUnsupported
+    case missingCredentials
+
+    static let allActionErrors: Set<String> = Set(allCases.map(\.actionErrorText))
+
+    var isSpecificBlocker: Bool {
+        self != .notConfigured
+    }
+
+    var noticeText: String {
+        switch self {
+        case .notConfigured:
+            return "未配置辅助生图模型时，可直接从相册或文件换图"
+        case .providerDisabled:
+            return "所选生图服务商已停用，请在「设置 → 服务商」中启用后再试"
+        case .codexNotSignedIn:
+            return "请先在服务商设置里登录 Codex 后再生成形象"
+        case .chatGptSiwcUnsupported:
+            return "ChatGPT SIWC 预览通道暂不支持生图，请在默认模型中改选支持生图的模型或 Codex OAuth"
+        case .geminiOAuthUnsupported:
+            return "Gemini OAuth 通道暂不支持生图，请在默认模型中改选 API Key 服务商或 Codex OAuth"
+        case .missingCredentials:
+            return "所选生图服务商缺少 API Key 或接口地址，请在「设置 → 服务商」补全"
+        }
+    }
+
+    var actionErrorText: String {
+        switch self {
+        case .notConfigured:
+            return "请先在「设置 → 默认模型 → 辅助任务」中配置生图模型，或直接从相册/文件换图。"
+        case .providerDisabled:
+            return "生图服务商已停用，请先在「设置 → 服务商」中启用后再生成形象。"
+        case .codexNotSignedIn:
+            return "请先在服务商设置里登录 Codex 后再生成形象"
+        case .chatGptSiwcUnsupported:
+            return "ChatGPT SIWC 预览通道暂不支持生图，请在默认模型中改选支持生图的模型或 Codex OAuth"
+        case .geminiOAuthUnsupported:
+            return "Gemini OAuth 通道暂不支持生图，请在默认模型中改选 API Key 服务商或 Codex OAuth"
+        case .missingCredentials:
+            return "所选生图服务商缺少 API Key 或接口地址，请先在「设置 → 服务商」补全，或直接从相册/文件换图。"
+        }
+    }
+}
+
+enum AmberPersonaImageGenerationRoute: Equatable, Sendable {
+    case codexOAuth(providerId: String, modelId: String, preferredRoutingModelID: String?)
+    case apiKey(modelId: String, apiKey: String, baseURL: String)
+    case unavailable(reason: AmberPersonaImageGenerationUnavailableReason)
+
+    var isAvailable: Bool {
+        switch self {
+        case .codexOAuth, .apiKey:
+            return true
+        case .unavailable:
+            return false
+        }
+    }
+
+    var modelId: String? {
+        switch self {
+        case let .codexOAuth(_, modelId, _), let .apiKey(modelId, _, _):
+            return modelId
+        case .unavailable:
+            return nil
+        }
+    }
+
+    var unavailableReason: AmberPersonaImageGenerationUnavailableReason? {
+        switch self {
+        case .codexOAuth, .apiKey:
+            return nil
+        case let .unavailable(reason):
+            return reason
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class AmberPersonaStore {
@@ -462,11 +544,88 @@ final class AmberPersonaStore {
         return primaryReferenceDataURL()
     }
 
-    func hasConfiguredImageGenerationProvider(sharedSettings: IOSSharedSettingsStore) -> Bool {
-        if staticGeneratorOverrideForTesting != nil || spriteSheetGeneratorOverrideForTesting != nil {
+    var hasTestingImageGeneratorOverride: Bool {
+        staticGeneratorOverrideForTesting != nil || spriteSheetGeneratorOverrideForTesting != nil
+    }
+
+    func hasConfiguredImageGenerationProvider(
+        sharedSettings: IOSSharedSettingsStore,
+        isCodexSignedIn: (String) -> Bool = { IOSCodexAuthStore.load(providerId: $0) != nil }
+    ) -> Bool {
+        if hasTestingImageGeneratorOverride {
             return true
         }
-        return resolveImageGenerationCredentials(sharedSettings: sharedSettings) != nil
+        return resolveImageGenerationRoute(
+            sharedSettings: sharedSettings,
+            isCodexSignedIn: isCodexSignedIn
+        ).isAvailable
+    }
+
+    func resolveImageGenerationRoute(
+        sharedSettings: IOSSharedSettingsStore,
+        isCodexSignedIn: (String) -> Bool = { IOSCodexAuthStore.load(providerId: $0) != nil }
+    ) -> AmberPersonaImageGenerationRoute {
+        let snapshot = sharedSettings.snapshot
+        guard let model = snapshot.findModelById(uuid: snapshot.imageGenerationModelId),
+              let provider = ChatProviderConfiguration.provider(for: model, providers: snapshot.providers) else {
+            return .unavailable(reason: .notConfigured)
+        }
+        guard provider.enabled else {
+            return .unavailable(reason: .providerDisabled)
+        }
+        if let openAI = provider as? ProviderSetting.OpenAI {
+            if openAI.authMode == OpenAIAuthMode.codexOauth {
+                let providerId = openAI.id.description()
+                guard isCodexSignedIn(providerId) else {
+                    return .unavailable(reason: .codexNotSignedIn)
+                }
+                let chatModel = snapshot.getCurrentChatModel()
+                let preferred = chatModel.flatMap { chat in
+                    ChatProviderConfiguration.provider(for: chat, providers: snapshot.providers)?.id == openAI.id
+                        ? chat.modelId : nil
+                }
+                return .codexOAuth(
+                    providerId: providerId,
+                    modelId: model.modelId,
+                    preferredRoutingModelID: preferred
+                )
+            }
+            if openAI.authMode == OpenAIAuthMode.chatgptSiwc {
+                return .unavailable(reason: .chatGptSiwcUnsupported)
+            }
+        }
+        if let google = provider as? ProviderSetting.Google,
+           IOSGeminiProviderResolver.isAntigravityOAuth(google) {
+            return .unavailable(reason: .geminiOAuthUnsupported)
+        }
+        let apiKey = ChatProviderConfiguration.apiKey(of: provider).trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseURL = ChatProviderConfiguration.baseURL(of: provider).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !apiKey.isEmpty, !baseURL.isEmpty else {
+            return .unavailable(reason: .missingCredentials)
+        }
+        return .apiKey(modelId: model.modelId, apiKey: apiKey, baseURL: baseURL)
+    }
+
+    private func executeImageGeneration(
+        request: IOSImageGenerationRequest,
+        route: AmberPersonaImageGenerationRoute
+    ) async throws -> IOSImageGenerationRecord {
+        switch route {
+        case let .codexOAuth(providerId, _, preferredRoutingModelID):
+            return try await IOSImageGenerationRepository.shared.generateViaCodex(
+                request: request,
+                providerId: providerId,
+                preferredRoutingModelID: preferredRoutingModelID
+            )
+        case let .apiKey(_, apiKey, baseURL):
+            return try await IOSImageGenerationRepository.shared.generate(
+                request: request,
+                apiKey: apiKey,
+                baseURL: baseURL
+            )
+        case .unavailable:
+            throw IOSImageGenerationError.missingAPIKey
+        }
     }
 
     func cancelAvatarGeneration() {
@@ -519,24 +678,25 @@ final class AmberPersonaStore {
             return
         }
 
-        guard let credentials = resolveImageGenerationCredentials(sharedSettings: sharedSettings) else {
-            lastGenerationError = "请先在「设置 → 默认模型 → 辅助任务」中配置生图模型，或直接从相册/文件换图。"
+        let route = resolveImageGenerationRoute(sharedSettings: sharedSettings)
+        guard let modelId = route.modelId else {
+            lastGenerationError = route.unavailableReason?.actionErrorText
+                ?? AmberPersonaImageGenerationUnavailableReason.notConfigured.actionErrorText
             return
         }
 
         do {
-            let record = try await IOSImageGenerationRepository.shared.generate(
+            let record = try await executeImageGeneration(
                 request: IOSImageGenerationRequest(
                     prompt: fullPrompt,
-                    model: credentials.modelId,
+                    model: modelId,
                     aspectRatio: .square,
                     count: 1,
                     style: "illustration",
                     source: "persona_studio",
                     sourceImageURL: sourceURL
                 ),
-                apiKey: credentials.apiKey,
-                baseURL: credentials.baseURL
+                route: route
             )
             guard !Task.isCancelled else { return }
             if let firstPath = record.files.first?.path,
@@ -585,24 +745,25 @@ final class AmberPersonaStore {
             return
         }
 
-        guard let credentials = resolveImageGenerationCredentials(sharedSettings: sharedSettings) else {
-            lastGenerationError = "请先在「设置 → 默认模型 → 辅助任务」中配置生图模型，或直接从相册/文件换图。"
+        let route = resolveImageGenerationRoute(sharedSettings: sharedSettings)
+        guard let modelId = route.modelId else {
+            lastGenerationError = route.unavailableReason?.actionErrorText
+                ?? AmberPersonaImageGenerationUnavailableReason.notConfigured.actionErrorText
             return
         }
 
         do {
-            let record = try await IOSImageGenerationRepository.shared.generate(
+            let record = try await executeImageGeneration(
                 request: IOSImageGenerationRequest(
                     prompt: sheetPrompt,
-                    model: credentials.modelId,
+                    model: modelId,
                     aspectRatio: .square,
                     count: 1,
                     style: "illustration",
                     source: "persona_studio_sprite_sheet",
                     sourceImageURL: sourceURL
                 ),
-                apiKey: credentials.apiKey,
-                baseURL: credentials.baseURL
+                route: route
             )
             try Task.checkCancellation()
             guard let firstPath = record.files.first?.path,
@@ -632,21 +793,6 @@ final class AmberPersonaStore {
             return
         }
         pendingSpriteSheetLayout = layout
-    }
-
-    private func resolveImageGenerationCredentials(
-        sharedSettings: IOSSharedSettingsStore
-    ) -> (modelId: String, apiKey: String, baseURL: String)? {
-        let snapshot = sharedSettings.snapshot
-        guard let model = snapshot.findModelById(uuid: snapshot.imageGenerationModelId),
-              let provider = ChatProviderConfiguration.provider(for: model, providers: snapshot.providers),
-              provider.enabled,
-              let apiKey = (provider as? ProviderSetting.OpenAI)?.apiKey ?? (provider as? ProviderSetting.Google)?.apiKey,
-              !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return nil
-        }
-        let baseURL = (provider as? ProviderSetting.OpenAI)?.baseUrl ?? "https://api.openai.com/v1"
-        return (model.modelId, apiKey, baseURL)
     }
 
     private func reloadAvatarFromDisk() {
@@ -795,6 +941,7 @@ struct AmberPersonaStudioContent: View {
     @State private var isImportingAvatarFile = false
     @State private var referencePickerItems: [PhotosPickerItem] = []
     @State private var showingPromptEditor = false
+    @State private var cachedImageGenRoute: AmberPersonaImageGenerationRoute?
 
     init(
         sharedSettings: IOSSharedSettingsStore,
@@ -820,8 +967,45 @@ struct AmberPersonaStudioContent: View {
         _ = store.stageUploadedAvatarDataForPreview(data)
     }
 
+    private var imageGenConfigFingerprint: String {
+        let snapshot = sharedSettings.snapshot
+        let modelUUID = snapshot.imageGenerationModelId.description()
+        guard let model = snapshot.findModelById(uuid: snapshot.imageGenerationModelId),
+              let provider = ChatProviderConfiguration.provider(for: model, providers: snapshot.providers) else {
+            return "none|\(modelUUID)"
+        }
+        let openAIAuth = (provider as? ProviderSetting.OpenAI).map { String(describing: $0.authMode) } ?? ""
+        let googleOAuth = (provider as? ProviderSetting.Google).map {
+            IOSGeminiProviderResolver.isAntigravityOAuth($0) ? "oauth" : "key"
+        } ?? ""
+        let hasKey = !ChatProviderConfiguration.apiKey(of: provider)
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let baseURL = ChatProviderConfiguration.baseURL(of: provider)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(modelUUID)|\(model.modelId)|\(provider.id.description())|\(provider.enabled)|\(openAIAuth)|\(googleOAuth)|\(hasKey)|\(baseURL)"
+    }
+
+    private var resolvedImageGenRoute: AmberPersonaImageGenerationRoute {
+        cachedImageGenRoute ?? store.resolveImageGenerationRoute(sharedSettings: sharedSettings)
+    }
+
     private var hasImageGenConfigured: Bool {
-        store.hasConfiguredImageGenerationProvider(sharedSettings: sharedSettings)
+        store.hasTestingImageGeneratorOverride || resolvedImageGenRoute.isAvailable
+    }
+
+    private var imageGenUnavailableReason: AmberPersonaImageGenerationUnavailableReason? {
+        guard !store.hasTestingImageGeneratorOverride else { return nil }
+        return resolvedImageGenRoute.unavailableReason
+    }
+
+    private func refreshImageGenRoute() {
+        let route = store.resolveImageGenerationRoute(sharedSettings: sharedSettings)
+        cachedImageGenRoute = route
+        if route.isAvailable,
+           let currentError = store.lastGenerationError,
+           AmberPersonaImageGenerationUnavailableReason.allActionErrors.contains(currentError) {
+            store.clearError()
+        }
     }
 
     private var activeStatusSummary: String {
@@ -855,6 +1039,12 @@ struct AmberPersonaStudioContent: View {
         VStack(alignment: .leading, spacing: 14) {
             heroAndPresetCard
             referenceImagesSection
+        }
+        .onAppear {
+            refreshImageGenRoute()
+        }
+        .onChange(of: imageGenConfigFingerprint) { _, _ in
+            refreshImageGenRoute()
         }
         .onChange(of: avatarPickerItem) { _, item in
                 guard let item else { return }
@@ -1036,6 +1226,8 @@ struct AmberPersonaStudioContent: View {
                             }
                     }
                     .buttonStyle(.plain)
+                    .disabled(!hasImageGenConfigured)
+                    .opacity(hasImageGenConfigured ? 1 : 0.48)
                     .accessibilityIdentifier("chat.persona.generateAnimationButton")
 
                     Button {
@@ -1055,6 +1247,8 @@ struct AmberPersonaStudioContent: View {
                             }
                     }
                     .buttonStyle(.plain)
+                    .disabled(!hasImageGenConfigured)
+                    .opacity(hasImageGenConfigured ? 1 : 0.48)
                     .accessibilityIdentifier("chat.persona.generateButton")
                 }
             }
@@ -1086,10 +1280,10 @@ struct AmberPersonaStudioContent: View {
                         .foregroundStyle(AmberTheme.accentRed)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("chat.persona.errorText")
-                } else if !hasImageGenConfigured {
-                    Text("未配置辅助生图模型时，可直接从相册或文件换图")
+                } else if let unavailableReason = imageGenUnavailableReason {
+                    Text(unavailableReason.noticeText)
                         .font(.caption2)
-                        .foregroundStyle(AmberTheme.muted)
+                        .foregroundStyle(unavailableReason.isSpecificBlocker ? AmberTheme.accentRed : AmberTheme.muted)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("chat.persona.unconfiguredHint")
                 } else {

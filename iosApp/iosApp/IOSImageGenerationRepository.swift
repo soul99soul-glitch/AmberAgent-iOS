@@ -252,32 +252,83 @@ final class IOSImageGenerationRepository {
         guard !model.isEmpty else { throw IOSImageGenerationError.missingModel }
         let resolvedApiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !resolvedApiKey.isEmpty else { throw IOSImageGenerationError.missingAPIKey }
-        let endpoint = try imageEndpoint(from: baseURL)
+        let endpoint: URL
+        var urlRequest: URLRequest
+        let payload: [RawImageItem]
+        if isGoogleNativeImageBaseURL(baseURL) {
+            let isImagen = model.lowercased().hasPrefix("imagen")
+            endpoint = try googleImageEndpoint(from: baseURL, model: model, isImagen: isImagen)
+            urlRequest = URLRequest(url: endpoint)
+            urlRequest.httpMethod = "POST"
+            urlRequest.timeoutInterval = 120
+            urlRequest.setValue(resolvedApiKey, forHTTPHeaderField: "x-goog-api-key")
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+            if isImagen {
+                urlRequest.httpBody = try JSONSerialization.data(
+                    withJSONObject: [
+                        "instances": [["prompt": request.effectivePrompt]],
+                        "parameters": [
+                            "sampleCount": max(1, min(request.count, 4)),
+                            "aspectRatio": request.aspectRatio.title
+                        ]
+                    ],
+                    options: [.sortedKeys]
+                )
+            } else {
+                var parts: [[String: Any]] = [["text": request.effectivePrompt]]
+                if let inlineData = Self.inlineDataPart(fromDataURL: request.sourceImageURL) {
+                    parts.append(["inlineData": inlineData])
+                }
+                urlRequest.httpBody = try JSONSerialization.data(
+                    withJSONObject: [
+                        "contents": [[
+                            "role": "user",
+                            "parts": parts
+                        ]],
+                        "generationConfig": [
+                            "responseModalities": ["TEXT", "IMAGE"]
+                        ]
+                    ],
+                    options: [.sortedKeys]
+                )
+            }
 
-        var urlRequest = URLRequest(url: endpoint)
-        urlRequest.httpMethod = "POST"
-        urlRequest.timeoutInterval = 120
-        urlRequest.setValue("Bearer \(resolvedApiKey)", forHTTPHeaderField: "Authorization")
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
-        urlRequest.httpBody = try JSONSerialization.data(
-            withJSONObject: [
-                "model": model,
-                "prompt": request.effectivePrompt,
-                "n": max(1, min(request.count, 4)),
-                "size": request.aspectRatio.apiSize
-            ],
-            options: [.sortedKeys]
-        )
+            try Task.checkCancellation()
+            let (response, data) = try await transport.send(urlRequest)
+            try Task.checkCancellation()
+            guard (200...299).contains(response.statusCode) else {
+                throw IOSImageGenerationError.httpStatus(response.statusCode, responseBodyPreview(data))
+            }
+            payload = isImagen
+                ? try googlePredictImageItems(from: data)
+                : try googleGenerateContentImageItems(from: data)
+        } else {
+            endpoint = try imageEndpoint(from: baseURL)
+            urlRequest = URLRequest(url: endpoint)
+            urlRequest.httpMethod = "POST"
+            urlRequest.timeoutInterval = 120
+            urlRequest.setValue("Bearer \(resolvedApiKey)", forHTTPHeaderField: "Authorization")
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+            urlRequest.httpBody = try JSONSerialization.data(
+                withJSONObject: [
+                    "model": model,
+                    "prompt": request.effectivePrompt,
+                    "n": max(1, min(request.count, 4)),
+                    "size": request.aspectRatio.apiSize
+                ],
+                options: [.sortedKeys]
+            )
 
-        try Task.checkCancellation()
-        let (response, data) = try await transport.send(urlRequest)
-        try Task.checkCancellation()
-        guard (200...299).contains(response.statusCode) else {
-            throw IOSImageGenerationError.httpStatus(response.statusCode, responseBodyPreview(data))
+            try Task.checkCancellation()
+            let (response, data) = try await transport.send(urlRequest)
+            try Task.checkCancellation()
+            guard (200...299).contains(response.statusCode) else {
+                throw IOSImageGenerationError.httpStatus(response.statusCode, responseBodyPreview(data))
+            }
+            payload = try imageItems(from: data)
         }
-
-        let payload = try imageItems(from: data)
         guard !payload.isEmpty else { throw IOSImageGenerationError.noImages(nil) }
 
         let recordId = UUID().uuidString
@@ -1107,6 +1158,89 @@ final class IOSImageGenerationRepository {
         var base64: String?
         var url: String?
         var mimeType: String
+    }
+
+    private func isGoogleNativeImageBaseURL(_ baseURL: String) -> Bool {
+        guard let components = URLComponents(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let host = components.host?.lowercased(),
+              host == "generativelanguage.googleapis.com" else {
+            return false
+        }
+        let normalizedPath = components.path.lowercased()
+        return !normalizedPath.contains("/openai")
+    }
+
+    private func googleImageEndpoint(from baseURL: String, model: String, isImagen: Bool) throws -> URL {
+        guard var components = URLComponents(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              components.host != nil else {
+            throw IOSImageGenerationError.invalidBaseURL
+        }
+        var path = components.path
+        while path.hasSuffix("/") {
+            path.removeLast()
+        }
+        if path.isEmpty {
+            path = "/v1beta"
+        }
+        let normalizedModel = model.hasPrefix("models/") ? String(model.dropFirst("models/".count)) : model
+        let action = isImagen ? "predict" : "generateContent"
+        components.path = "\(path)/models/\(normalizedModel):\(action)"
+        guard let url = components.url else { throw IOSImageGenerationError.invalidBaseURL }
+        return url
+    }
+
+    private static func inlineDataPart(fromDataURL sourceImageURL: String?) -> [String: String]? {
+        guard let raw = sourceImageURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+              raw.lowercased().hasPrefix("data:"),
+              let commaIndex = raw.firstIndex(of: ",") else {
+            return nil
+        }
+        let header = String(raw[raw.index(raw.startIndex, offsetBy: 5)..<commaIndex])
+        let dataPart = String(raw[raw.index(after: commaIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !dataPart.isEmpty else { return nil }
+        let mimeType = header.split(separator: ";").first.map(String.init)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return [
+            "mimeType": (mimeType?.isEmpty == false ? mimeType! : "image/png"),
+            "data": dataPart
+        ]
+    }
+
+    private func googleGenerateContentImageItems(from data: Data) throws -> [RawImageItem] {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let candidates = object["candidates"] as? [[String: Any]] else {
+            throw IOSImageGenerationError.invalidResponse
+        }
+        var items: [RawImageItem] = []
+        for candidate in candidates {
+            guard let content = candidate["content"] as? [String: Any],
+                  let parts = content["parts"] as? [[String: Any]] else { continue }
+            for part in parts {
+                let inline = (part["inlineData"] as? [String: Any]) ?? (part["inline_data"] as? [String: Any])
+                guard let inline,
+                      let base64 = inline["data"] as? String,
+                      !base64.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                let mime = (inline["mimeType"] as? String) ?? (inline["mime_type"] as? String) ?? "image/png"
+                items.append(RawImageItem(base64: base64, url: nil, mimeType: mime))
+            }
+        }
+        return items
+    }
+
+    private func googlePredictImageItems(from data: Data) throws -> [RawImageItem] {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let predictions = object["predictions"] as? [[String: Any]] else {
+            throw IOSImageGenerationError.invalidResponse
+        }
+        return predictions.compactMap { prediction in
+            guard let base64 = prediction["bytesBase64Encoded"] as? String,
+                  !base64.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return nil
+            }
+            let mime = (prediction["mimeType"] as? String) ?? "image/png"
+            return RawImageItem(base64: base64, url: nil, mimeType: mime)
+        }
     }
 
     private func imageEndpoint(from baseURL: String) throws -> URL {

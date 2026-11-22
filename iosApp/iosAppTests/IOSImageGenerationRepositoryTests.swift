@@ -344,6 +344,74 @@ final class IOSImageGenerationRepositoryTests: XCTestCase {
         XCTAssertEqual(file["mime_type"] as? String, "image/png")
     }
 
+    func testGenerateRoutesGoogleGeminiAndImagenToNativeEndpoints() async throws {
+        let history = isolatedHistory()
+        let repository = IOSImageGenerationRepository(historyStore: history)
+
+        let geminiTransport = MockImageTransport(responses: [
+            .json(#"{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"aGVsbG8tZ2VtaW5p"}}]}}]}"#)
+        ])
+        let geminiRecord = try await repository.generate(
+            request: IOSImageGenerationRequest(
+                prompt: "Warm amber fox portrait",
+                model: "gemini-3.1-flash-image-preview",
+                aspectRatio: .square,
+                count: 1,
+                style: "illustration",
+                source: "persona_studio",
+                sourceImageURL: "data:image/jpeg;base64,QUJD"
+            ),
+            apiKey: "gemini-key",
+            baseURL: "https://generativelanguage.googleapis.com/v1beta",
+            transport: geminiTransport
+        )
+        generatedPaths.append(contentsOf: geminiRecord.files.map(\.path))
+
+        let geminiRequest = try XCTUnwrap(geminiTransport.requests.first)
+        XCTAssertEqual(
+            geminiRequest.url?.absoluteString,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent"
+        )
+        XCTAssertEqual(geminiRequest.value(forHTTPHeaderField: "x-goog-api-key"), "gemini-key")
+        XCTAssertNil(geminiRequest.value(forHTTPHeaderField: "Authorization"))
+        let geminiBody = try jsonObject(try XCTUnwrap(geminiRequest.httpBody))
+        let genConfig = try XCTUnwrap(geminiBody["generationConfig"] as? [String: Any])
+        XCTAssertEqual(genConfig["responseModalities"] as? [String], ["TEXT", "IMAGE"])
+        let contents = try XCTUnwrap(geminiBody["contents"] as? [[String: Any]])
+        let parts = try XCTUnwrap(contents.first?["parts"] as? [[String: Any]])
+        XCTAssertEqual(parts.count, 2)
+        let inlineData = try XCTUnwrap(parts.last?["inlineData"] as? [String: String])
+        XCTAssertEqual(inlineData["mimeType"], "image/jpeg")
+        XCTAssertEqual(inlineData["data"], "QUJD")
+        XCTAssertEqual(geminiRecord.files.count, 1)
+
+        let imagenTransport = MockImageTransport(responses: [
+            .json(#"{"predictions":[{"bytesBase64Encoded":"aGVsbG8taW1hZ2Vu","mimeType":"image/png"}]}"#)
+        ])
+        let imagenRecord = try await repository.generate(
+            request: IOSImageGenerationRequest(
+                prompt: "Editorial lantern",
+                model: "imagen-3.0-generate-002",
+                aspectRatio: .landscape,
+                count: 1,
+                style: "",
+                source: "persona_studio"
+            ),
+            apiKey: "gemini-key",
+            baseURL: "https://generativelanguage.googleapis.com/v1beta",
+            transport: imagenTransport
+        )
+        generatedPaths.append(contentsOf: imagenRecord.files.map(\.path))
+
+        let imagenRequest = try XCTUnwrap(imagenTransport.requests.first)
+        XCTAssertEqual(
+            imagenRequest.url?.absoluteString,
+            "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict"
+        )
+        XCTAssertEqual(imagenRequest.value(forHTTPHeaderField: "x-goog-api-key"), "gemini-key")
+        XCTAssertEqual(imagenRecord.files.count, 1)
+    }
+
     private func isolatedHistory() -> IOSImageGenerationHistoryStore {
         let suiteName = "ImageHistory-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
