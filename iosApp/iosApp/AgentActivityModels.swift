@@ -126,17 +126,31 @@ enum AgentActivityStepDetailPolicy {
     }
 }
 
+enum AgentApprovalRiskLevel: String, Codable, Hashable, Sendable {
+    case l1 = "L1"
+    case l2 = "L2"
+    case l3 = "L3"
+}
+
 struct AgentActivityApproval: Codable, Hashable, Sendable {
     let requestId: String
     /// 操作标题（如终端命令名）。仅在灵动岛展开态显示，锁屏只显示类别。
     let title: String
-    /// 是否允许在锁屏 / 灵动岛上直接点击「允许一次」。高风险工具只允许「拒绝」或点按回到 App 确认。
+    /// 是否允许在灵动岛上直接点击「允许一次」。高风险工具与 L3 审批只允许安全止损或回到 App 确认。
     var allowsInlineApprove: Bool = true
+    /// 渐进审批风险等级（L1/L2/L3）。L3 绝不允许在 Live Activity（尤其锁屏）提供批准按钮。
+    var riskLevel: AgentApprovalRiskLevel? = nil
 
-    init(requestId: String, title: String, allowsInlineApprove: Bool = true) {
+    init(
+        requestId: String,
+        title: String,
+        allowsInlineApprove: Bool = true,
+        riskLevel: AgentApprovalRiskLevel? = nil
+    ) {
         self.requestId = requestId
         self.title = title
-        self.allowsInlineApprove = allowsInlineApprove
+        self.allowsInlineApprove = (riskLevel == .l3) ? false : allowsInlineApprove
+        self.riskLevel = riskLevel
     }
 }
 
@@ -293,13 +307,18 @@ enum AgentActivityInlineControlPolicy {
     static func controls(
         presentation: AgentActivityPresentation,
         isStale: Bool,
-        hasConversation: Bool
+        hasConversation: Bool,
+        isLockScreen: Bool = false
     ) -> [AgentActivityInlineControl] {
         // 手机接管按钮直接作用于现有 run，轻点卡片仍可回到对话。
         guard hasConversation else { return [] }
         switch presentation.displayPhase(isStale: isStale) {
         case .waitingForUser:
             guard let approval = presentation.approval else { return [] }
+            // 锁屏红线：Live Activity 锁屏仅允许安全止损（拒绝/暂停），绝不提供 L3 批准按钮（且对一切锁屏审批 fail-closed）。
+            if isLockScreen || approval.riskLevel == .l3 {
+                return [.deny]
+            }
             return approval.allowsInlineApprove ? [.deny, .approve] : [.deny]
         case .failed:
             return presentation.retryable == true ? [.retry] : []

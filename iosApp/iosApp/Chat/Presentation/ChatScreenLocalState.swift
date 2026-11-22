@@ -36,6 +36,11 @@ struct ChatComposerLocalState {
     var lastCloudDialogueFingerprint: String?
     var cloudDialogueSubmitGeneration = 0
 
+    // Stage 2-B: Unified Timeline Explicit "交给 Mac" Delegation State
+    var isDelegateToMacArmed = false
+    var unifiedMacFollowupWorkItemId: String? = nil
+    var sharePrefillNotice: String? = nil
+
     static func cloudDialogueFingerprint(text: String, targetWorkItemId: String?) -> String {
         "\(targetWorkItemId ?? "main")\u{0000}\(text)"
     }

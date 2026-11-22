@@ -505,6 +505,7 @@ struct AppShell: View {
             IOSChatBackgroundGenerationCoordinator.shared.resumeDetachedResponsesIfNeeded()
             IOSChatBackgroundGenerationCoordinator.shared.resumeRecoverableJobsIfNeeded()
             finalizeStaleBackgroundJobsIfNeeded()
+            consumePendingShareInboxIfAvailable()
         case .inactive:
             break
         @unknown default:
@@ -728,6 +729,11 @@ struct AppShell: View {
             Task { @MainActor in
                 _ = await MacGatewayStore.shared.ensureCloudTaskLoaded(workItemId: workItemId)
             }
+        case .shareInbox(let handoffID):
+            if let payload = AmberShareHandoffStore.shared.consume(id: handoffID),
+               let prefill = payload.formattedPrefillText {
+                applySharePrefillToMainTimeline(prefill)
+            }
         case .agentActivity(let target):
             pendingAgentActivityTarget = target
             pendingAgentActivityURL = nil
@@ -740,6 +746,24 @@ struct AppShell: View {
         }
         pendingAppDeepLinkDestination = nil
         pendingAppDeepLinkURL = nil
+    }
+
+    private func consumePendingShareInboxIfAvailable() {
+        guard didBootstrapConversations else { return }
+        if case .shareInbox = pendingAppDeepLinkDestination { return }
+        guard let payload = AmberShareHandoffStore.shared.consumeLatestPending(),
+              let prefill = payload.formattedPrefillText else { return }
+        applySharePrefillToMainTimeline(prefill)
+    }
+
+    private func applySharePrefillToMainTimeline(_ prefill: String) {
+        MacGatewayStore.shared.setCloudMainDialogueSelected(false)
+        chatViewModel.inputText = AmberSharePayload.mergeIntoDraft(
+            existingDraft: chatViewModel.inputText,
+            incoming: prefill
+        )
+        rootRouter.path = [.chat]
+        rootRouter.sharePrefillRevision &+= 1
     }
 
     private func openPendingAgentActivityIfReady() async {

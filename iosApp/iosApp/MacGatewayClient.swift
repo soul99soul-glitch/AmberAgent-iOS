@@ -75,12 +75,27 @@ struct MacGatewayStatus: Decodable, Equatable, Sendable {
     struct PendingApproval: Decodable, Equatable, Sendable {
         var toolCallId: String
         var tool: String
-        var detail: String?
+        var detail: String? = nil
         /// High-risk calls are only approved on the Mac; the phone can still deny.
-        var highRisk: Bool
+        var highRisk: Bool = true
+        /// Explicit Mac-only redline flag from the gateway/daemon: unlocking iPhone never expands scope.
+        var requiresLocalApproval: Bool = false
+        /// Optional human-readable change summary for the half-sheet approval card.
+        var summary: String? = nil
+        /// Optional read-only diff or body preview shown in the half-sheet approval card.
+        var diffPreview: String? = nil
+        /// Optional target device name reported by the Mac/gateway.
+        var targetDeviceName: String? = nil
+        /// Optional risk level ("L1"/"L2"/"L3" or numeric/text alias).
+        var riskLevel: String? = nil
+        /// Optional linked work item id for targeted modification follow-ups.
+        var workItemId: String? = nil
+        /// Optional linked conversation id for unified timeline routing.
+        var conversationId: String? = nil
 
         private enum CodingKeys: String, CodingKey {
-            case toolCallId, tool, detail, highRisk
+            case toolCallId, tool, detail, highRisk, requiresLocalApproval
+            case summary, diffPreview, targetDeviceName, riskLevel, workItemId, conversationId
         }
     }
 
@@ -103,6 +118,13 @@ extension MacGatewayStatus.PendingApproval {
         tool = try container.decode(String.self, forKey: .tool)
         detail = try container.decodeIfPresent(String.self, forKey: .detail)
         highRisk = try container.decodeIfPresent(Bool.self, forKey: .highRisk) ?? true
+        requiresLocalApproval = try container.decodeIfPresent(Bool.self, forKey: .requiresLocalApproval) ?? false
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        diffPreview = try container.decodeIfPresent(String.self, forKey: .diffPreview)
+        targetDeviceName = try container.decodeIfPresent(String.self, forKey: .targetDeviceName)
+        riskLevel = try container.decodeIfPresent(String.self, forKey: .riskLevel)
+        workItemId = try container.decodeIfPresent(String.self, forKey: .workItemId)
+        conversationId = try container.decodeIfPresent(String.self, forKey: .conversationId)
     }
 }
 
@@ -128,12 +150,21 @@ struct MacGatewayBoardItem: Decodable, Equatable, Sendable, Identifiable {
         var sessionKey: String
         var toolCallId: String
         var tool: String
-        var detail: String?
+        var detail: String? = nil
         /// High-risk calls are only approved on the Mac; the phone can still deny.
-        var highRisk: Bool
+        var highRisk: Bool = true
+        /// Explicit Mac-only redline flag: when true, remote approval from iOS is forbidden.
+        var requiresLocalApproval: Bool = false
+        var summary: String? = nil
+        var diffPreview: String? = nil
+        var targetDeviceName: String? = nil
+        var riskLevel: String? = nil
+        var workItemId: String? = nil
+        var conversationId: String? = nil
 
         private enum CodingKeys: String, CodingKey {
-            case sessionKey, toolCallId, tool, detail, highRisk
+            case sessionKey, toolCallId, tool, detail, highRisk, requiresLocalApproval
+            case summary, diffPreview, targetDeviceName, riskLevel, workItemId, conversationId
         }
     }
 
@@ -165,6 +196,13 @@ extension MacGatewayBoardItem.Approval {
         tool = try container.decode(String.self, forKey: .tool)
         detail = try container.decodeIfPresent(String.self, forKey: .detail)
         highRisk = try container.decodeIfPresent(Bool.self, forKey: .highRisk) ?? true
+        requiresLocalApproval = try container.decodeIfPresent(Bool.self, forKey: .requiresLocalApproval) ?? false
+        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        diffPreview = try container.decodeIfPresent(String.self, forKey: .diffPreview)
+        targetDeviceName = try container.decodeIfPresent(String.self, forKey: .targetDeviceName)
+        riskLevel = try container.decodeIfPresent(String.self, forKey: .riskLevel)
+        workItemId = try container.decodeIfPresent(String.self, forKey: .workItemId)
+        conversationId = try container.decodeIfPresent(String.self, forKey: .conversationId)
     }
 }
 
@@ -260,6 +298,8 @@ enum MacGatewayError: LocalizedError, Equatable {
     /// The Mac answered with a different certificate than the one pinned at pairing.
     case certificateMismatch
     case unauthorized
+    /// Remote approval or privileged action rejected by Mac policy (HTTP 403).
+    case forbidden(String)
     case conflict(String)
     case server(String)
     case invalidResponse
@@ -272,6 +312,10 @@ enum MacGatewayError: LocalizedError, Equatable {
             IOSAppLocalization.string("Mac 的证书与配对时不一致（可能重装过 amber-gateway），请取消配对后重新扫码", defaultValue: "Mac 的证书与配对时不一致（可能重装过 amber-gateway），请取消配对后重新扫码")
         case .unauthorized:
             IOSAppLocalization.string("此设备已在 Mac 上被吊销，请重新配对", defaultValue: "此设备已在 Mac 上被吊销，请重新配对")
+        case .forbidden(let message):
+            message.isEmpty
+                ? IOSAppLocalization.string("此高危操作请在 Mac 上批准", defaultValue: "此高危操作请在 Mac 上批准")
+                : message
         case .conflict(let message), .server(let message):
             message
         case .invalidResponse:
@@ -527,6 +571,9 @@ actor MacGatewayClient {
             return response.data
         case 401:
             throw MacGatewayError.unauthorized
+        case 403:
+            let message = Self.extractErrorMessage(from: response.data) ?? response.errorCode
+            throw MacGatewayError.forbidden(message ?? "HTTP \(response.status)")
         case 409:
             let message = Self.extractErrorMessage(from: response.data) ?? response.errorCode
             throw MacGatewayError.conflict(message ?? "HTTP \(response.status)")

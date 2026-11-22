@@ -24,6 +24,8 @@ enum IOSAppDeepLink {
         case macTasks
         /// Paired Cloud schedule or native task detail (`amber://cloud-task/<workItemId>`).
         case cloudTask(workItemId: String)
+        /// iOS Share Sheet prefill handoff (`amber://share/<handoffID>`).
+        case shareInbox(handoffID: String)
     }
 
     static func parse(
@@ -78,6 +80,9 @@ enum IOSAppDeepLink {
         case ("cloud-task", let parts) where parts.count == 1 && queryItems.isEmpty:
             guard isSafeWorkItemIdentifier(parts[0]) else { return nil }
             return .cloudTask(workItemId: parts[0])
+        case ("share", let parts) where parts.count == 1 && queryItems.isEmpty:
+            guard isSafeIdentifier(parts[0], maxLength: 64) else { return nil }
+            return .shareInbox(handoffID: parts[0])
         case ("gateway", ["pair"]):
             guard queryItems.count == 1, queryItems[0].name == "p",
                   let payload = queryItems[0].value,
@@ -139,6 +144,10 @@ enum IOSAppDeepLink {
             guard isSafeWorkItemIdentifier(workItemId) else { return nil }
             components.host = "cloud-task"
             components.path = "/\(workItemId)"
+        case .shareInbox(let handoffID):
+            guard isSafeIdentifier(handoffID, maxLength: 64) else { return nil }
+            components.host = "share"
+            components.path = "/\(handoffID)"
         case .gatewayPair(let payload):
             guard isSafeIdentifier(payload, maxLength: MacGatewayPairingPayload.maximumLinkLength) else { return nil }
             components.host = "gateway"

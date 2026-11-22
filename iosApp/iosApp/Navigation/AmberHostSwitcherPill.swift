@@ -343,6 +343,7 @@ struct AmberInlineCloudMainDialogueView: View {
         let outcome: MacGatewayCloudDialogueOutcome?
         let workItemId: String?
         let showsActions: Bool
+        let needsOutcomeUnknownAction: Bool
     }
 
     private var liveProgressItems: [MacGatewayCloudDialogueWorkItemProgress] {
@@ -358,7 +359,8 @@ struct AmberInlineCloudMainDialogueView: View {
                     isLive: progress.isLive,
                     outcome: progress.outcome,
                     workItemId: progress.workItemId,
-                    showsActions: progress.isLive && !progress.isStopRequested
+                    showsActions: progress.isLive && !progress.isStopRequested && !progress.needsOutcomeUnknownAction,
+                    needsOutcomeUnknownAction: progress.needsOutcomeUnknownAction
                 )
             }
         }
@@ -370,7 +372,8 @@ struct AmberInlineCloudMainDialogueView: View {
                     isLive: true,
                     outcome: nil,
                     workItemId: nil,
-                    showsActions: false
+                    showsActions: false,
+                    needsOutcomeUnknownAction: false
                 )
             ]
         }
@@ -557,20 +560,48 @@ struct AmberInlineCloudMainDialogueView: View {
     private var liveProgressSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(tailStatusItems) { item in
-                AmberCloudTaskProgressRowView(
-                    headline: item.headline,
-                    isLive: item.isLive,
-                    outcome: item.outcome,
-                    showsActions: item.showsActions,
-                    onSupplement: item.workItemId.map { workItemId in
-                        { store.selectedCloudDialogueWorkItemId = workItemId }
-                    },
-                    onStop: item.workItemId.map { workItemId in
-                        { Task { _ = await store.stopCloudWorkItem(workItemId: workItemId) } }
+                VStack(alignment: .leading, spacing: 6) {
+                    AmberCloudTaskProgressRowView(
+                        headline: item.headline,
+                        isLive: item.isLive,
+                        outcome: item.outcome,
+                        showsActions: item.showsActions,
+                        onSupplement: item.workItemId.map { workItemId in
+                            { store.selectedCloudDialogueWorkItemId = workItemId }
+                        },
+                        onStop: item.workItemId.map { workItemId in
+                            { Task { _ = await store.stopCloudWorkItem(workItemId: workItemId) } }
+                        }
+                    )
+                    if item.needsOutcomeUnknownAction, let workItemId = item.workItemId {
+                        HStack(spacing: 8) {
+                            outcomeUnknownActionPill(macGatewayL("重查状态"), tint: AmberTheme.accent) {
+                                Task { _ = await store.recheckOutcomeUnknownCloudWorkItem(workItemId: workItemId) }
+                            }
+                            outcomeUnknownActionPill(macGatewayL("确认未执行后重试"), tint: AmberTheme.accentAmber) {
+                                Task { _ = await store.retryOutcomeUnknownCloudWorkItem(workItemId: workItemId) }
+                            }
+                            outcomeUnknownActionPill(macGatewayL("放弃"), tint: AmberTheme.muted) {
+                                _ = store.abandonOutcomeUnknownCloudWorkItem(workItemId: workItemId)
+                            }
+                        }
+                        .padding(.leading, 4)
                     }
-                )
+                }
             }
         }
+    }
+
+    private func outcomeUnknownActionPill(_ title: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(verbatim: title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(tint)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(tint.opacity(0.12), in: Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 
     private var emptyCloudConversationCard: some View {
@@ -666,19 +697,44 @@ struct AmberInlineCloudMainDialogueView: View {
             followupStatus: event.kind == .followup ? followup.map {
                 $0.deliveryStatus(isSending: store.busyCloudDialogueRequestIds.contains($0.requestId))
             } : nil,
+            isFollowupCancelled: followup?.state == .cancelled,
             isAssistantContinuation: isAssistantContinuation,
             userSendEntranceKey: store.cloudUserSendEntranceKey(for: event)
         )
     }
 
     private func followupBubble(_ followup: MacGatewayCloudDialogueFollowupRecord) -> some View {
-        ChatUserMessageRow {
-            ChatUserBubble(text: followup.text)
-            Text(verbatim: followup.deliveryStatus(isSending: store.busyCloudDialogueRequestIds.contains(followup.requestId)))
-                .font(.caption2)
-                .foregroundStyle(followup.state == .cancelled ? .orange : AmberTheme.muted)
-        }
+        AmberCloudFollowupBubbleRow(
+            text: followup.text,
+            statusText: followup.deliveryStatus(isSending: store.busyCloudDialogueRequestIds.contains(followup.requestId)),
+            isCancelled: followup.state == .cancelled
+        )
         .chatUserSendEntrance(key: "cloud-user:\(followup.requestId)")
+    }
+}
+
+/// Shared follow-up bubble row used both before and after server event synchronization
+/// so font, padding, corner radius, and status pill tint remain identical with zero visual jump.
+private struct AmberCloudFollowupBubbleRow: View {
+    let text: String
+    let statusText: String?
+    let isCancelled: Bool
+
+    var body: some View {
+        ChatUserMessageRow {
+            ChatUserBubble(text: text)
+            if let statusText, !statusText.isEmpty {
+                Text(verbatim: statusText)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(isCancelled ? AmberTheme.accentAmber : AmberTheme.muted)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2.5)
+                    .background(
+                        (isCancelled ? AmberTheme.accentAmber : AmberTheme.surface2).opacity(isCancelled ? 0.12 : 0.7),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
+            }
+        }
     }
 }
 
@@ -688,17 +744,17 @@ struct CloudDialogueMessageRow: View {
     let text: String
     let feedback: ChatCompletionFeedback?
     var followupStatus: String? = nil
+    var isFollowupCancelled = false
     var isAssistantContinuation = false
     var userSendEntranceKey: String? = nil
 
     var body: some View {
         if event.role == "user" || event.kind == .userMessage || event.kind == .followup {
-            ChatUserMessageRow {
-                ChatUserBubble(text: text)
-                if let followupStatus {
-                    Text(verbatim: followupStatus).font(.caption2).foregroundStyle(AmberTheme.muted)
-                }
-            }
+            AmberCloudFollowupBubbleRow(
+                text: text,
+                statusText: followupStatus,
+                isCancelled: isFollowupCancelled
+            )
             .chatUserSendEntrance(key: userSendEntranceKey)
         } else {
             ChatAssistantStack {
@@ -706,6 +762,25 @@ struct CloudDialogueMessageRow: View {
                     HStack(alignment: .firstTextBaseline, spacing: 6) { ChatAgentName() }
                 }
                 CloudReplyCompletionText(event: event, text: text, feedback: feedback)
+                if !event.displaySourceAnnotations.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(event.displaySourceAnnotations, id: \.self) { source in
+                                HStack(spacing: 4) {
+                                    Image(systemName: "doc.text")
+                                        .font(.system(size: 10))
+                                    Text(verbatim: source)
+                                        .font(.caption2.monospaced())
+                                        .lineLimit(1)
+                                }
+                                .foregroundStyle(AmberTheme.muted)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(AmberTheme.surface2, in: Capsule(style: .continuous))
+                            }
+                        }
+                    }
+                }
                 if let outcome = event.outcome, outcome != .completed {
                     Text(verbatim: outcome.displayTitle)
                         .font(.caption2)
@@ -789,7 +864,9 @@ struct MacGatewayCloudDialogueSheet: View {
                         CloudDialogueMessageRow(event: event, text: store.cloudDialogueDisplayText(for: event), feedback: nil,
                             followupStatus: event.kind == .followup ? followup.map {
                                 $0.deliveryStatus(isSending: store.busyCloudDialogueRequestIds.contains($0.requestId))
-                            } : nil, isAssistantContinuation: continuationIDs.contains(event.id))
+                            } : nil,
+                            isFollowupCancelled: followup?.state == .cancelled,
+                            isAssistantContinuation: continuationIDs.contains(event.id))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
                     }
@@ -797,12 +874,11 @@ struct MacGatewayCloudDialogueSheet: View {
                     ForEach(store.cloudDialogueFollowups.filter { record in
                         !store.cloudDialogueVisibleEvents.contains(where: { $0.id == record.eventId })
                     }) { followup in
-                        ChatUserMessageRow {
-                            ChatUserBubble(text: followup.text)
-                            Text(verbatim: followup.deliveryStatus(isSending: store.busyCloudDialogueRequestIds.contains(followup.requestId)))
-                                .font(.caption2)
-                                .foregroundStyle(followup.state == .cancelled ? .orange : AmberTheme.muted)
-                        }
+                        AmberCloudFollowupBubbleRow(
+                            text: followup.text,
+                            statusText: followup.deliveryStatus(isSending: store.busyCloudDialogueRequestIds.contains(followup.requestId)),
+                            isCancelled: followup.state == .cancelled
+                        )
                         .listRowSeparator(.hidden)
                         .listRowBackground(Color.clear)
                     }

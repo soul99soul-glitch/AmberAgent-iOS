@@ -63,6 +63,7 @@ targets:
           - AmberSubscriptions.storekit
       - path: PhoneControlRuntime
       - path: SharedWatch
+      - path: SharedShare
       - path: WatchApp/WatchLocalStore.swift
       - path: WatchApp/WatchTaskViewModel.swift
       - path: AlarmKitResources
@@ -250,6 +251,8 @@ targets:
         product: ChatLayout
       - target: AmberAgentActivityWidget
       - target: AmberPhoneControlTunnel
+        embed: true
+      - target: AmberShareExtension
         embed: true
       - target: AmberWatchApp
         embed: true
@@ -445,6 +448,7 @@ targets:
           - Info.plist
       - path: PhoneControlRuntime
       - path: SharedWatch
+      - path: SharedShare
       - path: WatchApp/WatchLocalStore.swift
       - path: WatchApp/WatchTaskViewModel.swift
       - path: AlarmKitResources
@@ -666,6 +670,8 @@ targets:
       - target: AmberAgentActivityWidgetExperimentalGPL
       - target: AmberPhoneControlTunnelExperimentalGPL
         embed: true
+      - target: AmberShareExtensionExperimentalGPL
+        embed: true
       - target: AmberWatchAppExperimentalGPL
         embed: true
     scheme:
@@ -804,6 +810,60 @@ targets:
           - watchsimulator
     scheme:
       gatherCoverageData: false
+
+  AmberShareExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareExtension
+        excludes:
+          - Info.plist
+          - AmberShareExtension.entitlements
+          - AmberShareExtensionExperimental.entitlements
+          - PrivacyInfo.xcprivacy
+      - path: SharedShare
+      - path: ShareExtension/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.amber.ios.share-extension
+        INFOPLIST_FILE: ShareExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ShareExtension/AmberShareExtension.entitlements
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SKIP_INSTALL: "YES"
+        APPLICATION_EXTENSION_API_ONLY: "YES"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTED_PLATFORMS:
+          - iphoneos
+          - iphonesimulator
+
+  AmberShareExtensionExperimentalGPL:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareExtension
+        excludes:
+          - Info.plist
+          - AmberShareExtension.entitlements
+          - AmberShareExtensionExperimental.entitlements
+          - PrivacyInfo.xcprivacy
+      - path: SharedShare
+      - path: ShareExtension/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "$(AMBER_EXPERIMENTAL_BUNDLE_IDENTIFIER).share-extension"
+        INFOPLIST_FILE: ShareExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ShareExtension/AmberShareExtensionExperimental.entitlements
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SKIP_INSTALL: "YES"
+        APPLICATION_EXTENSION_API_ONLY: "YES"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTED_PLATFORMS:
+          - iphoneos
+          - iphonesimulator
 
   IOSIntelligentUIAcceptance:
     type: bundle.ui-testing

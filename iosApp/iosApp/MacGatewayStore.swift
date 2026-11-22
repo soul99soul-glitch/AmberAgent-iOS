@@ -102,6 +102,9 @@ final class MacGatewayStore {
     private(set) var pushError: String?
     /// Approvals being sent, by tool call id; their buttons show progress.
     private(set) var decidingCalls: Set<String> = []
+    /// Tool call IDs whose remote approval was explicitly rejected with HTTP 403 by the Mac.
+    /// Once marked, iOS locks the approval card to Mac-local-only approval and hides remote approve.
+    private(set) var localApprovalOnlyCallIds: Set<String> = []
     /// Amber scheduled tasks on the Mac; nil until fetched, or when Amber isn't running there.
     private(set) var schedules: [MacGatewaySchedule]?
     private(set) var schedulesError: String?
@@ -221,6 +224,7 @@ final class MacGatewayStore {
         self.connection = connection
         self.client = client
         self.isReachable = true
+        self.localApprovalOnlyCallIds = []
         self.cloudDialogueTransportState = .unknown
         self.hasCheckedCloudSoulOnConnect = false
         bindCloudSoulStoreIfNeeded(previousSoulStore)
@@ -485,6 +489,11 @@ final class MacGatewayStore {
         allow: Bool,
         source: MacGatewayDecisionSource = .foregroundApp
     ) async -> Bool {
+        if allow, requiresLocalApprovalOnly(sessionKey: sessionKey, toolCallId: toolCallId) {
+            localApprovalOnlyCallIds.insert(toolCallId)
+            notice = Notice(text: localized("此高危操作请在 Mac 上批准"), isError: true)
+            return false
+        }
         if allow, source == .notification, isKnownHighRiskApproval(sessionKey: sessionKey, toolCallId: toolCallId) {
             notice = Notice(text: localized("高风险操作，请在 App 前台核对后批准"), isError: true)
             return false
@@ -535,10 +544,32 @@ final class MacGatewayStore {
             return true
         } catch {
             guard self.client === client else { return false }
-            if !forgetIfRevoked(error, for: client) { notice = Notice(text: error.localizedDescription, isError: true) }
+            if case MacGatewayError.forbidden = error {
+                localApprovalOnlyCallIds.insert(toolCallId)
+                notice = Notice(text: localized("此高危操作请在 Mac 上批准"), isError: true)
+            } else if !forgetIfRevoked(error, for: client) {
+                notice = Notice(text: error.localizedDescription, isError: true)
+            }
             await refresh()
             return false
         }
+    }
+
+    func requiresLocalApprovalOnly(sessionKey: String, toolCallId: String) -> Bool {
+        if localApprovalOnlyCallIds.contains(toolCallId) {
+            return true
+        }
+        if let boardApproval = boardItems.compactMap(\.approval).first(where: {
+            $0.sessionKey == sessionKey && $0.toolCallId == toolCallId
+        }) {
+            return boardApproval.requiresLocalApproval
+        }
+        if let session = status?.sessions.first(where: { $0.key == sessionKey }),
+           let pending = session.pendingApproval,
+           pending.toolCallId == toolCallId {
+            return pending.requiresLocalApproval
+        }
+        return false
     }
 
     func isKnownHighRiskApproval(sessionKey: String, toolCallId: String) -> Bool {
@@ -762,6 +793,7 @@ final class MacGatewayStore {
         cloudAgents = []
         cloudTasks = []
         busyCloudTaskIds = []
+        localApprovalOnlyCallIds = []
         cloudConfig = nil
         cloudConfigError = nil
         cloudConfigLoading = false

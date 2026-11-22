@@ -218,6 +218,8 @@ struct MacGatewayCloudDialogueEvent: Codable, Equatable, Identifiable, Sendable 
     var observedSeq: Int64? = nil
     var ledgerId: String? = nil
     var outcomeUnknown: Bool? = nil
+    var sourceRefs: [String]? = nil
+    var sourcePaths: [String]? = nil
 
     init(
         seq: Int64,
@@ -238,7 +240,9 @@ struct MacGatewayCloudDialogueEvent: Codable, Equatable, Identifiable, Sendable 
         epoch: Int64? = nil,
         observedSeq: Int64? = nil,
         ledgerId: String? = nil,
-        outcomeUnknown: Bool? = nil
+        outcomeUnknown: Bool? = nil,
+        sourceRefs: [String]? = nil,
+        sourcePaths: [String]? = nil
     ) {
         self.seq = seq
         self.id = id
@@ -259,6 +263,23 @@ struct MacGatewayCloudDialogueEvent: Codable, Equatable, Identifiable, Sendable 
         self.observedSeq = observedSeq
         self.ledgerId = ledgerId
         self.outcomeUnknown = outcomeUnknown
+        self.sourceRefs = sourceRefs
+        self.sourcePaths = sourcePaths
+    }
+
+    var displaySourceAnnotations: [String] {
+        Self.mergedSourceAnnotations(sourceRefs: sourceRefs, sourcePaths: sourcePaths)
+    }
+
+    static func mergedSourceAnnotations(sourceRefs: [String]?, sourcePaths: [String]?) -> [String] {
+        var result: [String] = []
+        var seen = Set<String>()
+        for raw in (sourceRefs ?? []) + (sourcePaths ?? []) {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
+            result.append(trimmed)
+        }
+        return result
     }
 
     /// Parses deterministic server causal event IDs (`consumed:<inputId>` / `cancelled:<inputId>`).
@@ -355,6 +376,8 @@ struct MacGatewayCloudDialogueWorkItemProgress: Codable, Equatable, Identifiable
     var epoch: Int64? = nil
     var observedSeq: Int64? = nil
     var ledgerId: String? = nil
+    var sourceRefs: [String]? = nil
+    var sourcePaths: [String]? = nil
 
     init(
         workItemId: String,
@@ -373,7 +396,9 @@ struct MacGatewayCloudDialogueWorkItemProgress: Codable, Equatable, Identifiable
         executorId: String? = nil,
         epoch: Int64? = nil,
         observedSeq: Int64? = nil,
-        ledgerId: String? = nil
+        ledgerId: String? = nil,
+        sourceRefs: [String]? = nil,
+        sourcePaths: [String]? = nil
     ) {
         self.workItemId = workItemId
         self.topicId = topicId
@@ -392,12 +417,15 @@ struct MacGatewayCloudDialogueWorkItemProgress: Codable, Equatable, Identifiable
         self.epoch = epoch
         self.observedSeq = observedSeq
         self.ledgerId = ledgerId
+        self.sourceRefs = sourceRefs
+        self.sourcePaths = sourcePaths
     }
 
     private enum CodingKeys: String, CodingKey {
         case workItemId, topicId, statusLine, processEventCount, lastEventSeq, outcome
         case isStopRequested, isStopTooLate, isOutcomeUnknown, outcomeUnknownResolution
         case conversationId, parentRunId, executorKind, executorId, epoch, observedSeq, ledgerId
+        case sourceRefs, sourcePaths
     }
 
     init(from decoder: Decoder) throws {
@@ -422,6 +450,12 @@ struct MacGatewayCloudDialogueWorkItemProgress: Codable, Equatable, Identifiable
         epoch = try c.decodeIfPresent(Int64.self, forKey: .epoch)
         observedSeq = try c.decodeIfPresent(Int64.self, forKey: .observedSeq)
         ledgerId = try c.decodeIfPresent(String.self, forKey: .ledgerId)
+        sourceRefs = try c.decodeIfPresent([String].self, forKey: .sourceRefs)
+        sourcePaths = try c.decodeIfPresent([String].self, forKey: .sourcePaths)
+    }
+
+    var displaySourceAnnotations: [String] {
+        MacGatewayCloudDialogueEvent.mergedSourceAnnotations(sourceRefs: sourceRefs, sourcePaths: sourcePaths)
     }
 
     fileprivate var canRecordUnknownOutcome: Bool {
@@ -2065,7 +2099,8 @@ extension MacGatewayStore {
                     outcomeUnknownResolution: provisional.outcomeUnknownResolution,
                     conversationId: provisional.conversationId, parentRunId: provisional.parentRunId,
                     executorKind: provisional.executorKind, executorId: provisional.executorId,
-                    epoch: provisional.epoch, observedSeq: provisional.observedSeq, ledgerId: provisional.ledgerId
+                    epoch: provisional.epoch, observedSeq: provisional.observedSeq, ledgerId: provisional.ledgerId,
+                    sourceRefs: provisional.sourceRefs, sourcePaths: provisional.sourcePaths
                 )
             } else {
                 current?.processEventCount += provisional.processEventCount
@@ -2103,6 +2138,18 @@ extension MacGatewayStore {
         }
         if let ledgerId = Self.nonEmptyTrimmed(event.ledgerId) {
             progress.ledgerId = ledgerId
+        }
+        if let incomingRefs = event.sourceRefs, !incomingRefs.isEmpty {
+            progress.sourceRefs = MacGatewayCloudDialogueEvent.mergedSourceAnnotations(
+                sourceRefs: progress.sourceRefs,
+                sourcePaths: incomingRefs
+            )
+        }
+        if let incomingPaths = event.sourcePaths, !incomingPaths.isEmpty {
+            progress.sourcePaths = MacGatewayCloudDialogueEvent.mergedSourceAnnotations(
+                sourceRefs: progress.sourcePaths,
+                sourcePaths: incomingPaths
+            )
         }
     }
 
@@ -2665,5 +2712,459 @@ extension MacGatewayStore {
     func stopCloudDialoguePolling() {
         cloudDialoguePollTask?.cancel()
         cloudDialoguePollTask = nil
+    }
+}
+
+// MARK: - Stage 2-B Unified Timeline Mac Delegation & Approval Projections
+
+enum MacDelegationAttributionBadge: String, Equatable, Sendable {
+    case running
+    case awaitingMacApproval
+    case completed
+    case outcomeUnknown
+    case failed
+    case cancelled
+
+    var label: String {
+        switch self {
+        case .running:
+            return IOSAppLocalization.string("Mac 执行中", defaultValue: "Mac 执行中")
+        case .awaitingMacApproval:
+            return IOSAppLocalization.string("等待 Mac 确认", defaultValue: "等待 Mac 确认")
+        case .completed:
+            return IOSAppLocalization.string("Mac 已完成", defaultValue: "Mac 已完成")
+        case .outcomeUnknown:
+            return IOSAppLocalization.string("结果待确认", defaultValue: "结果待确认")
+        case .failed:
+            return IOSAppLocalization.string("Mac 执行失败", defaultValue: "Mac 执行失败")
+        case .cancelled:
+            return IOSAppLocalization.string("Mac 已取消", defaultValue: "Mac 已取消")
+        }
+    }
+}
+
+enum MacApprovalRiskTier: String, Equatable, Sendable {
+    case l1 = "L1"
+    case l2 = "L2"
+    case l3 = "L3"
+
+    var badgeText: String {
+        switch self {
+        case .l1: return IOSAppLocalization.string("L1 只读确认", defaultValue: "L1 只读确认")
+        case .l2: return IOSAppLocalization.string("L2 变更审批", defaultValue: "L2 变更审批")
+        case .l3: return IOSAppLocalization.string("L3 高危审批", defaultValue: "L3 高危审批")
+        }
+    }
+
+    static func resolve(rawLevel: String?, highRisk: Bool, requiresLocalApproval: Bool) -> MacApprovalRiskTier {
+        if requiresLocalApproval { return .l3 }
+        if let normalized = rawLevel?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() {
+            if normalized.contains("L3") || normalized == "3" || normalized == "HIGH" { return .l3 }
+            if normalized.contains("L2") || normalized == "2" || normalized == "MEDIUM" { return .l2 }
+            if normalized.contains("L1") || normalized == "1" || normalized == "LOW" { return .l1 }
+        }
+        return highRisk ? .l3 : .l2
+    }
+}
+
+/// Unified read-only approval card payload consumed by the half-sheet Diff approval sheet,
+/// the unified chat timeline, and the Mac task board.
+struct MacGatewayApprovalCardItem: Identifiable, Equatable, Sendable {
+    var id: String { "\(sessionKey)::\(toolCallId)" }
+    var sessionKey: String
+    var toolCallId: String
+    var tool: String
+    var summary: String
+    var detail: String?
+    var diffPreview: String?
+    var targetDeviceName: String
+    var highRisk: Bool
+    var requiresLocalApproval: Bool
+    var riskTier: MacApprovalRiskTier
+    var workItemId: String?
+    var conversationId: String?
+
+    var effectivePreviewText: String? {
+        if let diff = diffPreview?.trimmingCharacters(in: .whitespacesAndNewlines), !diff.isEmpty {
+            return diff
+        }
+        if let detail = detail?.trimmingCharacters(in: .whitespacesAndNewlines), !detail.isEmpty {
+            return detail
+        }
+        return nil
+    }
+
+    init(
+        sessionKey: String,
+        toolCallId: String,
+        tool: String,
+        summary: String,
+        detail: String? = nil,
+        diffPreview: String? = nil,
+        targetDeviceName: String,
+        highRisk: Bool = true,
+        requiresLocalApproval: Bool = false,
+        riskLevel: String? = nil,
+        workItemId: String? = nil,
+        conversationId: String? = nil
+    ) {
+        self.sessionKey = sessionKey
+        self.toolCallId = toolCallId
+        self.tool = tool
+        self.summary = summary
+        self.detail = detail
+        self.diffPreview = diffPreview
+        self.targetDeviceName = targetDeviceName
+        self.highRisk = highRisk
+        self.requiresLocalApproval = requiresLocalApproval
+        self.riskTier = MacApprovalRiskTier.resolve(
+            rawLevel: riskLevel,
+            highRisk: highRisk,
+            requiresLocalApproval: requiresLocalApproval
+        )
+        self.workItemId = workItemId
+        self.conversationId = conversationId
+    }
+
+    init(approval: MacGatewayBoardItem.Approval, title: String?, fallbackDeviceName: String) {
+        let resolvedSummary = approval.summary?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            ?? title?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+            ?? approval.tool
+        self.init(
+            sessionKey: approval.sessionKey,
+            toolCallId: approval.toolCallId,
+            tool: approval.tool,
+            summary: resolvedSummary,
+            detail: approval.detail,
+            diffPreview: approval.diffPreview,
+            targetDeviceName: approval.targetDeviceName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? fallbackDeviceName,
+            highRisk: approval.highRisk,
+            requiresLocalApproval: approval.requiresLocalApproval,
+            riskLevel: approval.riskLevel,
+            workItemId: approval.workItemId,
+            conversationId: approval.conversationId
+        )
+    }
+}
+
+/// Equatable lightweight projection of a Mac-delegated run displayed inside the unified chat timeline.
+struct MacDelegatedTimelineRun: Identifiable, Equatable, Sendable {
+    var id: String
+    var requestId: String?
+    var workItemId: String?
+    var conversationId: String?
+    var promptText: String
+    var badge: MacDelegationAttributionBadge
+    var statusLine: String
+    var resultText: String?
+    var sourceAnnotations: [String]
+    var isReceiptUnconfirmed: Bool
+    var isOutcomeUnknown: Bool
+    var pendingApproval: MacGatewayApprovalCardItem?
+    var lastError: String?
+    var isBusy: Bool
+    var canFollowup: Bool
+    var canStop: Bool
+    var sortSeq: Int64
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
+extension MacGatewayStore {
+    /// Explicit single-owner delegation to the paired Mac from the unified main timeline.
+    /// Always sends `X-Amber-Dialogue-Version: 1` with a stable `conversationId`.
+    /// On weak network or missing receipt, preserves the pending submission for explicit recheck/cancel
+    /// and NEVER silently falls back to local execution.
+    @discardableResult
+    func delegateToMacInUnifiedTimeline(
+        text: String,
+        conversationId: String,
+        requestId: String = UUID().uuidString.lowercased(),
+        targetWorkItemId: String? = nil
+    ) async -> Result<MacGatewayCloudDialogueReceipt, Error> {
+        let normalizedConversationId = Self.nonEmptyTrimmed(conversationId)
+        guard let normalizedConversationId else {
+            return .failure(MacGatewayError.server(localized("缺少稳定的会话标识，无法派发给 Mac")))
+        }
+        if let targetWorkItemId = Self.nonEmptyTrimmed(targetWorkItemId) {
+            return await sendCloudWorkItemInput(
+                workItemId: targetWorkItemId,
+                text: text,
+                requestId: requestId,
+                conversationId: normalizedConversationId
+            )
+        }
+        return await sendCloudDialogueMessage(
+            text: text,
+            requestId: requestId,
+            conversationId: normalizedConversationId
+        )
+    }
+
+    /// Explicit recovery action for a weak-network / receipt-missing Mac delegation:
+    /// checks the server receipt, polls dialogue events, and if needed rechecks the work item.
+    @discardableResult
+    func recheckPendingMacSubmission(
+        requestId: String?,
+        workItemId: String?
+    ) async -> Result<Void, Error> {
+        var lastError: Error?
+        if let requestId = Self.nonEmptyTrimmed(requestId) {
+            if case .failure(let error) = await refreshCloudDialogueReceipt(requestId: requestId) {
+                if case MacGatewayError.unauthorized = error { return .failure(error) }
+                lastError = error
+            }
+        }
+        if case .failure(let error) = await pollCloudDialogueEvents() {
+            if case MacGatewayError.unauthorized = error { return .failure(error) }
+            lastError = error
+        }
+        if let workItemId = Self.nonEmptyTrimmed(workItemId),
+           cloudDialogueProgressByWorkItem[workItemId]?.needsOutcomeUnknownAction == true {
+            if case .failure(let error) = await recheckOutcomeUnknownCloudWorkItem(workItemId: workItemId) {
+                if case MacGatewayError.unauthorized = error { return .failure(error) }
+                lastError = error
+            }
+        }
+        if let lastError,
+           let requestId = Self.nonEmptyTrimmed(requestId),
+           cloudDialogueSubmissions.first(where: { $0.requestId == requestId })?.isAwaitingReceiptConfirmation == true {
+            return .failure(lastError)
+        }
+        return .success(())
+    }
+
+    /// Explicit cancel action for a Mac delegation (running work item or unconfirmed weak-network submission).
+    /// Never silently falls back to local execution.
+    @discardableResult
+    func cancelPendingMacSubmission(
+        requestId: String?,
+        workItemId: String?
+    ) async -> Bool {
+        if let workItemId = Self.nonEmptyTrimmed(workItemId) {
+            if cloudDialogueProgressByWorkItem[workItemId]?.needsOutcomeUnknownAction == true {
+                return abandonOutcomeUnknownCloudWorkItem(workItemId: workItemId)
+            }
+            let result = await stopCloudWorkItem(workItemId: workItemId)
+            if case .success = result { return true }
+        }
+        guard let requestId = Self.nonEmptyTrimmed(requestId),
+              let idx = cloudDialogueSubmissions.firstIndex(where: { $0.requestId == requestId }) else {
+            return false
+        }
+        cloudDialogueSubmissions[idx].isAbandoned = true
+        cloudDialogueSubmissions[idx].lastError = localized("已显式取消（未回退本机）")
+        cloudDialogueSubmissions[idx].updatedAt = Date()
+        persistCloudDialogueState()
+        return true
+    }
+
+    /// Aggregates active approval cards across the Mac board and status sessions,
+    /// honoring both declared `requiresLocalApproval` and prior HTTP `403` rejections.
+    func activeMacApprovalCardItems(for conversationId: String? = nil) -> [MacGatewayApprovalCardItem] {
+        let deviceName = connection?.name ?? localized("Mac")
+        var items: [MacGatewayApprovalCardItem] = []
+        var seenCallIds = Set<String>()
+
+        for boardItem in boardItems {
+            guard let approval = boardItem.approval, seenCallIds.insert(approval.toolCallId).inserted else { continue }
+            var card = MacGatewayApprovalCardItem(
+                approval: approval,
+                title: boardItem.title,
+                fallbackDeviceName: deviceName
+            )
+            if localApprovalOnlyCallIds.contains(approval.toolCallId) {
+                card.requiresLocalApproval = true
+                card.riskTier = .l3
+            }
+            items.append(card)
+        }
+
+        for session in status?.sessions ?? [] {
+            guard let pending = session.pendingApproval, seenCallIds.insert(pending.toolCallId).inserted else { continue }
+            let requiresLocal = pending.requiresLocalApproval || localApprovalOnlyCallIds.contains(pending.toolCallId)
+            let card = MacGatewayApprovalCardItem(
+                sessionKey: session.key,
+                toolCallId: pending.toolCallId,
+                tool: pending.tool,
+                summary: pending.summary?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? session.displayTitle,
+                detail: pending.detail,
+                diffPreview: pending.diffPreview,
+                targetDeviceName: pending.targetDeviceName?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? deviceName,
+                highRisk: pending.highRisk,
+                requiresLocalApproval: requiresLocal,
+                riskLevel: pending.riskLevel,
+                workItemId: pending.workItemId,
+                conversationId: pending.conversationId
+            )
+            items.append(card)
+        }
+
+        guard let targetConversationId = Self.nonEmptyTrimmed(conversationId) else {
+            return items
+        }
+        return items.filter { card in
+            guard let cardConvId = Self.nonEmptyTrimmed(card.conversationId) else { return true }
+            return cardConvId.caseInsensitiveCompare(targetConversationId) == .orderedSame
+        }
+    }
+
+    /// Equatable projection of Mac-delegated runs belonging to the given unified conversation timeline.
+    /// Does zero disk I/O and is safe to call from SwiftUI projection boundaries.
+    func unifiedMacDelegatedRuns(for conversationId: String?) -> [MacDelegatedTimelineRun] {
+        guard let targetConversationId = Self.nonEmptyTrimmed(conversationId) else { return [] }
+        let approvals = activeMacApprovalCardItems(for: targetConversationId)
+        var runs: [MacDelegatedTimelineRun] = []
+        var coveredWorkItemIds = Set<String>()
+
+        let matchingProgresses = cloudDialogueProgressByWorkItem.values.filter { progress in
+            guard let progressConvId = Self.nonEmptyTrimmed(progress.conversationId) else { return false }
+            return progressConvId.caseInsensitiveCompare(targetConversationId) == .orderedSame
+        }
+
+        for progress in matchingProgresses {
+            coveredWorkItemIds.insert(progress.workItemId)
+            let relatedSubmission = cloudDialogueSubmissions.first { submission in
+                submission.kind == .mainMessage && (
+                    submission.workItemId == progress.workItemId ||
+                    submission.receipt?.workItemIds.contains(progress.workItemId) == true
+                )
+            }
+            let relatedUserEvent = cloudDialogueEvents.last { event in
+                (event.kind == .userMessage || event.kind == .followup) && (
+                    event.workItemId == progress.workItemId ||
+                    (!progress.topicId.isEmpty && event.topicId == progress.topicId)
+                )
+            }
+            let relatedResultEvent = cloudDialogueEvents.last { event in
+                (event.kind == .taskResult || (event.kind == .assistantReply && !event.isUpfrontAcknowledgement)) && (
+                    event.workItemId == progress.workItemId ||
+                    (!progress.topicId.isEmpty && event.topicId == progress.topicId)
+                )
+            }
+            let matchedApproval = approvals.first { card in
+                if let cardWorkId = Self.nonEmptyTrimmed(card.workItemId) {
+                    return cardWorkId == progress.workItemId
+                }
+                return card.conversationId?.caseInsensitiveCompare(targetConversationId) == .orderedSame
+                    && progress.outcome == .blocked
+            }
+
+            let promptText = Self.nonEmptyTrimmed(relatedSubmission?.text)
+                ?? Self.nonEmptyTrimmed(relatedUserEvent?.text)
+                ?? localized("已交给 Mac 执行")
+            let sources = MacGatewayCloudDialogueEvent.mergedSourceAnnotations(
+                sourceRefs: progress.displaySourceAnnotations,
+                sourcePaths: relatedResultEvent?.displaySourceAnnotations
+            )
+            let badge: MacDelegationAttributionBadge
+            if matchedApproval != nil || progress.outcome == .blocked {
+                badge = .awaitingMacApproval
+            } else if progress.needsOutcomeUnknownAction {
+                badge = .outcomeUnknown
+            } else if progress.outcomeUnknownResolution == .abandoned || progress.outcome == .cancelled {
+                badge = .cancelled
+            } else if progress.outcome == .failed {
+                badge = .failed
+            } else if progress.outcome == .completed {
+                badge = .completed
+            } else {
+                badge = .running
+            }
+
+            let resultText: String? = {
+                guard let event = relatedResultEvent, !event.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    return nil
+                }
+                return cloudDialogueDisplayText(for: event)
+            }()
+
+            let isBusy = relatedSubmission.map { busyCloudDialogueRequestIds.contains($0.requestId) } ?? false
+            runs.append(
+                MacDelegatedTimelineRun(
+                    id: "mac-work:\(progress.workItemId)",
+                    requestId: relatedSubmission?.requestId,
+                    workItemId: progress.workItemId,
+                    conversationId: targetConversationId,
+                    promptText: promptText,
+                    badge: badge,
+                    statusLine: progress.displaySingleLine,
+                    resultText: resultText,
+                    sourceAnnotations: sources,
+                    isReceiptUnconfirmed: false,
+                    isOutcomeUnknown: progress.needsOutcomeUnknownAction,
+                    pendingApproval: matchedApproval,
+                    lastError: relatedSubmission?.lastError,
+                    isBusy: isBusy,
+                    canFollowup: !progress.needsOutcomeUnknownAction && progress.outcomeUnknownResolution != .abandoned,
+                    canStop: progress.isLive && !progress.isStopRequested && !progress.needsOutcomeUnknownAction,
+                    sortSeq: max(progress.lastEventSeq, relatedResultEvent?.seq ?? 0)
+                )
+            )
+        }
+
+        // Also surface pending / weak-network / receipt-missing submissions bound to this conversation.
+        let matchingSubmissions = cloudDialogueSubmissions.filter { submission in
+            guard submission.kind == .mainMessage,
+                  let subConvId = Self.nonEmptyTrimmed(submission.conversationId),
+                  subConvId.caseInsensitiveCompare(targetConversationId) == .orderedSame else {
+                return false
+            }
+            let linkedWorkIds = (submission.receipt?.workItemIds ?? []) + (submission.workItemId.map { [$0] } ?? [])
+            return !linkedWorkIds.contains(where: { coveredWorkItemIds.contains($0) })
+        }
+
+        for (index, submission) in matchingSubmissions.enumerated() {
+            let workItemId = submission.workItemId ?? submission.receipt?.workItemIds.first
+            let isBusy = busyCloudDialogueRequestIds.contains(submission.requestId)
+            let isUnconfirmed = submission.isAwaitingReceiptConfirmation && !isBusy
+            let badge: MacDelegationAttributionBadge
+            let statusLine: String
+            if submission.isAbandoned {
+                badge = .cancelled
+                statusLine = localized("已显式取消（未回退本机）")
+            } else if submission.isOutcomeUnknown {
+                badge = .outcomeUnknown
+                statusLine = localized("结果待确认")
+            } else if submission.isConfirmedNotExecuted {
+                badge = .failed
+                statusLine = submission.lastError ?? localized("Mac 未接收请求（未回退本机）")
+            } else if isUnconfirmed {
+                badge = .running
+                statusLine = submission.lastError ?? localized("弱网待确认回执 · 不会静默回退本机")
+            } else {
+                badge = .running
+                statusLine = localized("正在派发给 Mac…")
+            }
+
+            runs.append(
+                MacDelegatedTimelineRun(
+                    id: "mac-sub:\(submission.requestId)",
+                    requestId: submission.requestId,
+                    workItemId: workItemId,
+                    conversationId: targetConversationId,
+                    promptText: Self.nonEmptyTrimmed(submission.text) ?? localized("已交给 Mac 执行"),
+                    badge: badge,
+                    statusLine: statusLine,
+                    resultText: nil,
+                    sourceAnnotations: [],
+                    isReceiptUnconfirmed: isUnconfirmed || submission.isConfirmedNotExecuted,
+                    isOutcomeUnknown: submission.isOutcomeUnknown,
+                    pendingApproval: nil,
+                    lastError: submission.lastError,
+                    isBusy: isBusy,
+                    canFollowup: workItemId != nil && !submission.isAbandoned,
+                    canStop: !submission.isAbandoned && !submission.isConfirmedNotExecuted,
+                    sortSeq: Int64(1_000_000 + index)
+                )
+            )
+        }
+
+        return runs.sorted { lhs, rhs in
+            if lhs.sortSeq != rhs.sortSeq { return lhs.sortSeq < rhs.sortSeq }
+            return lhs.id < rhs.id
+        }
     }
 }

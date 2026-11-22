@@ -337,12 +337,15 @@ struct AgentActivityBody: View {
     let phase: AgentActivityPhase
     /// 锁屏是共享表面，步骤只显示类别和数量，不显示搜索词、网址、文件名。
     var showsContent = true
+    /// 锁屏红线：禁止在锁屏显示任何批准按钮，仅保留进度脉搏与安全止损控制。
+    var isLockScreen = false
 
     private var controls: [AgentActivityInlineControl] {
         AgentActivityInlineControlPolicy.controls(
             presentation: state.presentation,
             isStale: phase == .stale,
-            hasConversation: attributes.conversationId != nil
+            hasConversation: attributes.conversationId != nil,
+            isLockScreen: isLockScreen
         )
     }
 
@@ -797,7 +800,7 @@ struct LockScreenAgentActivityView: View {
                     .fixedSize()
                     .layoutPriority(1)
             }
-            AgentActivityBody(attributes: attributes, state: state, phase: phase, showsContent: false)
+            AgentActivityBody(attributes: attributes, state: state, phase: phase, showsContent: false, isLockScreen: true)
         }
         .padding(14)
         .overlay {

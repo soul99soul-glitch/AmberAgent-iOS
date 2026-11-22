@@ -6,6 +6,8 @@ final class RouterPath {
     private var storedPath: [Route] = []
     /// An explicit automation record open must reveal the conversation, even from Tasks / Hubs.
     var phoneAutomationChatPresentationRevision = 0
+    /// Bumped whenever the iOS Share Extension prefills the unified chat composer.
+    var sharePrefillRevision = 0
     /// 宽屏（iPhone Duo 展开 / iPad）双栏时，会话侧栏是否显示。
     var showsSidebar = true
 

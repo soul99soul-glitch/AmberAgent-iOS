@@ -54,6 +54,7 @@ struct ChatView: View {
     @State var isPresentingEmbodimentHome = false
     @State var isPresentingCloudGatewaySettings = false
     @State var duetSelectedToolTarget: ToolDetailTarget?
+    @State var activeMacApprovalCard: MacGatewayApprovalCardItem?
     @Environment(IOSConversationStore.self)  var conversationStore
     @Environment(ConversationActivityCenter.self) var conversationActivityCenter
     @Environment(\.accessibilityReduceMotion)  var reduceMotion
@@ -243,6 +244,9 @@ struct ChatView: View {
                 // 不再强制 light:原生 `.glassEffect` 本就按系统外观渲染(深色模式下渲染为深色玻璃),
                 // 若把内容强制成 light,前景图标/文字会按浅色调色板解析成深灰,贴在深色玻璃上发暗。
                 // 让 composer 跟随真实外观(与顶栏一致),图标与玻璃明暗才匹配。
+                if !isCloudHostActive, !collapsesComposerForDuetPanel, !collapsesComposerForSiteMemoryApproval {
+                    unifiedMacDelegationDock
+                }
                 inputBar
             }
         }
@@ -438,6 +442,16 @@ struct ChatView: View {
             )
             .amberFloatingSheet(detents: [.medium, .large])
         }
+        .sheet(item: $activeMacApprovalCard) { approval in
+            MacReadOnlyDiffApprovalSheet(
+                item: approval,
+                store: MacGatewayStore.shared,
+                onRequestModification: { card in
+                    beginMacModificationFromApproval(card)
+                }
+            )
+            .amberFloatingSheet(detents: [.medium, .large])
+        }
     }
 
     var isAnyModalSheetPresented: Bool {
@@ -455,6 +469,7 @@ struct ChatView: View {
             || isPresentingPersonaStudio
             || isPresentingCloudGatewaySettings
             || duetSelectedToolTarget != nil
+            || activeMacApprovalCard != nil
     }
 
     var body: some View {
@@ -524,6 +539,13 @@ struct ChatView: View {
         // 消息内容同步由 generation 链路的 setMessages 负责，不靠这里。
         .onChange(of: router.phoneAutomationChatPresentationRevision) { _, _ in
             composerState.activeDuetTab = .chat
+        }
+        .onChange(of: router.sharePrefillRevision) { _, _ in
+            composerState.activeDuetTab = .chat
+            composerState.sharePrefillNotice = MacGatewayStore.shared.connection != nil
+                ? macGatewayL("来自系统分享 · 可直接发送或点「交给 Mac」")
+                : macGatewayL("已预填来自系统分享的内容")
+            composerState.isInputFocused = true
         }
         .onChange(of: conversationStore.conversationSwitchedRevision) { _, _ in
             handleConversationSwitch()
@@ -1014,6 +1036,71 @@ struct ChatView: View {
         )
             .onAppear { syncIslandPresentation() }
             .onChange(of: topIslandState) { _, _ in syncIslandPresentation() }
+    }
+
+    @ViewBuilder
+    private var unifiedMacDelegationDock: some View {
+        let macGateway = MacGatewayStore.shared
+        if macGateway.connection != nil {
+            let macRuns = macGateway.unifiedMacDelegatedRuns(for: currentConversationIdString)
+            let attachedApprovalIds = Set(macRuns.compactMap { $0.pendingApproval?.toolCallId })
+            let standaloneApprovals = macGateway.activeMacApprovalCardItems(for: currentConversationIdString).filter {
+                !attachedApprovalIds.contains($0.toolCallId)
+            }
+            if !macRuns.isEmpty || !standaloneApprovals.isEmpty {
+                ScrollView(.vertical, showsIndicators: false) {
+                    UnifiedMacDelegationTimelineSection(
+                        runs: macRuns,
+                        pendingStandaloneApprovals: standaloneApprovals,
+                        onRecheckPending: { run in
+                            Task { @MainActor in
+                                _ = await MacGatewayStore.shared.recheckPendingMacSubmission(
+                                    requestId: run.requestId,
+                                    workItemId: run.workItemId
+                                )
+                            }
+                        },
+                        onCancelPending: { run in
+                            Task { @MainActor in
+                                _ = await MacGatewayStore.shared.cancelPendingMacSubmission(
+                                    requestId: run.requestId,
+                                    workItemId: run.workItemId
+                                )
+                            }
+                        },
+                        onRecheckUnknown: { workItemId in
+                            Task { @MainActor in
+                                _ = await MacGatewayStore.shared.recheckOutcomeUnknownCloudWorkItem(workItemId: workItemId)
+                            }
+                        },
+                        onRetryUnknown: { workItemId in
+                            Task { @MainActor in
+                                _ = await MacGatewayStore.shared.retryOutcomeUnknownCloudWorkItem(workItemId: workItemId)
+                            }
+                        },
+                        onAbandonUnknown: { workItemId in
+                            _ = MacGatewayStore.shared.abandonOutcomeUnknownCloudWorkItem(workItemId: workItemId)
+                        },
+                        onFollowup: { workItemId in
+                            composerState.unifiedMacFollowupWorkItemId = workItemId
+                            composerState.isDelegateToMacArmed = false
+                            composerState.isInputFocused = true
+                        },
+                        onStop: { workItemId in
+                            Task { @MainActor in
+                                _ = await MacGatewayStore.shared.stopCloudWorkItem(workItemId: workItemId)
+                            }
+                        },
+                        onOpenApproval: { approval in
+                            activeMacApprovalCard = approval
+                        }
+                    )
+                    .padding(.horizontal, ChatLayout.contentHorizontalInset)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(maxHeight: 220)
+            }
+        }
     }
 
     // MARK: - Message List
