@@ -210,6 +210,28 @@
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "最近同步 %@" } }
       }
     },
+    "Local" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Local" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ローカル" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "로컬" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Локально" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "本机" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "本機" } }
+      }
+    },
+    "Cloud" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Cloud" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "クラウド" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "클라우드" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Облако" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "云端" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "雲端" } }
+      }
+    },
     "Tap to view recent records" : {
       "extractionState" : "manual",
       "localizations" : {

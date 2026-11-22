@@ -18,17 +18,28 @@ enum WatchTaskSnapshotBuilder {
         summary: String? = nil,
         decision: WatchDecision? = nil,
         languageCode: String? = nil,
-        now: Date = Date()
+        now: Date = Date(),
+        origin: WatchExecutionOrigin = .local,
+        originName: String? = nil,
+        needsAttention: Bool? = nil,
+        headlineOverride: String? = nil,
+        detailOverride: String? = nil
     ) -> WatchTaskSnapshot {
         let phase = presentation.phase.rawValue
         let stage = presentation.stage.rawValue
         let kind = presentation.kind.rawValue
-        let headline = presentation.kind.localizedTitle(languageCode: languageCode)
-        let detail = presentation.stage.localizedTitle(languageCode: languageCode)
+        let headline = WatchTaskText.singleLine(headlineOverride, maxLength: 80)
+            ?? presentation.kind.localizedTitle(languageCode: languageCode)
+        let detail = detailOverride ?? presentation.stage.localizedTitle(languageCode: languageCode)
         let metricText = presentation.metric.localizedShortText(languageCode: languageCode)
         let clippedSummary = WatchTaskText.clipped(summary, maxLength: 280)
         var visibleDecision = decision
-        if conversationId == nil {
+        if visibleDecision?.blocksWatchApproval == true {
+            // Hard L3 redline gate: never project an approve option to Watch.
+            visibleDecision?.options.removeAll { $0.style == .approve }
+            visibleDecision?.localApprovalOnly = true
+        }
+        if conversationId == nil, origin == .local {
             visibleDecision?.options.removeAll { $0.style == .openOnPhone }
         }
 
@@ -37,9 +48,10 @@ enum WatchTaskSnapshotBuilder {
             switch decision.type {
             case .approval:
                 // Keep the action projection in lockstep with the options on
-                // the decision card. In particular, a phone-only approval must
-                // never leave a stale approve action in the snapshot.
-                if decision.options.contains(where: { $0.style == .approve }) {
+                // the decision card. In particular, a phone-only or L3 approval
+                // must never leave a stale approve action in the snapshot.
+                if !decision.blocksWatchApproval,
+                   decision.options.contains(where: { $0.style == .approve }) {
                     actions.append(.approve)
                 }
                 if decision.options.contains(where: { $0.style == .deny }) {
@@ -73,12 +85,15 @@ enum WatchTaskSnapshotBuilder {
         }
         // A decision card already owns its single open-on-phone affordance.
         // For ordinary states, keep the state-changing primary action first.
-        if conversationId != nil, visibleDecision == nil {
+        if (conversationId != nil || origin != .local), visibleDecision == nil {
             actions.append(.openOnPhone)
         }
 
         var seen = Set<WatchAction>()
         actions = actions.filter { seen.insert($0).inserted }
+
+        let resolvedNeedsAttention = needsAttention
+            ?? (presentation.phase == .waitingForUser || visibleDecision != nil)
 
         return WatchTaskSnapshot(
             runId: runId,
@@ -94,8 +109,96 @@ enum WatchTaskSnapshotBuilder {
             decision: visibleDecision,
             actions: actions,
             updatedAt: now,
-            isStale: false
+            isStale: false,
+            origin: origin,
+            originName: WatchTaskText.singleLine(originName, maxLength: 40),
+            needsAttention: resolvedNeedsAttention
         )
+    }
+
+    static func remoteSnapshot(
+        from task: WatchRemoteTaskProjection,
+        languageCode: String? = nil
+    ) -> WatchTaskSnapshot {
+        let presentation: AgentActivityPresentation
+        switch task.phase {
+        case "waitingForUser":
+            presentation = .waitingForUser(kind: .workflow)
+        case "completed":
+            presentation = AgentActivityPresentation(
+                kind: .workflow,
+                phase: .completed,
+                stage: .completed,
+                action: .viewResult
+            )
+        case "failed":
+            presentation = .failed(retryable: false)
+        case "cancelled":
+            presentation = AgentActivityPresentation(
+                kind: .workflow,
+                phase: .cancelled,
+                stage: .cancelled,
+                action: nil
+            )
+        default:
+            presentation = AgentActivityPresentation(
+                kind: .workflow,
+                phase: .running,
+                stage: .runningTool,
+                action: nil
+            )
+        }
+        let decision = task.decision.map { remoteDecision(from: $0, languageCode: languageCode) }
+        var snapshot = make(
+            runId: task.runId,
+            conversationId: task.conversationId,
+            presentation: presentation,
+            summary: task.summary,
+            decision: decision,
+            languageCode: languageCode,
+            now: task.updatedAt,
+            origin: task.origin,
+            originName: task.hostName,
+            needsAttention: task.needsAttention,
+            headlineOverride: task.headline,
+            detailOverride: task.detail
+        )
+        // Remote board sessions without a cancellable workItemId cannot be cancelled from Watch.
+        if !task.canCancel {
+            snapshot.actions.removeAll { $0 == .cancel }
+        }
+        return snapshot
+    }
+
+    static func remoteDecision(
+        from remote: WatchRemotePendingDecision,
+        languageCode: String? = nil
+    ) -> WatchDecision {
+        switch remote.kind {
+        case .approval:
+            let blocksApproval = remote.riskLevel == .high || remote.localApprovalOnly
+            return approvalDecision(
+                id: remote.id,
+                title: remote.title,
+                body: remote.body,
+                risk: blocksApproval ? .high : remote.riskLevel,
+                allowsWatchApproval: !blocksApproval,
+                localApprovalOnly: blocksApproval,
+                origin: remote.origin,
+                languageCode: languageCode
+            )
+        case .askUser(let options):
+            var decision = askUserDecision(
+                from: WatchAskUserRequest(
+                    id: remote.id,
+                    question: remote.body,
+                    options: options
+                ),
+                languageCode: languageCode
+            )
+            decision.origin = remote.origin
+            return decision
+        }
     }
 
     static func decision(
@@ -382,8 +485,12 @@ enum WatchTaskSnapshotBuilder {
         body: String,
         risk: WatchRiskLevel,
         allowsWatchApproval: Bool = false,
+        localApprovalOnly: Bool = false,
+        origin: WatchExecutionOrigin? = nil,
         languageCode: String?
     ) -> WatchDecision {
+        let effectiveLocalOnly = localApprovalOnly || risk == .high
+        let effectiveAllowsWatchApproval = allowsWatchApproval && !effectiveLocalOnly
         var options = [
             WatchDecisionOption(
                 id: "deny",
@@ -391,7 +498,7 @@ enum WatchTaskSnapshotBuilder {
                 style: .deny
             )
         ]
-        if allowsWatchApproval {
+        if effectiveAllowsWatchApproval {
             options.append(
                 WatchDecisionOption(
                     id: "approve",
@@ -400,10 +507,19 @@ enum WatchTaskSnapshotBuilder {
                 )
             )
         }
+        let openTitle: String
+        if effectiveLocalOnly {
+            openTitle = localized(
+                origin == .mac ? "去 iPhone / Mac 核对" : "去 iPhone 核对",
+                languageCode: languageCode
+            )
+        } else {
+            openTitle = localized("在 iPhone 查看", languageCode: languageCode)
+        }
         options.append(
             WatchDecisionOption(
                 id: "open-phone",
-                title: localized("在 iPhone 查看", languageCode: languageCode),
+                title: openTitle,
                 style: .openOnPhone
             )
         )
@@ -419,7 +535,9 @@ enum WatchTaskSnapshotBuilder {
             body: body,
             options: options,
             riskLevel: risk,
-            allowsVoice: false
+            allowsVoice: false,
+            localApprovalOnly: effectiveLocalOnly,
+            origin: origin
         )
     }
 

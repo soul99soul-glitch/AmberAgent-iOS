@@ -661,9 +661,23 @@ final class MacGatewayStore {
 
     private func publishBoard() {
         let items = board ?? Self.fallbackBoard(sessions: status?.sessions ?? [])
-        if items != boardItems { boardItems = items }
+        var changed = false
+        if items != boardItems {
+            boardItems = items
+            changed = true
+        }
         let needsYou = connection != nil && isReachable == true ? items.filter { $0.column == .needsYou } : []
-        if needsYou != needsYouItems { needsYouItems = needsYou }
+        if needsYou != needsYouItems {
+            needsYouItems = needsYou
+            changed = true
+        }
+        if changed {
+            notifyWatchRemoteStateChanged()
+        }
+    }
+
+    func notifyWatchRemoteStateChanged() {
+        NotificationCenter.default.post(name: .amberWatchRemoteStateDidChange, object: self)
     }
 
     func refreshBoard() async {

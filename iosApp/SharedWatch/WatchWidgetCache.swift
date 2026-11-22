@@ -124,9 +124,9 @@ enum WatchWidgetCache {
 
     private static func privacySafeSnapshot(from snapshot: WatchTaskSnapshot) -> WatchTaskSnapshot {
         var safe = snapshot
-        // The widget only needs a stable target and generic lifecycle state.
-        // In particular, do not persist conversation identifiers, summaries,
-        // decision bodies, metric text, or action payloads in the App Group.
+        // The widget only needs a stable target, non-sensitive origin enum,
+        // attention flag, and generic lifecycle state. Never persist conversation
+        // identifiers, host names, summaries, decision bodies, or action payloads.
         safe.conversationId = nil
         safe.library = nil
         safe.headline = "Amber"
@@ -134,7 +134,9 @@ enum WatchWidgetCache {
         safe.summary = nil
         safe.metricText = nil
         safe.decision = nil
+        safe.originName = nil
         safe.actions = []
+        safe.needsAttention = snapshot.requiresAttention
         return safe
     }
 
@@ -147,19 +149,26 @@ enum WatchWidgetCache {
     }
 }
 
-/// Smart Stack ranking for the current-task widget. Only real task phases
-/// raise it; an idle or expired state never competes for the top slot.
+/// Smart Stack ranking for the current-task widget. Active local/cloud/Mac runs
+/// and pending decisions raise it; an idle or expired state never competes for the top slot.
 enum WatchWidgetRelevance {
     static let recentTerminalWindow: TimeInterval = 30 * 60
 
     /// `duration` 0 means "until the next timeline entry".
     static func score(for snapshot: WatchTaskSnapshot, now: Date) -> (score: Float, duration: TimeInterval) {
         guard snapshot.isActive, !snapshot.isStale else { return (0, 0) }
+        let freshnessWindow = WatchSnapshotFreshnessPolicy.staleAfter(for: snapshot)
         switch snapshot.phase {
-        case "waitingForUser", "running", "reconnecting":
+        case "waitingForUser":
             // Matches the widget's own expiry: an unconfirmed live state stops ranking.
-            guard now.timeIntervalSince(snapshot.updatedAt) < WatchSnapshotFreshnessPolicy.staleAfter else { return (0, 0) }
-            return (snapshot.phase == "waitingForUser" ? 100 : 60, 0)
+            guard now.timeIntervalSince(snapshot.updatedAt) < freshnessWindow else { return (0, 0) }
+            return (100, 0)
+        case "running", "reconnecting":
+            guard now.timeIntervalSince(snapshot.updatedAt) < freshnessWindow else { return (0, 0) }
+            if snapshot.needsAttention == true {
+                return (100, 0)
+            }
+            return (snapshot.effectiveOrigin == .local ? 60 : 70, 0)
         case "completed", "failed":
             let remaining = recentTerminalWindow - now.timeIntervalSince(snapshot.updatedAt)
             return remaining > 0 ? (30, remaining) : (0, 0)

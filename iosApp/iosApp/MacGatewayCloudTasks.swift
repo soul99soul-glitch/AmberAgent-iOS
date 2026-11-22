@@ -614,6 +614,7 @@ extension MacGatewayStore {
         cloudTasks[index].detail = resolvedDetail
         cloudTasks[index].lastError = nil
         cloudTasks[index].updatedAt = updatedDate
+        notifyWatchRemoteStateChanged()
         return true
     }
 

@@ -16,9 +16,9 @@ private enum AmberWatchWidgetAction {
 
     var title: String {
         switch self {
-        case .ask: AmberWatchWidgetCopy.localized("Ask Amber", fallback: "Ask Amber")
-        case .note: AmberWatchWidgetCopy.localized("Take a note", fallback: "Take a note")
-        case .recent: AmberWatchWidgetCopy.localized("Recent records", fallback: "Recent records")
+        case .ask: AmberWatchWidgetCopy.localized("Ask Amber", fallback: "问 Amber")
+        case .note: AmberWatchWidgetCopy.localized("Take a note", fallback: "随手记")
+        case .recent: AmberWatchWidgetCopy.localized("Recent records", fallback: "最近记录")
         }
     }
 
@@ -201,7 +201,7 @@ private struct AmberWatchTaskProvider: TimelineProvider {
            !snapshot.isStale,
            !["completed", "failed", "cancelled"].contains(snapshot.phase) {
             let expiration = snapshot.updatedAt.addingTimeInterval(
-                WatchSnapshotFreshnessPolicy.staleAfter
+                WatchSnapshotFreshnessPolicy.staleAfter(for: snapshot)
             )
             if expiration > now {
                 var stale = snapshot
@@ -210,6 +210,7 @@ private struct AmberWatchTaskProvider: TimelineProvider {
                 stale.detail = nil
                 stale.metricText = nil
                 stale.decision = nil
+                stale.needsAttention = false
                 stale.actions = []
                 stale.isStale = true
                 entries.append(AmberWatchTaskEntry(date: expiration, snapshot: stale))
@@ -238,7 +239,7 @@ private struct AmberWatchTaskView: View {
                     .widgetLabel(statusTitle)
             case .accessoryInline:
                 Label {
-                    Text(verbatim: "Amber · \(statusTitle)")
+                    Text(verbatim: "\(headerTitle) · \(statusTitle)")
                 } icon: {
                     Image(systemName: statusSymbol)
                 }
@@ -252,6 +253,27 @@ private struct AmberWatchTaskView: View {
         .widgetURL(targetURL)
     }
 
+    private var headerTitle: String {
+        guard entry.snapshot.isActive,
+              let originTag = originDisplayTag else {
+            return "Amber"
+        }
+        return "Amber · \(originTag)"
+    }
+
+    private var originDisplayTag: String? {
+        guard entry.snapshot.origin != nil else { return nil }
+        let languageCode = entry.snapshot.languageCode
+        switch entry.snapshot.effectiveOrigin {
+        case .local:
+            return AmberWatchWidgetCopy.localized("Local", fallback: "本机", languageCode: languageCode)
+        case .cloud:
+            return AmberWatchWidgetCopy.localized("Cloud", fallback: "云端", languageCode: languageCode)
+        case .mac:
+            return "Mac"
+        }
+    }
+
     private var rectangular: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
@@ -259,9 +281,10 @@ private struct AmberWatchTaskView: View {
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(statusColor)
                     .widgetAccentable()
-                Text("Amber")
+                Text(headerTitle)
                     .font(.caption2.weight(.semibold))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 Spacer(minLength: 2)
                 if entry.snapshot.updatedAt != .distantPast {
                     Text(entry.snapshot.updatedAt, style: .time)
@@ -293,7 +316,7 @@ private struct AmberWatchTaskView: View {
         entry.snapshot.isStale
             || (isExpirable
                 && entry.date.timeIntervalSince(entry.snapshot.updatedAt)
-                    >= WatchSnapshotFreshnessPolicy.staleAfter)
+                    >= WatchSnapshotFreshnessPolicy.staleAfter(for: entry.snapshot))
     }
 
     private var isExpirable: Bool {
@@ -306,51 +329,58 @@ private struct AmberWatchTaskView: View {
         if isExpired {
             return AmberWatchWidgetCopy.localized(
                 "State expired",
-                fallback: "State expired",
+                fallback: "状态已过期",
                 languageCode: languageCode
             )
         }
         switch entry.snapshot.phase {
         case "running":
+            if entry.snapshot.needsAttention == true {
+                return AmberWatchWidgetCopy.localized(
+                    "Waiting for your action",
+                    fallback: "等待你的操作",
+                    languageCode: languageCode
+                )
+            }
             return AmberWatchWidgetCopy.localized(
                 "Processing",
-                fallback: "Processing",
+                fallback: "正在处理",
                 languageCode: languageCode
             )
         case "waitingForUser":
             return AmberWatchWidgetCopy.localized(
                 "Waiting for your action",
-                fallback: "Waiting for your action",
+                fallback: "等待你的操作",
                 languageCode: languageCode
             )
         case "reconnecting":
             return AmberWatchWidgetCopy.localized(
                 "Reconnecting",
-                fallback: "Reconnecting",
+                fallback: "正在重连",
                 languageCode: languageCode
             )
         case "completed":
             return AmberWatchWidgetCopy.localized(
                 "Completed",
-                fallback: "Completed",
+                fallback: "已完成",
                 languageCode: languageCode
             )
         case "failed":
             return AmberWatchWidgetCopy.localized(
                 "Failed",
-                fallback: "Failed",
+                fallback: "执行失败",
                 languageCode: languageCode
             )
         case "cancelled":
             return AmberWatchWidgetCopy.localized(
                 "Cancelled",
-                fallback: "Cancelled",
+                fallback: "已取消",
                 languageCode: languageCode
             )
         default:
             return AmberWatchWidgetCopy.localized(
                 "No task in progress",
-                fallback: "No task in progress",
+                fallback: "没有进行中的任务",
                 languageCode: languageCode
             )
         }
@@ -361,7 +391,7 @@ private struct AmberWatchTaskView: View {
         if isExpired {
             return AmberWatchWidgetCopy.localized(
                 "Open Amber to see the latest status",
-                fallback: "Open Amber to see the latest status",
+                fallback: "请打开 Amber 查看最新状态",
                 languageCode: languageCode
             )
         }
@@ -372,14 +402,14 @@ private struct AmberWatchTaskView: View {
             )
             return AmberWatchWidgetCopy.formatted(
                 "Last synced %@",
-                fallback: "Last synced %@",
+                fallback: "最近同步 %@",
                 argument: time,
                 languageCode: languageCode
             )
         }
         return AmberWatchWidgetCopy.localized(
             "Tap to view recent records",
-            fallback: "Tap to view recent records",
+            fallback: "点按查看最近记录",
             languageCode: languageCode
         )
     }

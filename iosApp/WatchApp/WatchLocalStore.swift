@@ -20,6 +20,8 @@ final class WatchLocalStore: ObservableObject {
         var hapticsOnFailed: Bool = true
         /// Home puts the ask button on top instead of the latest result.
         var asksFirst: Bool = false
+        /// Sends non-empty dictated questions directly without stopping at draft review.
+        var directSendAfterDictation: Bool = false
 
         init() {}
 
@@ -34,6 +36,7 @@ final class WatchLocalStore: ObservableObject {
             hapticsOnWaiting = try container.decodeIfPresent(Bool.self, forKey: .hapticsOnWaiting) ?? true
             hapticsOnFailed = try container.decodeIfPresent(Bool.self, forKey: .hapticsOnFailed) ?? true
             asksFirst = try container.decodeIfPresent(Bool.self, forKey: .asksFirst) ?? false
+            directSendAfterDictation = try container.decodeIfPresent(Bool.self, forKey: .directSendAfterDictation) ?? false
         }
     }
 
@@ -223,7 +226,8 @@ final class WatchLocalStore: ObservableObject {
         mode: WatchComposerMode,
         conversationId: String? = nil,
         quickActionId: String? = nil,
-        initialText: String = ""
+        initialText: String = "",
+        targetOrigin: WatchExecutionOrigin? = nil
     ) -> WatchComposerDraft {
         if let existing = draft(forKey: key) {
             return existing
@@ -238,7 +242,8 @@ final class WatchLocalStore: ObservableObject {
             createdAt: Date(),
             updatedAt: Date(),
             pendingRequest: nil,
-            deliveryUnknown: false
+            deliveryUnknown: false,
+            targetOrigin: targetOrigin
         )
         upsertDraft(draft)
         return draft
@@ -506,6 +511,7 @@ struct WatchComposerDraft: Codable, Hashable, Identifiable, Sendable {
     var updatedAt: Date
     var pendingRequest: WatchTaskActionRequest?
     var deliveryUnknown: Bool
+    var targetOrigin: WatchExecutionOrigin?
 
     init(
         key: String,
@@ -517,7 +523,8 @@ struct WatchComposerDraft: Codable, Hashable, Identifiable, Sendable {
         createdAt: Date,
         updatedAt: Date,
         pendingRequest: WatchTaskActionRequest? = nil,
-        deliveryUnknown: Bool = false
+        deliveryUnknown: Bool = false,
+        targetOrigin: WatchExecutionOrigin? = nil
     ) {
         self.key = key
         self.requestId = requestId
@@ -529,6 +536,7 @@ struct WatchComposerDraft: Codable, Hashable, Identifiable, Sendable {
         self.updatedAt = updatedAt
         self.pendingRequest = pendingRequest
         self.deliveryUnknown = deliveryUnknown
+        self.targetOrigin = targetOrigin
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -542,6 +550,7 @@ struct WatchComposerDraft: Codable, Hashable, Identifiable, Sendable {
         case updatedAt
         case pendingRequest
         case deliveryUnknown
+        case targetOrigin
     }
 
     init(from decoder: Decoder) throws {
@@ -556,7 +565,8 @@ struct WatchComposerDraft: Codable, Hashable, Identifiable, Sendable {
             createdAt: try container.decode(Date.self, forKey: .createdAt),
             updatedAt: try container.decode(Date.self, forKey: .updatedAt),
             pendingRequest: try container.decodeIfPresent(WatchTaskActionRequest.self, forKey: .pendingRequest),
-            deliveryUnknown: try container.decodeIfPresent(Bool.self, forKey: .deliveryUnknown) ?? false
+            deliveryUnknown: try container.decodeIfPresent(Bool.self, forKey: .deliveryUnknown) ?? false,
+            targetOrigin: try container.decodeIfPresent(WatchExecutionOrigin.self, forKey: .targetOrigin)
         )
     }
 
