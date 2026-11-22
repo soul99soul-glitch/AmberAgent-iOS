@@ -1,6 +1,7 @@
 package app.amber.ai.provider.openai
 
 import app.amber.ai.provider.CustomHeader
+import app.amber.ai.provider.OpenAIAuthMode
 import app.amber.ai.provider.ProviderSetting
 import app.amber.ai.provider.TextGenerationParams
 import app.amber.ai.provider.resolveOpenAIRequestHeaders
@@ -238,6 +239,9 @@ class OpenAIResponsesBackgroundTransport {
         private val RESPONSE_ID_PATTERN = Regex("^[A-Za-z0-9_-]+$")
 
         internal fun requireOfficialResponsesProvider(providerSetting: ProviderSetting.OpenAI) {
+            require(providerSetting.authMode != OpenAIAuthMode.CHATGPT_SIWC) {
+                "Responses background transport is unsupported for Sign in with ChatGPT"
+            }
             require(providerSetting.useResponseApi) {
                 "Responses background transport requires useResponseApi=true"
             }

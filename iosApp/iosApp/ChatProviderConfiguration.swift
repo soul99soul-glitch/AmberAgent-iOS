@@ -36,6 +36,7 @@ enum ChatConfigurationIssue: Equatable {
     case providerDisabled
     case unsupportedProvider
     case codexNotSignedIn
+    case chatGptSiwcNotSignedIn
     case grokNotSignedIn
     case geminiNotSignedIn
 
@@ -55,6 +56,8 @@ enum ChatConfigurationIssue: Equatable {
             "当前服务商暂不支持聊天"
         case .codexNotSignedIn:
             "还没有登录 Codex"
+        case .chatGptSiwcNotSignedIn:
+            "还没有登录 ChatGPT"
         case .grokNotSignedIn:
             "还没有登录 Grok"
         case .geminiNotSignedIn:
@@ -78,6 +81,8 @@ enum ChatConfigurationIssue: Equatable {
             "当前服务商类型的 iOS 聊天执行器尚未移植，请先切换到 OpenAI 兼容或 Anthropic 服务商。"
         case .codexNotSignedIn:
             "请先在服务商设置里用 ChatGPT 账号登录 Codex，再发送消息。"
+        case .chatGptSiwcNotSignedIn:
+            "请先在服务商设置里通过 Continue with ChatGPT 登录你的 ChatGPT 套餐，再发送消息。"
         case .grokNotSignedIn:
             "请先在 xAI 服务商设置里用 Grok 账号登录，再发送消息。"
         case .geminiNotSignedIn:
@@ -108,6 +113,11 @@ enum ChatProviderConfiguration {
         guard supportsChatStreaming(provider) else { return .unsupportedProvider }
         // Codex OAuth providers carry no apiKey — the bearer is an OAuth token
         // resolved at request time. Gate on sign-in state instead of apiKey.
+        if IOSCodexProviderResolver.isChatGptSiwcProvider(provider) {
+            if !IOSCodexProviderResolver.isSignedIn(provider) { return .chatGptSiwcNotSignedIn }
+            if model.modelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .missingModel }
+            return nil
+        }
         if IOSCodexProviderResolver.isCodexProvider(provider) {
             if !IOSCodexProviderResolver.isSignedIn(provider) { return .codexNotSignedIn }
             if model.modelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .missingModel }
@@ -170,6 +180,9 @@ enum ChatProviderConfiguration {
 
     /// List-row / chat-ready credential: API key, or a signed-in OAuth/Web session.
     static func hasUsableCredential(_ provider: ProviderSetting) -> Bool {
+        if IOSCodexProviderResolver.isChatGptSiwcProvider(provider) {
+            return IOSCodexProviderResolver.isSignedIn(provider)
+        }
         if IOSCodexProviderResolver.isCodexProvider(provider) {
             return IOSCodexProviderResolver.isSignedIn(provider)
         }
@@ -184,6 +197,10 @@ enum ChatProviderConfiguration {
     }
 
     static func credentialStatusTitle(_ provider: ProviderSetting) -> String {
+        if IOSCodexProviderResolver.isChatGptSiwcProvider(provider),
+           IOSCodexProviderResolver.isSignedIn(provider) {
+            return "已登录"
+        }
         if IOSCodexProviderResolver.isCodexProvider(provider),
            IOSCodexProviderResolver.isSignedIn(provider) {
             return "已登录"

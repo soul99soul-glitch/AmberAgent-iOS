@@ -32,8 +32,11 @@ struct ProviderDetailView: View {
     @State private var selectedUserAgentPreset: ProviderUserAgentPreset?
     @State private var notice: String?
     @State private var showCodexLogin = false
+    @State private var showChatGptSiwcLogin = false
+    @State private var autoStartChatGptSiwcLogin = false
     @State private var showGrokLogin = false
     @State private var showAntigravityLogin = false
+    @Environment(\.openURL) private var openURL
 
     init(settingsStore: SettingsStore, providerRegistry: ProviderRegistryStore,
          sharedSettings: IOSSharedSettingsStore, providerId: String,
@@ -102,6 +105,43 @@ struct ProviderDetailView: View {
                     availableModels = IOSCodexModelCatalog.models(discovered: models)
                     fetchState = .success("已刷新 Codex 聊天模型；GPT Image 生图预设可在模型页单独添加。")
                     selectedTab = .models
+                }
+            )
+        }
+        .sheet(isPresented: $showChatGptSiwcLogin) {
+            ChatGptSiwcLoginView(
+                providerId: providerId,
+                autoStartLogin: autoStartChatGptSiwcLogin,
+                onAuthModeChange: { mode in
+                    cancelModelFetch(clearAvailableModels: true)
+                    _ = sharedSettings.setOpenAIAuthMode(providerId: providerId, authMode: mode)
+                    if isCurrentProvider {
+                        sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
+                    }
+                    loadDraft()
+                },
+                onModelsFetched: { discovered in
+                    guard let provider,
+                          IOSCodexProviderResolver.isChatGptSiwcProvider(provider),
+                          IOSCodexProviderResolver.isSignedIn(provider) else { return }
+                    cancelModelFetch()
+                    let kmpModels = IOSChatGptSiwcOAuthClient.kmpModels(from: discovered)
+                    availableModels = kmpModels
+                    if provider.models.filter({ $0.type == ModelType.chat }).isEmpty,
+                       !discovered.isEmpty {
+                        _ = sharedSettings.updateProviderChatModels(
+                            providerId: providerId,
+                            models: discovered.map { ($0.slug, $0.displayName) }
+                        )
+                    }
+                    fetchState = .success(
+                        discovered.isEmpty
+                            ? "已连接 ChatGPT 套餐，但未返回可列出的模型。"
+                            : "已刷新 \(discovered.count) 个 ChatGPT 官方模型。"
+                    )
+                    if isCurrentProvider {
+                        sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
+                    }
                 }
             )
         }
@@ -214,6 +254,11 @@ struct ProviderDetailView: View {
     private var isCodexProvider: Bool {
         guard let provider else { return false }
         return IOSCodexProviderResolver.isCodexProvider(provider)
+    }
+
+    private var isChatGptSiwcProvider: Bool {
+        guard let provider else { return false }
+        return IOSCodexProviderResolver.isChatGptSiwcProvider(provider)
     }
 
     var currentModel: Model? {
@@ -329,7 +374,7 @@ struct ProviderDetailView: View {
                         geminiAuthModeSection
                         ProviderDetailDivider()
                     }
-                    if !isGeminiOAuth {
+                    if !isGeminiOAuth && !isChatGptSiwcProvider {
                         ProviderEditableTextFieldRow(
                             title: "API Key",
                             text: $draftApiKey,
@@ -341,6 +386,13 @@ struct ProviderDetailView: View {
                     }
                     if let openAI = provider as? ProviderSetting.OpenAI, isCodingPlan(openAI.authMode), openAI.brand != OpenAIBrand.mimo {
                         ProviderStaticRow(title: "API 地址", subtitle: "", value: draftBaseURL, valueStyle: .mono)
+                    } else if isChatGptSiwcProvider {
+                        ProviderStaticRow(
+                            title: "API 地址",
+                            subtitle: "",
+                            value: IOSChatGptSiwcConstants.apiBaseUrl,
+                            valueStyle: .mono
+                        )
                     } else if isGeminiOAuth {
                         ProviderStaticRow(
                             title: "API 地址",
@@ -356,7 +408,7 @@ struct ProviderDetailView: View {
                             monospace: true
                         )
                     }
-                    if provider is ProviderSetting.OpenAI {
+                    if provider is ProviderSetting.OpenAI && !isChatGptSiwcProvider {
                         ProviderDetailDivider()
                         ProviderEditableTextFieldRow(
                             title: "路径",
@@ -368,6 +420,8 @@ struct ProviderDetailView: View {
                 }
                 if let openAI = provider as? ProviderSetting.OpenAI, isCodingPlan(openAI.authMode), openAI.brand != OpenAIBrand.mimo {
                     ProviderDetailFooter("已钉到该品牌官方 Coding Plan 地址。")
+                } else if isChatGptSiwcProvider {
+                    ProviderDetailFooter("已钉到 OpenAI 官方 Responses API（Sign in with ChatGPT）。")
                 } else if isGeminiOAuth {
                     ProviderDetailFooter("已钉到 Antigravity Gemini 官方地址。")
                 }
@@ -375,6 +429,8 @@ struct ProviderDetailView: View {
                 legacyKeyImportSection
 
                 grokSection
+
+                chatGptSiwcSection
 
                 codexSection
 
@@ -583,6 +639,7 @@ struct ProviderDetailView: View {
     private var headerDisguiseSection: some View {
         if let current = provider as? ProviderSetting.OpenAI,
            !IOSCodexProviderResolver.isCodexProvider(current),
+           !IOSCodexProviderResolver.isChatGptSiwcProvider(current),
            !IOSGrokWebProviderResolver.isGrokWebProvider(current) {
             AmberSectionLabel(text: "请求伪装")
             AmberFormGroup {
@@ -648,6 +705,140 @@ struct ProviderDetailView: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
             .padding(.top, 16)
+        }
+    }
+
+    /// Official Sign in with ChatGPT (SIWC) entry, shown for the official OpenAI
+    /// brand or a provider using `CHATGPT_SIWC`. Parallel to legacy `codexSection`.
+    @ViewBuilder
+    private var chatGptSiwcSection: some View {
+        if let openAI = provider as? ProviderSetting.OpenAI,
+           openAI.brand == OpenAIBrand.openai
+            || openAI.authMode == OpenAIAuthMode.chatgptSiwc
+            || openAI.authMode == OpenAIAuthMode.codexOauth {
+            AmberSectionLabel(text: "ChatGPT 套餐登录（官方 SIWC）")
+            AmberFormGroup {
+                if let siwcCreds = chatGptSiwcCredentials {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .center, spacing: 8) {
+                            HStack(spacing: 5) {
+                                Image(systemName: "checkmark.seal.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text("Using ChatGPT plan")
+                                    .font(.caption.weight(.semibold))
+                            }
+                            .foregroundStyle(AmberTheme.accentGreen)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(AmberTheme.accentGreen.opacity(0.12), in: Capsule())
+
+                            Spacer(minLength: 8)
+
+                            Button {
+                                openChatGptSiwcSheet(autoStart: false)
+                            } label: {
+                                Text("管理")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(AmberTheme.accent)
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        if let email = siwcCreds.email, !email.isEmpty {
+                            Text(email)
+                                .font(.subheadline)
+                                .foregroundStyle(AmberTheme.foreground)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+
+                    ProviderDetailDivider()
+
+                    HStack(spacing: 10) {
+                        Button {
+                            fetchModels(saveBeforeFetch: true, revealModels: true, reportsConnectionStatus: false)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.caption.weight(.semibold))
+                                Text("刷新模型")
+                                    .font(.subheadline.weight(.medium))
+                            }
+                            .foregroundStyle(AmberTheme.foreground)
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 40)
+                            .background(AmberTheme.surface2.opacity(0.86), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(fetchState.isLoading)
+
+                        Button {
+                            if let url = URL(string: IOSChatGptSiwcConstants.usageSettingsUrl) {
+                                openURL(url)
+                            }
+                        } label: {
+                            HStack(spacing: 5) {
+                                Text("Manage usage")
+                                    .font(.subheadline.weight(.medium))
+                                Image(systemName: "arrow.up.right")
+                                    .font(.caption2.weight(.semibold))
+                            }
+                            .foregroundStyle(AmberTheme.accent)
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 40)
+                            .background(AmberTheme.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                } else {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("使用你的 ChatGPT Plus / Pro 套餐额度，通过 OpenAI 官方公开 Responses API 推理，无需 API Key。")
+                            .font(.footnote)
+                            .foregroundStyle(AmberTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        Button {
+                            openChatGptSiwcSheet(autoStart: true)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "sparkles")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("Continue with ChatGPT")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .foregroundStyle(AmberTheme.background)
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 44)
+                            .background(AmberTheme.foreground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                }
+            }
+        }
+    }
+
+    private var chatGptSiwcCredentials: IOSChatGptSiwcCredentials? {
+        _ = sharedSettings.revision
+        guard let openAI = provider as? ProviderSetting.OpenAI,
+              openAI.authMode == OpenAIAuthMode.chatgptSiwc else {
+            return nil
+        }
+        return IOSChatGptSiwcAuthStore.load(providerId: providerId)
+    }
+
+    private func openChatGptSiwcSheet(autoStart: Bool) {
+        commitPendingTextInput {
+            guard saveConfig(showSuccess: false) else { return }
+            autoStartChatGptSiwcLogin = autoStart
+            showChatGptSiwcLogin = true
         }
     }
 
@@ -1201,7 +1392,16 @@ struct ProviderDetailView: View {
             do {
                 let models: [Model]
                 let successMessage: String?
-                if IOSCodexProviderResolver.isCodexProvider(provider),
+                if IOSCodexProviderResolver.isChatGptSiwcProvider(provider),
+                   let openAI = provider as? ProviderSetting.OpenAI {
+                    let discovered = try await IOSChatGptSiwcOAuthClient(
+                        providerId: IOSCodexProviderResolver.providerKey(openAI)
+                    ).fetchModelsOrThrow()
+                    models = IOSChatGptSiwcOAuthClient.kmpModels(from: discovered)
+                    successMessage = discovered.isEmpty
+                        ? "已连接 ChatGPT 套餐，当前未返回可列出的模型。"
+                        : "已获取 \(discovered.count) 个 ChatGPT 官方模型。"
+                } else if IOSCodexProviderResolver.isCodexProvider(provider),
                    let openAI = provider as? ProviderSetting.OpenAI {
                     let discovered = try await IOSCodexOAuthClient(
                         providerId: IOSCodexProviderResolver.providerKey(openAI)

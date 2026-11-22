@@ -537,6 +537,7 @@ struct IOSCloudImportDraft: Equatable {
     /// Account-bound credentials stay on the device: OAuth sign-ins, web cookie
     /// sessions and managed coding-plan sign-ins can't be imported to the cloud.
     private static func managedAuthLabel(of provider: ProviderSetting) -> String? {
+        if IOSCodexProviderResolver.isChatGptSiwcProvider(provider) { return "Sign in with ChatGPT" }
         if IOSCodexProviderResolver.isCodexProvider(provider) { return "Codex OAuth" }
         if IOSGrokWebProviderResolver.isGrokWebProvider(provider) { return "Grok" }
         if let google = provider as? ProviderSetting.Google {

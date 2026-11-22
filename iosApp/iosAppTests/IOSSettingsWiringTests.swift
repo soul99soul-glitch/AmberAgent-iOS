@@ -859,6 +859,30 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertFalse(IOSProviderEndpointPolicy.isValidBaseURL("203.0.113.10:8080/v1"))
     }
 
+    func testChatGptSiwcIsWiredToProviderSettingsAndChatRuntime() throws {
+        let detail = try source("iosApp/ProviderDetailView.swift")
+        let addView = try source("iosApp/ProvidersView.swift")
+        let loginView = try source("iosApp/ChatGptSiwcLoginView.swift")
+        let resolver = try source("iosApp/IOSCodexProviderResolver.swift")
+        let configuration = try source("iosApp/ChatProviderConfiguration.swift")
+        let durable = try source("iosApp/Chat/Generation/Kernel/ChatKernelDurableTextProvider.swift")
+
+        XCTAssertTrue(addView.contains("ChatGPT 套餐登录（官方 SIWC）"))
+        XCTAssertTrue(addView.contains("buildChatGptSiwcProvider"))
+        XCTAssertTrue(detail.contains("chatGptSiwcSection"))
+        XCTAssertTrue(detail.contains("ChatGptSiwcLoginView("))
+        XCTAssertTrue(detail.contains("Continue with ChatGPT"))
+        XCTAssertTrue(detail.contains("Using ChatGPT plan"))
+        XCTAssertTrue(detail.contains("Manage usage"))
+        XCTAssertTrue(detail.contains("codexSection"))
+        XCTAssertTrue(loginView.contains("You're using your ChatGPT plan"))
+        XCTAssertTrue(loginView.contains("SFSafariViewController"))
+        XCTAssertTrue(resolver.contains("isChatGptSiwcProvider"))
+        XCTAssertTrue(resolver.contains("IOSChatGptSiwcOAuthClient"))
+        XCTAssertTrue(configuration.contains(".chatGptSiwcNotSignedIn"))
+        XCTAssertTrue(durable.contains("provider.authMode != OpenAIAuthMode.chatgptSiwc"))
+    }
+
     private func makeCookie(name: String, value: String) -> HTTPCookie {
         HTTPCookie(properties: [
             .domain: ".grok.com",

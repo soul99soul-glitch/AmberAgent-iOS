@@ -542,7 +542,7 @@ extension ChatView {
         case .some(.missingModel):
             openModelDefaults()
         case .some(.missingAPIKey), .some(.invalidBaseURL), .some(.missingProvider),
-             .some(.unsupportedProvider), .some(.codexNotSignedIn), .some(.grokNotSignedIn),
+             .some(.unsupportedProvider), .some(.codexNotSignedIn), .some(.chatGptSiwcNotSignedIn), .some(.grokNotSignedIn),
              .some(.geminiNotSignedIn), .some(.providerDisabled), .none:
             router.navigate(to: .providers)
         }

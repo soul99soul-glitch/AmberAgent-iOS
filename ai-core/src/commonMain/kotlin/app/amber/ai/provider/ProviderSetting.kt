@@ -83,6 +83,9 @@ enum class OpenAIAuthMode {
     @SerialName("codex_oauth")
     CODEX_OAUTH,
 
+    @SerialName("chatgpt_siwc")
+    CHATGPT_SIWC,
+
     @SerialName("zhipu_coding_plan")
     ZHIPU_CODING_PLAN,
 
@@ -102,7 +105,7 @@ enum class OpenAIAuthMode {
  * "OpenAI Codex OAuth" on a DeepSeek provider, etc.
  *
  *  - GENERIC : user-defined OpenAI-compatible (only API_KEY)
- *  - OPENAI  : OpenAI official (API_KEY + CODEX_OAUTH)
+ *  - OPENAI  : OpenAI official (API_KEY + CHATGPT_SIWC + CODEX_OAUTH)
  *  - DEEPSEEK: DeepSeek (only API_KEY today; field reserved for future Coding Plan)
  *  - ZHIPU   : 智谱 GLM (API_KEY + ZHIPU_CODING_PLAN)
  *  - KIMI    : Kimi / Moonshot (API_KEY + KIMI_CODING_PLAN)
@@ -135,7 +138,7 @@ enum class OpenAIBrand {
 
 fun OpenAIBrand.availableAuthModes(): List<OpenAIAuthMode> = when (this) {
     OpenAIBrand.GENERIC, OpenAIBrand.DEEPSEEK -> listOf(OpenAIAuthMode.API_KEY)
-    OpenAIBrand.OPENAI -> listOf(OpenAIAuthMode.API_KEY, OpenAIAuthMode.CODEX_OAUTH)
+    OpenAIBrand.OPENAI -> listOf(OpenAIAuthMode.API_KEY, OpenAIAuthMode.CHATGPT_SIWC, OpenAIAuthMode.CODEX_OAUTH)
     OpenAIBrand.ZHIPU -> listOf(OpenAIAuthMode.API_KEY, OpenAIAuthMode.ZHIPU_CODING_PLAN)
     OpenAIBrand.KIMI -> listOf(OpenAIAuthMode.API_KEY, OpenAIAuthMode.KIMI_CODING_PLAN)
     OpenAIBrand.MIMO -> listOf(OpenAIAuthMode.API_KEY, OpenAIAuthMode.MIMO_CODING_PLAN)
@@ -150,6 +153,7 @@ fun OpenAIBrand.availableAuthModes(): List<OpenAIAuthMode> = when (this) {
 fun OpenAIAuthMode.fixedBaseUrl(): String? = when (this) {
     OpenAIAuthMode.API_KEY -> null
     OpenAIAuthMode.CODEX_OAUTH -> "https://chatgpt.com/backend-api/codex"
+    OpenAIAuthMode.CHATGPT_SIWC -> "https://api.openai.com/v1"
     OpenAIAuthMode.ZHIPU_CODING_PLAN -> "https://open.bigmodel.cn/api/coding/paas/v4"
     OpenAIAuthMode.KIMI_CODING_PLAN -> "https://api.kimi.com/coding/v1"
     OpenAIAuthMode.MIMO_CODING_PLAN -> MIMO_TOKEN_PLAN_DEFAULT_BASE_URL
@@ -485,7 +489,8 @@ fun ProviderSetting.hasUsableAuth(): Boolean {
     return when (this) {
         is ProviderSetting.OpenAI -> when (authMode) {
             // OAuth 模式用单独 token, 不依赖用户填的 apiKey
-            OpenAIAuthMode.CODEX_OAUTH -> true
+            OpenAIAuthMode.CODEX_OAUTH,
+            OpenAIAuthMode.CHATGPT_SIWC -> true
             else -> apiKey.isNotBlank()
         }
         is ProviderSetting.Google -> when (authMode) {

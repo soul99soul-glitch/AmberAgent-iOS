@@ -371,6 +371,9 @@ extension ChatViewModel {
             }
             // Codex image generation uses the OAuth bearer (no apiKey); gate on
             // sign-in instead. Other providers require a real apiKey + baseURL.
+            if IOSCodexProviderResolver.isChatGptSiwcProvider(provider) {
+                return false
+            }
             if IOSCodexProviderResolver.isCodexProvider(provider) {
                 return IOSCodexProviderResolver.isSignedIn(provider)
             }

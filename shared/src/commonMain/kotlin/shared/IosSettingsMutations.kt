@@ -1007,6 +1007,23 @@ object IosSettingsMutations {
         )
     }
 
+    @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
+    fun buildChatGptSiwcProvider(
+        name: String,
+    ): ProviderSetting.OpenAI {
+        return ProviderSetting.OpenAI(
+            id = kotlin.uuid.Uuid.random(),
+            name = name,
+            apiKey = "",
+            baseUrl = OpenAIAuthMode.CHATGPT_SIWC.fixedBaseUrl() ?: "https://api.openai.com/v1",
+            models = emptyList(),
+            builtIn = false,
+            useResponseApi = true,
+            authMode = OpenAIAuthMode.CHATGPT_SIWC,
+            brand = OpenAIBrand.OPENAI,
+        )
+    }
+
     /**
      * Construct a key-less OpenAI-compatible provider with a stable id supplied
      * by iOS. Used by the Provider registry so a custom provider can survive

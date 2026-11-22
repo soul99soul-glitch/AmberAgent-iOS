@@ -750,6 +750,8 @@ extension ChatView {
             "先切换服务商"
         case .some(.codexNotSignedIn):
             "先登录 Codex"
+        case .some(.chatGptSiwcNotSignedIn):
+            "先登录 ChatGPT"
         case .some(.grokNotSignedIn):
             "先登录 Grok"
         case .some(.geminiNotSignedIn):

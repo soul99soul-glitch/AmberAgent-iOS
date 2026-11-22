@@ -325,7 +325,13 @@ final class IOSProviderConfigToolService {
 
         let models: [Model]
         do {
-            if IOSCodexProviderResolver.isCodexProvider(provider),
+            if IOSCodexProviderResolver.isChatGptSiwcProvider(provider),
+               let openAI = provider as? ProviderSetting.OpenAI {
+                let discovered = try await IOSChatGptSiwcOAuthClient(
+                    providerId: IOSCodexProviderResolver.providerKey(openAI)
+                ).fetchModelsOrThrow()
+                models = IOSChatGptSiwcOAuthClient.kmpModels(from: discovered)
+            } else if IOSCodexProviderResolver.isCodexProvider(provider),
                let openAI = provider as? ProviderSetting.OpenAI {
                 let discovered = try await IOSCodexOAuthClient(
                     providerId: IOSCodexProviderResolver.providerKey(openAI)

@@ -130,6 +130,7 @@ internal enum class OpenAIStreamKind {
 /** Per-collection protocol completion check. It deliberately has no global state. */
 internal class OpenAIStreamTerminalState(
     private val kind: OpenAIStreamKind,
+    private val strictResponsesCompletedOnly: Boolean = false,
 ) {
     private companion object {
         val json = Json { ignoreUnknownKeys = true }
@@ -143,7 +144,9 @@ internal class OpenAIStreamTerminalState(
             .filter { it.isNotBlank() }
             .forEach { payload ->
                 if (payload == "[DONE]") {
-                    completed = true
+                    if (!(kind == OpenAIStreamKind.RESPONSES && strictResponsesCompletedOnly)) {
+                        completed = true
+                    }
                     return@forEach
                 }
                 val objectPayload = runCatching { json.parseToJsonElement(payload) as? JsonObject }
@@ -158,9 +161,14 @@ internal class OpenAIStreamTerminalState(
                     // `response.incomplete` 同样是协议终态(输出写满上限 / 内容过滤),
                     // 只是内容未写完。把它排除在终态之外,会让一次正常的上限截断在
                     // 连接关闭时再被误报成"流在终态前断开"。
+                    // CHATGPT_SIWC 模式遵循官方规范：仅 `response.completed` 视为成功。
                     OpenAIStreamKind.RESPONSES -> {
                         val eventType = (objectPayload["type"] as? JsonPrimitive)?.contentOrNull
-                        eventType == "response.completed" || eventType == "response.incomplete"
+                        if (strictResponsesCompletedOnly) {
+                            eventType == "response.completed"
+                        } else {
+                            eventType == "response.completed" || eventType == "response.incomplete"
+                        }
                     }
                 }
             }

@@ -986,6 +986,7 @@ final class IOSSharedSettingsStore {
         // deleted provider cannot leave usable credentials or header secrets
         // behind in Keychain/UserDefaults.
         IOSCodexAuthStore.clear(providerId: providerId)
+        IOSChatGptSiwcAuthStore.clearAll(providerId: providerId)
         IOSGrokOAuthClients.logout(providerId: providerId)
         IOSGrokOAuthAuthStore.clearBackup(providerId: providerId)
         IOSGrokWebAuthStore.clear(providerId: providerId)

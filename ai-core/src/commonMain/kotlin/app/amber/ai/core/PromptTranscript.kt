@@ -58,12 +58,13 @@ data class PromptTranscriptCapabilities(
                 is ProviderSetting.OpenAI -> {
                     val host = host(setting.baseUrl)
                     val codex = setting.authMode == OpenAIAuthMode.CODEX_OAUTH && host == "chatgpt.com"
+                    val siwc = setting.authMode == OpenAIAuthMode.CHATGPT_SIWC
                     val responsesModel = id in setOf(
                         "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-pro", "gpt-5.5",
                         "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra",
                     )
                     when {
-                        (setting.useResponseApi || codex) && responsesModel && (host == "api.openai.com" || codex) ->
+                        (setting.useResponseApi || codex || siwc) && responsesModel && (host == "api.openai.com" || codex || siwc) ->
                             PromptTranscriptCapabilities(true, true, responsesToolSearch = codex && id in setOf(
                                 "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-pro", "gpt-5.5",
                             ))

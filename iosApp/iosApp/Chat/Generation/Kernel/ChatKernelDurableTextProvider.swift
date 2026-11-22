@@ -161,6 +161,7 @@ final class ChatKernelDurableTextProvider: IOSAgentTextProvider, IOSAgentStreami
     private static func usesBackgroundResponses(_ provider: ProviderSetting.OpenAI) -> Bool {
         guard provider.useResponseApi,
               provider.authMode != OpenAIAuthMode.codexOauth,
+              provider.authMode != OpenAIAuthMode.chatgptSiwc,
               let url = URL(string: provider.baseUrl),
               url.scheme?.lowercased() == "https",
               url.host?.lowercased() == "api.openai.com",

@@ -53,6 +53,9 @@ extension ProviderDetailView {
     }
 
     func hasConnectionCredential(_ provider: ProviderSetting) -> Bool {
+        if IOSCodexProviderResolver.isChatGptSiwcProvider(provider) {
+            return IOSCodexProviderResolver.isSignedIn(provider)
+        }
         if IOSCodexProviderResolver.isCodexProvider(provider) {
             return IOSCodexProviderResolver.isSignedIn(provider)
         }
@@ -67,6 +70,7 @@ extension ProviderDetailView {
     }
 
     func connectionCredentialIssue(_ provider: ProviderSetting) -> ChatConfigurationIssue {
+        if IOSCodexProviderResolver.isChatGptSiwcProvider(provider) { return .chatGptSiwcNotSignedIn }
         if IOSCodexProviderResolver.isCodexProvider(provider) { return .codexNotSignedIn }
         if IOSGrokWebProviderResolver.isGrokWebProvider(provider) { return .grokNotSignedIn }
         if let google = provider as? ProviderSetting.Google,

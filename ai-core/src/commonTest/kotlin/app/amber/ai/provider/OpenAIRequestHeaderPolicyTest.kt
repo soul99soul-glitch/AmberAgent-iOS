@@ -56,4 +56,28 @@ class OpenAIRequestHeaderPolicyTest {
             OpenAIAuthMode.MIMO_CODING_PLAN.fixedBaseUrl(),
         )
     }
+
+    @Test
+    fun chatGptSiwcModeIsOfficialOpenAIAuthWithFixedBaseUrlAndUsableAuth() {
+        assertTrue(OpenAIAuthMode.CHATGPT_SIWC in OpenAIBrand.OPENAI.availableAuthModes())
+        assertTrue(OpenAIAuthMode.CODEX_OAUTH in OpenAIBrand.OPENAI.availableAuthModes())
+        assertEquals("https://api.openai.com/v1", OpenAIAuthMode.CHATGPT_SIWC.fixedBaseUrl())
+        assertTrue(resolveOpenAIRequestHeaders(OpenAIAuthMode.CHATGPT_SIWC).isEmpty())
+        val encoded = kotlinx.serialization.json.Json.encodeToString(
+            OpenAIAuthMode.serializer(),
+            OpenAIAuthMode.CHATGPT_SIWC,
+        )
+        assertEquals("\"chatgpt_siwc\"", encoded)
+        assertEquals(
+            OpenAIAuthMode.CHATGPT_SIWC,
+            kotlinx.serialization.json.Json.decodeFromString(OpenAIAuthMode.serializer(), "\"chatgpt_siwc\""),
+        )
+        val provider = ProviderSetting.OpenAI(
+            apiKey = "",
+            baseUrl = "https://api.openai.com/v1",
+            authMode = OpenAIAuthMode.CHATGPT_SIWC,
+            brand = OpenAIBrand.OPENAI,
+        )
+        assertTrue(provider.hasUsableAuth())
+    }
 }

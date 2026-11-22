@@ -383,9 +383,14 @@ struct ProviderAddView: View {
 
                 ScrollView {
                     VStack(spacing: 0) {
+                        quickTemplateSection
                         connectionSection
-                        credentialSection
-                        modelSection
+                        if protocolOption != .chatGptSiwc {
+                            credentialSection
+                            modelSection
+                        } else {
+                            siwcHintSection
+                        }
                     }
                     .padding(.bottom, 36)
                 }
@@ -446,6 +451,74 @@ struct ProviderAddView: View {
         .padding(.bottom, 10)
     }
 
+    private var quickTemplateSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "快捷模板")
+            AmberFormGroup {
+                Button {
+                    applyChatGptSiwcTemplate()
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(AmberTheme.accent)
+                            .frame(width: 34, height: 34)
+                            .background(AmberTheme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("ChatGPT 套餐登录（官方 SIWC）")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(AmberTheme.foreground)
+                            Text("Continue with ChatGPT · 使用 ChatGPT 套餐额度，无需 API Key")
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.muted)
+                                .lineLimit(2)
+                        }
+
+                        Spacer(minLength: 8)
+
+                        Image(systemName: protocolOption == .chatGptSiwc ? "checkmark.circle.fill" : "plus.circle")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(protocolOption == .chatGptSiwc ? AmberTheme.accentGreen : AmberTheme.accent)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var siwcHintSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "认证方式")
+            AmberFormGroup {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Continue with ChatGPT")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AmberTheme.foreground)
+                    Text("保存后将直接进入服务商详情页，点击 Continue with ChatGPT 完成官方 OAuth 授权并自动拉取可用模型。")
+                        .font(.footnote)
+                        .foregroundStyle(AmberTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+            }
+        }
+    }
+
+    private func applyChatGptSiwcTemplate() {
+        switchProtocol(to: .chatGptSiwc)
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "New Provider" || ProviderProtocolOption.allCases.contains(where: { $0.defaultName == trimmed }) {
+            name = ProviderProtocolOption.chatGptSiwc.defaultName
+        }
+        apiBase = ProviderProtocolOption.chatGptSiwc.defaultBaseURL
+        apiKey = ""
+    }
+
     private var connectionSection: some View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "连接")
@@ -476,12 +549,20 @@ struct ProviderAddView: View {
                     )
                 }
                 ProviderDivider()
-                ProviderDraftTextFieldRow(
-                    title: "API 地址",
-                    text: $apiBase,
-                    placeholder: protocolOption.defaultBaseURLPlaceholder,
-                    monospace: true
-                )
+                if protocolOption == .chatGptSiwc {
+                    ProviderDraftValueRow(
+                        title: "API 地址",
+                        value: ProviderProtocolOption.chatGptSiwc.defaultBaseURL,
+                        showsChevron: false
+                    )
+                } else {
+                    ProviderDraftTextFieldRow(
+                        title: "API 地址",
+                        text: $apiBase,
+                        placeholder: protocolOption.defaultBaseURLPlaceholder,
+                        monospace: true
+                    )
+                }
             }
         }
     }
@@ -541,13 +622,31 @@ struct ProviderAddView: View {
         // When the user switches protocol, reset the base URL to the protocol's
         // default IF the current value is still the previous protocol's default
         // (i.e. the user hasn't customized it). This keeps custom URLs intact.
-        if apiBase == protocolOption.defaultBaseURL {
+        if option == .chatGptSiwc || apiBase == protocolOption.defaultBaseURL {
             apiBase = option.defaultBaseURL
+        }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if option == .chatGptSiwc && (trimmed.isEmpty || trimmed == "New Provider" || trimmed == protocolOption.defaultName) {
+            name = option.defaultName
         }
         protocolOption = option
     }
 
     private func save() {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalName = trimmedName.isEmpty ? protocolOption.defaultName : trimmedName
+
+        if protocolOption == .chatGptSiwc {
+            let provider = IosSettingsMutations.shared.buildChatGptSiwcProvider(name: finalName)
+            let added = sharedSettings.addProvider(provider)
+            if let error = sharedSettings.credentialPersistenceError {
+                alert = .credentialSaveFailed(error)
+                return
+            }
+            replaceProviderAddRoute(with: added.id.description())
+            return
+        }
+
         let normalizedBase = Self.normalizedBaseURL(apiBase)
         guard Self.isValidHTTPBaseURL(normalizedBase) else {
             alert = .invalidBaseURL
@@ -556,9 +655,6 @@ struct ProviderAddView: View {
 
         let trimmedModelId = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedModelName = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalName = trimmedName.isEmpty ? protocolOption.defaultName : trimmedName
         let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Build the provider via KMP (OpenAI-compatible or Claude), add it to the
@@ -719,6 +815,7 @@ private enum ProviderAddAlert: Identifiable {
 
 enum ProviderProtocolOption: String, CaseIterable, Identifiable {
     case openAI
+    case chatGptSiwc
     case codexOAuth
     case google
     case anthropic
@@ -729,6 +826,7 @@ enum ProviderProtocolOption: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .openAI: "OpenAI Compatible"
+        case .chatGptSiwc: "ChatGPT 套餐登录（官方 SIWC）"
         case .codexOAuth: "Codex OAuth"
         case .google: "Gemini"
         case .anthropic: "Anthropic"
@@ -739,7 +837,7 @@ enum ProviderProtocolOption: String, CaseIterable, Identifiable {
     /// Protocols the "add provider" flow can actually create and run in the iOS
     /// chat chain today. Custom stays out of the picker.
     static var addableCases: [ProviderProtocolOption] {
-        [.openAI, .anthropic, .google]
+        [.openAI, .chatGptSiwc, .anthropic, .google]
     }
 
     static var switchableCases: [ProviderProtocolOption] {
@@ -749,6 +847,9 @@ enum ProviderProtocolOption: String, CaseIterable, Identifiable {
     static func option(for provider: ProviderSetting?) -> ProviderProtocolOption? {
         guard let provider else { return nil }
         if let openAI = provider as? ProviderSetting.OpenAI {
+            if IOSCodexProviderResolver.isChatGptSiwcProvider(openAI) {
+                return .chatGptSiwc
+            }
             if IOSCodexProviderResolver.isCodexProvider(openAI) {
                 return .codexOAuth
             }
@@ -768,6 +869,7 @@ enum ProviderProtocolOption: String, CaseIterable, Identifiable {
     var defaultBaseURL: String {
         switch self {
         case .openAI: "https://api.openai.com/v1"
+        case .chatGptSiwc: IOSChatGptSiwcConstants.apiBaseUrl
         case .codexOAuth: IOSCodexOAuthConstants.codexBackendBaseUrl
         case .anthropic: "https://api.anthropic.com/v1"
         case .google: "https://generativelanguage.googleapis.com/v1beta"
@@ -782,6 +884,7 @@ enum ProviderProtocolOption: String, CaseIterable, Identifiable {
     var defaultName: String {
         switch self {
         case .openAI: "OpenAI Compatible"
+        case .chatGptSiwc: "ChatGPT"
         case .codexOAuth: "Codex OAuth"
         case .anthropic: "Claude"
         case .google: "Gemini"

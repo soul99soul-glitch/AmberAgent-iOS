@@ -25,20 +25,50 @@ enum IOSCodexProviderResolver {
         return isCodexConfiguration(openAI)
     }
 
+    static func isChatGptSiwcProvider(_ provider: ProviderSetting) -> Bool {
+        guard let openAI = provider as? ProviderSetting.OpenAI else { return false }
+        return openAI.authMode == OpenAIAuthMode.chatgptSiwc
+    }
+
     static func isSignedIn(_ provider: ProviderSetting) -> Bool {
         guard let openAI = provider as? ProviderSetting.OpenAI else { return false }
+        if openAI.authMode == OpenAIAuthMode.chatgptSiwc {
+            return IOSChatGptSiwcAuthStore.load(providerId: providerKey(openAI)) != nil
+        }
         return IOSCodexAuthStore.load(providerId: providerKey(openAI)) != nil
     }
 
-    /// Returns a request-ready provider. Throws if a codex provider isn't signed
-    /// in or the token can't be refreshed.
+    /// Returns a request-ready provider. Throws if a Codex or Sign in with ChatGPT
+    /// provider isn't signed in or the token can't be refreshed.
     ///
     /// Token 缓存命中与过期刷新在 `getValidAccessToken()` 内处理。多个独立
-    /// `IOSCodexOAuthClient` 实例共享同一 provider 的刷新请求；这里仍由每个调用者
+    /// OAuth Client 实例共享同一 provider 的刷新请求；这里仍由每个调用者
     /// 根据自己的冻结快照重建 provider，避免串入其他调用者的设置字段。
     static func resolved(_ provider: ProviderSetting) async throws -> ProviderSetting {
-        guard let openAI = provider as? ProviderSetting.OpenAI,
-              isCodexConfiguration(openAI) else {
+        guard let openAI = provider as? ProviderSetting.OpenAI else {
+            return provider
+        }
+        if openAI.authMode == OpenAIAuthMode.chatgptSiwc {
+            let key = providerKey(openAI)
+            let token = try await IOSChatGptSiwcOAuthClient(providerId: key).getValidAccessToken()
+            return ProviderSetting.OpenAI(
+                id: openAI.id,
+                enabled: openAI.enabled,
+                name: openAI.name,
+                models: openAI.models,
+                balanceOption: openAI.balanceOption,
+                builtIn: openAI.builtIn,
+                descriptionText: openAI.descriptionText,
+                shortDescriptionText: openAI.shortDescriptionText,
+                apiKey: token,
+                baseUrl: IOSChatGptSiwcConstants.apiBaseUrl,
+                chatCompletionsPath: openAI.chatCompletionsPath,
+                useResponseApi: true,
+                authMode: OpenAIAuthMode.chatgptSiwc,
+                brand: openAI.brand
+            )
+        }
+        guard isCodexConfiguration(openAI) else {
             return provider
         }
         let key = providerKey(openAI)
@@ -138,6 +168,7 @@ enum IOSCodexProviderResolver {
     }
 
     private static func isCodexConfiguration(_ openAI: ProviderSetting.OpenAI) -> Bool {
+        if openAI.authMode == OpenAIAuthMode.chatgptSiwc { return false }
         if openAI.authMode == OpenAIAuthMode.codexOauth { return true }
         return hasCodexBackendBaseUrl(openAI.baseUrl)
     }

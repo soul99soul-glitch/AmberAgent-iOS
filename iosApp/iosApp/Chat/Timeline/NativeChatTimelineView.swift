@@ -1505,6 +1505,7 @@ private struct ChatConfigurationNoticeCard: View {
         case .providerDisabled: "启用服务商"
         case .unsupportedProvider: "切换服务商"
         case .codexNotSignedIn: "登录 Codex"
+        case .chatGptSiwcNotSignedIn: "登录 ChatGPT"
         case .grokNotSignedIn: "登录 Grok"
         case .geminiNotSignedIn: "登录 Antigravity"
         }
