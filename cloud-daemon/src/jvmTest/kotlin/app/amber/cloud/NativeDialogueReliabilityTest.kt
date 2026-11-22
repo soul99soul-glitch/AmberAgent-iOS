@@ -281,7 +281,7 @@ class NativeDialogueReliabilityTest {
                 if (input.batchPrompt == "派活") RouterDecision(dispatch = listOf(WorkItemSubmissionSpec("probe", "检查", "检查", ExecutionTargetNode.CloudSubagent(rolePrompt = "worker"))))
                 else RouterDecision(reply = "已看到结果")
             }
-            k.nativeDialogue.submit(device, "probe", "派活")
+            k.nativeDialogue.submit(device, "probe", "派活", conversationId = "shared-conversation")
             k.router.awaitIdle()
             // Ingress runs in its own scope; wait for the persisted operation, not just the Router's current queue.
             withTimeout(2_000) { while (k.orchestrationStore.listWorkItems().isEmpty()) delay(10) }
@@ -292,6 +292,7 @@ class NativeDialogueReliabilityTest {
             k.router.awaitIdle()
             assertEquals(1, contexts.size, "原生任务已有结果事件，不应再让模型猜结果或重派")
             val event = k.orchestrationStore.dialogue.page(0, 100).items.single { it.kind == "task_result" }
+            assertEquals("shared-conversation", event.conversationId)
             assertEquals("failed", event.outcome)
             assertContains(event.text, "自动重试 1 次")
             val history = k.conversationStorage.loadConversation(PRIMARY_CONVERSATION_ID)!!.messageNodes

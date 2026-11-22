@@ -298,6 +298,17 @@ data class CloudWorkItemRecord(
     val updatedAtMs: Long,
     val agentId: String = app.amber.cloud.agents.MAIN_AGENT_ID,
     val replyAddress: ImAddress? = null,
+    val conversationId: String? = null,
+    val executorKind: String? = null,
+    val executorId: String? = null,
+    val epoch: Long? = null,
+    val causedByInputId: String? = null,
+    val causedByRequestId: String? = null,
+    val parentRunId: String? = null,
+    val observedSeq: Long? = null,
+    val ledgerId: String? = null,
+    val outcomeUnknown: Boolean = false,
+    val schemaVersion: Int = DIALOGUE_CONTRACT_SCHEMA_VERSION,
 )
 
 @Serializable

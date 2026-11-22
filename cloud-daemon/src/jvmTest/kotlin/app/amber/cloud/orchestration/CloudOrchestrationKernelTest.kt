@@ -270,7 +270,7 @@ class CloudOrchestrationKernelTest {
         try {
             val h1 = Harness(tempDir = restartDir)
             val msgId = h1.recordOwnerMessage("msg-idem-1", "分析日志并检查配置")
-            val specs = (1..4).map { idx ->
+            val specs = (1..5).map { idx ->
                 WorkItemSubmissionSpec(
                     taskKey = "idem-task-$idx",
                     title = "幂等任务 $idx",
@@ -297,7 +297,7 @@ class CloudOrchestrationKernelTest {
                 nowEpochMs = h1.clock.addAndGet(500L),
             )
             assertEquals(firstSubmit.batchId, sameRequestReplay.batchId)
-            assertEquals(4, sameRequestReplay.replayedWorkItemIds.size)
+            assertEquals(5, sameRequestReplay.replayedWorkItemIds.size)
 
             // Layer 2: 不同 requestId 但相同 (scopeKey, taskKey) 且相同指纹 -> 幂等重放已有 WorkItem
             val sameTaskKeyReplay = h1.kernel.submitWorkBatch(
@@ -321,9 +321,12 @@ class CloudOrchestrationKernelTest {
             }
 
             val item1Id = firstSubmit.items.first { it.state == WorkItemState.WORKING }.workItemId
-            val item4Id = firstSubmit.items.single { it.state == WorkItemState.QUEUED }.workItemId
+            val queued = firstSubmit.items.filter { it.state == WorkItemState.QUEUED }
+            val item4Id = queued.first().workItemId
+            val interruptedId = queued.last().workItemId
             assertEquals(WorkItemState.WORKING, h1.store.getWorkItem(item1Id)!!.state)
             assertEquals(WorkItemState.QUEUED, h1.store.getWorkItem(item4Id)!!.state)
+            h1.store.dialogue.markStopping(interruptedId)
             h1.store.close()
 
             // --- Process 2 (模拟守护进程重启，基于同一 SQLite 数据库恢复) ---
@@ -336,10 +339,11 @@ class CloudOrchestrationKernelTest {
                 clockMs = { h1.clock.get() },
             )
             val recovered = kernel2.recoverAfterRestart(h1.clock.addAndGet(2_000L))
-            assertEquals(4, recovered.size)
+            assertEquals(5, recovered.size)
             assertEquals(3, store2.countHeldSlots())
             assertEquals(WorkItemState.WORKING, store2.getWorkItem(item1Id)!!.state)
             assertEquals(WorkItemState.QUEUED, store2.getWorkItem(item4Id)!!.state)
+            assertEquals(WorkItemState.CANCELLED, store2.getWorkItem(interruptedId)!!.state)
             store2.close()
         } finally {
             restartDir.deleteRecursively()
