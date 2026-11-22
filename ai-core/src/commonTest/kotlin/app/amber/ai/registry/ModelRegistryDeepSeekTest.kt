@@ -8,20 +8,23 @@ import kotlin.test.assertNull
 
 class ModelRegistryDeepSeekTest {
     @Test
-    fun officialFlashAliasInheritsExistingV4FlashCapabilities() {
-        for (id in listOf("deepseek-flash", "DEEPSEEK-FLASH")) {
+    fun officialFlashAliasInheritsV41FlashMultimodalCapabilities() {
+        for (id in listOf("deepseek-flash", "DEEPSEEK-FLASH", "deepseek-v4.1-flash")) {
             assertEquals(
                 listOf(ModelAbility.TOOL, ModelAbility.REASONING),
                 ModelRegistry.MODEL_ABILITIES.getData(id), id,
             )
             assertEquals(
-                ModelRegistry.MODEL_ABILITIES.getData("deepseek-v4-flash"),
+                ModelRegistry.MODEL_ABILITIES.getData("deepseek-v4.1-flash"),
                 ModelRegistry.MODEL_ABILITIES.getData(id), id,
             )
-            assertEquals(listOf(Modality.TEXT), ModelRegistry.MODEL_INPUT_MODALITIES.getData(id), id)
+            assertEquals(
+                listOf(Modality.TEXT, Modality.IMAGE),
+                ModelRegistry.MODEL_INPUT_MODALITIES.getData(id), id,
+            )
             assertEquals(listOf(Modality.TEXT), ModelRegistry.MODEL_OUTPUT_MODALITIES.getData(id), id)
             assertEquals(
-                ModelRegistry.MODEL_CONTEXT_WINDOW.getData("deepseek-v4-flash"),
+                ModelRegistry.MODEL_CONTEXT_WINDOW.getData("deepseek-v4.1-flash"),
                 ModelRegistry.MODEL_CONTEXT_WINDOW.getData(id), id,
             )
             assertEquals(1_000_000, ModelRegistry.MODEL_CONTEXT_WINDOW.getData(id), id)
