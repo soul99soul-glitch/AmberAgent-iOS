@@ -57,6 +57,11 @@ data class PromptTranscriptCapabilities(
             return when (setting) {
                 is ProviderSetting.OpenAI -> {
                     val host = host(setting.baseUrl)
+                    if (setting.authMode == OpenAIAuthMode.CHATGPT_SIWC) {
+                        // SIWC Preview forbids `tool_search` and `{type: "message", role: "system"}`;
+                        // keep system prompts in top-level `instructions` and tools in top-level `tools`.
+                        return PromptTranscriptCapabilities()
+                    }
                     val codex = setting.authMode == OpenAIAuthMode.CODEX_OAUTH && host == "chatgpt.com"
                     val responsesModel = id in setOf(
                         "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-pro", "gpt-5.5",

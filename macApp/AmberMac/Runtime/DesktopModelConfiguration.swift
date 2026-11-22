@@ -200,7 +200,7 @@ enum DesktopThinkingPolicy {
             case .mimoCodingPlan: return "mimo"
             case .minimaxTokenPlan: return "minimax"
             case .grokOAuth: return "xai"
-            case .codexOAuth: return "openai"
+            case .codexOAuth, .chatgptSiwc: return "openai"
             case .apiKey, .antigravityOAuth: break
             }
             let endpoint = "\(baseURL) \(name)".lowercased()

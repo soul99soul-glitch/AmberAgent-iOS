@@ -101,6 +101,15 @@ internal fun desktopAuthenticatedConfiguration(kind: String, id: String, name: S
             require(provider is ProviderSetting.OpenAI && kind == "responses") { "Codex OAuth requires Responses protocol" }
             provider.copy(authMode = OpenAIAuthMode.CODEX_OAUTH, useResponseApi = true)
         }
+        "chatgptSiwc" -> {
+            require(provider is ProviderSetting.OpenAI && kind == "responses") { "Sign in with ChatGPT requires Responses protocol" }
+            provider.copy(
+                authMode = OpenAIAuthMode.CHATGPT_SIWC,
+                brand = app.amber.ai.provider.OpenAIBrand.OPENAI,
+                baseUrl = OpenAIAuthMode.CHATGPT_SIWC.fixedBaseUrl() ?: "https://api.openai.com/v1",
+                useResponseApi = true,
+            )
+        }
         // Coding / Token plans: same key, plan endpoint; KMP pins the base URL and adds the plan User-Agent.
         "zhipuCodingPlan", "kimiCodingPlan", "mimoCodingPlan", "minimaxTokenPlan" -> {
             require(provider is ProviderSetting.OpenAI && kind == "openai") { "Coding plans use the OpenAI-compatible protocol" }

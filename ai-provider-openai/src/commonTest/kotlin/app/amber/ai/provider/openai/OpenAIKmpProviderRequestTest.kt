@@ -22,6 +22,7 @@ import app.amber.ai.ui.UIMessage
 import app.amber.ai.ui.UIMessagePart
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -722,6 +723,107 @@ class OpenAIKmpProviderRequestTest {
         description = declaration.description,
         execute = { emptyList() },
     )
+
+    @Test
+    fun siwcResponsesSanitizesUnsupportedFieldsSystemRolesAndHostedTools() {
+        val siwcSetting = setting.copy(
+            baseUrl = "https://api.openai.com/v1",
+            authMode = OpenAIAuthMode.CHATGPT_SIWC,
+            useResponseApi = false,
+        )
+        val model = Model(
+            modelId = "gpt-5.4",
+            displayName = "GPT-5.4",
+            abilities = listOf(ModelAbility.TOOL),
+            tools = setOf(app.amber.ai.provider.BuiltInTools.Search),
+        )
+        val body = provider.buildResponsesRequestBody(
+            providerSetting = siwcSetting,
+            messages = listOf(
+                UIMessage(role = MessageRole.SYSTEM, parts = listOf(UIMessagePart.Text("Be concise."))),
+                UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("Hello"))),
+            ),
+            params = TextGenerationParams(
+                model = model,
+                temperature = 0.7f,
+                topP = 0.9f,
+                maxTokens = 2048,
+                tools = listOf(testTool()),
+                customBody = listOf(
+                    CustomBody("background", JsonPrimitive(true)),
+                    CustomBody("conversation", JsonPrimitive("conv_1")),
+                    CustomBody("max_output_tokens", JsonPrimitive(4096)),
+                    CustomBody("max_tool_calls", JsonPrimitive(5)),
+                    CustomBody("metadata", buildJsonObject { put("k", "v") }),
+                    CustomBody("moderation", JsonPrimitive("auto")),
+                    CustomBody("multi_agent", JsonPrimitive(true)),
+                    CustomBody("previous_response_id", JsonPrimitive("resp_prev")),
+                    CustomBody("prompt", buildJsonObject { put("id", "pmpt_1") }),
+                    CustomBody("prompt_cache_retention", JsonPrimitive("24h")),
+                    CustomBody("safety_identifier", JsonPrimitive("safe_1")),
+                    CustomBody("temperature", JsonPrimitive(0.5)),
+                    CustomBody("top_logprobs", JsonPrimitive(3)),
+                    CustomBody("top_p", JsonPrimitive(0.8)),
+                    CustomBody("truncation", JsonPrimitive("auto")),
+                    CustomBody("user", JsonPrimitive("user_123")),
+                    CustomBody("store", JsonPrimitive(true)),
+                    CustomBody("stream", JsonPrimitive(false)),
+                    CustomBody(
+                        "input",
+                        kotlinx.serialization.json.buildJsonArray {
+                            add(buildJsonObject {
+                                put("type", "message")
+                                put("role", "system")
+                                put("content", "Injected system")
+                            })
+                            add(buildJsonObject {
+                                put("role", "user")
+                                put("content", "Hello")
+                            })
+                        },
+                    ),
+                    CustomBody(
+                        "tools",
+                        kotlinx.serialization.json.buildJsonArray {
+                            add(buildJsonObject { put("type", "function"); put("name", "get_weather") })
+                            add(buildJsonObject { put("type", "custom"); put("name", "my_custom_tool") })
+                            add(buildJsonObject { put("type", "web_search") })
+                            add(buildJsonObject { put("type", "image_generation") })
+                            add(buildJsonObject { put("type", "file_search") })
+                            add(buildJsonObject { put("type", "code_interpreter") })
+                            add(buildJsonObject { put("type", "computer_use") })
+                            add(buildJsonObject { put("type", "mcp") })
+                            add(buildJsonObject { put("type", "tool_search") })
+                            add(buildJsonObject { put("type", "programmatic_tool_calling") })
+                        },
+                    ),
+                ),
+            ),
+            stream = false,
+        )
+
+        assertTrue(usesOpenAIResponsesApi(siwcSetting, "gpt-5.4"))
+        assertEquals(false, body.getValue("store").jsonPrimitive.boolean)
+        assertEquals(true, body.getValue("stream").jsonPrimitive.boolean)
+        assertEquals("Be concise.", body.getValue("instructions").jsonPrimitive.content)
+
+        val forbiddenFields = listOf(
+            "background", "conversation", "max_output_tokens", "max_tool_calls",
+            "metadata", "moderation", "multi_agent", "previous_response_id",
+            "prompt", "prompt_cache_retention", "safety_identifier", "temperature",
+            "top_logprobs", "top_p", "truncation", "user",
+        )
+        forbiddenFields.forEach { field ->
+            assertFalse(field in body, "SIWC request must omit $field")
+        }
+
+        val inputItems = body.getValue("input").jsonArray
+        assertTrue(inputItems.none { it.jsonObject["role"]?.jsonPrimitive?.content == "system" })
+        assertEquals("developer", inputItems[0].jsonObject.getValue("role").jsonPrimitive.content)
+
+        val toolTypes = body.getValue("tools").jsonArray.map { it.jsonObject.getValue("type").jsonPrimitive.content }
+        assertEquals(listOf("function", "custom", "web_search"), toolTypes)
+    }
 
     private fun transcriptMessages(vararg events: PromptTranscriptEvent): List<UIMessage> = buildList {
         events.firstOrNull()?.let { add(PromptTranscript.message(it)) }

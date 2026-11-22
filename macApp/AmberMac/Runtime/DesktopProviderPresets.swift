@@ -22,7 +22,7 @@ struct DesktopProviderPreset: Identifiable, Equatable, Sendable {
 
     static let all: [DesktopProviderPreset] = [
         .init(id: "openai", name: "OpenAI", group: .international, kind: .responses, baseURL: "https://api.openai.com/v1",
-              summary: "GPT 系列；Responses 协议", keyURL: URL(string: "https://platform.openai.com/api-keys")),
+              summary: "GPT 系列；支持 API Key 与 ChatGPT 套餐登录", keyURL: URL(string: "https://platform.openai.com/api-keys")),
         .init(id: "anthropic", name: "Anthropic", group: .international, kind: .claude, baseURL: "https://api.anthropic.com/v1",
               summary: "Claude 系列", keyPlaceholder: "sk-ant-…", keyURL: URL(string: "https://console.anthropic.com/settings/keys")),
         .init(id: "gemini", name: "Google Gemini", group: .international, kind: .gemini, baseURL: "https://generativelanguage.googleapis.com/v1beta",

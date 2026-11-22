@@ -37,6 +37,23 @@ import Foundation
             run.installCancellation { task.cancel() }
             return run
         }
+        if configuration.authMode == .chatgptSiwc {
+            let task = Task {
+                do {
+                    let providerID = configuration.id.uuidString.lowercased()
+                    let token = try await DesktopChatGPTSIWCClient(providerId: providerID).getValidAccessToken()
+                    try Task.checkCancellation()
+                    let provider = try bridge.configurationWithAuth(kind: "responses", id: configuration.id.uuidString,
+                        name: configuration.name, baseUrl: DesktopChatGPTSIWCConstants.apiBaseURL,
+                        apiKey: token, authMode: configuration.authMode.rawValue)
+                    try self.startKMP(provider: provider, messages: input, params: params, responseID: responseID, run: run)
+                } catch is CancellationError { run.yield(.cancelled) }
+                catch let siwcError as DesktopSIWCError { run.yield(.failed(siwcError.localizedDescription)) }
+                catch { run.yield(.failed(Self.failureMessage(error.localizedDescription))) }
+            }
+            run.installCancellation { task.cancel() }
+            return run
+        }
         if configuration.authMode == .grokOAuth {
             let task = Task {
                 do {
@@ -113,6 +130,18 @@ import Foundation
 
     nonisolated private static func failureMessage(_ raw: String) -> String {
         // Provider bodies can echo credentials; present classified status, never raw bodies.
+        if raw.contains("subscription_sharing_usage_limit_exceeded") {
+            return DesktopSIWCError.usageLimitExceeded.localizedDescription
+        }
+        if raw.contains("subscription_sharing_usage_unavailable") {
+            return DesktopSIWCError.usageUnavailable.localizedDescription
+        }
+        if raw.contains("chatgpt.tokens.use.direct") {
+            return DesktopSIWCError.planScopeUnavailable.localizedDescription
+        }
+        if raw.contains("Continue with ChatGPT") {
+            return DesktopSIWCError.notSignedIn.localizedDescription
+        }
         if raw.contains("401") || raw.contains("403") { return "服务商拒绝认证，请检查 API Key 与账号权限后重试。" }
         if raw.contains("429") { return "服务商请求限额已到，请稍后重试或检查余额。" }
         if raw.contains("404") { return "服务商未找到模型或 API 路径，请检查地址与 Model ID。" }

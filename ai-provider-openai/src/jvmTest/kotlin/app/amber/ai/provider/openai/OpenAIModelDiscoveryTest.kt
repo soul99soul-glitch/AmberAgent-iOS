@@ -57,4 +57,46 @@ class OpenAIModelDiscoveryTest {
             client.close()
         }
     }
+
+    @Test
+    fun siwcDiscoveryFiltersVisibilityListPreservesOrderAndUsesDisplayNameAndSlug() = runBlocking {
+        var requestedUrl: String? = null
+        var authHeader: String? = null
+        val engine = MockEngine { request ->
+            requestedUrl = request.url.toString()
+            authHeader = request.headers[HttpHeaders.Authorization]
+            respond(
+                content = """
+                    {"models":[
+                      {"slug":"gpt-5.4","display_name":"GPT-5.4","visibility":"list","context_window":400000,"input_modalities":["text","image"]},
+                      {"slug":"internal-hidden","display_name":"Internal","visibility":"hide"},
+                      {"slug":"gpt-5.4-mini","display_name":"GPT-5.4 mini","visibility":"list","input_modalities":["text"]},
+                      {"slug":"unlisted-preview","display_name":"Unlisted","visibility":"unlisted"},
+                      {"slug":"gpt-5.4-codex","display_name":"","visibility":"list"}
+                    ]}
+                """.trimIndent(),
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+            )
+        }
+        val client = HttpClient(engine)
+        try {
+            val models = OpenAIKmpProvider(client, client).listModelsWithHeadersOrThrow(
+                ProviderSetting.OpenAI(
+                    apiKey = "siwc-access-token",
+                    baseUrl = "https://custom.ignored.example/v1",
+                    authMode = app.amber.ai.provider.OpenAIAuthMode.CHATGPT_SIWC,
+                ),
+                emptyList(),
+            )
+
+            assertEquals("https://api.openai.com/v1/models", requestedUrl)
+            assertEquals("Bearer siwc-access-token", authHeader)
+            assertEquals(listOf("gpt-5.4", "gpt-5.4-mini", "gpt-5.4-codex"), models.map { it.modelId })
+            assertEquals(listOf("GPT-5.4", "GPT-5.4 mini", "gpt-5.4-codex"), models.map { it.displayName })
+            assertEquals(400000, models[0].contextWindowTokens)
+        } finally {
+            client.close()
+        }
+    }
 }

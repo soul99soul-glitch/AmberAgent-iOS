@@ -125,6 +125,7 @@ internal class OpenAISseLineParser {
 internal enum class OpenAIStreamKind {
     CHAT_COMPLETIONS,
     RESPONSES,
+    RESPONSES_SIWC,
 }
 
 /** Per-collection protocol completion check. It deliberately has no global state. */
@@ -143,7 +144,9 @@ internal class OpenAIStreamTerminalState(
             .filter { it.isNotBlank() }
             .forEach { payload ->
                 if (payload == "[DONE]") {
-                    completed = true
+                    if (kind != OpenAIStreamKind.RESPONSES_SIWC) {
+                        completed = true
+                    }
                     return@forEach
                 }
                 val objectPayload = runCatching { json.parseToJsonElement(payload) as? JsonObject }
@@ -162,12 +165,21 @@ internal class OpenAIStreamTerminalState(
                         val eventType = (objectPayload["type"] as? JsonPrimitive)?.contentOrNull
                         eventType == "response.completed" || eventType == "response.incomplete"
                     }
+
+                    // OpenAI SIWC Preview: only `response.completed` counts as stream success.
+                    OpenAIStreamKind.RESPONSES_SIWC -> {
+                        val eventType = (objectPayload["type"] as? JsonPrimitive)?.contentOrNull
+                        eventType == "response.completed"
+                    }
                 }
             }
     }
 
     fun requireCompleted() {
         if (!completed) {
+            if (kind == OpenAIStreamKind.RESPONSES_SIWC) {
+                throw IllegalStateException("OpenAI SIWC responses stream ended before response.completed")
+            }
             throw IllegalStateException("OpenAI ${kind.name.lowercase()} stream ended before a terminal event")
         }
     }

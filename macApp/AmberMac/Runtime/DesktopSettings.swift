@@ -368,6 +368,12 @@ final class DesktopSettings {
         if value.authMode == .codexOAuth, value.kind != .responses {
             throw DesktopRuntimeError.message("Codex 登录须使用 Responses 协议。")
         }
+        if value.authMode == .chatgptSiwc {
+            guard value.kind == .responses else {
+                throw DesktopRuntimeError.message("ChatGPT 套餐登录须使用 Responses 协议。")
+            }
+            value.baseURL = DesktopChatGPTSIWCConstants.apiBaseURL
+        }
         if value.authMode == .grokOAuth, value.kind != .openAI {
             throw DesktopRuntimeError.message("Grok 登录须使用 OpenAI 兼容协议。")
         }

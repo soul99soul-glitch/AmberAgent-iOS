@@ -53,6 +53,53 @@ class OpenAIKmpProviderResponsesStreamTest {
     }
 
     @Test
+    fun siwcUsageLimitExceededSurfacesFriendlyRecoveryGuidance() {
+        val error = assertFailsWith<IllegalStateException> {
+            OpenAIKmpProvider().parseResponsesStreamData(
+                """{"type":"response.failed","response":{"status":"failed","error":{"code":"subscription_sharing_usage_limit_exceeded","message":"Usage limit reached"}}}""",
+                siwc = true,
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("subscription_sharing_usage_limit_exceeded"))
+        assertTrue(error.message.orEmpty().contains("https://chatgpt.com/settings/usage"))
+    }
+
+    @Test
+    fun siwcUsageUnavailableSurfacesFriendlyRecoveryGuidance() {
+        val error = assertFailsWith<IllegalStateException> {
+            OpenAIKmpProvider().parseResponsesStreamData(
+                """{"type":"response.failed","response":{"status":"failed","error":{"code":"subscription_sharing_usage_unavailable","message":"Unavailable"}}}""",
+                siwc = true,
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("subscription_sharing_usage_unavailable"))
+        assertTrue(error.message.orEmpty().contains("https://chatgpt.com/settings/usage"))
+    }
+
+    @Test
+    fun siwcStreamRequiresResponseCompletedEvent() {
+        val doneOnly = OpenAIStreamTerminalState(OpenAIStreamKind.RESPONSES_SIWC)
+        doneOnly.observe("data: [DONE]")
+        assertFailsWith<IllegalStateException> { doneOnly.requireCompleted() }
+
+        val incompleteOnly = OpenAIStreamTerminalState(OpenAIStreamKind.RESPONSES_SIWC)
+        incompleteOnly.observe("""{"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}""")
+        assertFailsWith<IllegalStateException> { incompleteOnly.requireCompleted() }
+        assertFailsWith<IllegalStateException> {
+            OpenAIKmpProvider().parseResponsesStreamData(
+                """{"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}""",
+                siwc = true,
+            )
+        }
+
+        val completed = OpenAIStreamTerminalState(OpenAIStreamKind.RESPONSES_SIWC)
+        completed.observe("""{"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[]}}""")
+        completed.requireCompleted()
+    }
+
+    @Test
     fun functionCallArgumentsDoneCarriesCallIdAndName() {
         val chunk = OpenAIKmpProvider().parseResponseDelta(
             buildJsonObject {

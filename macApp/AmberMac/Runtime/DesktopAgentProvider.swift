@@ -385,8 +385,27 @@ struct DesktopEngineTransport: IOSAgentTextProvider, IOSAgentStreamingProvider {
     var promptCaching = false
 
     func prepareRequest(providerSetting: ProviderSetting, params: TextGenerationParams) async throws -> (ProviderSetting, TextGenerationParams) {
-        // Same identity rewrite chain as iOS ChatKernelRunHost: Codex, then Grok OAuth (token refresh + CLI proxy).
+        // Same identity rewrite chain as iOS ChatKernelRunHost: Codex, ChatGPT SIWC, then Grok OAuth.
         var resolved = try await IOSGrokWebProviderResolver.resolved(try await IOSCodexProviderResolver.resolved(providerSetting))
+        if let openAI = resolved as? ProviderSetting.OpenAI, openAI.authMode == OpenAIAuthMode.chatgptSiwc {
+            let token = try await DesktopChatGPTSIWCClient(providerId: openAI.id.description().lowercased()).getValidAccessToken()
+            resolved = ProviderSetting.OpenAI(
+                id: openAI.id,
+                enabled: openAI.enabled,
+                name: openAI.name,
+                models: openAI.models,
+                balanceOption: openAI.balanceOption,
+                builtIn: openAI.builtIn,
+                descriptionText: openAI.descriptionText,
+                shortDescriptionText: openAI.shortDescriptionText,
+                apiKey: token,
+                baseUrl: DesktopChatGPTSIWCConstants.apiBaseURL,
+                chatCompletionsPath: openAI.chatCompletionsPath,
+                useResponseApi: true,
+                authMode: OpenAIAuthMode.chatgptSiwc,
+                brand: openAI.brand
+            )
+        }
         if promptCaching, let claude = resolved as? ProviderSetting.Claude {
             claude.promptCaching = true
             resolved = claude

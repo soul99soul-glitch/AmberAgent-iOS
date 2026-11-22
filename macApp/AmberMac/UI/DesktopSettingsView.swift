@@ -17,6 +17,7 @@ struct DesktopSettingsView: View {
     private let plugins: DesktopPluginStore?
     @State private var speechPreviewID = UUID()
     @State private var login: DesktopCodexLogin
+    @State private var siwcLogin: DesktopSIWCLogin
     @State private var catalogRequest = DesktopCatalogRequest()
     @State private var tab = 0
     @State private var previousTab = 0
@@ -61,6 +62,7 @@ struct DesktopSettingsView: View {
     }
 
     init(settings: DesktopSettings, catalog: any DesktopModelCatalog, oauth: any DesktopCodexAuthorizer,
+        siwc: (any DesktopSIWCAuthorizer)? = nil,
         onOpenBackup: (() -> Void)? = nil, mcp: DesktopMCPManager? = nil, syncWorkspace: DesktopWorkspace? = nil,
         notifications: DesktopNotifications? = nil, onOpenStorage: (() -> Void)? = nil, speech: DesktopSpeechPlayer? = nil,
         backgroundMode: DesktopBackgroundMode? = nil, gateway: DesktopGateway? = nil,
@@ -80,6 +82,7 @@ struct DesktopSettingsView: View {
         _tab = State(initialValue: initialTab)
         _previousTab = State(initialValue: initialTab)
         _login = State(initialValue: DesktopCodexLogin(authorizer: oauth))
+        _siwcLogin = State(initialValue: DesktopSIWCLogin(authorizer: siwc ?? DesktopMacSIWCAuthorizer()))
     }
     /// Changes whenever a new preset draft becomes fetchable (key typed, or keyless local server).
     private var autoFetchKey: String? {
@@ -108,7 +111,7 @@ struct DesktopSettingsView: View {
             apply(.provider(settings.selectedProviderID ?? settings.providers.first?.id))
         }
         .onDisappear {
-            catalogRequest.cancel(); login.cancel()
+            catalogRequest.cancel(); login.cancel(); siwcLogin.cancel()
             if speech?.currentMessageID == speechPreviewID { speech?.stop() }
         }
         .confirmationDialog("有尚未保存的配置", isPresented: $confirmsSwitch, titleVisibility: .visible) {
@@ -138,6 +141,11 @@ struct DesktopSettingsView: View {
         .confirmationDialog("移除这个服务商？", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("移除服务商", role: .destructive) { deleteProvider() }
         } message: { Text("API Key 和登录凭证也会从钥匙串移除。已有会话会保留。") }
+        .alert("You're using your ChatGPT plan", isPresented: $siwcLogin.showFirstTimePlanConfirmation) {
+            Button("Got it") { siwcLogin.acknowledgePlanConfirmation() }
+        } message: {
+            Text("Amber will send OpenAI Responses requests using your ChatGPT subscription plan. You can check or manage your usage anytime at chatgpt.com/settings/usage.")
+        }
     }
 
     private var observedTabs: some View {
@@ -155,8 +163,15 @@ struct DesktopSettingsView: View {
         .onChange(of: draft.kind) { old, value in
             if draft.baseURL == old.defaultBaseURL { draft.baseURL = value.defaultBaseURL }
             if draft.authMode == .codexOAuth && value != .responses { draft.authMode = .apiKey }
+            if draft.authMode == .chatgptSiwc && value != .responses { draft.authMode = .apiKey }
             if draft.authMode == .antigravityOAuth && value != .gemini { draft.authMode = .apiKey }
             if draft.authMode == .grokOAuth && value != .openAI { draft.authMode = .apiKey }
+        }
+        .onChange(of: draft.authMode) { _, value in
+            if value == .chatgptSiwc {
+                draft.kind = .responses
+                draft.baseURL = DesktopChatGPTSIWCConstants.apiBaseURL
+            }
         }
     }
 
@@ -261,6 +276,7 @@ struct DesktopSettingsView: View {
             VStack(spacing: 0) {
                 Form {
                     providerConfiguration
+                    if draft.authMode == .chatgptSiwc { siwcAuthentication }
                     if draft.authMode == .codexOAuth { codexAuthentication }
                     #if !AMBER_MAC_PREVIEW
                     if draft.authMode == .grokOAuth {
@@ -281,6 +297,21 @@ struct DesktopSettingsView: View {
         let preset = DesktopProviderPreset.matching(draft)
         return Section(editingID == nil ? "添加服务商" : "服务商配置") {
             TextField("名称", text: $draft.name, prompt: Text("例如：OpenAI / 本地模型")).accessibilityIdentifier("provider-name")
+            if preset?.id == "openai" && (draft.authMode == .apiKey || draft.authMode == .chatgptSiwc) {
+                LabeledContent("登录方式") {
+                    DesktopSegmented(options: [(false, "API Key"), (true, "ChatGPT 套餐")], selection: Binding(
+                        get: { draft.authMode == .chatgptSiwc },
+                        set: { useSiwc in
+                            draft.kind = .responses
+                            draft.authMode = useSiwc ? .chatgptSiwc : .apiKey
+                            draft.baseURL = DesktopChatGPTSIWCConstants.apiBaseURL
+                        }))
+                }
+                Text(draft.authMode == .chatgptSiwc
+                     ? "通过官方 Sign in with ChatGPT 使用你的 ChatGPT 订阅额度（公开 Responses API）。"
+                     : "按调用量计费的 OpenAI API Key。")
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+            }
             if let preset, let plan = preset.plan {
                 LabeledContent("计费方式") {
                     DesktopSegmented(options: [(false, "按量 API"), (true, preset.planTitle)], selection: Binding(
@@ -308,9 +339,10 @@ struct DesktopSettingsView: View {
                     ForEach(DesktopProviderKind.allCases) { Text($0.title).tag($0) }
                 }
                 TextField("API 地址", text: $draft.baseURL).accessibilityIdentifier("provider-base-url")
-                    .disabled(draft.authMode.isPlan)
+                    .disabled(draft.authMode.isPlan || draft.authMode == .chatgptSiwc)
                 Picker("认证方式", selection: $draft.authMode) {
                     Text("API Key").tag(DesktopProviderAuthMode.apiKey)
+                    if draft.kind == .responses { Text("ChatGPT 套餐登录（SIWC）").tag(DesktopProviderAuthMode.chatgptSiwc) }
                     if draft.kind == .responses { Text("ChatGPT / Codex 登录").tag(DesktopProviderAuthMode.codexOAuth) }
                     if draft.kind == .openAI { Text("Grok / xAI 登录").tag(DesktopProviderAuthMode.grokOAuth) }
                     if draft.authMode == .antigravityOAuth { Text("已有 Antigravity 登录").tag(DesktopProviderAuthMode.antigravityOAuth) }
@@ -334,9 +366,107 @@ struct DesktopSettingsView: View {
                     ProgressView().controlSize(.small)
                     Button("取消") { catalogRequest.cancel() }.buttonStyle(.borderless)
                 }
-            }.disabled(credentialLoadFailed || (draft.authMode == .codexOAuth && (editingID == nil || login.account == nil))
+            }.disabled(credentialLoadFailed
+                || (draft.authMode == .codexOAuth && (editingID == nil || login.account == nil))
+                || (draft.authMode == .chatgptSiwc && (editingID == nil || siwcLogin.account == nil || siwcLogin.account?.planAvailable == false))
                 || (draft.authMode == .grokOAuth && (editingID == nil || !grokSignedIn)))
             if let message = catalogRequest.status { statusText(message, failed: catalogRequest.failed) }
+        }
+    }
+
+    private var siwcAuthentication: some View {
+        Section("Sign in with ChatGPT") {
+            if let account = siwcLogin.account {
+                LabeledContent("已登录") {
+                    HStack(spacing: 8) {
+                        let summary = [account.displayName, account.plan].compactMap { $0 }.joined(separator: " · ")
+                        Text(summary)
+                            .font(.system(size: 13))
+                            .foregroundStyle(DesktopTheme.ink)
+                        if account.planAvailable {
+                            Text("Using ChatGPT plan")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(DesktopTheme.accentInk)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(DesktopTheme.honeySoft, in: Capsule())
+                                .overlay(Capsule().strokeBorder(DesktopTheme.honeyEdge, lineWidth: 0.5))
+                        } else {
+                            Text("套餐不可用")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(DesktopTheme.danger)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(DesktopTheme.danger.opacity(0.1), in: Capsule())
+                        }
+                    }
+                }
+                if account.planAvailable {
+                    HStack(spacing: 12) {
+                        Link("Manage usage", destination: DesktopChatGPTSIWCConstants.usageSettingsURL)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(DesktopTheme.accent)
+                        Spacer()
+                        Button("刷新模型列表") { fetchModels(testOnly: false) }
+                            .disabled(editingID == nil || catalogRequest.isLoading || siwcLogin.isBusy)
+                        Button("退出登录") { if let id = editingID { siwcLogin.logout(id) } }
+                            .disabled(editingID == nil || siwcLogin.isBusy)
+                    }
+                } else {
+                    Text("当前授权缺少 chatgpt.tokens.use.direct 权限，暂不可使用 ChatGPT 套餐额度。请重新授权或切换为 OpenAI API Key。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesktopTheme.danger)
+                    HStack(spacing: 10) {
+                        if siwcLogin.isBusy {
+                            ProgressView().controlSize(.small)
+                            Button("取消登录") { siwcLogin.cancel() }
+                        } else {
+                            Button("Continue with ChatGPT") { startSIWCLogin() }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(!canSave)
+                            Button("切换为 API Key") {
+                                draft.authMode = .apiKey
+                                draft.baseURL = DesktopChatGPTSIWCConstants.apiBaseURL
+                            }
+                            Button("退出登录") { if let id = editingID { siwcLogin.logout(id) } }
+                                .disabled(editingID == nil)
+                        }
+                    }
+                }
+            } else {
+                Text("点击下方按钮在系统浏览器完成官方 ChatGPT 登录。登录成功后将通过 https://api.openai.com/v1 自动拉取可用模型。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(DesktopTheme.inkTertiary)
+                HStack(spacing: 10) {
+                    if siwcLogin.isBusy {
+                        ProgressView().controlSize(.small)
+                        Text("等待浏览器回调…")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DesktopTheme.inkSecondary)
+                        Button("取消登录") { siwcLogin.cancel() }
+                    } else {
+                        Button("Continue with ChatGPT") { startSIWCLogin() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!canSave)
+                    }
+                }
+            }
+            if let message = siwcLogin.status { statusText(message, failed: siwcLogin.failed) }
+        }
+    }
+
+    private func startSIWCLogin() {
+        let targetID: UUID
+        if let existing = editingID, !hasUnsavedChanges {
+            targetID = existing
+        } else {
+            guard save(), let savedID = editingID else { return }
+            targetID = savedID
+        }
+        siwcLogin.login(targetID) { account in
+            if account.planAvailable && draft.models.isEmpty {
+                fetchModels(testOnly: false)
+            }
         }
     }
 
@@ -779,6 +909,7 @@ struct DesktopSettingsView: View {
         modelBeingEdited = draft.selectedModel?.id ?? draft.models.first?.id
         savedDraft = draft; savedKey = apiKey; savedParameters = parameters
         login.selectProvider(id)
+        siwcLogin.selectProvider(id)
         #if !AMBER_MAC_PREVIEW
         grokSignedIn = id.map { IOSGrokOAuthAuthStore.load(providerId: $0.uuidString.lowercased()) != nil } ?? false
         #endif
@@ -812,6 +943,7 @@ struct DesktopSettingsView: View {
             defer { deleting = false }
             do {
                 try await login.removeCredentials(id)
+                try await siwcLogin.removeCredentials(id)
                 try settings.deleteProvider(id)
                 load(settings.providers.first?.id)
             } catch { status = "移除服务商失败，请解锁钥匙串后重试。"; failed = true }

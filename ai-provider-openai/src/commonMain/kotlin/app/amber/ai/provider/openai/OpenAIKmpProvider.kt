@@ -17,6 +17,7 @@ import app.amber.ai.provider.Model
 import app.amber.ai.provider.ModelAbility
 import app.amber.ai.provider.ModelType
 import app.amber.ai.provider.OpenAIBrand
+import app.amber.ai.provider.Modality
 import app.amber.ai.provider.OpenAIAuthMode
 import app.amber.ai.provider.OpenCodeRequestHeaders
 import app.amber.ai.provider.Provider
@@ -94,11 +95,47 @@ private const val RESPONSES_OUTPUT_CAP_REASON = "max_output_tokens"
  * Do not flip the whole provider to Responses: sibling models on the same
  * OpenCode entry (DeepSeek, MiMo) stay on Completions.
  */
+private const val CHATGPT_SIWC_API_BASE_URL = "https://api.openai.com/v1"
+internal const val CHATGPT_SIWC_USAGE_URL = "https://chatgpt.com/settings/usage"
+
+private val SIWC_UNSUPPORTED_RESPONSE_FIELDS = setOf(
+    "background",
+    "conversation",
+    "max_output_tokens",
+    "max_tool_calls",
+    "metadata",
+    "moderation",
+    "multi_agent",
+    "previous_response_id",
+    "prompt",
+    "prompt_cache_retention",
+    "safety_identifier",
+    "temperature",
+    "top_logprobs",
+    "top_p",
+    "truncation",
+    "user",
+)
+
+private val SIWC_UNSUPPORTED_HOSTED_TOOL_TYPES = setOf(
+    "image_generation",
+    "file_search",
+    "code_interpreter",
+    "computer_use",
+    "computer_use_preview",
+    "mcp",
+    "tool_search",
+    "programmatic_tool_calling",
+)
+
 internal fun usesOpenAIResponsesApi(
     providerSetting: ProviderSetting.OpenAI,
     modelId: String,
 ): Boolean {
-    if (providerSetting.useResponseApi || providerSetting.authMode == OpenAIAuthMode.CODEX_OAUTH) return true
+    if (providerSetting.useResponseApi ||
+        providerSetting.authMode == OpenAIAuthMode.CODEX_OAUTH ||
+        providerSetting.authMode == OpenAIAuthMode.CHATGPT_SIWC
+    ) return true
     val wireId = modelId.substringAfterLast('/').lowercase()
     return wireId.startsWith("muse-spark")
 }
@@ -137,15 +174,27 @@ class OpenAIKmpProvider internal constructor(
         providerSetting: ProviderSetting.OpenAI,
         extraHeaders: List<CustomHeader>,
     ): List<Model> {
-        val url = "${providerSetting.baseUrl}/models"
+        val isSiwc = providerSetting.authMode == OpenAIAuthMode.CHATGPT_SIWC
+        val url = if (isSiwc) {
+            "$CHATGPT_SIWC_API_BASE_URL/models"
+        } else {
+            "${providerSetting.baseUrl}/models"
+        }
         val response = httpClient.get(url) {
             configureAuth(providerSetting, extraHeaders)
         }
         val body = response.bodyAsText()
         if (!response.status.isSuccess()) {
+            if (isSiwc) {
+                formatSiwcUsageError(runCatching { json.parseToJsonElement(body) }.getOrNull(), body)
+                    ?.let { throw IllegalStateException(it) }
+            }
             throw Exception("OpenAI model listing failed: ${response.status.value} ${body.take(1200)}")
         }
         val bodyJson = json.parseToJsonElement(body).jsonObject
+        if (isSiwc) {
+            return parseSiwcModelsResponse(bodyJson)
+        }
         val data = bodyJson["data"]?.arr()
             ?: throw Exception("OpenAI model listing response is missing data")
         return data.mapNotNull { modelJson ->
@@ -157,6 +206,37 @@ class OpenAIKmpProvider internal constructor(
                 type = if (isOpenAIImageModelId(id)) ModelType.IMAGE else ModelType.CHAT,
                 inputModalities = ModelRegistry.MODEL_INPUT_MODALITIES.getData(id),
                 abilities = ModelRegistry.MODEL_ABILITIES.getData(id),
+            )
+        }
+    }
+
+    internal fun parseSiwcModelsResponse(bodyJson: JsonObject): List<Model> {
+        val models = bodyJson["models"]?.arr()
+            ?: throw Exception("OpenAI SIWC model listing response is missing models")
+        return models.mapNotNull { entry ->
+            val modelObj = entry.obj() ?: return@mapNotNull null
+            if (modelObj.str("visibility") != "list") return@mapNotNull null
+            val slug = modelObj.str("slug")?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            val displayName = modelObj.str("display_name")?.trim()?.takeIf { it.isNotEmpty() } ?: slug
+            val declaredModalities = modelObj["input_modalities"]?.arr()
+                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.lowercase() }
+                .orEmpty()
+            val inputModalities = if (declaredModalities.isNotEmpty()) {
+                buildList {
+                    if ("text" in declaredModalities) add(Modality.TEXT)
+                    if ("image" in declaredModalities) add(Modality.IMAGE)
+                }.ifEmpty { ModelRegistry.MODEL_INPUT_MODALITIES.getData(slug) }
+            } else {
+                ModelRegistry.MODEL_INPUT_MODALITIES.getData(slug)
+            }
+            Model(
+                modelId = slug,
+                displayName = displayName,
+                type = if (isOpenAIImageModelId(slug)) ModelType.IMAGE else ModelType.CHAT,
+                inputModalities = inputModalities,
+                abilities = ModelRegistry.MODEL_ABILITIES.getData(slug),
+                contextWindowTokens = modelObj.int("context_window")
+                    ?: ModelRegistry.MODEL_CONTEXT_WINDOW.getData(slug),
             )
         }
     }
@@ -806,10 +886,12 @@ class OpenAIKmpProvider internal constructor(
         messages: List<UIMessage>,
         params: TextGenerationParams,
     ): MessageChunk {
-        // The Codex OAuth endpoint accepts streaming responses only, including
-        // one-shot callers such as WebMount vision. Reuse the normal SSE parser
+        // Both Codex OAuth and official ChatGPT SIWC require streaming responses only,
+        // including one-shot callers such as WebMount vision. Reuse the normal SSE parser
         // and accumulator so terminal failures and cancellation still propagate.
-        if (providerSetting.authMode == OpenAIAuthMode.CODEX_OAUTH) {
+        if (providerSetting.authMode == OpenAIAuthMode.CODEX_OAUTH ||
+            providerSetting.authMode == OpenAIAuthMode.CHATGPT_SIWC
+        ) {
             val accumulator = MessageStreamAccumulator(
                 listOf(UIMessage(role = MessageRole.ASSISTANT, parts = emptyList())),
                 params.model,
@@ -848,8 +930,13 @@ class OpenAIKmpProvider internal constructor(
         params: TextGenerationParams,
     ): Flow<MessageChunk> {
         val streamAssistantId = Uuid.random()
+        val isSiwc = providerSetting.authMode == OpenAIAuthMode.CHATGPT_SIWC
         val requestBody = buildResponsesRequestBody(providerSetting, messages, params, stream = true)
-        val url = "${providerSetting.baseUrl}/responses"
+        val url = if (isSiwc) {
+            "$CHATGPT_SIWC_API_BASE_URL/responses"
+        } else {
+            "${providerSetting.baseUrl}/responses"
+        }
         val events = sseClient.sseFlow(url) {
             method = HttpMethod.Post
             contentType(ContentType.Application.Json)
@@ -857,16 +944,24 @@ class OpenAIKmpProvider internal constructor(
             setBody(json.encodeToString(requestBody))
         }
         return flow {
-            val terminal = OpenAIStreamTerminalState(OpenAIStreamKind.RESPONSES)
+            val terminal = OpenAIStreamTerminalState(
+                if (isSiwc) OpenAIStreamKind.RESPONSES_SIWC else OpenAIStreamKind.RESPONSES,
+            )
             events.collect { event ->
                 when (event) {
                     is SseEvent.Event -> {
                         terminal.observe(event.data)
-                        parseResponsesStreamData(event.data)
+                        parseResponsesStreamData(event.data, siwc = isSiwc)
                             .forEach { emit(it.normalizeResponseStreamAssistant(streamAssistantId)) }
                     }
 
-                    is SseEvent.Failure -> throw event.throwable ?: Exception("Stream failed")
+                    is SseEvent.Failure -> {
+                        if (isSiwc) {
+                            val raw = event.throwable?.message
+                            formatSiwcUsageError(null, raw)?.let { throw IllegalStateException(it) }
+                        }
+                        throw event.throwable ?: Exception("Stream failed")
+                    }
                     is SseEvent.Closed -> terminal.requireCompleted()
                     is SseEvent.Open -> Unit
                 }
@@ -874,21 +969,32 @@ class OpenAIKmpProvider internal constructor(
         }
     }
 
-    internal fun parseResponsesStreamData(data: String): List<MessageChunk> =
+    internal fun parseResponsesStreamData(
+        data: String,
+        siwc: Boolean = false,
+    ): List<MessageChunk> =
         normalizeOpenAIStreamDataLines(data).mapNotNull { payload ->
             val obj = runCatching { json.parseToJsonElement(payload) as? JsonObject }
                 .getOrNull() ?: return@mapNotNull null
-            obj["error"]?.let { throw it.parseErrorDetail() }
+            obj["error"]?.let { errorElement ->
+                formatSiwcUsageError(errorElement, payload)?.let { throw IllegalStateException(it) }
+                throw errorElement.parseErrorDetail()
+            }
             val status = when (obj.str("type")) {
                 "response.incomplete" -> "incomplete"
                 "response.failed" -> "failed"
                 else -> null
             }
-            throwIfResponsesTerminalFailure(obj["response"]?.obj(), status, "stream")
+            throwIfResponsesTerminalFailure(obj["response"]?.obj(), status, "stream", siwc = siwc)
             parseResponseDelta(obj)
         }
 
-    private fun throwIfResponsesTerminalFailure(response: JsonObject?, status: String?, source: String) {
+    private fun throwIfResponsesTerminalFailure(
+        response: JsonObject?,
+        status: String?,
+        source: String,
+        siwc: Boolean = false,
+    ) {
         when (status) {
             "incomplete" -> {
                 val reason = response?.get("incomplete_details")?.obj()?.str("reason")
@@ -898,7 +1004,8 @@ class OpenAIKmpProvider internal constructor(
                 // 这里放行,由 parseResponseDelta 转成 finishReason="length",与
                 // Claude 的 stop_reason="max_tokens" 对称,交给下游既有的输出
                 // 上限提示(reachedOutputLimit / outputLimitFailure)。
-                if (reason == RESPONSES_OUTPUT_CAP_REASON) return
+                // SIWC Preview 仅在收到 response.completed 时视为成功。
+                if (!siwc && reason == RESPONSES_OUTPUT_CAP_REASON) return
                 throw IllegalStateException(
                     "OpenAI Responses $source incomplete: " +
                         (reason ?: response?.str("status") ?: "unknown reason")
@@ -906,12 +1013,42 @@ class OpenAIKmpProvider internal constructor(
             }
 
             "failed" -> {
-                val detail = response?.get("error")?.parseErrorDetail()?.message
+                val errorElement = response?.get("error")
+                formatSiwcUsageError(errorElement, response?.toString())?.let {
+                    throw IllegalStateException(it)
+                }
+                val detail = errorElement?.parseErrorDetail()?.message
                     ?: response?.str("status")
                     ?: "unknown error"
                 throw IllegalStateException("OpenAI Responses $source failed: $detail")
             }
         }
+    }
+
+    internal fun formatSiwcUsageError(errorElement: JsonElement?, rawText: String? = null): String? {
+        val code = extractOpenAIErrorCode(errorElement)
+            ?: when {
+                rawText?.contains("subscription_sharing_usage_limit_exceeded") == true ->
+                    "subscription_sharing_usage_limit_exceeded"
+                rawText?.contains("subscription_sharing_usage_unavailable") == true ->
+                    "subscription_sharing_usage_unavailable"
+                else -> null
+            }
+        return when (code) {
+            "subscription_sharing_usage_limit_exceeded" ->
+                "ChatGPT 套餐共享额度已用尽（subscription_sharing_usage_limit_exceeded）。请前往 $CHATGPT_SIWC_USAGE_URL 查看或管理用量，或切换为 OpenAI API Key。"
+
+            "subscription_sharing_usage_unavailable" ->
+                "当前账号的 ChatGPT 套餐共享暂不可用（subscription_sharing_usage_unavailable）。请前往 $CHATGPT_SIWC_USAGE_URL 检查订阅状态与套餐共享设置，或切换为 OpenAI API Key。"
+
+            else -> null
+        }
+    }
+
+    private fun extractOpenAIErrorCode(element: JsonElement?): String? {
+        val obj = element as? JsonObject ?: return null
+        obj.str("code")?.takeIf { it.isNotBlank() }?.let { return it }
+        return extractOpenAIErrorCode(obj["error"])
     }
 
     private fun MessageChunk.normalizeResponseStreamAssistant(streamAssistantId: Uuid): MessageChunk = copy(
@@ -1055,12 +1192,55 @@ class OpenAIKmpProvider internal constructor(
             }
             if (isMiMo && toolDefinitions.isNotEmpty()) put("tools", toolDefinitions)
         }.mergeCustomBody(params.customBody).let { body ->
-            if (providerSetting.authMode != OpenAIAuthMode.CODEX_OAUTH) body
-            else JsonObject(body.toMutableMap().apply {
-                put("stream", JsonPrimitive(true))
-                remove("max_output_tokens")
-            })
+            when (providerSetting.authMode) {
+                OpenAIAuthMode.CODEX_OAUTH -> JsonObject(body.toMutableMap().apply {
+                    put("stream", JsonPrimitive(true))
+                    remove("max_output_tokens")
+                })
+
+                OpenAIAuthMode.CHATGPT_SIWC -> sanitizeSiwcResponsesRequestBody(body)
+                else -> body
+            }
         }
+    }
+
+    private fun sanitizeSiwcResponsesRequestBody(body: JsonObject): JsonObject {
+        val sanitized = body.toMutableMap()
+        sanitized["store"] = JsonPrimitive(false)
+        sanitized["stream"] = JsonPrimitive(true)
+        SIWC_UNSUPPORTED_RESPONSE_FIELDS.forEach { sanitized.remove(it) }
+
+        val inputArray = sanitized["input"] as? JsonArray
+        if (inputArray != null) {
+            sanitized["input"] = buildJsonArray {
+                inputArray.forEach { item ->
+                    val obj = item as? JsonObject
+                    if (obj != null && obj.str("role").equals("system", ignoreCase = true)) {
+                        add(JsonObject(obj.toMutableMap().apply {
+                            put("role", JsonPrimitive("developer"))
+                        }))
+                    } else {
+                        add(item)
+                    }
+                }
+            }
+        }
+
+        val toolsArray = sanitized["tools"] as? JsonArray
+        if (toolsArray != null) {
+            val filteredTools = toolsArray.filter { toolElement ->
+                val toolType = (toolElement as? JsonObject)?.str("type")?.lowercase()
+                toolType == null || toolType !in SIWC_UNSUPPORTED_HOSTED_TOOL_TYPES
+            }
+            if (filteredTools.isEmpty()) {
+                sanitized.remove("tools")
+                sanitized.remove("parallel_tool_calls")
+            } else {
+                sanitized["tools"] = JsonArray(filteredTools)
+            }
+        }
+
+        return JsonObject(sanitized)
     }
 
     private fun buildResponsesMessages(

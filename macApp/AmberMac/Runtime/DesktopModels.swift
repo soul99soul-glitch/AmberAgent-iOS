@@ -22,7 +22,7 @@ enum DesktopProviderKind: String, Codable, CaseIterable, Identifiable, Sendable 
 }
 
 enum DesktopProviderAuthMode: String, Codable, Sendable {
-    case apiKey, codexOAuth, antigravityOAuth, grokOAuth
+    case apiKey, codexOAuth, chatgptSiwc, antigravityOAuth, grokOAuth
     case zhipuCodingPlan, kimiCodingPlan, mimoCodingPlan, minimaxTokenPlan
 
     var isPlan: Bool { [.zhipuCodingPlan, .kimiCodingPlan, .mimoCodingPlan, .minimaxTokenPlan].contains(self) }
