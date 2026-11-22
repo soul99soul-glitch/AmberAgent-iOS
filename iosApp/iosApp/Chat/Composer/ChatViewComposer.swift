@@ -514,11 +514,17 @@ extension ChatView {
                                     isDelegateToMacArmed: composerState.isDelegateToMacArmed,
                                     onToggleDelegateToMac: {
                                         withAnimation(.snappy(duration: 0.2)) {
+                                            if MacGatewayStore.shared.isCloudMainDialogueSelected {
+                                                MacGatewayStore.shared.setCloudMainDialogueSelected(false)
+                                            }
                                             if composerState.activeDuetTab != .chat {
                                                 selectDuetTab(.chat)
                                                 composerState.isDelegateToMacArmed = true
                                             } else {
                                                 composerState.isDelegateToMacArmed.toggle()
+                                            }
+                                            if !composerState.isDelegateToMacArmed {
+                                                composerState.unifiedMacFollowupWorkItemId = nil
                                             }
                                             composerState.cloudDialogueErrorMessage = nil
                                         }
@@ -760,6 +766,7 @@ extension ChatView {
 
         let target = composerState.takeUnifiedMacTarget()
         viewModel.inputText = ""
+        dismissKeyboard()
         // Start on the current actor so the validated pairing and draft are still the ones selected at tap.
         Task.immediate { @MainActor in
             let result = await store.delegateToMacInUnifiedTimeline(

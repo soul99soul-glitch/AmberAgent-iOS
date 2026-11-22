@@ -414,14 +414,33 @@ struct UnifiedMacDelegationTimelineSection: View {
     let onFollowup: (String) -> Void
     let onOpenApproval: (MacGatewayApprovalCardItem) -> Void
 
+    private var maxCardAreaHeight: CGFloat {
+        dynamicTypeSize.isAccessibilitySize ? 280 : 220
+    }
+
+    private func dismissKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if !projection.runs.isEmpty || !projection.standalone.isEmpty {
-                ScrollView(.vertical, showsIndicators: false) {
-                    cards.padding(.horizontal, ChatLayout.contentHorizontalInset)
+                ViewThatFits(in: .vertical) {
+                    cards
+                        .padding(.horizontal, ChatLayout.contentHorizontalInset)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    ScrollView(.vertical, showsIndicators: false) {
+                        cards.padding(.horizontal, ChatLayout.contentHorizontalInset)
+                    }
+                    .scrollDismissesKeyboard(.interactively)
+                    .scrollBounceBehavior(.basedOnSize)
                 }
-                .scrollBounceBehavior(.basedOnSize)
-                .frame(maxHeight: dynamicTypeSize.isAccessibilitySize ? 280 : 220)
+                .frame(maxHeight: maxCardAreaHeight)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    dismissKeyboard()
+                }
                 if let actionError {
                     Text(verbatim: actionError)
                         .font(.caption)
@@ -436,7 +455,9 @@ struct UnifiedMacDelegationTimelineSection: View {
         .task(id: "\(conversationId ?? "")|\(locale.identifier)") {
             let updates = Observations { @MainActor in
                 let approvals = store.activeMacApprovalCardItems(for: conversationId)
+                let dismissed = store.dismissedUnifiedMacRunIds
                 let runs = store.unifiedMacDelegatedRuns(for: conversationId, approvals: approvals)
+                    .filter { !dismissed.contains($0.id) }
                 let attached = Set(runs.compactMap { $0.pendingApproval?.id })
                 return Projection(runs: runs, standalone: approvals.filter { !attached.contains($0.id) })
             }
@@ -487,6 +508,9 @@ struct UnifiedMacDelegationTimelineSection: View {
                     },
                     onOpenApproval: {
                         if let approval = run.pendingApproval { onOpenApproval(approval) }
+                    },
+                    onDismissCard: {
+                        store.dismissedUnifiedMacRunIds.insert(run.id)
                     }
                 )
             }
@@ -546,9 +570,22 @@ private struct UnifiedMacDelegationRunCard: View {
     let onFollowup: () -> Void
     let onStop: () -> Void
     let onOpenApproval: () -> Void
+    let onDismissCard: () -> Void
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var pendingConfirmation: PendingConfirmation? = nil
+
+    private var canDismissCard: Bool {
+        guard !run.isBusy, !run.isReceiptUnconfirmed, !run.isOutcomeUnknown, run.pendingApproval == nil else {
+            return false
+        }
+        switch run.badge {
+        case .failed, .completed, .cancelled, .retried, .trackingEnded:
+            return true
+        case .running, .followup, .awaitingMacApproval, .outcomeUnknown:
+            return false
+        }
+    }
 
     private var badgeTint: Color {
         switch run.badge {
@@ -607,6 +644,19 @@ private struct UnifiedMacDelegationRunCard: View {
                     .buttonStyle(.plain)
                     .padding(.vertical, -8)
                     .padding(.trailing, -4)
+                } else if canDismissCard {
+                    Button(action: onDismissCard) {
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AmberTheme.muted)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.vertical, -10)
+                    .padding(.trailing, -10)
+                    .accessibilityLabel(macGatewayL("关闭卡片"))
+                    .accessibilityIdentifier("chat.macRun.dismiss.\(run.id)")
                 }
             }
 

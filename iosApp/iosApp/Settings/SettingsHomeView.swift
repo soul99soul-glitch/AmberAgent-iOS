@@ -24,15 +24,13 @@ struct SettingsHomeView: View {
                 route: .language
             ),
             .init(title: "显示与字体", systemImage: "slider.horizontal.3", route: .displayFont),
-            .init(title: "Apple Watch", systemImage: "applewatch", route: .appleWatch),
-            .init(title: "Amber · 云端", systemImage: "desktopcomputer", route: .macGateway)
+            .init(title: "Amber 多终端", subtitle: "云端 · Mac · Watch", systemImage: "laptopcomputer.and.iphone", route: .multiDevice)
         ]
     }
 
     private var agentEntries: [SettingsHomeEntry] {
         [
             .init(title: "灵魂与记忆", systemImage: "cylinder.split.1x2", route: .memory),
-            .init(title: "执行规则卡", systemImage: "list.bullet.rectangle", route: .proceduralRules),
             .init(title: "运行环境", systemImage: "terminal", route: .execution),
             .init(title: "技能", systemImage: "wrench.and.screwdriver", route: .skills),
             .init(title: "权限与批准", systemImage: "shield", route: .toolPermissions)

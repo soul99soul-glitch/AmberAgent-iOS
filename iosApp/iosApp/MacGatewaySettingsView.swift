@@ -4,6 +4,7 @@ import UIKit
 
 struct MacGatewaySettingsView: View {
     var sharedSettings: IOSSharedSettingsStore? = nil
+    var showsNavigationHeader: Bool = true
 
     private struct LocalSiwcPromptState: Equatable {
         let providerId: String?
@@ -25,6 +26,7 @@ struct MacGatewaySettingsView: View {
     @Environment(RouterPath.self) private var router
     @State private var confirmsUnpair = false
     @State private var presentingCloudCompose = false
+    @State private var presentingCloudDialogue = false
     @State private var copiedFingerprint = false
     @State private var copyFingerprintResetTask: Task<Void, Never>?
     @State private var localSiwcPrompt: LocalSiwcPromptState?
@@ -54,7 +56,9 @@ struct MacGatewaySettingsView: View {
         ZStack {
             AmberTheme.background.ignoresSafeArea()
             VStack(spacing: 0) {
-                header
+                if showsNavigationHeader {
+                    header
+                }
                 ScrollView {
                     VStack(spacing: 0) {
                         if let pending = store.pendingPairing {
@@ -105,6 +109,9 @@ struct MacGatewaySettingsView: View {
             MacGatewayCloudTaskComposeSheet(store: store) { _ in
                 router.navigate(to: .macTasks)
             }
+        }
+        .sheet(isPresented: $presentingCloudDialogue) {
+            MacGatewayCloudDialogueSheet(store: store)
         }
         .sheet(
             isPresented: Binding(
@@ -482,13 +489,19 @@ struct MacGatewaySettingsView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "云端配置")
             AmberFormGroup {
+                MacGatewayRow(icon: "icloud", title: L("打开云端常驻对话"),
+                              detail: L("进入云端独立对话流，不影响主界面的统一时间线"),
+                              action: { presentingCloudDialogue = true }) {
+                    MacGatewayChevron()
+                }
+                MacGatewayRowDivider()
                 MacGatewayRow(icon: "gearshape.2", title: L("模型与搜索"),
                               detail: L("查看云端 provider/model，或从本机导入配置与 API Key"),
                               action: { router.navigate(to: .cloudConfig) }) {
                     MacGatewayChevron()
                 }
                 MacGatewayRowDivider()
-                MacGatewayRow(icon: "list.bullet.rectangle", title: L("执行规则卡"),
+                MacGatewayRow(icon: "checklist", title: L("行为习惯与规则"),
                               detail: proceduralRulesSummary,
                               action: { router.navigate(to: .proceduralRules) }) {
                     MacGatewayChevron()
@@ -501,12 +514,12 @@ struct MacGatewaySettingsView: View {
         let proposed = ruleStore.proposedCount
         let active = ruleStore.activeCount
         if proposed > 0 {
-            return L("待确认 \(proposed) 条 · 生效中 \(active) 条")
+            return L("待你确认 \(proposed) 条 · 生效中 \(active) 条")
         }
         if active > 0 {
-            return L("生效中 \(active) 条 · 遵循四层权威注入")
+            return L("正在生效 \(active) 条")
         }
-        return L("查看、确认或撤销从纠正沉淀的执行规则")
+        return L("管理你交代过 Amber 的固定做法")
     }
 
     private func bootstrapHintSummary(_ hint: MacGatewayPairingBootstrapHint) -> String {
@@ -522,7 +535,7 @@ struct MacGatewaySettingsView: View {
             parts.append(L("形象人设 v\(hint.soulRevision)"))
         }
         if hint.activeRulesCount > 0 {
-            parts.append(L("\(hint.activeRulesCount) 条生效规则卡"))
+            parts.append(L("\(hint.activeRulesCount) 条生效习惯"))
         }
         return parts.isEmpty
             ? L("配对后将使用临时 RSA 密钥自动同步云端配置")

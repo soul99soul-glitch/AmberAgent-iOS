@@ -41,11 +41,11 @@ struct ChatComposerLocalState {
     var unifiedMacFollowupWorkItemId: String? = nil
     var sharePrefillNotice: String? = nil
 
-    /// Transfer exactly one send to the remote owner before waiting for its receipt.
+    /// Transfer a send to the remote owner while preserving the user's selected remote target
+    /// (Direction 1: unified timeline single-level target switch stays armed until switched back).
     mutating func takeUnifiedMacTarget() -> String? {
         let target = unifiedMacFollowupWorkItemId
         unifiedMacFollowupWorkItemId = nil
-        isDelegateToMacArmed = false
         cloudDialogueErrorMessage = nil
         sharePrefillNotice = nil
         return target

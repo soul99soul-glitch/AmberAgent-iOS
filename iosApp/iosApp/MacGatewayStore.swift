@@ -153,6 +153,7 @@ final class MacGatewayStore {
     @ObservationIgnored let cloudCompletionFeedback = ChatCompletionFeedback()
     var selectedCloudDialogueWorkItemId: String?
     var busyCloudDialogueRequestIds: Set<String> = []
+    var dismissedUnifiedMacRunIds: Set<String> = []
     var cloudDialogueLastError: String?
     var cloudDialogueTransportState: MacGatewayCloudDialogueTransportState = .unknown
     /// Cloud configuration (/v2 config API): non-secret remote view plus fetch/

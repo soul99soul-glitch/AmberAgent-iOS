@@ -956,6 +956,11 @@ private extension View {
                 IOSAppleIntegrationsView(
                     systemPermissionCoordinator: systemPermissionCoordinator
                 )
+            case .multiDevice:
+                AmberMultiDeviceSettingsView(
+                    sharedSettings: sharedSettings,
+                    conversationStore: conversationStore
+                )
             case .appleWatch:
                 IOSWatchSettingsView(
                     sharedSettings: sharedSettings,

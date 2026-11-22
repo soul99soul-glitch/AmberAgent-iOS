@@ -174,9 +174,9 @@ struct CouncilChatRuntimeView: View {
         .safeAreaBar(edge: .top, spacing: 0) {
             VStack(spacing: 0) {
                 header
-                // 透明延伸只扩大 safeAreaBar 几何，不画自定义材质；模糊走原生 soft edge。
+                // 议会顶栏不挂载主对话大头像，使用紧凑延伸高度避免顶部大片留白。
                 Color.clear
-                    .frame(height: ChatTopBarLayout.softEdgeExtension)
+                    .frame(height: 8)
                     .allowsHitTesting(false)
             }
         }
@@ -334,7 +334,8 @@ struct CouncilChatRuntimeView: View {
             }
         }
         .padding(.horizontal, 18)
-        .frame(height: ChatTopBarLayout.controlsHeight, alignment: .bottom)
+        .padding(.top, 2)
+        .frame(height: 52, alignment: .center)
     }
 
     private var modeCapsuleButton: some View {

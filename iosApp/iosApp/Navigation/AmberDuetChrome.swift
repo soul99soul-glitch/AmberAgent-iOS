@@ -104,28 +104,19 @@ struct AmberDuetBottomSwitcher: View {
 
                 Spacer(minLength: 4)
 
-                // Right (+1): 交给 Mac 胶囊（短按切换单次交给 Mac，长按直切本机 ⇄ 云端）
+                // Right (+1): 统一主时间线单层级执行去向切换胶囊（短按本机 ⇄ 远端，长按配对设置）
                 AmberHostSwitcherPill(
                     gateway: gateway,
-                    isDelegateToMacArmed: isDelegateToMacArmed,
-                    onToggleDelegateToMac: onToggleDelegateToMac,
-                    onSelectHost: { useCloud in
-                        if let onSelectHost {
-                            onSelectHost(useCloud)
-                        } else {
-                            gateway.setCloudMainDialogueSelected(useCloud)
-                            if selectedTab != .chat {
-                                onSelectTab?(.chat)
-                            }
+                    isRemoteTargetSelected: isDelegateToMacArmed,
+                    onToggleRemoteTarget: {
+                        if let onToggleDelegateToMac {
+                            onToggleDelegateToMac()
+                        } else if selectedTab != .chat {
+                            onSelectTab?(.chat)
                         }
                     },
                     onOpenPairingSettings: {
                         onOpenCloudPairingSettings?()
-                    },
-                    onFocusCloudDialogue: {
-                        if selectedTab != .chat {
-                            onSelectTab?(.chat)
-                        }
                     }
                 )
             }

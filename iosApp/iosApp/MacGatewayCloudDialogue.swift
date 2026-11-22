@@ -756,15 +756,65 @@ extension MacGatewayClient {
         segment.addingPercentEncoding(withAllowedCharacters: dialoguePathAllowed) ?? segment
     }
 
+    private static func isInvalidRequestResponse(_ response: MacGatewayRawResponse) -> Bool {
+        if response.errorCode?.lowercased() == "invalid_request" {
+            return true
+        }
+        guard let body = String(data: response.data, encoding: .utf8)?.lowercased() else {
+            return false
+        }
+        return body.contains("invalid_request") || body.contains("unknown key")
+    }
+
+    private func decodeDialogueResponse(_ response: MacGatewayRawResponse) throws -> MacGatewayCloudDialogueReceipt {
+        switch response.status {
+        case 200..<300:
+            return try decode(response.data)
+        case 401:
+            throw MacGatewayError.unauthorized
+        case 403:
+            let message = Self.extractErrorMessage(from: response.data) ?? response.errorCode
+            throw MacGatewayError.forbidden(message ?? "HTTP \(response.status)")
+        case 409:
+            let message = Self.extractErrorMessage(from: response.data) ?? response.errorCode
+            throw MacGatewayError.conflict(message ?? "HTTP \(response.status)")
+        default:
+            let message = Self.extractErrorMessage(from: response.data) ?? response.errorCode
+            throw MacGatewayError.server(message ?? "HTTP \(response.status)")
+        }
+    }
+
+    private func sendDialogueWithLegacyFallback<Request: Encodable>(
+        path: String,
+        request: Request,
+        legacyRequest: Request?
+    ) async throws -> MacGatewayCloudDialogueReceipt {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let primaryData = try encoder.encode(request)
+        var response = try await requestData("POST", path, bodyData: primaryData, headers: Self.dialogueHeaders, slow: true)
+        if let legacyRequest,
+           response.status == 400,
+           Self.isInvalidRequestResponse(response) {
+            let legacyData = try encoder.encode(legacyRequest)
+            response = try await requestData("POST", path, bodyData: legacyData, headers: Self.dialogueHeaders, slow: true)
+        }
+        return try decodeDialogueResponse(response)
+    }
+
     /// `POST /v2/dialogue/messages`
     func postDialogueMessage(_ request: MacGatewayCloudDialogueInputRequest) async throws -> MacGatewayCloudDialogueReceipt {
         if let validationError = request.validationError {
             throw MacGatewayError.server(validationError)
         }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let bodyData = try encoder.encode(request)
-        return try decode(await sendData("POST", "/v2/dialogue/messages", bodyData: bodyData, headers: Self.dialogueHeaders, slow: true))
+        let legacyRequest: MacGatewayCloudDialogueInputRequest? = request.conversationId != nil
+            ? MacGatewayCloudDialogueInputRequest(requestId: request.requestId, text: request.text, conversationId: nil)
+            : nil
+        return try await sendDialogueWithLegacyFallback(
+            path: "/v2/dialogue/messages",
+            request: request,
+            legacyRequest: legacyRequest
+        )
     }
 
     /// `POST /v2/work-items/{id}/inputs`
@@ -773,10 +823,14 @@ extension MacGatewayClient {
             throw MacGatewayError.server(validationError)
         }
         let encodedId = Self.encodeDialoguePathSegment(workItemId)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let bodyData = try encoder.encode(request)
-        return try decode(await sendData("POST", "/v2/work-items/\(encodedId)/inputs", bodyData: bodyData, headers: Self.dialogueHeaders, slow: true))
+        let legacyRequest: MacGatewayCloudDialogueInputRequest? = request.conversationId != nil
+            ? MacGatewayCloudDialogueInputRequest(requestId: request.requestId, text: request.text, conversationId: nil)
+            : nil
+        return try await sendDialogueWithLegacyFallback(
+            path: "/v2/work-items/\(encodedId)/inputs",
+            request: request,
+            legacyRequest: legacyRequest
+        )
     }
 
     /// `POST /v2/work-items/{id}/stop`
@@ -793,10 +847,14 @@ extension MacGatewayClient {
             throw MacGatewayError.server(validationError)
         }
         let encodedId = Self.encodeDialoguePathSegment(workItemId)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        let bodyData = try encoder.encode(stopRequest)
-        return try decode(await sendData("POST", "/v2/work-items/\(encodedId)/stop", bodyData: bodyData, headers: Self.dialogueHeaders, slow: true))
+        let legacyRequest: MacGatewayCloudDialogueStopRequest? = stopRequest.conversationId != nil
+            ? MacGatewayCloudDialogueStopRequest(requestId: stopRequest.requestId, conversationId: nil)
+            : nil
+        return try await sendDialogueWithLegacyFallback(
+            path: "/v2/work-items/\(encodedId)/stop",
+            request: stopRequest,
+            legacyRequest: legacyRequest
+        )
     }
 
     /// `GET /v2/dialogue/receipts/{requestId}`

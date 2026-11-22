@@ -79,7 +79,7 @@ struct ProceduralRulesSettingsView: View {
             titleVisibility: .visible,
             presenting: pendingRevokeRule
         ) { rule in
-            Button(rule.status == .proposed ? L("确认忽略并撤销") : L("确认撤销"), role: .destructive) {
+            Button(rule.status == .proposed ? L("忽略这条") : L("确认删除"), role: .destructive) {
                 pendingRevokeRule = nil
                 revokeRule(rule)
             }
@@ -88,8 +88,8 @@ struct ProceduralRulesSettingsView: View {
             }
         } message: { rule in
             Text(verbatim: rule.status == .proposed
-                 ? L("忽略后该规则将被标记为已撤销，不会参与注入。")
-                 : L("撤销后下一轮起将永久停止注入，无法恢复为生效中；如仅想暂时停用，可选择「归档」。"))
+                 ? L("忽略后不会生效，可在下方历史记录中查看。")
+                 : L("删除后下次对话起将不再遵守；如果只想暂时停用，可选择「暂停」。"))
         }
         .sheet(isPresented: $showingProposeSheet, onDismiss: {
             if pendingOpenSoulAfterProposeDismiss {
@@ -104,8 +104,8 @@ struct ProceduralRulesSettingsView: View {
                     banner = FeedbackBannerState(
                         style: .success,
                         message: deduplicated
-                            ? L("已存在相同的规则卡，可在「待确认」或「生效中」查看：") + rule.title
-                            : L("已创建待确认规则卡，需你点击「确认生效」后才参与注入。")
+                            ? L("已存在相同的习惯，可在「待你确认」或「正在生效」中查看：") + rule.title
+                            : L("已保存为待确认习惯，点「开启生效」后下次对话会自动遵守。")
                     )
                 },
                 onRedirectToSoul: { message in
@@ -129,10 +129,10 @@ struct ProceduralRulesSettingsView: View {
     }
 
     private var revokeDialogTitle: String {
-        guard let rule = pendingRevokeRule else { return L("撤销规则卡？") }
+        guard let rule = pendingRevokeRule else { return L("删除这条习惯？") }
         return rule.status == .proposed
-            ? L("忽略并撤销待确认规则「\(rule.title)」？")
-            : L("撤销规则卡「\(rule.title)」？")
+            ? L("忽略「\(rule.title)」？")
+            : L("删除「\(rule.title)」？")
     }
 
     // MARK: - Header
@@ -149,7 +149,7 @@ struct ProceduralRulesSettingsView: View {
             }
             .frame(width: balancedSideWidth)
 
-            Text(verbatim: L("执行规则卡"))
+            Text(verbatim: L("行为习惯"))
                 .font(.title2.weight(.bold))
                 .foregroundStyle(AmberTheme.foreground)
                 .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
@@ -178,7 +178,7 @@ struct ProceduralRulesSettingsView: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(AmberTheme.accent)
                     .disabled(store.isSyncing)
-                    .accessibilityLabel(Text(verbatim: L("同步云端规则卡")))
+                    .accessibilityLabel(Text(verbatim: L("同步习惯列表")))
                 }
                 Button {
                     showingProposeSheet = true
@@ -190,7 +190,7 @@ struct ProceduralRulesSettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(AmberTheme.accent)
-                .accessibilityLabel(Text(verbatim: L("提议新规则卡")))
+                .accessibilityLabel(Text(verbatim: L("添加一条习惯")))
             }
             .frame(width: balancedSideWidth, alignment: .trailing)
         }
@@ -199,37 +199,25 @@ struct ProceduralRulesSettingsView: View {
         .padding(.bottom, 16)
     }
 
-    // MARK: - Authority Overview
+    // MARK: - Intro Note
 
     private var authorityOverviewCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "shield.lefthalf.filled")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(AmberTheme.accent)
-                    .accessibilityHidden(true)
-                Text(verbatim: L("四层上下文权威顺序"))
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(AmberTheme.foreground)
-            }
-            Text(verbatim: L("系统静态风险表（L1–L3，不可绕过）> 已确认规则 > 形象人设（C-SOUL-V1）> 对话记忆 / Episode"))
-                .font(.footnote.weight(.medium))
+        VStack(alignment: .leading, spacing: 6) {
+            Text(verbatim: L("你教过 Amber 的固定做法，开启后下次对话会自动遵守；涉及高风险操作仍会先问你。"))
+                .font(.callout)
                 .foregroundStyle(AmberTheme.foreground2)
+                .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(verbatim: L("新规则须经你显式确认后才生效；归档或撤销后下一轮立即停止注入。"))
-                .font(.caption)
-                .foregroundStyle(AmberTheme.muted)
-                .fixedSize(horizontal: false, vertical: true)
+            if store.isCloudRulesUnsupported {
+                Text(verbatim: L("云端暂未升级，当前仅本机生效"))
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous)
-                .strokeBorder(AmberTheme.borderSoft, lineWidth: 0.5)
-        )
         .padding(.horizontal, 16)
-        .padding(.bottom, 12)
+        .padding(.bottom, 8)
     }
 
     private func feedbackBanner(_ state: FeedbackBannerState) -> some View {
@@ -251,12 +239,12 @@ struct ProceduralRulesSettingsView: View {
         case .riskImmutable:
             accentColor = MacDelegationSemanticInk.danger
             iconName = "shield.slash.fill"
-            title = L("静态风险表不可绕过（L1–L3）")
+            title = L("涉及敏感或高风险操作，系统仍会先请你确认")
             fillTint = MacDelegationSemanticInk.danger.opacity(colorScheme == .dark ? 0.14 : 0.07)
         case .redirectToSoul:
             accentColor = AmberTheme.accent
             iconName = "person.crop.circle.badge.exclamationmark"
-            title = L("请前往「形象人设」编辑")
+            title = L("这条更像是角色性格设定，去形象人设里改更合适")
             fillTint = AmberTheme.surface
         }
 
@@ -327,10 +315,10 @@ struct ProceduralRulesSettingsView: View {
     private var proposedSection: some View {
         let items = store.proposedRules
         return VStack(spacing: 0) {
-            AmberSectionLabel(verbatim: L("待确认规则卡（\(items.count)）"))
+            AmberSectionLabel(verbatim: L("待你确认（\(items.count)）"))
             if items.isEmpty {
                 AmberFormGroup {
-                    emptyRow(text: L("暂无待确认规则卡。可点击右上角「+」提议一条新执行规则。"))
+                    emptyRow(text: L("暂无待确认的习惯。点右上角「+」可添加一条。"))
                 }
             } else {
                 AmberFormGroup {
@@ -365,7 +353,7 @@ struct ProceduralRulesSettingsView: View {
                         _ = try await store.confirm(id: rule.id, syncClient: gatewayStore.client)
                         banner = FeedbackBannerState(
                             style: .success,
-                            message: L("已确认生效：") + rule.title
+                            message: L("已开启：") + rule.title
                         )
                     }
                 } label: {
@@ -375,7 +363,7 @@ struct ProceduralRulesSettingsView: View {
                                 .controlSize(.small)
                                 .tint(AmberTheme.accentInk)
                         }
-                        Text(verbatim: activeAction == .confirm ? L("确认中…") : L("确认生效"))
+                        Text(verbatim: activeAction == .confirm ? L("开启中…") : L("开启生效"))
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(AmberTheme.accentInk)
                     }
@@ -423,10 +411,10 @@ struct ProceduralRulesSettingsView: View {
     private var activeSection: some View {
         let items = store.activeRules
         return VStack(spacing: 0) {
-            AmberSectionLabel(verbatim: L("已生效规则卡（\(items.count)）"))
+            AmberSectionLabel(verbatim: L("正在生效（\(items.count)）"))
             if items.isEmpty {
                 AmberFormGroup {
-                    emptyRow(text: L("暂无已生效规则卡。规则经你确认后才会参与上下文注入。"))
+                    emptyRow(text: L("暂无正在生效的习惯。开启后下次对话会自动遵守。"))
                 }
             } else {
                 AmberFormGroup {
@@ -467,7 +455,7 @@ struct ProceduralRulesSettingsView: View {
                         _ = try await store.archive(id: rule.id, syncClient: gatewayStore.client)
                         banner = FeedbackBannerState(
                             style: .success,
-                            message: L("已归档，下一轮停止注入：") + rule.title
+                            message: L("已暂停，下次对话起不再生效：") + rule.title
                         )
                     }
                 } label: {
@@ -477,7 +465,7 @@ struct ProceduralRulesSettingsView: View {
                                 .controlSize(.small)
                                 .tint(AmberTheme.foreground)
                         }
-                        Text(verbatim: activeAction == .archive ? L("归档中…") : L("归档"))
+                        Text(verbatim: activeAction == .archive ? L("暂停中…") : L("暂停"))
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(AmberTheme.foreground)
                     }
@@ -503,7 +491,7 @@ struct ProceduralRulesSettingsView: View {
                                 .controlSize(.small)
                                 .tint(MacDelegationSemanticInk.danger)
                         }
-                        Text(verbatim: activeAction == .revoke ? L("撤销中…") : L("撤销"))
+                        Text(verbatim: activeAction == .revoke ? L("删除中…") : L("删除"))
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(MacDelegationSemanticInk.danger)
                     }
@@ -540,7 +528,7 @@ struct ProceduralRulesSettingsView: View {
                     }
                 } label: {
                     HStack(spacing: 8) {
-                        Text(verbatim: L("已归档 / 已撤销（\(items.count)）"))
+                        Text(verbatim: L("已暂停 / 已删除（\(items.count)）"))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(AmberTheme.muted)
                             .monospacedDigit()
@@ -555,7 +543,7 @@ struct ProceduralRulesSettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .padding(.top, 12)
-                .accessibilityHint(Text(verbatim: showHistory ? L("双击收起历史规则卡") : L("双击展开历史规则卡")))
+                .accessibilityHint(Text(verbatim: showHistory ? L("双击收起历史习惯") : L("双击展开历史习惯")))
 
                 if showHistory {
                     AmberFormGroup {
@@ -589,7 +577,7 @@ struct ProceduralRulesSettingsView: View {
         HStack(spacing: 8) {
             scopeBadge(rule.scope)
             if rule.status != .active && rule.hitCount > 0 {
-                Text(verbatim: L("曾命中 \(rule.hitCount) 次"))
+                Text(verbatim: L("曾遵守 \(rule.hitCount) 次"))
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(AmberTheme.muted)
@@ -661,7 +649,7 @@ struct ProceduralRulesSettingsView: View {
 
     private func scopeBadge(_ scope: String) -> some View {
         let isGlobal = scope == IOSProceduralRule.scopeGlobal
-        let label = isGlobal ? L("全局") : scope
+        let label = isGlobal ? L("所有对话") : scope
         return Text(verbatim: label)
             .font(.caption.weight(.medium))
             .foregroundStyle(AmberTheme.foreground)
@@ -671,11 +659,11 @@ struct ProceduralRulesSettingsView: View {
             .padding(.vertical, 4)
             .background(AmberTheme.surface2, in: Capsule())
             .overlay(Capsule().strokeBorder(AmberTheme.borderSoft, lineWidth: 0.5))
-            .accessibilityLabel(Text(verbatim: L("作用域：") + label))
+            .accessibilityLabel(Text(verbatim: L("生效范围：") + label))
     }
 
     private func hitCountBadge(_ count: Int) -> some View {
-        Text(verbatim: L("命中 \(count) 次"))
+        Text(verbatim: L("已遵守 \(count) 次"))
             .font(.caption.weight(.semibold))
             .monospacedDigit()
             .foregroundStyle(MacDelegationSemanticInk.success)
@@ -733,8 +721,8 @@ struct ProceduralRulesSettingsView: View {
             banner = FeedbackBannerState(
                 style: .success,
                 message: rule.status == .proposed
-                    ? L("已忽略并撤销：") + rule.title
-                    : L("已撤销，下一轮 100% 停止注入：") + rule.title
+                    ? L("已忽略：") + rule.title
+                    : L("已删除，下次对话起不再生效：") + rule.title
             )
         }
     }
@@ -786,7 +774,7 @@ private struct ProceduralRuleProposeSheet: View {
                 AmberTheme.background.ignoresSafeArea()
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        fieldSection(title: L("规则标题（可选）")) {
+                        fieldSection(title: L("简短名称（可选）")) {
                             TextField(L("例如：提交代码前先跑单测"), text: $title)
                                 .textFieldStyle(.plain)
                                 .foregroundStyle(AmberTheme.foreground)
@@ -798,10 +786,10 @@ private struct ProceduralRuleProposeSheet: View {
                                 )
                         }
 
-                        fieldSection(title: L("执行规则内容")) {
+                        fieldSection(title: L("希望 Amber 怎么做")) {
                             ZStack(alignment: .topLeading) {
                                 if instruction.isEmpty {
-                                    Text(verbatim: L("输入希望 Agent 在后续轮次遵守的具体执行规则…"))
+                                    Text(verbatim: L("写下你希望 Amber 以后固定遵守的做法…"))
                                         .font(.body)
                                         .foregroundStyle(AmberTheme.muted)
                                         .padding(.horizontal, 14)
@@ -821,7 +809,7 @@ private struct ProceduralRuleProposeSheet: View {
                             )
                         }
 
-                        fieldSection(title: L("作用域")) {
+                        fieldSection(title: L("生效范围")) {
                             TextField("global", text: $scope)
                                 .textFieldStyle(.plain)
                                 .textInputAutocapitalization(.never)
@@ -833,7 +821,7 @@ private struct ProceduralRuleProposeSheet: View {
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                                         .strokeBorder(AmberTheme.borderSoft, lineWidth: 0.75)
                                 )
-                            Text(verbatim: L("填 global 可用于共享记忆的会话。只想用于一个会话时，填写该会话的 ID。"))
+                            Text(verbatim: L("保持 global 会对所有对话生效；只想用于单个对话时填该对话 ID。"))
                                 .font(.caption)
                                 .foregroundStyle(AmberTheme.muted)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -848,7 +836,7 @@ private struct ProceduralRuleProposeSheet: View {
                                         .padding(.top, 1)
                                         .accessibilityHidden(true)
                                     VStack(alignment: .leading, spacing: 4) {
-                                        Text(verbatim: L("该内容属于形象人设（C-SOUL-V1）"))
+                                        Text(verbatim: L("这条更像是角色性格设定，去形象人设里改更合适"))
                                             .font(.subheadline.weight(.semibold))
                                             .foregroundStyle(AmberTheme.foreground)
                                         Text(verbatim: redirectToSoulMessage)
@@ -863,7 +851,7 @@ private struct ProceduralRuleProposeSheet: View {
                                     HStack(spacing: 6) {
                                         Image(systemName: "person.crop.circle")
                                             .font(.subheadline.weight(.semibold))
-                                        Text(verbatim: L("前往「形象人设 (C-SOUL-V1)」"))
+                                        Text(verbatim: L("前往「形象人设」"))
                                             .font(.subheadline.weight(.semibold))
                                     }
                                     .foregroundStyle(AmberTheme.accent)
@@ -890,7 +878,7 @@ private struct ProceduralRuleProposeSheet: View {
                                     .accessibilityHidden(true)
                                 VStack(alignment: .leading, spacing: 4) {
                                     if isRiskImmutable {
-                                        Text(verbatim: L("静态风险表不可绕过（L1–L3）"))
+                                        Text(verbatim: L("涉及敏感或高风险操作，系统仍会先请你确认"))
                                             .font(.subheadline.weight(.semibold))
                                             .foregroundStyle(inkColor)
                                     }
@@ -923,7 +911,7 @@ private struct ProceduralRuleProposeSheet: View {
                                         .controlSize(.small)
                                         .tint(AmberTheme.accentInk)
                                 }
-                                Text(verbatim: isSubmitting ? L("提交中…") : L("提交为待确认规则"))
+                                Text(verbatim: isSubmitting ? L("保存中…") : L("保存待确认"))
                                     .font(.body.weight(.semibold))
                                     .foregroundStyle(AmberTheme.accentInk)
                             }
@@ -938,7 +926,7 @@ private struct ProceduralRuleProposeSheet: View {
                     .padding(16)
                 }
             }
-            .navigationTitle(Text(verbatim: L("提议执行规则")))
+            .navigationTitle(Text(verbatim: L("添加一条习惯")))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

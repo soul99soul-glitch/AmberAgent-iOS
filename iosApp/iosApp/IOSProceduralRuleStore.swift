@@ -155,6 +155,12 @@ extension IOSProceduralRulesSyncing {
     }
 }
 
+struct IOSProceduralRulesUnsupportedError: LocalizedError, Equatable, Sendable {
+    var errorDescription: String? {
+        IOSAppLocalization.string("云端暂未升级，当前仅本机生效", defaultValue: "云端暂未升级，当前仅本机生效")
+    }
+}
+
 extension MacGatewayClient: IOSProceduralRulesSyncing {
     func fetchProceduralRules(status: IOSProceduralRuleStatus? = nil, scope: String? = nil) async throws -> [IOSProceduralRule] {
         var queryItems: [URLQueryItem] = []
@@ -172,9 +178,22 @@ extension MacGatewayClient: IOSProceduralRulesSyncing {
                 path += "?\(query)"
             }
         }
-        let data = try await send("GET", path)
-        let decoded: IOSProceduralRuleListResponse = try decode(data)
-        return decoded.rules
+        let response = try await requestData("GET", path)
+        switch response.status {
+        case 200..<300:
+            let decoded: IOSProceduralRuleListResponse = try decode(response.data)
+            return decoded.rules
+        case 404:
+            throw IOSProceduralRulesUnsupportedError()
+        case 401:
+            throw MacGatewayError.unauthorized
+        case 403:
+            throw MacGatewayError.forbidden(response.errorCode ?? "HTTP 403")
+        case 409:
+            throw MacGatewayError.conflict(response.errorCode ?? "HTTP 409")
+        default:
+            throw MacGatewayError.server(response.errorCode ?? "HTTP \(response.status)")
+        }
     }
 
     func proposeProceduralRule(
@@ -202,6 +221,8 @@ extension MacGatewayClient: IOSProceduralRulesSyncing {
         case 200, 201:
             let decoded: IOSProceduralRuleResponse = try decode(response.data)
             return .proposed(decoded.rule, deduplicated: decoded.deduplicated ?? false)
+        case 404:
+            throw IOSProceduralRulesUnsupportedError()
         case 422:
             if let redirect = try? JSONDecoder().decode(IOSProceduralRuleRedirectResponse.self, from: response.data) {
                 if redirect.redirectToSoul == true || redirect.target == "C-SOUL-V1" {
@@ -211,22 +232,22 @@ extension MacGatewayClient: IOSProceduralRulesSyncing {
                         message: (message?.isEmpty == false)
                             ? message!
                             : IOSAppLocalization.string(
-                                "该内容属于形象人设或说话口吻，请前往「形象人设」编辑。",
-                                defaultValue: "该内容属于形象人设或说话口吻，请前往「形象人设」编辑。"
+                                "这条更像是角色性格设定，去「形象人设」里改更合适。",
+                                defaultValue: "这条更像是角色性格设定，去「形象人设」里改更合适。"
                             )
                     )
                 }
                 let code = redirect.error ?? "rule_rejected"
                 let fallback: String = (code == "risk_table_immutable")
                     ? IOSAppLocalization.string(
-                        "静态风险表（L1–L3）不可被规则卡放宽或绕过。",
-                        defaultValue: "静态风险表（L1–L3）不可被规则卡放宽或绕过。"
+                        "涉及敏感或高风险操作，系统仍会先请你确认，无法通过习惯放宽。",
+                        defaultValue: "涉及敏感或高风险操作，系统仍会先请你确认，无法通过习惯放宽。"
                     )
-                    : IOSAppLocalization.string("规则提议被拒绝", defaultValue: "规则提议被拒绝")
+                    : IOSAppLocalization.string("这条习惯暂时无法保存", defaultValue: "这条习惯暂时无法保存")
                 let message = redirect.message?.trimmingCharacters(in: .whitespacesAndNewlines)
                 return .rejected(code: code, message: (message?.isEmpty == false) ? message! : fallback)
             }
-            return .rejected(code: "rule_rejected", message: IOSAppLocalization.string("规则提议被拒绝", defaultValue: "规则提议被拒绝"))
+            return .rejected(code: "rule_rejected", message: IOSAppLocalization.string("这条习惯暂时无法保存", defaultValue: "这条习惯暂时无法保存"))
         case 401:
             throw MacGatewayError.unauthorized
         case 403:
@@ -497,6 +518,7 @@ final class IOSProceduralRuleStore {
     private(set) var rules: [IOSProceduralRule] = []
     private(set) var isSyncing = false
     private(set) var lastSyncError: String?
+    private(set) var isCloudRulesUnsupported = false
 
     @ObservationIgnored private let storageURL: URL?
     @ObservationIgnored private let clockMs: @Sendable () -> Int64
@@ -684,6 +706,17 @@ final class IOSProceduralRuleStore {
 
     // MARK: - Gateway-Synced Operations
 
+    private static func isNotFoundUnsupportedError(_ error: Error) -> Bool {
+        if error is IOSProceduralRulesUnsupportedError {
+            return true
+        }
+        if case MacGatewayError.server(let message) = error {
+            let lower = message.lowercased()
+            return lower.contains("404") || lower.contains("not_found") || lower.contains("not found")
+        }
+        return false
+    }
+
     func syncFromGateway(syncClient: (any IOSProceduralRulesSyncing)?) async {
         guard let syncClient, !isSyncing else { return }
         isSyncing = true
@@ -691,10 +724,16 @@ final class IOSProceduralRuleStore {
         do {
             let remote = try await syncClient.fetchProceduralRules()
             mergeRemoteRules(remote)
+            isCloudRulesUnsupported = false
             lastSyncError = nil
         } catch is CancellationError {
         } catch {
-            lastSyncError = error.localizedDescription
+            if Self.isNotFoundUnsupportedError(error) {
+                isCloudRulesUnsupported = true
+                lastSyncError = nil
+            } else {
+                lastSyncError = error.localizedDescription
+            }
         }
     }
 
@@ -715,6 +754,7 @@ final class IOSProceduralRuleStore {
                     scope: resolvedScope,
                     sourceEventId: sourceEventId
                 )
+                isCloudRulesUnsupported = false
                 lastSyncError = nil
                 if case .proposed(let rule, _) = outcome {
                     upsertRule(rule)
@@ -723,8 +763,13 @@ final class IOSProceduralRuleStore {
             } catch MacGatewayError.unreachable {
                 lastSyncError = MacGatewayError.unreachable.localizedDescription
             } catch {
-                lastSyncError = error.localizedDescription
-                return .rejected(code: "gateway_request_failed", message: error.localizedDescription)
+                if Self.isNotFoundUnsupportedError(error) {
+                    isCloudRulesUnsupported = true
+                    lastSyncError = nil
+                } else {
+                    lastSyncError = error.localizedDescription
+                    return .rejected(code: "gateway_request_failed", message: error.localizedDescription)
+                }
             }
         }
         return proposeLocal(title: title, instruction: instruction, scope: resolvedScope, sourceEventId: sourceEventId)

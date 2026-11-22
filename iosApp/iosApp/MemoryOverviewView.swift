@@ -212,6 +212,32 @@ struct MemoryOverviewView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
             }
+
+            AmberSectionLabel(text: "行为习惯")
+            AmberFormGroup {
+                let activeRuleCount = IOSProceduralRuleStore.shared.activeCount
+                let proposedRuleCount = IOSProceduralRuleStore.shared.proposedCount
+                let trailingSummary: String? = {
+                    if proposedRuleCount > 0 {
+                        return "\(proposedRuleCount) 条待确认"
+                    }
+                    if activeRuleCount > 0 {
+                        return "\(activeRuleCount) 条生效"
+                    }
+                    return nil
+                }()
+                AmberFormRow(
+                    systemImage: "checklist",
+                    iconColor: AmberTheme.accent,
+                    iconUsesAccentPlate: true,
+                    title: "行为习惯与规则",
+                    subtitle: "你交代过 Amber 的固定做法",
+                    trailing: trailingSummary,
+                    showsChevron: true
+                ) {
+                    router.navigate(to: .proceduralRules)
+                }
+            }
         }
         .sheet(isPresented: $showSoulEditor) {
             NavigationStack {

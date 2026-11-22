@@ -659,7 +659,7 @@ actor MacGatewayClient {
         throw sawPinMismatch ? MacGatewayError.certificateMismatch : MacGatewayError.unreachable
     }
 
-    private static func extractErrorMessage(from data: Data) -> String? {
+    static func extractErrorMessage(from data: Data) -> String? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
         }

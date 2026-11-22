@@ -970,4 +970,42 @@ struct IOSProceduralRulesAndPairingSyncTests {
         #expect(applied.summary.soulSynced && soul.displayName == "Remote")
         #expect(!applied.summary.credentialsImported && !applied.summary.encryptedConfigDecrypted)
     }
+
+    // MARK: - 7. Legacy Gateway /v2/rules HTTP 404 Degrades Silently to Local Rules
+
+    @Test @MainActor func legacyGateway404OnRulesSyncDegradesSilentlyToLocalOnly() async throws {
+        let store = IOSProceduralRuleStore(storageURL: nil)
+        let client = MacGatewayClient(
+            addrs: ["127.0.0.1"],
+            port: 9443,
+            fingerprint: "fp-legacy-404",
+            token: "tok-legacy-404",
+            transport: { request, _ in
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+                return (Data(#"{"error":"not_found"}"#.utf8), response)
+            }
+        )
+
+        await store.syncFromGateway(syncClient: client)
+        #expect(store.isCloudRulesUnsupported == true)
+        #expect(store.lastSyncError == nil)
+
+        let outcome = await store.propose(
+            title: "回复简洁",
+            instruction: "输出变更前先列出影响文件列表",
+            syncClient: client
+        )
+        guard case .proposed(let rule, _) = outcome else {
+            Issue.record("Expected local fallback proposal on 404, got \(outcome)")
+            return
+        }
+        #expect(IOSProceduralRule.isLocalID(rule.id))
+        #expect(store.isCloudRulesUnsupported == true)
+        #expect(store.lastSyncError == nil)
+    }
 }

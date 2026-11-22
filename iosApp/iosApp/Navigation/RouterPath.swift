@@ -98,6 +98,7 @@ enum Route: Hashable {
     case healthSummary
     case weather
     case appleIntegrations
+    case multiDevice
     case appleWatch
     case macGateway
     /// Task board of the paired Mac (scheduled tasks, their runs, Claude Code / Codex sessions).

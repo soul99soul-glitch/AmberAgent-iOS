@@ -11,6 +11,7 @@ struct IOSWatchSettingsView: View {
     let sharedSettings: IOSSharedSettingsStore
     let conversationStore: IOSConversationStore
     @Bindable var service: IOSWatchCompanionService
+    var showsNavigationHeader: Bool = true
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -39,12 +40,14 @@ struct IOSWatchSettingsView: View {
         sharedSettings: IOSSharedSettingsStore,
         conversationStore: IOSConversationStore,
         service: IOSWatchCompanionService = .shared,
-        initiallyShowsNotes: Bool = false
+        initiallyShowsNotes: Bool = false,
+        showsNavigationHeader: Bool = true
     ) {
         self.sharedSettings = sharedSettings
         self.conversationStore = conversationStore
         self._service = Bindable(service)
         self._showsNotes = State(initialValue: initiallyShowsNotes)
+        self.showsNavigationHeader = showsNavigationHeader
     }
 
     private var availableQuickActions: [WatchQuickAction] {
@@ -105,7 +108,9 @@ struct IOSWatchSettingsView: View {
         ZStack {
             AmberTheme.background.ignoresSafeArea()
             VStack(spacing: 0) {
-                header
+                if showsNavigationHeader {
+                    header
+                }
                 ScrollView {
                     VStack(spacing: 0) {
                         deviceSection

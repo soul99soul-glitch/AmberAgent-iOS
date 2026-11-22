@@ -257,11 +257,12 @@ struct Stage2BUnifiedMacHandoffTests {
             defaults.removePersistentDomain(forName: suiteName)
         }
 
-        // Arm "交给 Mac" in composer, submit Mac task A, then confirm composer resets to local default for B.
+        // Direction 1: arming remote target persists across sends until switched back to local,
+        // while staying on the unified main timeline (isCloudMainDialogueSelected remains false).
         var composerState = ChatComposerLocalState()
         composerState.isDelegateToMacArmed = true
         let targetA = composerState.takeUnifiedMacTarget()
-        #expect(!composerState.isDelegateToMacArmed && !composerState.isSubmittingCloudDialogue)
+        #expect(composerState.isDelegateToMacArmed && !composerState.isSubmittingCloudDialogue)
         let receiptA = try await store.delegateToMacInUnifiedTimeline(
             text: "分析本地仓库日志",
             conversationId: convId,
@@ -271,7 +272,7 @@ struct Stage2BUnifiedMacHandoffTests {
         store.stopCloudDialoguePolling()
 
         #expect(receiptA.workItemIds == ["work:mac-a"])
-        #expect(composerState.isDelegateToMacArmed == false, "After dispatching Mac A, local B must immediately default to local chat")
+        #expect(composerState.isDelegateToMacArmed == true, "Direction 1 keeps remote target selected until user taps back to local")
         #expect(store.isCloudMainDialogueSelected == false, "Unified timeline delegation must not force parallel cloud host mode")
 
         // Simulate Mac A running while user chats B locally on the same conversation.
@@ -716,19 +717,88 @@ struct Stage2BUnifiedMacHandoffTests {
         #expect(latest.formattedPrefillText == "https://apple.com")
     }
 
-    // MARK: - 6. Bottom-Right "交给 Mac" / Host Switcher Pill Gesture Policy
+    // MARK: - 6. Direction 1 Single-Level Execution Target Pill & Legacy Gateway 400 Fallback
 
-    @Test func hostSwitcherPillRoutesShortTapToDelegateAndLongPressToHostSwitch() {
-        // Unpaired: both short tap and long press open pairing settings.
-        #expect(AmberHostSwitcherPillPolicy.resolveShortTap(isPaired: false, isCloudSelected: false) == .openPairingSettings)
-        #expect(AmberHostSwitcherPillPolicy.resolveLongPress(isPaired: false, isCloudSelected: false) == .openPairingSettings)
+    @Test func hostSwitcherPillUsesSingleLevelTargetToggleAndConsistentRemoteLabel() {
+        #expect(AmberHostSwitcherPillPolicy.resolveShortTap(isPaired: false) == .openPairingSettings)
+        #expect(AmberHostSwitcherPillPolicy.resolveLongPress(isPaired: false) == .openPairingSettings)
 
-        // Paired local: short tap toggles one-shot Mac delegation; long press switches to cloud main dialogue.
-        #expect(AmberHostSwitcherPillPolicy.resolveShortTap(isPaired: true, isCloudSelected: false) == .toggleDelegateToMac)
-        #expect(AmberHostSwitcherPillPolicy.resolveLongPress(isPaired: true, isCloudSelected: false) == .switchHost(useCloud: true))
+        #expect(AmberHostSwitcherPillPolicy.resolveShortTap(isPaired: true) == .toggleRemoteTarget)
+        #expect(AmberHostSwitcherPillPolicy.resolveLongPress(isPaired: true) == .openPairingSettings)
 
-        // Paired cloud: short tap stays on cloud dialogue (never switches host); long press switches back to local.
-        #expect(AmberHostSwitcherPillPolicy.resolveShortTap(isPaired: true, isCloudSelected: true) == .focusCloudDialogue)
-        #expect(AmberHostSwitcherPillPolicy.resolveLongPress(isPaired: true, isCloudSelected: true) == .switchHost(useCloud: false))
+        let macLabel = AmberHostSwitcherPillPolicy.remoteDisplayLabel(connectionName: "Studio MacBook Pro")
+        #expect(macLabel.icon == "desktopcomputer" && macLabel.title == "Mac")
+
+        let cloudLabel = AmberHostSwitcherPillPolicy.remoteDisplayLabel(connectionName: "Amber Cloud")
+        #expect(cloudLabel.icon == "icloud" && cloudLabel.title == "云端")
+    }
+
+    @Test @MainActor func legacyGateway400InvalidRequestRetriesSameRequestIdWithoutConversationId() async throws {
+        struct RecordedBody: Sendable {
+            let requestId: String?
+            let conversationId: String?
+        }
+        actor BodyRecorder {
+            var bodies: [RecordedBody] = []
+            func append(_ body: RecordedBody) { bodies.append(body) }
+            func all() -> [RecordedBody] { bodies }
+        }
+        let recorder = BodyRecorder()
+        let reqId = "550e8400-e29b-41d4-a716-446655440777"
+        let convId = "conv-legacy-compat"
+
+        let (store, defaults, suiteName) = try makeTestStore(suiteSuffix: "Legacy400Fallback") { request, _ in
+            let url = request.url!
+            let path = url.path
+            if request.httpMethod == "POST", path == "/v2/dialogue/messages" {
+                let json = (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]) ?? [:]
+                let recorded = RecordedBody(
+                    requestId: json["requestId"] as? String,
+                    conversationId: json["conversationId"] as? String
+                )
+                await recorder.append(recorded)
+                if recorded.conversationId != nil {
+                    return Self.jsonResponse(url: url, status: 400, json: #"{"error":"invalid_request"}"#)
+                }
+                return Self.jsonResponse(
+                    url: url,
+                    status: 202,
+                    json: """
+                    {
+                      "eventId": "evt-legacy-1",
+                      "requestId": "\(reqId)",
+                      "topicId": "topic-legacy-1",
+                      "workItemIds": ["work:legacy-1"],
+                      "state": "received",
+                      "replayed": false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/v2/dialogue/events" {
+                return Self.jsonResponse(url: url, status: 200, json: #"{"items":[],"nextCursor":0}"#)
+            }
+            return Self.jsonResponse(url: url, status: 404, json: #"{"error":"not_found"}"#)
+        }
+        defer {
+            store.stopCloudDialoguePolling()
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let receipt = try await store.delegateToMacInUnifiedTimeline(
+            text: "兼容旧版网关发送",
+            conversationId: convId,
+            requestId: reqId
+        ).get()
+        store.stopCloudDialoguePolling()
+
+        #expect(receipt.requestId == reqId)
+        #expect(receipt.workItemIds == ["work:legacy-1"])
+        let recorded = await recorder.all()
+        #expect(recorded.count == 2)
+        #expect(recorded[0].requestId == reqId)
+        #expect(recorded[0].conversationId == convId)
+        #expect(recorded[1].requestId == reqId)
+        #expect(recorded[1].conversationId == nil)
     }
 }
