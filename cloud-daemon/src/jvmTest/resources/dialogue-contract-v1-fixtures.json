@@ -1,0 +1,543 @@
+{
+  "schemaVersion": 1,
+  "contract": "dialogue-event-contract-v1",
+  "scenarios": [
+    {
+      "id": "duplicate_text_followups_consume_second_only",
+      "description": "同任务连发两条相同文字补充（不同 requestId），只消费第二条时第一条仍 received、第二条 consumed 且带准确 causedByInputId",
+      "workItemId": "work:dup-followup-1",
+      "topicId": "topic-dup-1",
+      "conversationId": "conv-dup-1",
+      "deviceId": "ios-device-1",
+      "executorKind": "mac",
+      "executorId": "mac-node-1",
+      "epoch": 1,
+      "steps": [
+        {
+          "action": "accept",
+          "input": {
+            "id": "inp-dup-1",
+            "deviceId": "ios-device-1",
+            "requestId": "req-dup-1",
+            "kind": "followup",
+            "text": "把平均值也算一下",
+            "topicId": "topic-dup-1",
+            "workItemId": "work:dup-followup-1",
+            "conversationId": "conv-dup-1",
+            "executorKind": "mac",
+            "executorId": "mac-node-1",
+            "epoch": 1
+          },
+          "expect": {
+            "replayed": false,
+            "disposition": "received"
+          }
+        },
+        {
+          "action": "accept",
+          "input": {
+            "id": "inp-dup-2",
+            "deviceId": "ios-device-1",
+            "requestId": "req-dup-2",
+            "kind": "followup",
+            "text": "把平均值也算一下",
+            "topicId": "topic-dup-1",
+            "workItemId": "work:dup-followup-1",
+            "conversationId": "conv-dup-1",
+            "executorKind": "mac",
+            "executorId": "mac-node-1",
+            "epoch": 1
+          },
+          "expect": {
+            "replayed": false,
+            "disposition": "received"
+          }
+        },
+        {
+          "action": "consume",
+          "inputIds": ["inp-dup-2"]
+        }
+      ],
+      "expected": {
+        "dispositions": {
+          "inp-dup-1": "received",
+          "inp-dup-2": "consumed"
+        },
+        "pendingInputIds": ["inp-dup-1"],
+        "requiredEvents": [
+          {
+            "id": "consumed:inp-dup-2",
+            "kind": "input_consumed",
+            "workItemId": "work:dup-followup-1",
+            "conversationId": "conv-dup-1",
+            "causedByInputId": "inp-dup-2",
+            "causedByRequestId": "req-dup-2"
+          }
+        ],
+        "absentEventIds": ["consumed:inp-dup-1"]
+      }
+    },
+    {
+      "id": "offline_replay_and_request_id_conflict",
+      "description": "离线同 deviceId+requestId 补发重放：同内容 replayed=true，异内容抛 request_id_conflict",
+      "workItemId": "work:replay-1",
+      "topicId": "topic-replay-1",
+      "conversationId": "conv-replay-1",
+      "deviceId": "ios-device-2",
+      "executorKind": "cloud",
+      "executorId": "cloud-worker-1",
+      "epoch": 1,
+      "steps": [
+        {
+          "action": "accept",
+          "input": {
+            "id": "inp-replay-1",
+            "deviceId": "ios-device-2",
+            "requestId": "req-offline-1",
+            "kind": "followup",
+            "text": "顺便导出一份 Markdown",
+            "topicId": "topic-replay-1",
+            "workItemId": "work:replay-1",
+            "conversationId": "conv-replay-1",
+            "executorKind": "cloud",
+            "executorId": "cloud-worker-1",
+            "epoch": 1,
+            "observedSeq": 12
+          },
+          "expect": {
+            "replayed": false,
+            "disposition": "received",
+            "acceptedInputId": "inp-replay-1"
+          }
+        },
+        {
+          "action": "accept",
+          "input": {
+            "id": "inp-replay-1-retry-client-uuid",
+            "deviceId": "ios-device-2",
+            "requestId": "req-offline-1",
+            "kind": "followup",
+            "text": "顺便导出一份 Markdown",
+            "topicId": "topic-replay-1",
+            "workItemId": "work:replay-1",
+            "conversationId": "conv-replay-1",
+            "executorKind": "cloud",
+            "executorId": "cloud-worker-1",
+            "epoch": 1,
+            "observedSeq": 12
+          },
+          "expect": {
+            "replayed": true,
+            "disposition": "received",
+            "acceptedInputId": "inp-replay-1"
+          }
+        },
+        {
+          "action": "accept",
+          "input": {
+            "id": "inp-replay-1-tampered",
+            "deviceId": "ios-device-2",
+            "requestId": "req-offline-1",
+            "kind": "followup",
+            "text": "改成导出 PDF",
+            "topicId": "topic-replay-1",
+            "workItemId": "work:replay-1",
+            "conversationId": "conv-replay-1",
+            "executorKind": "cloud",
+            "executorId": "cloud-worker-1",
+            "epoch": 1,
+            "observedSeq": 12
+          },
+          "expect": {
+            "errorCode": "request_id_conflict"
+          }
+        }
+      ],
+      "expected": {
+        "dispositions": {
+          "inp-replay-1": "received"
+        },
+        "pendingInputIds": ["inp-replay-1"],
+        "eventCountByKind": {
+          "followup": 1
+        }
+      }
+    },
+    {
+      "id": "stale_epoch_rejected_in_transaction",
+      "description": "过期 epoch 写入在事务内直接被拒绝并抛出 stale_epoch",
+      "workItemId": "work:epoch-1",
+      "topicId": "topic-epoch-1",
+      "conversationId": "conv-epoch-1",
+      "deviceId": "android-device-1",
+      "executorKind": "mac",
+      "executorId": "mac-node-2",
+      "epoch": 2,
+      "steps": [
+        {
+          "action": "append_event",
+          "event": {
+            "id": "run-start-epoch-2",
+            "kind": "run_started",
+            "role": "system",
+            "text": "执行者进入 epoch 2",
+            "topicId": "topic-epoch-1",
+            "workItemId": "work:epoch-1",
+            "conversationId": "conv-epoch-1",
+            "executorKind": "mac",
+            "executorId": "mac-node-2",
+            "epoch": 2
+          }
+        },
+        {
+          "action": "accept",
+          "input": {
+            "id": "inp-stale-1",
+            "deviceId": "android-device-1",
+            "requestId": "req-stale-epoch-1",
+            "kind": "followup",
+            "text": "旧代际补充",
+            "topicId": "topic-epoch-1",
+            "workItemId": "work:epoch-1",
+            "conversationId": "conv-epoch-1",
+            "executorKind": "mac",
+            "executorId": "mac-node-2",
+            "epoch": 1
+          },
+          "expect": {
+            "errorCode": "stale_epoch"
+          }
+        },
+        {
+          "action": "accept",
+          "input": {
+            "id": "inp-current-2",
+            "deviceId": "android-device-1",
+            "requestId": "req-current-epoch-2",
+            "kind": "followup",
+            "text": "当前代际补充",
+            "topicId": "topic-epoch-1",
+            "workItemId": "work:epoch-1",
+            "conversationId": "conv-epoch-1",
+            "executorKind": "mac",
+            "executorId": "mac-node-2",
+            "epoch": 2
+          },
+          "expect": {
+            "replayed": false,
+            "disposition": "received"
+          }
+        }
+      ],
+      "expected": {
+        "dispositions": {
+          "inp-current-2": "received"
+        },
+        "pendingInputIds": ["inp-current-2"],
+        "absentEventIds": ["inp-stale-1"]
+      }
+    },
+    {
+      "id": "followup_after_stop_auto_cancelled_in_transaction",
+      "description": "停止后到达的补充直接在事务内记为 consumed=2 并产出带 causedByInputId 的 input_cancelled",
+      "workItemId": "work:stop-then-followup-1",
+      "topicId": "topic-stop-1",
+      "conversationId": "conv-stop-1",
+      "deviceId": "harmony-device-1",
+      "executorKind": "mac",
+      "executorId": "mac-node-1",
+      "epoch": 1,
+      "steps": [
+        {
+          "action": "accept",
+          "input": {
+            "id": "inp-stop-1",
+            "deviceId": "harmony-device-1",
+            "requestId": "req-stop-1",
+            "kind": "stop",
+            "text": "",
+            "topicId": "topic-stop-1",
+            "workItemId": "work:stop-then-followup-1",
+            "conversationId": "conv-stop-1",
+            "executorKind": "mac",
+            "executorId": "mac-node-1",
+            "epoch": 1
+          },
+          "expect": {
+            "replayed": false,
+            "disposition": "received"
+          }
+        },
+        {
+          "action": "accept",
+          "input": {
+            "id": "inp-late-followup-1",
+            "deviceId": "harmony-device-1",
+            "requestId": "req-late-followup-1",
+            "kind": "followup",
+            "text": "停后到达的补充",
+            "topicId": "topic-stop-1",
+            "workItemId": "work:stop-then-followup-1",
+            "conversationId": "conv-stop-1",
+            "executorKind": "mac",
+            "executorId": "mac-node-1",
+            "epoch": 1
+          },
+          "expect": {
+            "replayed": false,
+            "disposition": "cancelled"
+          }
+        }
+      ],
+      "expected": {
+        "dispositions": {
+          "inp-late-followup-1": "cancelled"
+        },
+        "pendingFollowupIds": [],
+        "requiredEvents": [
+          {
+            "id": "cancelled:inp-late-followup-1",
+            "kind": "input_cancelled",
+            "workItemId": "work:stop-then-followup-1",
+            "conversationId": "conv-stop-1",
+            "causedByInputId": "inp-late-followup-1",
+            "causedByRequestId": "req-late-followup-1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "stop_after_completion_emits_stop_too_late",
+      "description": "目标任务完成后才到达的停止请求不静默丢弃，产出带 causedByInputId 的 stop_too_late",
+      "workItemId": "work:completed-1",
+      "topicId": "topic-completed-1",
+      "conversationId": "conv-completed-1",
+      "deviceId": "ios-device-3",
+      "executorKind": "mac",
+      "executorId": "mac-node-1",
+      "epoch": 1,
+      "steps": [
+        {
+          "action": "append_event",
+          "event": {
+            "id": "result:work:completed-1",
+            "kind": "task_result",
+            "role": "assistant",
+            "text": "已完成基线汇总",
+            "topicId": "topic-completed-1",
+            "workItemId": "work:completed-1",
+            "outcome": "completed",
+            "conversationId": "conv-completed-1",
+            "executorKind": "mac",
+            "executorId": "mac-node-1",
+            "epoch": 1
+          }
+        },
+        {
+          "action": "accept",
+          "input": {
+            "id": "inp-late-stop-1",
+            "deviceId": "ios-device-3",
+            "requestId": "req-late-stop-1",
+            "kind": "stop",
+            "text": "",
+            "topicId": "topic-completed-1",
+            "workItemId": "work:completed-1",
+            "conversationId": "conv-completed-1",
+            "executorKind": "mac",
+            "executorId": "mac-node-1",
+            "epoch": 1
+          },
+          "expect": {
+            "replayed": false,
+            "disposition": "cancelled"
+          }
+        }
+      ],
+      "expected": {
+        "dispositions": {
+          "inp-late-stop-1": "cancelled"
+        },
+        "pendingInputIds": [],
+        "requiredEvents": [
+          {
+            "id": "stop_too_late:inp-late-stop-1",
+            "kind": "stop_too_late",
+            "workItemId": "work:completed-1",
+            "conversationId": "conv-completed-1",
+            "causedByInputId": "inp-late-stop-1",
+            "causedByRequestId": "req-late-stop-1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ledger_imported_idempotency_and_conflict",
+      "description": "离线账本按 event.id 幂等导入、同 ID 异内容抛 ledger_event_conflict，且不改写历史 run 属主",
+      "workItemId": "work:ledger-run-1",
+      "topicId": "topic-ledger-1",
+      "conversationId": "conv-ledger-1",
+      "ledgerId": "ledger-ios-offline-001",
+      "steps": [
+        {
+          "action": "append_event",
+          "event": {
+            "id": "run-owner-mac",
+            "kind": "run_started",
+            "role": "system",
+            "text": "Mac 启动 run",
+            "topicId": "topic-ledger-1",
+            "workItemId": "work:ledger-run-1",
+            "conversationId": "conv-ledger-1",
+            "executorKind": "mac",
+            "executorId": "mac-owner-1",
+            "epoch": 2
+          }
+        },
+        {
+          "action": "import_ledger",
+          "ledgerId": "ledger-ios-offline-001",
+          "events": [
+            {
+              "id": "offline-ev-1",
+              "kind": "user_message",
+              "role": "user",
+              "text": "离线草稿记录 1",
+              "topicId": "topic-ledger-1",
+              "workItemId": "work:ledger-run-1",
+              "conversationId": "conv-ledger-1",
+              "executorKind": "ios",
+              "executorId": "ios-local-1",
+              "epoch": 99
+            },
+            {
+              "id": "offline-ev-2",
+              "kind": "assistant_reply",
+              "role": "assistant",
+              "text": "离线本地回复 1",
+              "topicId": "topic-ledger-1",
+              "workItemId": "work:ledger-run-1",
+              "conversationId": "conv-ledger-1",
+              "executorKind": "ios",
+              "executorId": "ios-local-1",
+              "causedByInputId": "offline-ev-1"
+            }
+          ],
+          "expect": {
+            "importedCount": 2,
+            "duplicateCount": 0
+          }
+        },
+        {
+          "action": "import_ledger",
+          "ledgerId": "ledger-ios-offline-001",
+          "events": [
+            {
+              "id": "offline-ev-1",
+              "kind": "user_message",
+              "role": "user",
+              "text": "离线草稿记录 1",
+              "topicId": "topic-ledger-1",
+              "workItemId": "work:ledger-run-1",
+              "conversationId": "conv-ledger-1",
+              "executorKind": "ios",
+              "executorId": "ios-local-1",
+              "epoch": 99
+            },
+            {
+              "id": "offline-ev-2",
+              "kind": "assistant_reply",
+              "role": "assistant",
+              "text": "离线本地回复 1",
+              "topicId": "topic-ledger-1",
+              "workItemId": "work:ledger-run-1",
+              "conversationId": "conv-ledger-1",
+              "executorKind": "ios",
+              "executorId": "ios-local-1",
+              "causedByInputId": "offline-ev-1"
+            }
+          ],
+          "expect": {
+            "importedCount": 0,
+            "duplicateCount": 2
+          }
+        },
+        {
+          "action": "import_ledger",
+          "ledgerId": "ledger-ios-offline-001",
+          "events": [
+            {
+              "id": "offline-ev-3-should-rollback",
+              "kind": "user_message",
+              "role": "user",
+              "text": "同批新事件应随冲突回滚",
+              "topicId": "topic-ledger-1",
+              "workItemId": "work:ledger-run-1",
+              "conversationId": "conv-ledger-1",
+              "executorKind": "ios",
+              "executorId": "ios-local-1"
+            },
+            {
+              "id": "offline-ev-1",
+              "kind": "user_message",
+              "role": "user",
+              "text": "被篡改的离线草稿",
+              "topicId": "topic-ledger-1",
+              "workItemId": "work:ledger-run-1",
+              "conversationId": "conv-ledger-1",
+              "executorKind": "ios",
+              "executorId": "ios-local-1",
+              "epoch": 99
+            }
+          ],
+          "expect": {
+            "errorCode": "ledger_event_conflict"
+          }
+        },
+        {
+          "action": "accept",
+          "input": {
+            "id": "inp-mac-epoch-2-still-valid",
+            "deviceId": "mac-owner-1",
+            "requestId": "req-mac-epoch-2",
+            "kind": "followup",
+            "text": "导入 epoch=99 历史账本不能破坏原 run 的 epoch=2 属主",
+            "topicId": "topic-ledger-1",
+            "workItemId": "work:ledger-run-1",
+            "conversationId": "conv-ledger-1",
+            "executorKind": "mac",
+            "executorId": "mac-owner-1",
+            "epoch": 2
+          },
+          "expect": {
+            "replayed": false,
+            "disposition": "received"
+          }
+        }
+      ],
+      "expected": {
+        "eventCountByKind": {
+          "ledger_imported": 1
+        },
+        "requiredEvents": [
+          {
+            "id": "run-owner-mac",
+            "kind": "run_started",
+            "workItemId": "work:ledger-run-1",
+            "executorKind": "mac",
+            "executorId": "mac-owner-1"
+          },
+          {
+            "id": "offline-ev-1",
+            "kind": "user_message",
+            "workItemId": "work:ledger-run-1",
+            "ledgerId": "ledger-ios-offline-001",
+            "executorKind": "ios",
+            "executorId": "ios-local-1"
+          }
+        ],
+        "absentEventIds": ["offline-ev-3-should-rollback"]
+      }
+    }
+  ]
+}

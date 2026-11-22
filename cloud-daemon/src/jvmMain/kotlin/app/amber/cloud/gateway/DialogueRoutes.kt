@@ -11,9 +11,19 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
-@Serializable private data class DialogueRequest(val requestId:String,val text:String="")
+@Serializable private data class DialogueRequest(
+    val requestId: String,
+    val text: String = "",
+    val conversationId: String? = null,
+    val executorKind: String? = null,
+    val executorId: String? = null,
+    val epoch: Long? = null,
+    val parentRunId: String? = null,
+    val observedSeq: Long? = null,
+    val ledgerId: String? = null,
+)
 internal fun Application.configureDialogueRoutes(state:CloudGatewayState,kernel:CloudAgentKernel) {
-    val json=Json {encodeDefaults=true}
+    val json=Json {encodeDefaults=true; ignoreUnknownKeys=true}
     suspend fun ApplicationCall.error(code:Int,message:String)=respondText("{\"error\":\"$message\"}",ContentType.Application.Json,HttpStatusCode.fromValue(code))
     suspend fun ApplicationCall.device():PairedDevice? {
         val token=request.header(HttpHeaders.Authorization)?.takeIf {it.startsWith("Bearer ",true)}?.substringAfter(' ')
@@ -27,9 +37,22 @@ internal fun Application.configureDialogueRoutes(state:CloudGatewayState,kernel:
         try {
             val text=receiveText();require(text.length<=100_000)
             val body=json.decodeFromString<DialogueRequest>(text)
-            val receipt=kernel.nativeDialogue.submit(device,body.requestId,body.text,kind,parameters["id"])
+            val receipt=kernel.nativeDialogue.submit(
+                device = device,
+                requestId = body.requestId,
+                text = body.text,
+                kind = kind,
+                workItemId = parameters["id"],
+                conversationId = body.conversationId,
+                executorKind = body.executorKind,
+                executorId = body.executorId,
+                epoch = body.epoch,
+                parentRunId = body.parentRunId,
+                observedSeq = body.observedSeq,
+                ledgerId = body.ledgerId,
+            )
             respondText(json.encodeToString(receipt),ContentType.Application.Json,
-                if(kind=="stop"||receipt.replayed)HttpStatusCode.OK else HttpStatusCode.Accepted)
+                if(kind=="stop"||receipt.replayed||receipt.state=="cancelled")HttpStatusCode.OK else HttpStatusCode.Accepted)
         }catch(e:DialogueConflict){error(409,e.code)}
         catch(_:NoSuchElementException){error(404,"task_not_found")}
         catch(e:IllegalArgumentException){error(if(e.message=="task_terminal")409 else 400,if(e.message=="task_terminal")"task_terminal" else "invalid_request")}

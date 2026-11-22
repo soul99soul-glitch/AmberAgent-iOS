@@ -30,7 +30,21 @@ class DialogueSettlementTest {
             assertEquals(WorkItemState.COMPLETED,k.orchestrationKernel.reportWorkerSettlement(principal,report).state)
             assertEquals("consumed",k.nativeDialogue.receipt(device,"followup")!!.state)
             assertTrue(k.nativeDialogue.submit(device,"followup","must consume",kind="followup",workItemId=item.id).replayed)
-            assertFailsWith<IllegalArgumentException> {k.nativeDialogue.submit(device,"new-followup","too late",kind="followup",workItemId=item.id)}
+            val lateFollowup=k.nativeDialogue.submit(device,"new-followup","too late",kind="followup",workItemId=item.id)
+            assertEquals("cancelled",lateFollowup.state)
+            assertTrue(k.orchestrationStore.dialogue.pending(workItemId=item.id).isEmpty())
+            assertTrue(k.orchestrationStore.dialogue.page(0,100).items.any {
+                it.kind==DialogueEventKinds.INPUT_CANCELLED &&
+                    it.causedByInputId==lateFollowup.eventId &&
+                    it.causedByRequestId=="new-followup"
+            })
+            val lateStop=k.nativeDialogue.submit(device,"late-stop","",kind="stop",workItemId=item.id)
+            assertEquals("cancelled",lateStop.state)
+            assertTrue(k.orchestrationStore.dialogue.page(0,100).items.any {
+                it.kind==DialogueEventKinds.STOP_TOO_LATE &&
+                    it.causedByInputId==lateStop.eventId &&
+                    it.causedByRequestId=="late-stop"
+            })
             assertEquals(WorkItemState.COMPLETED,k.orchestrationKernel.cancelWorkItem(CloudPrincipal.OwnerUser(device.id,"app"),item.id).state)
         } finally {
             k.router.awaitIdle(includeWorkers=true);k.conversationTagger.closeAndJoin()
