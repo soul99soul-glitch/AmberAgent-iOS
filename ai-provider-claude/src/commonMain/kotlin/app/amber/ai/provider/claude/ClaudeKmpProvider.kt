@@ -954,12 +954,16 @@ class ClaudeKmpProvider internal constructor(
         val cachedInputTokens = usageJson["cache_read_input_tokens"]?.jsonPrimitive?.intOrNull ?: 0
         val cachedCreationTokens = usageJson["cache_creation_input_tokens"]?.jsonPrimitive?.intOrNull ?: 0
         val completionTokens = usageJson["output_tokens"]?.jsonPrimitive?.intOrNull ?: 0
+        // promptTokens = uncachedInput + cachedRead + cacheCreation;
+        // uncachedInputTokens is derived via TokenUsage.uncachedInputTokens =
+        // maxOf(0, promptTokens - cachedTokens - cacheCreationTokens).
         val promptTokens = inputTokens + cachedInputTokens + cachedCreationTokens
         return TokenUsage(
             promptTokens = promptTokens,
             completionTokens = completionTokens,
             totalTokens = promptTokens + completionTokens,
             cachedTokens = cachedInputTokens,
+            cacheCreationTokens = cachedCreationTokens,
         )
     }
 

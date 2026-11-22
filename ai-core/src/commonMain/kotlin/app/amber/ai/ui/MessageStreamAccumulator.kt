@@ -22,20 +22,38 @@ class MessageStreamAccumulator(
     private var active = MutableMessage.from(initialMessages.last())
 
     fun append(chunk: MessageChunk) {
-        // Process usage FIRST, before the empty-choices early return.
-        // OpenAI's final usage-only chunk has empty choices WITH populated usage,
-        // so merging here ensures token usage is never silently lost.
-        chunk.usage?.let { usage ->
-            active.usage = active.usage.merge(usage)
+        val choice = chunk.choices.getOrNull(0)
+        if (choice == null) {
+            // OpenAI's final usage-only chunk has empty choices WITH populated usage,
+            // so merging here ensures token usage is never silently lost.
+            chunk.usage?.let { usage ->
+                active.usage = active.usage.merge(usage)
+            }
+            return
         }
-
-        val choice = chunk.choices.getOrNull(0) ?: return
         val finalMessage = choice.message
         if (choice.delta == null && finalMessage != null) {
-            replaceActive(finalMessage)
-            return  // usage already merged above
+            if (active.role == finalMessage.role) {
+                chunk.usage?.let { usage ->
+                    active.usage = active.usage.merge(usage)
+                }
+                replaceActive(finalMessage)
+            } else {
+                replaceActive(finalMessage)
+                chunk.usage?.let { usage ->
+                    // finalMessage自带的权威 usage 优先,否则沿用本 chunk 的 usage。
+                    active.usage = active.usage?.let { usage.merge(it) } ?: usage
+                }
+            }
+            return
         }
-        val delta = choice.delta ?: choice.message ?: return
+        val delta = choice.delta ?: choice.message
+        if (delta == null) {
+            chunk.usage?.let { usage ->
+                active.usage = active.usage.merge(usage)
+            }
+            return
+        }
 
         if (active.role != delta.role) {
             prefix += active.snapshot()
@@ -46,6 +64,13 @@ class MessageStreamAccumulator(
                     parts = emptyList()
                 )
             )
+        }
+
+        // Merge usage AFTER role transition so initial chunks carrying usage
+        // (e.g. Claude `message_start`) attach to the new assistant message
+        // rather than polluting the preceding user message.
+        chunk.usage?.let { usage ->
+            active.usage = active.usage.merge(usage)
         }
 
         active.append(delta)
