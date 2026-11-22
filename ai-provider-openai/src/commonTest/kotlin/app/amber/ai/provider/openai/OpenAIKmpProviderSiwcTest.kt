@@ -7,6 +7,7 @@ import app.amber.ai.core.PromptTranscriptEvent
 import app.amber.ai.core.ReasoningLevel
 import app.amber.ai.core.Tool
 import app.amber.ai.provider.CustomBody
+import app.amber.ai.provider.CustomHeader
 import app.amber.ai.provider.Model
 import app.amber.ai.provider.ModelAbility
 import app.amber.ai.provider.OpenAIAuthMode
@@ -57,6 +58,15 @@ class OpenAIKmpProviderSiwcTest {
     fun siwcAlwaysUsesResponsesApiEvenWhenUseResponseApiIsFalse() {
         assertTrue(usesOpenAIResponsesApi(siwcSetting, "gpt-5.4"))
         assertTrue(usesOpenAIResponsesApi(siwcSetting, "gpt-4o"))
+    }
+
+    @Test
+    fun siwcUsesOnlyTheSelectedBearerForAuthentication() {
+        val requestId = CustomHeader("X-Client-Request-ID", "test-id")
+        val headers = provider.resolveAuthenticationHeaders(siwcSetting, listOf(
+            CustomHeader("authorization", "stale"), CustomHeader("ChatGPT-Account-Id", "old"), requestId,
+        ))
+        assertEquals(listOf(CustomHeader("Authorization", "Bearer siwc-access-token"), requestId), headers)
     }
 
     @Test
@@ -187,7 +197,9 @@ class OpenAIKmpProviderSiwcTest {
                 "image_generation",
                 "file_search",
                 "code_interpreter",
+                "computer",
                 "computer_use",
+                "computer_use_preview",
                 "mcp",
                 "tool_search",
                 "programmatic_tool_calling",
@@ -200,6 +212,14 @@ class OpenAIKmpProviderSiwcTest {
             buildJsonObject {
                 put("model", "gpt-5.4")
                 put("tools", mixedTools)
+                put("tool_choice", buildJsonObject { put("type", "computer") })
+                put("input", buildJsonArray {
+                    add(buildJsonObject {
+                        put("type", "additional_tools")
+                        put("role", "user")
+                        put("tools", mixedTools)
+                    })
+                })
             }
         )
 
@@ -207,6 +227,10 @@ class OpenAIKmpProviderSiwcTest {
         assertEquals(1, remaining.size)
         assertEquals("function", remaining.single().jsonObject.getValue("type").jsonPrimitive.content)
         assertEquals("get_weather", remaining.single().jsonObject.getValue("name").jsonPrimitive.content)
+        assertFalse("tool_choice" in sanitized)
+        val inline = sanitized.getValue("input").jsonArray.single().jsonObject
+        assertEquals(remaining, inline["tools"])
+        assertEquals("user", inline.getValue("role").jsonPrimitive.content)
     }
 
     @Test
@@ -232,6 +256,11 @@ class OpenAIKmpProviderSiwcTest {
 
     @Test
     fun siwcMapsSubscriptionSharingUsageErrorsToFriendlyGuidance() {
+        val errorEvent = """{"type":"error","code":"subscription_sharing_usage_limit_exceeded","message":"limit reached"}"""
+        val streamError = assertFailsWith<IllegalStateException> {
+            provider.parseResponsesStreamData(errorEvent, OpenAIAuthMode.CHATGPT_SIWC)
+        }
+        assertTrue(streamError.message.orEmpty().contains(CHATGPT_SIWC_USAGE_SETTINGS_URL))
         val limitErr = assertFailsWith<IllegalStateException> {
             provider.parseResponsesStreamData(
                 """{"type":"response.failed","response":{"status":"failed","error":{"code":"subscription_sharing_usage_limit_exceeded","message":"limit reached"}}}""",
@@ -249,6 +278,14 @@ class OpenAIKmpProviderSiwcTest {
         }
         assertTrue(unavailableErr.message.orEmpty().contains("subscription_sharing_usage_unavailable"))
         assertTrue(unavailableErr.message.orEmpty().contains(CHATGPT_SIWC_USAGE_SETTINGS_URL))
+
+        val legacyError = assertFailsWith<IllegalStateException> {
+            provider.parseResponsesStreamData(
+                """{"type":"response.failed","response":{"error":{"code":"subscription_sharing_usage_unavailable","message":"upstream unavailable"}}}""",
+                OpenAIAuthMode.CODEX_OAUTH,
+            )
+        }
+        assertEquals("OpenAI Responses stream failed: upstream unavailable", legacyError.message)
     }
 
     @Test

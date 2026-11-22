@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Security
 import Shared
@@ -52,7 +53,8 @@ final class IOSChatGptSiwcOAuthTests: XCTestCase {
         let registration = IOSChatGptSiwcRegistrationRecord(
             clientId: "oaiapp_existing_12345",
             lastIdToken: "prior.id.token",
-            lastEmail: "alice@example.com"
+            lastEmail: "alice@example.com",
+            subject: "alice"
         )
         let request = try IOSChatGptSiwcOAuthClient.buildAuthorizationRequest(
             redirectUri: "http://127.0.0.1:51000/auth/callback",
@@ -83,15 +85,15 @@ final class IOSChatGptSiwcOAuthTests: XCTestCase {
         )
     }
 
-    func testHostIdIsStableAcrossSignOut() {
+    func testHostIdIsStableAcrossSignOut() throws {
         let providerId = "siwc-hostid-test-\(UUID().uuidString)"
         defer { IOSChatGptSiwcAuthStore.clearAll(providerId: providerId) }
 
-        let first = IOSChatGptSiwcHostIdStore.hostId()
+        let first = try IOSChatGptSiwcHostIdStore.hostId()
         XCTAssertTrue(IOSChatGptSiwcHostIdStore.isValidHostId(first))
         IOSChatGptSiwcAuthStore.clearSession(providerId: providerId)
         IOSChatGptSiwcAuthStore.clearAll(providerId: providerId)
-        let second = IOSChatGptSiwcHostIdStore.hostId()
+        let second = try IOSChatGptSiwcHostIdStore.hostId()
         XCTAssertEqual(first, second)
     }
 
@@ -151,6 +153,12 @@ final class IOSChatGptSiwcOAuthTests: XCTestCase {
             isDynamicRegistration: false
         )
         XCTAssertEqual(reauthParsed.issuedClientId, "oaiapp_existing")
+        XCTAssertThrowsError(try IOSChatGptSiwcOAuthClient.parseAndValidateCallback(
+            url: validURL, expectedState: "expected", requestedClientId: "oaiapp_existing", isDynamicRegistration: false
+        ))
+        XCTAssertThrowsError(try IOSChatGptSiwcOAuthClient.parseAndValidateCallback(
+            url: errorURL, expectedState: "another-attempt", requestedClientId: "oaiapp_existing", isDynamicRegistration: false
+        )) { XCTAssertTrue($0.localizedDescription.contains("state")) }
     }
 
     // MARK: - JWKS verification (RSA + EC) & Token exchange / scope validation
@@ -182,6 +190,13 @@ final class IOSChatGptSiwcOAuthTests: XCTestCase {
         XCTAssertEqual(rsClaims.subject, "user_abc")
         XCTAssertEqual(rsClaims.email, "tester@example.com")
 
+        let pssPair = try SiwcTestKeyPair.generateRSA(kid: "pss", pss: true)
+        let psToken = try pssPair.signJWT(payload: validPayload)
+        let psClaims = try IOSChatGptSiwcJwtVerifier.verifyIdToken(
+            psToken, expectedClientId: "oaiapp_test_client", expectedNonce: "nonce-ok", jwks: [pssPair.jwk], now: now
+        )
+        XCTAssertEqual(psClaims.subject, "user_abc")
+
         let esToken = try ecPair.signJWT(payload: validPayload)
         let esClaims = try IOSChatGptSiwcJwtVerifier.verifyIdToken(
             esToken,
@@ -191,6 +206,12 @@ final class IOSChatGptSiwcOAuthTests: XCTestCase {
             now: now
         )
         XCTAssertEqual(esClaims.subject, "user_abc")
+
+        var differentIssuer = validPayload
+        differentIssuer["iss"] = "https://auth.openai.com/"
+        XCTAssertThrowsError(try IOSChatGptSiwcJwtVerifier.validateClaims(
+            differentIssuer, expectedClientId: "oaiapp_test_client", expectedNonce: "nonce-ok", now: now
+        ))
 
         // Tampered signature must fail
         let tampered = rsToken + "A"
@@ -255,10 +276,21 @@ final class IOSChatGptSiwcOAuthTests: XCTestCase {
             "exp": Int(Date().timeIntervalSince1970 + 3600),
             "email": "siwc@example.com",
         ])
+        let otherIdentity = try rsaPair.signJWT(payload: [
+            "iss": "https://auth.openai.com", "aud": "oaiapp_issued_01", "sub": "other-user",
+            "nonce": "returning", "exp": Int(Date().timeIntervalSince1970 + 3600),
+        ])
 
         SiwcMockURLProtocol.reset()
+        let revoked = expectation(description: "Revoke the saved renewable session")
         SiwcMockURLProtocol.handler = { request in
             let url = request.url?.absoluteString ?? ""
+            if url == IOSChatGptSiwcConstants.revocationEndpoint {
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertEqual(Self.readRequestBody(request), "client_id=oaiapp_issued_01&token=siwc_refresh_1&token_type_hint=refresh_token")
+                revoked.fulfill()
+                return (200, Data())
+            }
             if url == IOSChatGptSiwcConstants.jwksEndpoint {
                 return (200, jwksData)
             }
@@ -270,7 +302,7 @@ final class IOSChatGptSiwcOAuthTests: XCTestCase {
                 let json: [String: Any] = [
                     "access_token": "siwc_access_1",
                     "refresh_token": "siwc_refresh_1",
-                    "id_token": idToken,
+                    "id_token": bodyText.contains("code=returning") ? otherIdentity : idToken,
                     "expires_in": 3600,
                     "scope": IOSChatGptSiwcConstants.scope,
                 ]
@@ -306,14 +338,33 @@ final class IOSChatGptSiwcOAuthTests: XCTestCase {
         XCTAssertEqual(creds.email, "siwc@example.com")
 
         // Registration persists across logout so re-auth reuses oaiapp_issued_01
-        await client.logout()
+        try await client.logout()
+        await fulfillment(of: [revoked], timeout: 2)
         XCTAssertNil(IOSChatGptSiwcAuthStore.load(providerId: providerId))
         let registration = IOSChatGptSiwcAuthStore.loadRegistration(providerId: providerId)
         XCTAssertEqual(registration?.clientId, "oaiapp_issued_01")
         XCTAssertEqual(registration?.lastEmail, "siwc@example.com")
+        XCTAssertNil(registration?.lastIdToken)
+
+        let returning = try IOSChatGptSiwcOAuthClient.buildAuthorizationRequest(
+            redirectUri: authRequest.redirectUri, registration: registration,
+            state: "next", nonce: "returning", codeVerifier: "verifier_01"
+        )
+        do {
+            _ = try await client.exchangeAuthorizationCode(request: returning, callback: .init(
+                code: "returning", state: "next", issuedClientId: creds.clientId
+            ))
+            XCTFail("Returning sign-in must match the saved account")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("sub"))
+        }
+        XCTAssertNil(IOSChatGptSiwcAuthStore.load(providerId: providerId))
     }
 
     func testTokenExchangeRejectsMissingDirectTokenScope() async throws {
+        XCTAssertEqual(IOSChatGptSiwcOAuthClient.resolveGrantedScope(
+            tokenResponse: ["scope": ""], accessToken: "opaque", fallback: IOSChatGptSiwcConstants.scope
+        ), "")
         let providerId = "siwc-scope-test-\(UUID().uuidString)"
         defer { IOSChatGptSiwcAuthStore.clearAll(providerId: providerId) }
 
@@ -430,7 +481,70 @@ final class IOSChatGptSiwcOAuthTests: XCTestCase {
 
     // MARK: - Model list filtering & ordering
 
-    func testParseModelsFiltersVisibilityListPreservesOrderAndMapsSlugDisplayName() {
+    func testModel401FromPreviousAccountDoesNotRefreshReplacementAccount() async throws {
+        let providerId = "siwc-models-\(UUID())"
+        defer { IOSChatGptSiwcAuthStore.clearAll(providerId: providerId) }
+        let original = credentials(for: "first")
+        let replacement = credentials(for: "second")
+        XCTAssertTrue(IOSChatGptSiwcAuthStore.save(providerId: providerId, credentials: original))
+        SiwcMockURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.absoluteString, IOSChatGptSiwcConstants.modelsEndpoint)
+            guard request.url?.absoluteString == IOSChatGptSiwcConstants.modelsEndpoint else { return (400, Data()) }
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access-first")
+            XCTAssertTrue(IOSChatGptSiwcAuthStore.save(providerId: providerId, credentials: replacement))
+            return (401, Data())
+        }
+        let client = IOSChatGptSiwcOAuthClient(providerId: providerId, session: makeMockSession())
+        do {
+            _ = try await client.fetchModelsOrThrow()
+            XCTFail("An old model request must not run as another account")
+        } catch {
+            XCTAssertEqual(IOSChatGptSiwcAuthStore.load(providerId: providerId), replacement)
+        }
+    }
+
+    func testModelsRetries401WithRotatedBearerAndRequiresReauthAfterInvalidGrant() async throws {
+        let providerId = "siwc-retry-\(UUID())"
+        defer { IOSChatGptSiwcAuthStore.clearAll(providerId: providerId) }
+        let account = credentials(for: "first")
+        XCTAssertTrue(IOSChatGptSiwcAuthStore.save(providerId: providerId, credentials: account))
+        let client = IOSChatGptSiwcOAuthClient(providerId: providerId, session: makeMockSession())
+        var requests: [String] = []
+        SiwcMockURLProtocol.handler = { request in
+            switch request.url?.absoluteString {
+            case IOSChatGptSiwcConstants.modelsEndpoint:
+                let bearer = request.value(forHTTPHeaderField: "Authorization") ?? ""
+                requests.append(bearer)
+                if bearer == "Bearer access-first" { return (401, Data()) }
+                return (200, Data(#"{"models":[{"slug":"listed","visibility":"list"}]}"#.utf8))
+            case IOSChatGptSiwcConstants.tokenEndpoint:
+                requests.append("refresh")
+                return (200, Data(#"{"access_token":"new","refresh_token":"rotated","expires_in":3600}"#.utf8))
+            default:
+                XCTFail("Unexpected endpoint")
+                return (404, Data())
+            }
+        }
+        let models = try await client.fetchModelsOrThrow()
+        XCTAssertEqual(models.map(\.slug), ["listed"])
+        XCTAssertEqual(requests, ["Bearer access-first", "refresh", "Bearer new"])
+
+        SiwcMockURLProtocol.handler = { request in
+            if request.url?.absoluteString == IOSChatGptSiwcConstants.modelsEndpoint { return (401, Data()) }
+            XCTAssertTrue(Self.readRequestBody(request).contains("refresh_token=rotated"))
+            return (400, Data(#"{"error":"invalid_grant"}"#.utf8))
+        }
+        do {
+            _ = try await client.fetchModelsOrThrow()
+            XCTFail("Invalidated session must require sign-in")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("重新登录"))
+        }
+        XCTAssertNil(IOSChatGptSiwcAuthStore.load(providerId: providerId))
+        XCTAssertEqual(IOSChatGptSiwcAuthStore.loadRegistration(providerId: providerId)?.clientId, account.clientId)
+    }
+
+    func testParseModelsFiltersVisibilityListPreservesOrderAndMapsSlugDisplayName() throws {
         let payload = Data("""
         {
           "models": [
@@ -444,9 +558,10 @@ final class IOSChatGptSiwcOAuthTests: XCTestCase {
         }
         """.utf8)
 
-        let items = IOSChatGptSiwcOAuthClient.parseModels(payload)
+        let items = try IOSChatGptSiwcOAuthClient.parseModels(payload)
         XCTAssertEqual(items.map(\.slug), ["gpt-5.4", "gpt-5.4-mini", "o4-mini"])
         XCTAssertEqual(items.map(\.displayName), ["GPT-5.4", "GPT-5.4 mini", "o4-mini"])
+        XCTAssertThrowsError(try IOSChatGptSiwcOAuthClient.parseModels(Data("{}".utf8)))
     }
 
     // MARK: - Provider resolver & configuration
@@ -514,6 +629,20 @@ final class IOSChatGptSiwcOAuthTests: XCTestCase {
 
     // MARK: - Loopback NWListener callback server
 
+    @MainActor
+    func testDismissingSafariAllowsImmediateLoginRetry() async {
+        let model = ChatGptSiwcLoginModel(providerId: "siwc-cancel-\(UUID())") { _ in }
+        for _ in 0..<2 {
+            let presented = expectation(description: "Ready for Safari")
+            let observer = model.$phase.first { $0 == .authorizing }.sink { _ in presented.fulfill() }
+            model.startLogin { XCTFail("Dismissed login must not sign in") }
+            await fulfillment(of: [presented], timeout: 3)
+            observer.cancel()
+            model.handleSafariUserDismiss()
+            XCTAssertEqual(model.phase, .idle)
+        }
+    }
+
     func testLoopbackServerBinds127001IgnoresFaviconAndDeliversAuthCallback() async throws {
         let server = IOSChatGptSiwcLoopbackServer()
         defer { server.stop() }
@@ -530,7 +659,10 @@ final class IOSChatGptSiwcOAuthTests: XCTestCase {
         XCTAssertEqual((faviconResp as? HTTPURLResponse)?.statusCode, 404)
 
         // Real callback should return 200 HTML and resolve waitForCallback
-        let callbackURL = URL(string: "\(redirectUri)?code=cb_123&state=st_456&client_id=oaiapp_cb")!
+        let previousCallback = URL(string: "\(redirectUri)?code=previous&state=previous-attempt")!
+        let (_, previousResponse) = try await URLSession.shared.data(from: previousCallback)
+        XCTAssertEqual((previousResponse as? HTTPURLResponse)?.statusCode, 400)
+        let callbackURL = URL(string: "\(redirectUri)?code=cb_123&state=\(server.state)&client_id=oaiapp_cb")!
         let (htmlData, cbResp) = try await URLSession.shared.data(from: callbackURL)
         XCTAssertEqual((cbResp as? HTTPURLResponse)?.statusCode, 200)
         let html = String(data: htmlData, encoding: .utf8) ?? ""
@@ -539,7 +671,7 @@ final class IOSChatGptSiwcOAuthTests: XCTestCase {
         let delivered = try await callbackTask.value
         let parsed = try IOSChatGptSiwcOAuthClient.parseAndValidateCallback(
             url: delivered,
-            expectedState: "st_456",
+            expectedState: server.state,
             requestedClientId: "dynamic_agent_client",
             isDynamicRegistration: true
         )
@@ -548,6 +680,12 @@ final class IOSChatGptSiwcOAuthTests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    private func credentials(for subject: String) -> IOSChatGptSiwcCredentials {
+        .init(clientId: "client-\(subject)", accessToken: "access-\(subject)", refreshToken: "refresh-\(subject)",
+              expiresAtMillis: Int64(Date().timeIntervalSince1970 + 3600) * 1000,
+              scope: IOSChatGptSiwcConstants.scope, idToken: nil, subject: subject, email: nil, name: nil)
+    }
 
     private func queryMap(from components: URLComponents) -> [String: String] {
         (components.queryItems ?? []).reduce(into: [:]) { result, item in
@@ -625,7 +763,7 @@ private struct SiwcTestKeyPair {
     let secAlg: SecKeyAlgorithm
     let isEC: Bool
 
-    static func generateRSA(kid: String) throws -> SiwcTestKeyPair {
+    static func generateRSA(kid: String, pss: Bool = false) throws -> SiwcTestKeyPair {
         let attributes: [CFString: Any] = [
             kSecAttrKeyType: kSecAttrKeyTypeRSA,
             kSecAttrKeySizeInBits: 2048,
@@ -640,7 +778,7 @@ private struct SiwcTestKeyPair {
         let jwk = IOSChatGptSiwcJwk(
             kty: "RSA",
             kid: kid,
-            alg: "RS256",
+            alg: pss ? "PS256" : "RS256",
             use: "sig",
             n: base64URL(modulus),
             e: base64URL(exponent),
@@ -651,8 +789,8 @@ private struct SiwcTestKeyPair {
         return SiwcTestKeyPair(
             privateKey: privateKey,
             jwk: jwk,
-            alg: "RS256",
-            secAlg: .rsaSignatureMessagePKCS1v15SHA256,
+            alg: pss ? "PS256" : "RS256",
+            secAlg: pss ? .rsaSignatureMessagePSSSHA256 : .rsaSignatureMessagePKCS1v15SHA256,
             isEC: false
         )
     }

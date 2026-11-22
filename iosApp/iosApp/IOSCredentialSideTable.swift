@@ -62,6 +62,28 @@ enum IOSCredentialSideTable {
         return added
     }
 
+    /// Creates an installation identifier without overwriting an existing or unreadable item.
+    static func insertDeviceValueIfAbsent(key: String, value: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+            kSecValueData as String: Data(value.utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        let status = cacheLock.withLock {
+            let status = SecItemAdd(query as CFDictionary, nil)
+            if status == errSecSuccess {
+                memoryCache[key] = .some(value)
+            } else {
+                memoryCache.removeValue(forKey: key)
+            }
+            return status
+        }
+        if status == errSecDuplicateItem { return load(key: key) }
+        return status == errSecSuccess ? value : nil
+    }
+
     /// Loads a credential value for a key, or nil if absent.
     static func load(key: String) -> String? {
         cacheLock.lock()

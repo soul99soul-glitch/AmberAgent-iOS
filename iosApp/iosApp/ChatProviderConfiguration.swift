@@ -224,6 +224,8 @@ enum ChatProviderConfiguration {
         conversationId: String? = nil
     ) -> [CustomHeader] {
         let providerId = provider.id.description() as String
+        // The fixed SIWC endpoint must not inherit a proxy's private headers.
+        if IOSCodexProviderResolver.isChatGptSiwcProvider(provider) { return assistant + model }
         var headers = IOSProviderRequestHeaderStore.headers(for: providerId) + assistant + model
         if OpenCodeRequestHeaders.shared.isOpenCodeEndpoint(baseUrl: baseURL(of: provider)),
            let conversationId,

@@ -91,12 +91,11 @@ final class ChatGptSiwcLoginModel: ObservableObject {
     }
 
     func startLogin(onSignedIn: @escaping () -> Void) {
-        invalidateModelRequests()
         cancelLogin()
         phase = .preparing
 
         loginTask = Task { [weak self] in
-            guard let self else { return }
+            guard let self, !Task.isCancelled else { return }
             let server = IOSChatGptSiwcLoopbackServer()
             self.activeServer = server
             defer {
@@ -110,7 +109,8 @@ final class ChatGptSiwcLoginModel: ObservableObject {
                 let registration = IOSChatGptSiwcAuthStore.loadRegistration(providerId: self.providerId)
                 let authRequest = try IOSChatGptSiwcOAuthClient.buildAuthorizationRequest(
                     redirectUri: redirectUri,
-                    registration: registration
+                    registration: registration,
+                    state: server.state
                 )
                 try Task.checkCancellation()
 
@@ -118,10 +118,9 @@ final class ChatGptSiwcLoginModel: ObservableObject {
                 self.safariItem = ChatGptSiwcSafariItem(url: authRequest.authorizeURL)
 
                 let callbackURL = try await server.waitForCallback()
-                self.safariItem = nil
                 try Task.checkCancellation()
-
                 self.phase = .exchanging
+                self.safariItem = nil
                 let callbackResult = try IOSChatGptSiwcOAuthClient.parseAndValidateCallback(
                     url: callbackURL,
                     expectedState: authRequest.state,
@@ -141,15 +140,15 @@ final class ChatGptSiwcLoginModel: ObservableObject {
                 }
                 onSignedIn()
                 await self.applyModels(generation: self.modelRequestGeneration)
-            } catch is CancellationError {
+            } catch {
+                // cancelLogin already restored the UI. A newer attempt may own it now.
+                guard !Task.isCancelled else { return }
                 self.safariItem = nil
                 self.restorePersistedPhase()
-            } catch {
-                self.safariItem = nil
-                if Task.isCancelled {
-                    self.restorePersistedPhase()
+                if self.isSignedIn {
+                    self.modelRefreshMessage = "重新登录失败：\(error.localizedDescription)"
                 } else {
-                    self.phase = .failed((error as NSError).localizedDescription)
+                    self.phase = .failed(error.localizedDescription)
                 }
             }
         }
@@ -176,12 +175,22 @@ final class ChatGptSiwcLoginModel: ObservableObject {
         modelRefreshTask = Task { await applyModels(generation: generation) }
     }
 
-    func logout(onLoggedOut: () -> Void) {
+    func logout(onLoggedOut: @escaping () -> Void) {
         cancelLogin()
-        IOSChatGptSiwcAuthStore.clearSession(providerId: providerId)
-        phase = .idle
-        modelRefreshMessage = nil
-        onLoggedOut()
+        let generation = modelRequestGeneration
+        Task {
+            do {
+                try await client.logout {
+                    phase = .idle
+                    modelRefreshMessage = nil
+                    onLoggedOut()
+                }
+            } catch {
+                guard generation == modelRequestGeneration else { return }
+                if isSignedIn { modelRefreshMessage = error.localizedDescription }
+                else { phase = .failed(error.localizedDescription) }
+            }
+        }
     }
 
     private func applyModels(generation: Int) async {
@@ -203,7 +212,11 @@ final class ChatGptSiwcLoginModel: ObservableObject {
                 : "已刷新 \(models.count) 个 ChatGPT 官方模型。"
         } catch {
             guard generation == modelRequestGeneration, !Task.isCancelled else { return }
-            modelRefreshMessage = "模型刷新失败：\(error.localizedDescription)"
+            if IOSChatGptSiwcAuthStore.load(providerId: providerId) == nil {
+                phase = .failed(error.localizedDescription)
+            } else {
+                modelRefreshMessage = "模型刷新失败：\(error.localizedDescription)"
+            }
         }
     }
 
@@ -278,9 +291,11 @@ struct ChatGptSiwcLoginView: View {
                     model.cancelLogin()
                 }
             }
-            .sheet(item: $model.safariItem) { item in
+            .sheet(item: $model.safariItem, onDismiss: {
+                if model.safariItem == nil { model.handleSafariUserDismiss() }
+            }) { item in
                 ChatGptSiwcSafariView(url: item.url) {
-                    model.handleSafariUserDismiss()
+                    if model.safariItem?.id == item.id { model.handleSafariUserDismiss() }
                 }
                 .ignoresSafeArea()
             }

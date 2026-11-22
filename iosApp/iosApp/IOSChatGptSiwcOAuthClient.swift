@@ -8,6 +8,7 @@ enum IOSChatGptSiwcConstants {
     static let issuer = "https://auth.openai.com"
     static let authorizeEndpoint = "https://auth.openai.com/api/accounts/authorize"
     static let tokenEndpoint = "https://auth.openai.com/api/accounts/oauth/token"
+    static let revocationEndpoint = "https://auth.openai.com/api/accounts/oauth/revoke"
     static let jwksEndpoint = "https://auth.openai.com/.well-known/jwks.json"
     static let apiBaseUrl = "https://api.openai.com/v1"
     static let modelsEndpoint = "https://api.openai.com/v1/models"
@@ -38,12 +39,22 @@ struct IOSChatGptSiwcCredentials: Codable, Equatable, Sendable {
     let subject: String?
     let email: String?
     let name: String?
+
+    func belongsToSameAccount(as other: Self) -> Bool {
+        clientId == other.clientId && subject == other.subject
+    }
+
+    func canReuse(rejectedAccessToken: String?) -> Bool {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        return expiresAtMillis > now + IOSChatGptSiwcConstants.refreshSkewMillis && accessToken != rejectedAccessToken
+    }
 }
 
 struct IOSChatGptSiwcRegistrationRecord: Codable, Equatable, Sendable {
     let clientId: String
     let lastIdToken: String?
     let lastEmail: String?
+    let subject: String?
 }
 
 struct IOSChatGptSiwcAuthRequest: Equatable, Sendable {
@@ -56,6 +67,7 @@ struct IOSChatGptSiwcAuthRequest: Equatable, Sendable {
     let codeChallenge: String
     let hostId: String
     let isDynamicRegistration: Bool
+    let expectedSubject: String?
 }
 
 struct IOSChatGptSiwcCallbackResult: Equatable, Sendable {
@@ -88,7 +100,7 @@ enum IOSChatGptSiwcHostIdStore {
     private static let keychainKey = "chatgpt_siwc.device.ext_agent_host_id"
     nonisolated(unsafe) private static var cachedHostId: String?
 
-    static func hostId() -> String {
+    static func hostId() throws -> String {
         lock.lock()
         defer { lock.unlock() }
         if let cachedHostId, isValidHostId(cachedHostId) {
@@ -100,9 +112,12 @@ enum IOSChatGptSiwcHostIdStore {
             return stored
         }
         let generated = "urn:uuid:\(UUID().uuidString.lowercased())"
-        _ = IOSCredentialSideTable.store(key: keychainKey, value: generated)
-        cachedHostId = generated
-        return generated
+        guard let persisted = IOSCredentialSideTable.insertDeviceValueIfAbsent(key: keychainKey, value: generated),
+              isValidHostId(persisted) else {
+            throw IOSChatGptSiwcOAuthError(message: "无法从 Keychain 读取或保存 ChatGPT 设备标识，请解锁后重试。")
+        }
+        cachedHostId = persisted
+        return persisted
     }
 
     static func isValidHostId(_ value: String) -> Bool {
@@ -138,18 +153,13 @@ enum IOSChatGptSiwcAuthStore {
 
     @discardableResult
     static func save(providerId: String, credentials: IOSChatGptSiwcCredentials) -> Bool {
-        guard let raw = encoded(credentials) else { return false }
+        guard credentials.clientId != IOSChatGptSiwcConstants.dynamicClientId,
+              let raw = encoded(credentials) else { return false }
         mutationLock.lock()
         defer { mutationLock.unlock() }
         let saved = IOSCredentialSideTable.store(key: credentialKey(providerId: providerId), value: raw)
         if saved {
             decodedCredentialsCache[providerId] = (raw, credentials)
-            let reg = IOSChatGptSiwcRegistrationRecord(
-                clientId: credentials.clientId,
-                lastIdToken: credentials.idToken,
-                lastEmail: credentials.email
-            )
-            saveRegistrationLocked(providerId: providerId, registration: reg)
         } else {
             decodedCredentialsCache.removeValue(forKey: providerId)
         }
@@ -159,7 +169,20 @@ enum IOSChatGptSiwcAuthStore {
     static func loadRegistration(providerId: String) -> IOSChatGptSiwcRegistrationRecord? {
         mutationLock.lock()
         defer { mutationLock.unlock() }
-        return loadRegistrationLocked(providerId: providerId)
+        if let active = loadLocked(providerId: providerId) {
+            return IOSChatGptSiwcRegistrationRecord(
+                clientId: active.clientId, lastIdToken: active.idToken, lastEmail: active.email, subject: active.subject
+            )
+        }
+        let stored = loadRegistrationLocked(providerId: providerId)
+        guard let registration = stored, let hint = registration.lastIdToken else { return stored }
+        // Older signed-out records retained the previously verified ID token.
+        let signedOut = IOSChatGptSiwcRegistrationRecord(
+            clientId: registration.clientId, lastIdToken: nil, lastEmail: registration.lastEmail,
+            subject: registration.subject ?? (IOSChatGptSiwcJwtVerifier.decodePayload(hint)?["sub"] as? String)
+        )
+        _ = saveRegistrationLocked(providerId: providerId, registration: signedOut)
+        return signedOut
     }
 
     @discardableResult
@@ -184,25 +207,28 @@ enum IOSChatGptSiwcAuthStore {
         let saved = IOSCredentialSideTable.store(key: credentialKey(providerId: providerId), value: raw)
         if saved {
             decodedCredentialsCache[providerId] = (raw, refreshed)
-            let reg = IOSChatGptSiwcRegistrationRecord(
-                clientId: refreshed.clientId,
-                lastIdToken: refreshed.idToken ?? loadRegistrationLocked(providerId: providerId)?.lastIdToken,
-                lastEmail: refreshed.email ?? loadRegistrationLocked(providerId: providerId)?.lastEmail
-            )
-            _ = saveRegistrationLocked(providerId: providerId, registration: reg)
             return .saved
         }
         decodedCredentialsCache.removeValue(forKey: providerId)
         return .storeFailed
     }
 
-    /// Clears active OAuth tokens on sign-out while retaining the issued `client_id`
-    /// and hints so subsequent sign-ins reuse the registered client per SIWC spec.
-    static func clearSession(providerId: String) {
+    /// Keep the verified account mapping before dropping its active tokens.
+    @discardableResult
+    static func clearSession(providerId: String, matching expected: IOSChatGptSiwcCredentials? = nil) -> Bool {
         mutationLock.lock()
         defer { mutationLock.unlock() }
+        let current = loadLocked(providerId: providerId)
+        if let expected, expected != current { return false }
+        if let active = current {
+            let registration = IOSChatGptSiwcRegistrationRecord(
+                clientId: active.clientId, lastIdToken: nil, lastEmail: active.email, subject: active.subject
+            )
+            guard saveRegistrationLocked(providerId: providerId, registration: registration) else { return false }
+        }
+        guard IOSCredentialSideTable.delete(key: credentialKey(providerId: providerId)) else { return false }
         decodedCredentialsCache.removeValue(forKey: providerId)
-        IOSCredentialSideTable.delete(key: credentialKey(providerId: providerId))
+        return true
     }
 
     /// Clears all provider-scoped SIWC state (used when deleting a provider).
@@ -264,7 +290,8 @@ enum IOSChatGptSiwcAuthStore {
         providerId: String,
         registration: IOSChatGptSiwcRegistrationRecord
     ) -> Bool {
-        guard let raw = encoded(registration) else { return false }
+        guard registration.clientId != IOSChatGptSiwcConstants.dynamicClientId,
+              let raw = encoded(registration) else { return false }
         let saved = IOSCredentialSideTable.store(key: registrationKey(providerId: providerId), value: raw)
         if saved {
             decodedRegistrationCache[providerId] = (raw, registration)
@@ -388,10 +415,8 @@ enum IOSChatGptSiwcJwtVerifier {
         expectedNonce: String?,
         now: Date = Date()
     ) throws -> IOSChatGptSiwcIdTokenClaims {
-        let rawIssuer = (payload["iss"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedIssuer = rawIssuer.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard normalizedIssuer == IOSChatGptSiwcConstants.issuer else {
-            throw IOSChatGptSiwcOAuthError(message: "ID Token 签发方不匹配（iss=\(rawIssuer)）。")
+        guard let issuer = payload["iss"] as? String, issuer == IOSChatGptSiwcConstants.issuer else {
+            throw IOSChatGptSiwcOAuthError(message: "ID Token 签发方（iss）不匹配。")
         }
 
         let audiences: [String]
@@ -426,8 +451,7 @@ enum IOSChatGptSiwcJwtVerifier {
             }
         }
 
-        guard let subject = (payload["sub"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !subject.isEmpty else {
+        guard let subject = (payload["sub"] as? String).nonBlank else {
             throw IOSChatGptSiwcOAuthError(message: "ID Token 缺少用户标识（sub）。")
         }
 
@@ -436,7 +460,7 @@ enum IOSChatGptSiwcJwtVerifier {
         let name = (payload["name"] as? String).nonBlank ?? (profileClaims?["name"] as? String).nonBlank
 
         return IOSChatGptSiwcIdTokenClaims(
-            issuer: normalizedIssuer,
+            issuer: issuer,
             audiences: audiences,
             subject: subject,
             nonce: tokenNonce,
@@ -477,6 +501,7 @@ enum IOSChatGptSiwcJwtVerifier {
         }
         return jwks.filter { key in
             if let expectedKty, key.kty.uppercased() != expectedKty { return false }
+            if let keyAlgorithm = key.alg, keyAlgorithm != alg { return false }
             if let use = key.use, use != "sig" { return false }
             if let kid, !kid.isEmpty {
                 return key.kid == kid
@@ -495,17 +520,15 @@ enum IOSChatGptSiwcJwtVerifier {
         case "RS256", "RS384", "RS512", "PS256", "PS384", "PS512":
             guard let secKey = makeRSAPublicKey(from: jwk),
                   let secAlg = rsaAlgorithm(for: alg) else { return false }
-            var error: Unmanaged<CFError>?
-            return SecKeyVerifySignature(secKey, secAlg, signingInput as CFData, signature as CFData, &error)
+            return SecKeyVerifySignature(secKey, secAlg, signingInput as CFData, signature as CFData, nil)
 
         case "ES256", "ES384", "ES512":
-            guard let (secKey, coordinateBytes) = makeECPublicKey(from: jwk),
-                  let secAlg = ecAlgorithm(for: alg),
+            guard let secAlg = ecAlgorithm(for: alg, curve: jwk.crv),
+                  let (secKey, coordinateBytes) = makeECPublicKey(from: jwk),
                   let derSignature = rawECDSASignatureToDER(signature, coordinateBytes: coordinateBytes) else {
                 return false
             }
-            var error: Unmanaged<CFError>?
-            return SecKeyVerifySignature(secKey, secAlg, signingInput as CFData, derSignature as CFData, &error)
+            return SecKeyVerifySignature(secKey, secAlg, signingInput as CFData, derSignature as CFData, nil)
 
         default:
             return false
@@ -524,11 +547,11 @@ enum IOSChatGptSiwcJwtVerifier {
         }
     }
 
-    private static func ecAlgorithm(for alg: String) -> SecKeyAlgorithm? {
-        switch alg {
-        case "ES256": .ecdsaSignatureMessageX962SHA256
-        case "ES384": .ecdsaSignatureMessageX962SHA384
-        case "ES512": .ecdsaSignatureMessageX962SHA512
+    private static func ecAlgorithm(for alg: String, curve: String?) -> SecKeyAlgorithm? {
+        switch (alg, curve) {
+        case ("ES256", "P-256"): .ecdsaSignatureMessageX962SHA256
+        case ("ES384", "P-384"): .ecdsaSignatureMessageX962SHA384
+        case ("ES512", "P-521"): .ecdsaSignatureMessageX962SHA512
         default: nil
         }
     }
@@ -546,8 +569,7 @@ enum IOSChatGptSiwcJwtVerifier {
             kSecAttrKeyType: kSecAttrKeyTypeRSA,
             kSecAttrKeyClass: kSecAttrKeyClassPublic,
         ]
-        var error: Unmanaged<CFError>?
-        return SecKeyCreateWithData(pkcs1 as CFData, attributes as CFDictionary, &error)
+        return SecKeyCreateWithData(pkcs1 as CFData, attributes as CFDictionary, nil)
     }
 
     private static func makeECPublicKey(from jwk: IOSChatGptSiwcJwk) -> (SecKey, Int)? {
@@ -576,8 +598,7 @@ enum IOSChatGptSiwcJwtVerifier {
             kSecAttrKeyType: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeyClass: kSecAttrKeyClassPublic,
         ]
-        var error: Unmanaged<CFError>?
-        guard let key = SecKeyCreateWithData(x963 as CFData, attributes as CFDictionary, &error) else {
+        guard let key = SecKeyCreateWithData(x963 as CFData, attributes as CFDictionary, nil) else {
             return nil
         }
         return (key, coordinateBytes)
@@ -663,7 +684,9 @@ final class IOSChatGptSiwcLoopbackServer: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "app.amber.ios.chatgpt-siwc.loopback")
     private let lock = NSLock()
+    let state = UUID().uuidString
     private var listener: NWListener?
+    private var connections: [ObjectIdentifier: NWConnection] = [:]
     private var boundPort: UInt16 = 0
     private var callbackContinuation: CheckedContinuation<URL, Error>?
     private var deliveredCallback: URL?
@@ -675,15 +698,13 @@ final class IOSChatGptSiwcLoopbackServer: @unchecked Sendable {
         params.allowLocalEndpointReuse = true
         params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: .any)
         let listener = try NWListener(using: params)
-        storeListener(listener)
-
         let port: UInt16 = try await withCheckedThrowingContinuation { continuation in
             let box = PortContinuationBox(continuation)
 
-            listener.stateUpdateHandler = { [weak self] state in
+            listener.stateUpdateHandler = { [weak self, weak listener] state in
                 switch state {
                 case .ready:
-                    if let port = listener.port?.rawValue, port > 0 {
+                    if let port = listener?.port?.rawValue, port > 0 {
                         self?.setBoundPort(port)
                         box.resumeOnce(.success(port))
                     } else {
@@ -704,16 +725,17 @@ final class IOSChatGptSiwcLoopbackServer: @unchecked Sendable {
                 self?.handleConnection(connection)
             }
 
-            listener.start(queue: queue)
+            lock.withLock {
+                guard !stopped else {
+                    box.resumeOnce(.failure(CancellationError()))
+                    return
+                }
+                self.listener = listener
+                listener.start(queue: queue)
+            }
         }
 
         return "http://127.0.0.1:\(port)\(IOSChatGptSiwcConstants.callbackPath)"
-    }
-
-    private func storeListener(_ listener: NWListener) {
-        lock.withLock {
-            self.listener = listener
-        }
     }
 
     func waitForCallback() async throws -> URL {
@@ -754,17 +776,17 @@ final class IOSChatGptSiwcLoopbackServer: @unchecked Sendable {
 
     func stop() {
         lock.lock()
-        let wasStopped = stopped
         stopped = true
         let continuation = callbackContinuation
         callbackContinuation = nil
         let activeListener = listener
         listener = nil
+        let openConnections = connections.values
+        connections.removeAll()
         lock.unlock()
 
-        if !wasStopped {
-            activeListener?.cancel()
-        }
+        activeListener?.cancel()
+        openConnections.forEach { $0.cancel() }
         continuation?.resume(throwing: CancellationError())
     }
 
@@ -776,7 +798,7 @@ final class IOSChatGptSiwcLoopbackServer: @unchecked Sendable {
 
     private func failWaiting(with error: Error) {
         lock.lock()
-        guard deliveredCallback == nil else {
+        guard !stopped, deliveredCallback == nil else {
             lock.unlock()
             return
         }
@@ -789,29 +811,39 @@ final class IOSChatGptSiwcLoopbackServer: @unchecked Sendable {
 
     private func deliver(_ callbackURL: URL) {
         lock.lock()
-        guard deliveredCallback == nil else {
+        guard !stopped, terminalError == nil, deliveredCallback == nil else {
             lock.unlock()
             return
         }
         deliveredCallback = callbackURL
         let continuation = callbackContinuation
         callbackContinuation = nil
-        let activeListener = listener
-        listener = nil
-        stopped = true
         lock.unlock()
 
-        activeListener?.cancel()
+        stop()
         continuation?.resume(returning: callbackURL)
     }
 
     private func handleConnection(_ connection: NWConnection) {
-        connection.start(queue: queue)
+        let id = ObjectIdentifier(connection)
+        let accepted = lock.withLock {
+            guard !stopped else { return false }
+            connections[id] = connection
+            connection.stateUpdateHandler = { [weak self] state in
+                if case .cancelled = state {
+                    self?.lock.withLock { self?.connections[id] = nil }
+                }
+            }
+            connection.start(queue: queue)
+            return true
+        }
+        guard accepted else { connection.cancel(); return }
         receiveRequest(on: connection, buffer: Data())
     }
 
     private func receiveRequest(on connection: NWConnection, buffer: Data) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { [weak self] data, _, isComplete, error in
+        let limit = 16_384
+        connection.receive(minimumIncompleteLength: 1, maximumLength: limit - buffer.count) { [weak self] data, _, isComplete, error in
             guard let self else {
                 connection.cancel()
                 return
@@ -820,9 +852,10 @@ final class IOSChatGptSiwcLoopbackServer: @unchecked Sendable {
             if let data { accumulated.append(data) }
 
             let headerDelimiter = Data("\r\n\r\n".utf8)
-            let hasCompleteHeaders = accumulated.range(of: headerDelimiter) != nil
-            if hasCompleteHeaders || isComplete || error != nil || accumulated.count >= 16_384 {
-                self.processRawRequest(accumulated, on: connection)
+            if let end = accumulated.range(of: headerDelimiter) {
+                self.processRawRequest(accumulated[..<end.lowerBound], on: connection)
+            } else if isComplete || error != nil || accumulated.count >= limit {
+                self.sendHTTPResponse(status: "400 Bad Request", html: Self.errorHTML, on: connection) {}
             } else {
                 self.receiveRequest(on: connection, buffer: accumulated)
             }
@@ -836,7 +869,7 @@ final class IOSChatGptSiwcLoopbackServer: @unchecked Sendable {
             return
         }
         let parts = firstLine.split(separator: " ")
-        guard parts.count >= 2 else {
+        guard parts.count == 3, parts[0] == "GET" else {
             sendHTTPResponse(status: "400 Bad Request", html: Self.errorHTML, on: connection) {}
             return
         }
@@ -846,14 +879,18 @@ final class IOSChatGptSiwcLoopbackServer: @unchecked Sendable {
         lock.unlock()
 
         guard let callbackURL = URL(string: "http://127.0.0.1:\(port)\(target)"),
+              target.hasPrefix("/"),
               callbackURL.path == IOSChatGptSiwcConstants.callbackPath else {
             sendHTTPResponse(status: "404 Not Found", html: Self.notFoundHTML, on: connection) {}
             return
         }
 
-        let hasError = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?
-            .queryItems?
-            .contains(where: { $0.name == "error" && !($0.value ?? "").isEmpty }) == true
+        let query = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        guard query.first(where: { $0.name == "state" })?.value == state else {
+            sendHTTPResponse(status: "400 Bad Request", html: Self.errorHTML, on: connection) {}
+            return
+        }
+        let hasError = query.contains { $0.name == "error" && !($0.value ?? "").isEmpty }
         let html = hasError ? Self.errorHTML : Self.successHTML
         sendHTTPResponse(status: "200 OK", html: html, on: connection) { [weak self] in
             self?.deliver(callbackURL)
@@ -870,7 +907,7 @@ final class IOSChatGptSiwcLoopbackServer: @unchecked Sendable {
         let response = "HTTP/1.1 \(status)\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
         var payload = Data(response.utf8)
         payload.append(body)
-        connection.send(content: payload, completion: .contentProcessed { _ in
+        connection.send(content: payload, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { _ in
             connection.cancel()
             completion()
         })
@@ -948,8 +985,24 @@ actor IOSChatGptSiwcOAuthClient {
         IOSChatGptSiwcAuthStore.load(providerId: providerId)
     }
 
-    func logout() {
-        IOSChatGptSiwcAuthStore.clearSession(providerId: providerId)
+    @MainActor
+    func logout(onLocalSignOut: () -> Void = {}) async throws {
+        let current = IOSChatGptSiwcAuthStore.load(providerId: providerId)
+        guard IOSChatGptSiwcAuthStore.clearSession(providerId: providerId, matching: current) else {
+            throw IOSChatGptSiwcOAuthError(message: "无法从 Keychain 清除当前凭据，请重试退出。")
+        }
+        onLocalSignOut()
+        guard let current else { return }
+        var request = URLRequest(url: URL(string: IOSChatGptSiwcConstants.revocationEndpoint)!)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(Self.formEncode([
+            "token": current.refreshToken, "token_type_hint": "refresh_token", "client_id": current.clientId,
+        ]).utf8)
+        let response = try? await dataWithRetry(for: request, retryServerError: true).1 as? HTTPURLResponse
+        guard response?.statusCode == 200 else {
+            throw IOSChatGptSiwcOAuthError(message: "已在本机退出，尚未确认服务端撤销。可在 ChatGPT 设置中断开连接。")
+        }
     }
 
     // MARK: - Authorization URL & callback parsing
@@ -957,7 +1010,7 @@ actor IOSChatGptSiwcOAuthClient {
     nonisolated static func buildAuthorizationRequest(
         redirectUri: String,
         registration: IOSChatGptSiwcRegistrationRecord?,
-        hostId: String = IOSChatGptSiwcHostIdStore.hostId(),
+        hostId: String? = nil,
         state: String? = nil,
         nonce: String? = nil,
         codeVerifier: String? = nil
@@ -970,9 +1023,10 @@ actor IOSChatGptSiwcOAuthClient {
             throw IOSChatGptSiwcOAuthError(message: "SIWC redirect_uri 必须为 http://127.0.0.1:<port>/auth/callback。")
         }
 
-        let resolvedState = state ?? randomBase64URL(byteCount: 24)
-        let resolvedNonce = nonce ?? randomBase64URL(byteCount: 24)
-        let resolvedVerifier = codeVerifier ?? randomBase64URL(byteCount: 32)
+        let hostId = try hostId ?? IOSChatGptSiwcHostIdStore.hostId()
+        let resolvedState = try state ?? randomBase64URL(byteCount: 24)
+        let resolvedNonce = try nonce ?? randomBase64URL(byteCount: 24)
+        let resolvedVerifier = try codeVerifier ?? randomBase64URL(byteCount: 32)
         let challenge = pkceS256Challenge(for: resolvedVerifier)
 
         let existingClientId = registration?.clientId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1018,7 +1072,8 @@ actor IOSChatGptSiwcOAuthClient {
             codeVerifier: resolvedVerifier,
             codeChallenge: challenge,
             hostId: hostId,
-            isDynamicRegistration: isDynamic
+            isDynamicRegistration: isDynamic,
+            expectedSubject: isDynamic ? nil : registration?.subject
         )
     }
 
@@ -1039,13 +1094,12 @@ actor IOSChatGptSiwcOAuthClient {
             }
         }
 
+        guard let returnedState = queryMap["state"].nonBlank, returnedState == expectedState else {
+            throw IOSChatGptSiwcOAuthError(message: "授权回调 state 校验失败，请重新登录。")
+        }
         if let error = queryMap["error"].nonBlank {
             let description = queryMap["error_description"].nonBlank
             throw IOSChatGptSiwcOAuthError(message: description ?? "ChatGPT 授权被拒绝或失败（\(error)）。")
-        }
-
-        guard let returnedState = queryMap["state"].nonBlank, returnedState == expectedState else {
-            throw IOSChatGptSiwcOAuthError(message: "授权回调 state 校验失败，请重新登录。")
         }
 
         guard let code = queryMap["code"].nonBlank else {
@@ -1061,11 +1115,11 @@ actor IOSChatGptSiwcOAuthClient {
             }
             issuedClientId = callbackClientId
         } else {
-            let candidate = callbackClientId ?? requestedClientId
-            guard !candidate.isEmpty, candidate != IOSChatGptSiwcConstants.dynamicClientId else {
-                throw IOSChatGptSiwcOAuthError(message: "缺少有效的已注册 client_id。")
+            guard !requestedClientId.isEmpty, requestedClientId != IOSChatGptSiwcConstants.dynamicClientId,
+                  callbackClientId == nil || callbackClientId == requestedClientId else {
+                throw IOSChatGptSiwcOAuthError(message: "授权回调的 client_id 与所选账号不匹配。")
             }
-            issuedClientId = candidate
+            issuedClientId = requestedClientId
         }
 
         return IOSChatGptSiwcCallbackResult(
@@ -1077,6 +1131,7 @@ actor IOSChatGptSiwcOAuthClient {
 
     // MARK: - Token exchange & refresh
 
+    @MainActor
     func exchangeAuthorizationCode(
         request authRequest: IOSChatGptSiwcAuthRequest,
         callback: IOSChatGptSiwcCallbackResult
@@ -1096,10 +1151,10 @@ actor IOSChatGptSiwcOAuthClient {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.httpBody = Data(form.utf8)
 
-        let (data, response) = try await dataWithRetry(for: request)
+        let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
-            throw oauthError("ChatGPT SIWC 令牌交换失败", status: status, body: data)
+            throw Self.oauthError("ChatGPT SIWC 令牌交换失败", status: status, body: data)
         }
 
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
@@ -1123,7 +1178,8 @@ actor IOSChatGptSiwcOAuthClient {
         let claims = try await verifyIdTokenWithJwks(
             idToken: idToken,
             expectedClientId: callback.issuedClientId,
-            expectedNonce: authRequest.nonce
+            expectedNonce: authRequest.nonce,
+            expectedSubject: authRequest.expectedSubject
         )
 
         let expiresAtMillis = Self.resolveExpiresAtMillis(tokenResponse: obj, accessToken: accessToken)
@@ -1139,40 +1195,44 @@ actor IOSChatGptSiwcOAuthClient {
             name: claims.name
         )
 
+        try Task.checkCancellation()
         guard IOSChatGptSiwcAuthStore.save(providerId: providerId, credentials: credentials) else {
             throw IOSChatGptSiwcOAuthError(message: "无法将 ChatGPT SIWC 凭据安全保存到 Keychain。")
         }
         return credentials
     }
 
-    func getValidAccessToken(forceRefresh: Bool = false) async throws -> String {
+    func getValidAccessToken() async throws -> String {
+        try await validCredentials().accessToken
+    }
+
+    private func validCredentials(afterRejection rejected: IOSChatGptSiwcCredentials? = nil) async throws -> IOSChatGptSiwcCredentials {
         guard let current = IOSChatGptSiwcAuthStore.load(providerId: providerId) else {
             throw IOSChatGptSiwcOAuthError(message: "尚未登录 ChatGPT 套餐，请先点击 Continue with ChatGPT 完成授权。")
         }
-        let now = Self.nowMillis()
-        if !forceRefresh, current.expiresAtMillis - IOSChatGptSiwcConstants.refreshSkewMillis > now {
-            return current.accessToken
+        if let rejected, !current.belongsToSameAccount(as: rejected) {
+            throw IOSChatGptSiwcOAuthError(message: "ChatGPT 登录账号已变更，请重新获取模型。")
         }
-        return try await IOSChatGptSiwcResolveCoordinator.shared.resolve(key: providerId) { [self] in
-            if !forceRefresh,
-               let latest = IOSChatGptSiwcAuthStore.load(providerId: providerId),
-               latest.expiresAtMillis - IOSChatGptSiwcConstants.refreshSkewMillis > Self.nowMillis() {
-                return latest.accessToken
+        if current.canReuse(rejectedAccessToken: rejected?.accessToken) {
+            return current
+        }
+        let key = IOSChatGptSiwcResolveCoordinator.Key(providerId: providerId, clientId: current.clientId, subject: current.subject)
+        return try await IOSChatGptSiwcResolveCoordinator.shared.resolve(key: key) { [self] in
+            guard let latest = IOSChatGptSiwcAuthStore.load(providerId: providerId), latest.belongsToSameAccount(as: current) else {
+                throw IOSChatGptSiwcOAuthError(message: "ChatGPT 登录账号已变更，已取消令牌刷新。")
             }
-            return try await refresh().accessToken
+            if latest.canReuse(rejectedAccessToken: rejected?.accessToken) { return latest }
+            return try await refresh(latest)
         }
     }
 
-    func refresh() async throws -> IOSChatGptSiwcCredentials {
-        guard let current = IOSChatGptSiwcAuthStore.load(providerId: providerId) else {
-            throw IOSChatGptSiwcOAuthError(message: "尚未登录 ChatGPT 套餐，请先点击 Continue with ChatGPT 完成授权。")
-        }
+    private func refresh(_ current: IOSChatGptSiwcCredentials) async throws -> IOSChatGptSiwcCredentials {
         let form = Self.formEncode([
             "grant_type": "refresh_token",
             "refresh_token": current.refreshToken,
             "client_id": current.clientId,
             "resource": IOSChatGptSiwcConstants.resource,
-            "ext_agent_host_id": IOSChatGptSiwcHostIdStore.hostId(),
+            "ext_agent_host_id": try IOSChatGptSiwcHostIdStore.hostId(),
         ])
         var request = URLRequest(url: URL(string: IOSChatGptSiwcConstants.tokenEndpoint)!)
         request.httpMethod = "POST"
@@ -1180,11 +1240,16 @@ actor IOSChatGptSiwcOAuthClient {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.httpBody = Data(form.utf8)
 
-        let (data, response) = try await dataWithRetry(for: request)
+        // A lost response may already have rotated the refresh token. Do not replay this grant.
+        let (data, response) = try await session.data(for: request)
         try Task.checkCancellation()
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
-            throw oauthError("ChatGPT SIWC 令牌刷新失败", status: status, body: data)
+            if (400..<500).contains(status), Self.isUnusableRefreshTokenResponse(data) {
+                _ = IOSChatGptSiwcAuthStore.clearSession(providerId: providerId, matching: current)
+                throw Self.oauthError("ChatGPT 会话已失效，请重新登录", status: status, body: data)
+            }
+            throw Self.oauthError("ChatGPT SIWC 令牌刷新失败", status: status, body: data)
         }
 
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
@@ -1198,6 +1263,7 @@ actor IOSChatGptSiwcOAuthClient {
             fallback: current.scope
         )
         guard Self.hasRequiredDirectTokenScope(refreshedScope) else {
+            _ = IOSChatGptSiwcAuthStore.clearSession(providerId: providerId, matching: current)
             throw IOSChatGptSiwcOAuthError(
                 message: "刷新后的 ChatGPT 授权缺少 \(IOSChatGptSiwcConstants.requiredDirectTokenScope) 权限，请重新登录。"
             )
@@ -1211,7 +1277,8 @@ actor IOSChatGptSiwcOAuthClient {
             let claims = try await verifyIdTokenWithJwks(
                 idToken: refreshedIdToken,
                 expectedClientId: current.clientId,
-                expectedNonce: nil
+                expectedNonce: nil,
+                expectedSubject: current.subject
             )
             subject = claims.subject
             email = claims.email ?? email
@@ -1247,24 +1314,27 @@ actor IOSChatGptSiwcOAuthClient {
     // MARK: - Model discovery (`GET https://api.openai.com/v1/models`)
 
     func fetchModelsOrThrow() async throws -> [IOSChatGptSiwcModelItem] {
-        var token = try await getValidAccessToken(forceRefresh: false)
-        var (data, response) = try await dataWithRetry(for: modelsRequest(bearer: token))
+        var credentials = try await validCredentials()
+        var (data, response) = try await dataWithRetry(for: modelsRequest(bearer: credentials.accessToken))
         var status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 401 {
-            token = try await getValidAccessToken(forceRefresh: true)
-            (data, response) = try await dataWithRetry(for: modelsRequest(bearer: token))
+            credentials = try await validCredentials(afterRejection: credentials)
+            (data, response) = try await dataWithRetry(for: modelsRequest(bearer: credentials.accessToken))
             status = (response as? HTTPURLResponse)?.statusCode ?? 0
         }
         guard (200..<300).contains(status) else {
-            throw oauthError("获取 ChatGPT 模型列表失败", status: status, body: data)
+            throw Self.oauthError("获取 ChatGPT 模型列表失败", status: status, body: data)
         }
-        return Self.parseModels(data)
+        guard IOSChatGptSiwcAuthStore.load(providerId: providerId)?.belongsToSameAccount(as: credentials) == true else {
+            throw IOSChatGptSiwcOAuthError(message: "ChatGPT 登录账号已变更，请重新获取模型。")
+        }
+        return try Self.parseModels(data)
     }
 
-    nonisolated static func parseModels(_ data: Data) -> [IOSChatGptSiwcModelItem] {
+    nonisolated static func parseModels(_ data: Data) throws -> [IOSChatGptSiwcModelItem] {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let entries = root["models"] as? [[String: Any]] else {
-            return []
+            throw IOSChatGptSiwcOAuthError(message: "ChatGPT 模型列表响应缺少有效的 models 数组。")
         }
         var result: [IOSChatGptSiwcModelItem] = []
         var seen = Set<String>()
@@ -1312,19 +1382,24 @@ actor IOSChatGptSiwcOAuthClient {
     private func verifyIdTokenWithJwks(
         idToken: String,
         expectedClientId: String,
-        expectedNonce: String?
+        expectedNonce: String?,
+        expectedSubject: String?
     ) async throws -> IOSChatGptSiwcIdTokenClaims {
         let kid = IOSChatGptSiwcJwtVerifier.decodeHeaderKid(idToken)
         var keys = try await jwksCache.keys(session: session, forceRefresh: false)
         if let kid, !keys.contains(where: { $0.kid == kid }) {
             keys = try await jwksCache.keys(session: session, forceRefresh: true)
         }
-        return try IOSChatGptSiwcJwtVerifier.verifyIdToken(
+        let claims = try IOSChatGptSiwcJwtVerifier.verifyIdToken(
             idToken,
             expectedClientId: expectedClientId,
             expectedNonce: expectedNonce,
             jwks: keys
         )
+        guard expectedSubject == nil || expectedSubject == claims.subject else {
+            throw IOSChatGptSiwcOAuthError(message: "ID Token 的账号标识（sub）与所选账号不匹配。")
+        }
+        return claims
     }
 
     private func modelsRequest(bearer: String) -> URLRequest {
@@ -1335,22 +1410,19 @@ actor IOSChatGptSiwcOAuthClient {
         return request
     }
 
-    private func dataWithRetry(for request: URLRequest) async throws -> (Data, URLResponse) {
-        var lastError: Error?
-        for attempt in 0..<2 {
-            try Task.checkCancellation()
-            do {
-                return try await session.data(for: request)
-            } catch {
-                if attempt == 0 && Self.isTransientTransport(error) {
-                    lastError = error
-                    try await Task.sleep(for: .milliseconds(350))
-                    continue
-                }
-                throw error
+    private func dataWithRetry(for request: URLRequest, retryServerError: Bool = false) async throws -> (Data, URLResponse) {
+        try Task.checkCancellation()
+        do {
+            let result = try await session.data(for: request)
+            guard retryServerError, let http = result.1 as? HTTPURLResponse,
+                  (500..<600).contains(http.statusCode) else {
+                return result
             }
+        } catch {
+            guard Self.isTransientTransport(error) else { throw error }
         }
-        throw lastError ?? IOSChatGptSiwcOAuthError(message: "网络请求失败。")
+        try await Task.sleep(for: .milliseconds(350))
+        return try await session.data(for: request)
     }
 
     nonisolated static func pkceS256Challenge(for verifier: String) -> String {
@@ -1369,17 +1441,17 @@ actor IOSChatGptSiwcOAuthClient {
         accessToken: String,
         fallback: String = ""
     ) -> String {
-        if let explicit = (tokenResponse["scope"] as? String).nonBlank {
+        if let explicit = tokenResponse["scope"] as? String {
             return explicit
         }
         if let claims = IOSChatGptSiwcJwtVerifier.decodePayload(accessToken) {
-            if let claimScope = (claims["scope"] as? String).nonBlank {
+            if let claimScope = claims["scope"] as? String {
                 return claimScope
             }
-            if let scpArray = claims["scp"] as? [String], !scpArray.isEmpty {
+            if let scpArray = claims["scp"] as? [String] {
                 return scpArray.joined(separator: " ")
             }
-            if let scpString = (claims["scp"] as? String).nonBlank {
+            if let scpString = claims["scp"] as? String {
                 return scpString
             }
         }
@@ -1401,9 +1473,11 @@ actor IOSChatGptSiwcOAuthClient {
         return now + IOSChatGptSiwcConstants.fallbackTokenLifetimeMillis
     }
 
-    private nonisolated static func randomBase64URL(byteCount: Int) -> String {
+    private nonisolated static func randomBase64URL(byteCount: Int) throws -> String {
         var bytes = [UInt8](repeating: 0, count: byteCount)
-        _ = SecRandomCopyBytes(kSecRandomDefault, byteCount, &bytes)
+        guard SecRandomCopyBytes(kSecRandomDefault, byteCount, &bytes) == errSecSuccess else {
+            throw IOSChatGptSiwcOAuthError(message: "无法生成 ChatGPT 授权所需的随机值。")
+        }
         return base64URLEncode(Data(bytes))
     }
 
@@ -1423,7 +1497,7 @@ actor IOSChatGptSiwcOAuthClient {
             || ns.code == NSURLErrorNotConnectedToInternet
     }
 
-    private func oauthError(_ prefix: String, status: Int, body: Data) -> IOSChatGptSiwcOAuthError {
+    private nonisolated static func oauthError(_ prefix: String, status: Int, body: Data) -> IOSChatGptSiwcOAuthError {
         let detail = Self.safeOAuthError(body)
         return IOSChatGptSiwcOAuthError(
             message: detail.isEmpty ? "\(prefix)：HTTP \(status)" : "\(prefix)：\(detail)"
@@ -1440,6 +1514,15 @@ actor IOSChatGptSiwcOAuthClient {
             if let v = (obj["message"] as? String).nonBlank { return v }
         }
         return String((String(data: body, encoding: .utf8) ?? "").prefix(240))
+    }
+
+    private nonisolated static func isUnusableRefreshTokenResponse(_ data: Data) -> Bool {
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let code = object["error"] as? String ?? (object["error"] as? [String: Any])?["code"] as? String else {
+            return false
+        }
+        return ["invalid_grant", "invalid_refresh_token", "token_expired", "refresh_token_expired",
+                "refresh_token_invalidated", "refresh_token_reused"].contains(code)
     }
 
     private nonisolated static func nowMillis() -> Int64 {
@@ -1460,12 +1543,18 @@ actor IOSChatGptSiwcOAuthClient {
 actor IOSChatGptSiwcResolveCoordinator {
     static let shared = IOSChatGptSiwcResolveCoordinator()
 
-    private var inFlight: [String: Task<String, Error>] = [:]
+    struct Key: Hashable {
+        let providerId: String
+        let clientId: String
+        let subject: String?
+    }
+
+    private var inFlight: [Key: Task<IOSChatGptSiwcCredentials, Error>] = [:]
 
     func resolve(
-        key: String,
-        _ operation: @escaping @Sendable () async throws -> String
-    ) async throws -> String {
+        key: Key,
+        _ operation: @escaping @Sendable () async throws -> IOSChatGptSiwcCredentials
+    ) async throws -> IOSChatGptSiwcCredentials {
         if let existing = inFlight[key] {
             return try await existing.value
         }

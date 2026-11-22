@@ -96,6 +96,9 @@ private const val RESPONSES_OUTPUT_CAP_REASON = "max_output_tokens"
  */
 internal const val CHATGPT_SIWC_RESPONSES_URL = "https://api.openai.com/v1/responses"
 internal const val CHATGPT_SIWC_USAGE_SETTINGS_URL = "https://chatgpt.com/settings/usage"
+private val CHATGPT_SIWC_RESERVED_HEADERS = setOf(
+    "authorization", "api-key", "x-api-key", "chatgpt-account-id", "originator", "openai-beta",
+)
 
 private val CHATGPT_SIWC_UNSUPPORTED_FIELDS = setOf(
     "background",
@@ -120,6 +123,7 @@ private val CHATGPT_SIWC_UNSUPPORTED_HOSTED_TOOL_TYPES = setOf(
     "image_generation",
     "file_search",
     "code_interpreter",
+    "computer",
     "computer_use",
     "computer_use_preview",
     "mcp",
@@ -778,6 +782,12 @@ class OpenAIKmpProvider internal constructor(
         extraHeaders: List<CustomHeader> = emptyList(),
     ): List<CustomHeader> {
         val token = providerSetting.apiKey
+        if (providerSetting.authMode == OpenAIAuthMode.CHATGPT_SIWC) {
+            val headers = resolveOpenAIRequestHeaders(providerSetting.authMode, extraHeaders).filterNot {
+                it.name.lowercase() in CHATGPT_SIWC_RESERVED_HEADERS
+            }
+            return listOf(CustomHeader("Authorization", "Bearer $token")) + headers
+        }
         val host = hostOf(providerSetting.baseUrl)
         val usesMimoApiKey = providerSetting.brand == OpenAIBrand.MIMO ||
             providerSetting.authMode == OpenAIAuthMode.MIMO_CODING_PLAN ||
@@ -936,9 +946,12 @@ class OpenAIKmpProvider internal constructor(
         normalizeOpenAIStreamDataLines(data).mapNotNull { payload ->
             val obj = runCatching { json.parseToJsonElement(payload) as? JsonObject }
                 .getOrNull() ?: return@mapNotNull null
-            obj["error"]?.let { errorElement ->
-                siwcFriendlyErrorMessage(errorElement.obj())?.let { friendly ->
-                    throw IllegalStateException(friendly)
+            val error = obj["error"] ?: obj.takeIf {
+                authMode == OpenAIAuthMode.CHATGPT_SIWC && it.str("type") == "error"
+            }
+            error?.let { errorElement ->
+                if (authMode == OpenAIAuthMode.CHATGPT_SIWC) {
+                    siwcFriendlyErrorMessage(errorElement.obj())?.let { throw IllegalStateException(it) }
                 }
                 throw errorElement.parseErrorDetail()
             }
@@ -975,15 +988,13 @@ class OpenAIKmpProvider internal constructor(
             }
 
             "failed" -> {
-                val errorObj = response?.get("error")?.obj()
-                siwcFriendlyErrorMessage(errorObj)?.let { friendly ->
-                    throw IllegalStateException(friendly)
-                }
-                val detail = response?.get("error")?.parseErrorDetail()?.message
+                val error = response?.get("error")
+                val detail = error?.parseErrorDetail()?.message
                     ?: response?.str("status")
                     ?: "unknown error"
-                siwcFriendlyErrorMessageFromText(detail)?.let { friendly ->
-                    throw IllegalStateException(friendly)
+                if (authMode == OpenAIAuthMode.CHATGPT_SIWC) {
+                    val friendly = siwcFriendlyErrorMessage(error.obj()) ?: siwcFriendlyErrorMessageFromText(detail)
+                    if (friendly != null) throw IllegalStateException(friendly)
                 }
                 throw IllegalStateException("OpenAI Responses $source failed: $detail")
             }
@@ -1186,36 +1197,52 @@ class OpenAIKmpProvider internal constructor(
         val inputArray = cleaned["input"] as? JsonArray
         if (inputArray != null) {
             cleaned["input"] = JsonArray(
-                inputArray.map { item ->
-                    val obj = item as? JsonObject ?: return@map item
-                    val role = obj.str("role")?.lowercase()
-                    if (role == "system") {
-                        JsonObject(obj.toMutableMap().apply {
-                            put("role", JsonPrimitive("developer"))
-                        })
-                    } else {
-                        item
+                inputArray.mapNotNull { item ->
+                    val obj = item as? JsonObject ?: return@mapNotNull item
+                    val message = if (obj.str("role").equals("system", ignoreCase = true)) {
+                        JsonObject(obj + ("role" to JsonPrimitive("developer")))
+                    } else obj
+                    val inlineTools = obj["tools"] as? JsonArray
+                    if (obj.str("type") == "additional_tools" && inlineTools != null) {
+                        val kept = inlineTools.filterNot(::isUnsupportedSiwcTool)
+                        if (kept.isEmpty()) return@mapNotNull null
+                        return@mapNotNull JsonObject(message + ("tools" to JsonArray(kept)))
                     }
+                    message
                 }
             )
         }
 
         val toolsArray = cleaned["tools"] as? JsonArray
         if (toolsArray != null) {
-            val filteredTools = toolsArray.filter { toolElement ->
-                val toolObj = toolElement as? JsonObject ?: return@filter true
-                val toolType = toolObj.str("type")?.trim()?.lowercase() ?: return@filter true
-                toolType !in CHATGPT_SIWC_UNSUPPORTED_HOSTED_TOOL_TYPES
-            }
+            val filteredTools = toolsArray.filterNot(::isUnsupportedSiwcTool)
             if (filteredTools.isEmpty()) {
                 cleaned.remove("tools")
+                val hasInlineTools = (cleaned["input"] as? JsonArray).orEmpty().any { it.obj()?.str("type") == "additional_tools" }
+                if (cleaned["tool_choice"] == JsonPrimitive("required") && toolsArray.isNotEmpty() && !hasInlineTools) {
+                    cleaned.remove("tool_choice")
+                }
             } else {
                 cleaned["tools"] = JsonArray(filteredTools)
+            }
+        }
+        val choice = cleaned["tool_choice"] as? JsonObject
+        if (isUnsupportedSiwcTool(choice)) {
+            cleaned.remove("tool_choice")
+        } else if (choice?.str("type") == "allowed_tools") {
+            val allowed = choice["tools"] as? JsonArray
+            if (allowed != null && allowed.any(::isUnsupportedSiwcTool)) {
+                val kept = allowed.filterNot(::isUnsupportedSiwcTool)
+                if (kept.isEmpty()) cleaned.remove("tool_choice")
+                else cleaned["tool_choice"] = JsonObject(choice + ("tools" to JsonArray(kept)))
             }
         }
 
         return JsonObject(cleaned)
     }
+
+    private fun isUnsupportedSiwcTool(element: JsonElement?): Boolean =
+        element.obj()?.str("type")?.trim()?.lowercase() in CHATGPT_SIWC_UNSUPPORTED_HOSTED_TOOL_TYPES
 
     private fun buildResponsesMessages(
         messages: List<UIMessage>,

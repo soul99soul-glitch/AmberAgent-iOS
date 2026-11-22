@@ -279,7 +279,7 @@ object IosSettingsMutations {
     /**
      * Sets the persisted auth mode for provider [providerId].
      *
-     * Codex OAuth still only flips [ProviderSetting.OpenAI.authMode]: request-time
+     * OpenAI OAuth only flips [ProviderSetting.OpenAI.authMode]: request-time
      * endpoint/Responses overrides belong to IOSCodexProviderResolver, so
      * login/logout never destroys the user's API-key endpoint configuration.
      *
@@ -312,7 +312,9 @@ object IosSettingsMutations {
         provider: ProviderSetting.OpenAI,
         mode: OpenAIAuthMode,
     ): String {
-        if (mode == OpenAIAuthMode.CODEX_OAUTH) {
+        if (mode == OpenAIAuthMode.CODEX_OAUTH || mode == OpenAIAuthMode.CHATGPT_SIWC ||
+            (mode == OpenAIAuthMode.API_KEY && provider.authMode == OpenAIAuthMode.CHATGPT_SIWC)
+        ) {
             return provider.baseUrl
         }
         if (mode == OpenAIAuthMode.MIMO_CODING_PLAN) {

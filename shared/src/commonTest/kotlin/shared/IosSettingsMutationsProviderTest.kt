@@ -108,6 +108,22 @@ class IosSettingsMutationsProviderTest {
     }
 
     @Test
+    fun chatGptSiwcSignInAndSignOutPreserveApiKeyConfiguration() {
+        val provider = ProviderSetting.OpenAI(
+            brand = OpenAIBrand.OPENAI,
+            apiKey = "local-test-key",
+            baseUrl = "https://proxy.example/v1",
+            chatCompletionsPath = "/custom/chat",
+        )
+        val signedIn = IosSettingsMutations.setOpenAIAuthMode(
+            Settings(providers = listOf(provider)), provider.id.toString(), OpenAIAuthMode.CHATGPT_SIWC,
+        )
+        assertEquals(provider.copy(authMode = OpenAIAuthMode.CHATGPT_SIWC), signedIn.providers.single())
+        val signedOut = IosSettingsMutations.setOpenAIAuthMode(signedIn, provider.id.toString(), OpenAIAuthMode.API_KEY)
+        assertEquals(provider, signedOut.providers.single())
+    }
+
+    @Test
     fun antigravityAuthModePreservesCustomApiKeyEndpointAcrossRoundTrip() {
         val customBaseUrl = "https://proxy.example/gemini"
         val provider = ProviderSetting.Google(
