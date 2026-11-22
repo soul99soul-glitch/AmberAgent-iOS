@@ -9,6 +9,7 @@ import app.amber.cloud.proactive.ProactiveTriggerSignal
 import app.amber.cloud.proactive.ProactiveWebhookRecord
 import app.amber.cloud.proactive.RestraintStatusSnapshot
 import app.amber.cloud.proactive.RestraintVerdict
+import app.amber.cloud.proactive.readBoundedBody
 import app.amber.cloud.runtime.CloudAgentKernel
 import app.amber.cloud.security.CredentialRedactor
 import io.ktor.http.ContentType
@@ -17,14 +18,16 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.header
-import io.ktor.server.request.receive
+import io.ktor.server.request.receiveChannel
 import io.ktor.server.request.receiveText
+import io.ktor.server.response.header
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -77,7 +80,7 @@ internal fun Application.configureProactiveRoutes(
 
     suspend fun ApplicationCall.respondError(status: Int, message: String) = respondJson(
         status,
-        json.encodeToString(JsonObject.serializer(), buildJsonObject { put("error", message) }),
+        json.encodeToString(JsonObject.serializer(), buildJsonObject { put("error", CredentialRedactor.redact(message)) }),
     )
 
     suspend fun ApplicationCall.parseJsonBody(): JsonObject? {
@@ -99,7 +102,7 @@ internal fun Application.configureProactiveRoutes(
                 null
             }
             is CloudGatewayState.AuthResult.CorruptedStore -> {
-                respondError(500, auth.error)
+                respondError(500, "device_registry_unavailable")
                 null
             }
         }
@@ -121,11 +124,19 @@ internal fun Application.configureProactiveRoutes(
                 return@post
             }
 
-            val rawBytes = runCatching { call.receive<ByteArray>() }.getOrElse {
+            if ((call.request.header(HttpHeaders.ContentLength)?.toLongOrNull() ?: 0L) > MAX_WEBHOOK_BODY_BYTES) {
+                call.respondError(413, "webhook_payload_too_large")
+                return@post
+            }
+            val rawBytes = try {
+                call.receiveChannel().readBoundedBody(MAX_WEBHOOK_BODY_BYTES)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
                 call.respondError(400, "invalid_request_body")
                 return@post
             }
-            if (rawBytes.size > MAX_WEBHOOK_BODY_BYTES) {
+            if (rawBytes == null) {
                 call.respondError(413, "webhook_payload_too_large")
                 return@post
             }
@@ -145,11 +156,10 @@ internal fun Application.configureProactiveRoutes(
             }
 
             val rawText = String(rawBytes, StandardCharsets.UTF_8)
-            val deliveryId = call.request.header("X-Amber-Delivery")
-                ?.trim()
-                ?.takeIf { it.isNotEmpty() }
-                ?.take(128)
-                ?: L1DeterministicFilter.sha256Hex(rawText)
+            val payloadHash = L1DeterministicFilter.sha256Hex(rawBytes)
+            val deliveryId = call.request.header("X-Amber-Delivery")?.trim()?.takeIf { it.isNotEmpty() }?.let { id ->
+                if (id.length <= 128 && CredentialRedactor.redact(id) == id) id else L1DeterministicFilter.sha256Hex(id)
+            } ?: payloadHash
             val redactedPayload = CredentialRedactor.redact(rawText)
             val nowMs = System.currentTimeMillis()
             val signal = ProactiveTriggerSignal.WebhookInboundSignal(
@@ -157,6 +167,7 @@ internal fun Application.configureProactiveRoutes(
                 webhookId = webhook.id,
                 webhookName = webhook.name,
                 deliveryId = deliveryId,
+                signedPayloadHash = payloadHash.takeIf { signatureHeader != null },
                 instruction = webhook.instruction,
                 redactedPayload = redactedPayload,
                 timestampEpochMs = nowMs,
@@ -298,6 +309,7 @@ internal fun Application.configureProactiveRoutes(
                     enabled = enabled,
                 )
                 state.recordAudit("proactive-webhook-create", mapOf("device" to device.id, "webhookId" to created.webhook.id))
+                call.response.header(HttpHeaders.CacheControl, "no-store")
                 call.respondJson(201, json.encodeToString(CreatedProactiveWebhook.serializer(), created))
             } catch (e: IllegalArgumentException) {
                 call.respondError(400, e.message ?: "invalid_webhook")

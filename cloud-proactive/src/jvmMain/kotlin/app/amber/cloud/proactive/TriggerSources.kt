@@ -98,6 +98,7 @@ sealed interface ProactiveTriggerSignal {
         val redactedPayload: String,
         override val topicKey: String = "webhook:$webhookId",
         override val timestampEpochMs: Long = System.currentTimeMillis(),
+        val signedPayloadHash: String? = null,
     ) : ProactiveTriggerSignal {
         override val category: TriggerCategory = TriggerCategory.EXTERNAL_SENSOR
     }

@@ -25,9 +25,10 @@ class DeviceContextPrepTriggerSource(
 
     override suspend fun pollAll(nowEpochMs: Long): List<ProactiveTriggerSignal> {
         val pairedIds = runCatching { pairedDevicesProvider().map { it.id }.toSet() }.getOrDefault(emptySet())
+        if (pairedIds.isEmpty()) return emptyList()
         val snapshots = deviceContextStore.listActiveSnapshots(
             nowEpochMs = nowEpochMs,
-            allowedDeviceIds = pairedIds.takeIf { it.isNotEmpty() },
+            allowedDeviceIds = pairedIds,
         )
         if (snapshots.isEmpty()) return emptyList()
 
@@ -50,7 +51,7 @@ class DeviceContextPrepTriggerSource(
                 ).take(24)
                 if (!seenEventSignatures.add(sig)) continue
 
-                val recalled = memoryStore.recallForPrompt(query = item.title, limit = 5)
+                val recalled = memoryStore.recallForPrompt(query = item.title, limit = 5, requireMatch = true)
                     .map { it.content }
                     .distinct()
                 val minutesUntil = (deltaMs.toDouble() / 60_000.0).roundToInt().coerceIn(15, 30)

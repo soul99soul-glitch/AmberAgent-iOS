@@ -14,8 +14,8 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -145,8 +145,10 @@ class L1DeterministicFilter(
         /**
          * 计算文本的 SHA-256 十六进制摘要（委托 `:core:native` [AmberNativeBridge]）。
          */
-        fun sha256Hex(text: String): String {
-            val digest = AmberNativeBridge.sha256(text.toByteArray(StandardCharsets.UTF_8))
+        fun sha256Hex(text: String): String = sha256Hex(text.toByteArray(StandardCharsets.UTF_8))
+
+        fun sha256Hex(bytes: ByteArray): String {
+            val digest = AmberNativeBridge.sha256(bytes)
                 ?: error("SHA-256 unavailable on JVM")
             return digest.joinToString("") { "%02x".format(it) }
         }
@@ -539,9 +541,13 @@ class L1DeterministicFilter(
 
     private fun evaluateWebhookInbound(signal: ProactiveTriggerSignal.WebhookInboundSignal): L1Outcome {
         val dedupKey = "webhook:${signal.webhookId}:${signal.deliveryId}"
-        if (!recordDedupKey(dedupKey)) {
-            return L1Outcome.DroppedUnchanged(reason = "Webhook 投递 $dedupKey 重复到达，已幂等忽略")
+        // The HMAC authenticates only the bytes. A transport delivery ID is not part of the signature.
+        val signedKey = signal.signedPayloadHash?.let { "wh-body:${signal.webhookId}:$it" }
+        if (dedupKey in processedDeduplicationKeys || signedKey in processedDeduplicationKeys) {
+            return L1Outcome.DroppedUnchanged(reason = "Webhook 投递重复到达，已幂等忽略")
         }
+        recordDedupKey(dedupKey)
+        if (signedKey != null) recordDedupKey(signedKey)
         val safeName = CredentialRedactor.redact(signal.webhookName.trim()).ifBlank { signal.webhookId }
         val safeInstruction = CredentialRedactor.redact(signal.instruction.trim())
         val safePayload = CredentialRedactor.redact(signal.redactedPayload.trim()).take(4_000)
@@ -659,22 +665,28 @@ object NoteworthyResponseParser {
         val closeIdx = rawText.lastIndexOf('}')
         if (openIdx < 0 || closeIdx <= openIdx) return null
         val slice = rawText.substring(openIdx, closeIdx + 1)
-        val obj = runCatching { json.parseToJsonElement(slice).jsonObject }.getOrNull() ?: return null
-        val summary = obj["summary"]?.jsonPrimitive?.content?.trim().orEmpty()
-        if (summary.isEmpty()) return null
-        val noteworthy = obj["noteworthy"]?.jsonPrimitive?.booleanOrNull ?: return null
-        val urgency = obj["urgency"]?.jsonPrimitive?.intOrNull ?: (if (noteworthy) 4 else 1)
-        val importance = obj["importance"]?.jsonPrimitive?.intOrNull ?: (if (noteworthy) 4 else 1)
-        val actionable = obj["actionable"]?.jsonPrimitive?.booleanOrNull ?: noteworthy
-        val channel = obj["recommended_channel"]?.jsonPrimitive?.content ?: "im_direct"
-        return L2NoteworthyScore(
-            noteworthy = noteworthy,
-            urgency = urgency.coerceIn(1, 5),
-            importance = importance.coerceIn(1, 5),
-            actionable = actionable,
-            recommendedChannel = channel,
-            summary = summary.take(400),
-        )
+        return parseObject(slice, requireAll = false)
+    }
+
+    /** Live L2 output must satisfy the declared schema before it can authorize an interruption. */
+    fun parseModelReply(text: String): L2NoteworthyScore? = parseObject(text, requireAll = true)
+
+    private fun parseObject(text: String, requireAll: Boolean): L2NoteworthyScore? {
+        val obj = runCatching { json.parseToJsonElement(text) }.getOrNull() as? JsonObject ?: return null
+        fun string(key: String) = (obj[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        fun literal(key: String) = (obj[key] as? JsonPrimitive)?.takeUnless { it.isString }
+        val summary = string("summary")?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val noteworthy = literal("noteworthy")?.booleanOrNull ?: return null
+        fun score(key: String): Int? = if (!requireAll && key !in obj) {
+            if (noteworthy) 4 else 1
+        } else literal(key)?.intOrNull?.takeIf { it in 1..5 }
+        val urgency = score("urgency") ?: return null
+        val importance = score("importance") ?: return null
+        val actionable = if (!requireAll && "actionable" !in obj) noteworthy
+            else literal("actionable")?.booleanOrNull ?: return null
+        val channel = if (!requireAll && "recommended_channel" !in obj) "im_direct"
+            else string("recommended_channel")?.takeIf { it == "im_direct" || it == "pulse" } ?: return null
+        return L2NoteworthyScore(noteworthy, urgency, importance, actionable, channel, summary.take(400))
     }
 }
 

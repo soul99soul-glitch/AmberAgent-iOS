@@ -9,7 +9,11 @@ import app.amber.cloud.channels.RedactingChannelLogger
 import app.amber.cloud.channels.TelegramChannel
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.okhttp.OkHttp
 import kotlinx.coroutines.test.runTest
+import java.net.InetAddress
+import java.net.Proxy
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import java.time.LocalDateTime
@@ -27,6 +31,16 @@ import kotlin.test.assertTrue
 class CloudProactiveTest {
     private lateinit var fakeServer: HttpServer
     private var baseUrl: String = ""
+    private val fixtureDns: (String) -> List<InetAddress> = { listOf(InetAddress.getByName("93.184.216.34")) }
+    private val fixtureTransport = HttpClient(OkHttp) {
+        engine {
+            config {
+                proxy(Proxy.NO_PROXY)
+                dns { listOf(InetAddress.getLoopbackAddress()) }
+            }
+        }
+    }
+    private val watchedPageUrl get() = "http://watchtower.test:${fakeServer.address.port}/watched-pricing"
 
     private var watchtowerPageHtml: String = """
         <html>
@@ -77,6 +91,7 @@ class CloudProactiveTest {
 
     @AfterTest
     fun tearDown() {
+        fixtureTransport.close()
         fakeServer.stop(0)
     }
 
@@ -166,10 +181,12 @@ class CloudProactiveTest {
         val daytimeMs = epochMsAt(2026, 10, 31, 10, 30)
         val engine = ProactiveEngine(
             l2Judge = fakeJudge,
+            httpClient = fixtureTransport,
+            dnsResolver = fixtureDns,
             clockMs = { daytimeMs },
         )
 
-        val watchedUrl = "$baseUrl/watched-pricing"
+        val watchedUrl = watchedPageUrl
 
         // 首次建立基线快照
         val initialResult = engine.checkWatchtowerUrl(
@@ -230,8 +247,8 @@ class CloudProactiveTest {
             )
         }
 
-        val engine = ProactiveEngine(l2Judge = fakeJudge)
-        val watchedUrl = "$baseUrl/watched-pricing"
+        val engine = ProactiveEngine(l2Judge = fakeJudge, httpClient = fixtureTransport, dnsResolver = fixtureDns)
+        val watchedUrl = watchedPageUrl
 
         // 1. 在静默时段内（23:30 与 次日 02:15）触发网页异动与日程冲突 -> 验证绝不推送 IM
         val quietNightMs = epochMsAt(2026, 10, 31, 23, 30)
@@ -312,13 +329,15 @@ class CloudProactiveTest {
         val daytimeMs = epochMsAt(2026, 10, 31, 11, 0)
         val engine = ProactiveEngine(
             l2Judge = fakeJudge,
+            httpClient = fixtureTransport,
+            dnsResolver = fixtureDns,
             restraintGate = restraintGate,
             clockMs = { daytimeMs },
         )
 
         // 场景 1：Watchtower 网页异动（第 1 次消耗预算 -> 推送成功）
         val watchRes = engine.checkWatchtowerUrl(
-            url = "$baseUrl/watched-pricing",
+            url = watchedPageUrl,
             title = "Anthropic 定价页",
             targetChatId = "123456",
             channel = tgChannel,

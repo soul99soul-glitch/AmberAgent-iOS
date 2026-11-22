@@ -243,24 +243,16 @@ class CloudAgentKernel(
         routerIngress.recordReply(PRIMARY_CONVERSATION_ID.toString(),text,Uuid.parse(java.util.UUID.nameUUIDFromBytes(id.toByteArray()).toString()))
     } }
     val scheduleRunner by lazy { app.amber.cloud.gateway.CloudScheduleRunner(this) }
-    val watchtowerTriggerSource: WatchtowerMonitorTriggerSource = if (proactiveHttpClient != null) {
-        WatchtowerMonitorTriggerSource(
-            monitorStore = proactiveMonitorStore,
-            l1Filter = proactiveEngine.l1Filter,
-            httpClient = proactiveHttpClient,
-            dnsResolver = proactiveDnsResolver,
-        )
-    } else {
-        WatchtowerMonitorTriggerSource(
-            monitorStore = proactiveMonitorStore,
-            l1Filter = proactiveEngine.l1Filter,
-            dnsResolver = proactiveDnsResolver,
-        )
-    }
+    val watchtowerTriggerSource = WatchtowerMonitorTriggerSource(
+        monitorStore = proactiveMonitorStore,
+        l1Filter = proactiveEngine.l1Filter,
+        httpClient = proactiveHttpClient,
+        dnsResolver = proactiveDnsResolver,
+    )
     val deviceContextPrepTriggerSource: DeviceContextPrepTriggerSource = DeviceContextPrepTriggerSource(
         deviceContextStore = gatewayState.deviceContextStore,
         memoryStore = memoryStore,
-        pairedDevicesProvider = { runCatching { gatewayState.loadDevicesStrict() }.getOrDefault(emptyList()) },
+        pairedDevicesProvider = gatewayState::loadDevicesStrict,
         zoneIdProvider = { proactiveEngine.restraintGate.budgetConfig.zoneId },
     )
 
@@ -564,21 +556,10 @@ class CloudAgentKernel(
         var firstReceipt: OutboundReceipt? = pushed.receipt
 
         // Record the proactive card in the primary timeline so context is continuous across restarts
-        val existing = conversationStorage.loadConversation(PRIMARY_CONVERSATION_ID)
-            ?: Conversation(
-                id = PRIMARY_CONVERSATION_ID,
-                assistantId = DEFAULT_ASSISTANT_ID,
-                title = "主时间线",
-                messageNodes = emptyList(),
-            )
-        val proactiveMsg = sanitizeAssistantMessage(
-            UIMessage.assistant("【主动提醒 · ${card.title}】\n${card.markdownBody}")
-        )
-        conversationStorage.saveConversation(
-            existing.copy(
-                messageNodes = existing.messageNodes + proactiveMsg.toMessageNode(),
-                updateAt = Clock.System.now(),
-            )
+        routerIngress.recordReply(
+            PRIMARY_CONVERSATION_ID.toString(),
+            CredentialRedactor.redact("【主动提醒 · ${card.title}】\n${card.markdownBody}"),
+            createPrimaryIfMissing = true,
         )
 
         // Dispatch outbound card to all registered connectors where the owner has a bound private chat
@@ -593,7 +574,13 @@ class CloudAgentKernel(
                 card = card,
                 idempotencyKey = "proactive:${pushed.l1Delta.signalId}:${kind.wireName}",
             )
-            val receipt = connector.sendWithReceipt(outbound)
+            val receipt = try {
+                connector.sendWithReceipt(outbound)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                OutboundReceipt(false, kind.wireName, outbound.idempotencyKey.orEmpty(), note = "proactive_delivery_failed")
+            }
             if (firstReceipt == null) {
                 firstReceipt = receipt
             }
@@ -601,14 +588,22 @@ class CloudAgentKernel(
 
         // Dispatch APNs push to paired owner iOS/Watch devices with push tokens, honoring silentDelivery
         val pairedDevices = runCatching { gatewayState.loadDevicesStrict() }.getOrDefault(emptyList())
-        for (device in pairedDevices) {
+        for (paired in pairedDevices) {
+            // Pairings and tokens may change while the preceding device's send is suspended.
+            val device = gatewayState.findDeviceById(paired.id) ?: continue
             val pushPayload = gatewayState.buildProactivePushPayload(
                 device = device,
                 card = card,
                 signalId = pushed.l1Delta.signalId,
                 silentDelivery = pushed.restraintVerdict.silentDelivery,
             ) ?: continue
-            runCatching { gatewayState.pushSender.send(pushPayload) }
+            try {
+                gatewayState.pushSender.send(pushPayload).getOrThrow()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                gatewayState.recordAudit("proactive-push-failed", mapOf("device" to device.id))
+            }
         }
 
         return pushed.copy(receipt = firstReceipt)

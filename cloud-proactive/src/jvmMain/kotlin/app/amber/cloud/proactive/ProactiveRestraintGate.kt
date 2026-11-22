@@ -119,6 +119,7 @@ class ProactiveRestraintGate(
     )
 
     companion object {
+        private const val MAX_PULSE_ITEMS = 100
         private val TIME_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
         private val persistenceJson = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
     }
@@ -137,7 +138,7 @@ class ProactiveRestraintGate(
     private val lastPushByTopic = mutableMapOf<String, Long>()
     private val consecutiveIgnoresByTopic = mutableMapOf<String, Int>()
     private val mutedUntilByTopic = mutableMapOf<String, Long>()
-    private val bufferedPulseItems = mutableListOf<String>()
+    private val bufferedPulseItems = ArrayDeque<String>()
 
     init {
         loadFromDisk()
@@ -152,13 +153,14 @@ class ProactiveRestraintGate(
     ): RestraintStatusSnapshot {
         val nextStart = quietHoursStart?.trim()?.let { LocalTime.parse(it) } ?: quietHours.start
         val nextEnd = quietHoursEnd?.trim()?.let { LocalTime.parse(it) } ?: quietHours.end
-        val nextEnabled = quietHoursEnabled ?: quietHours.enabled
-        quietHours = quietHours.copy(enabled = nextEnabled, start = nextStart, end = nextEnd)
-        if (dailyMaxPushes != null) {
+        val nextQuiet = quietHours.copy(enabled = quietHoursEnabled ?: quietHours.enabled, start = nextStart, end = nextEnd)
+        val nextBudget = if (dailyMaxPushes != null) {
             require(dailyMaxPushes in 1..100) { "dailyMaxPushes 必须在 1..100 之间" }
-            budgetConfig = budgetConfig.copy(dailyMaxPushes = dailyMaxPushes)
-        }
-        persistToDisk()
+            budgetConfig.copy(dailyMaxPushes = dailyMaxPushes)
+        } else budgetConfig
+        persistToDisk(nextQuiet, nextBudget)
+        quietHours = nextQuiet
+        budgetConfig = nextBudget
         return statusSnapshot()
     }
 
@@ -229,6 +231,10 @@ class ProactiveRestraintGate(
         val today = Instant.ofEpochMilli(nowEpochMs).atZone(budgetConfig.zoneId).toLocalDate()
         var dirty = false
         if (currentDay != today) {
+            // L2 evaluations can finish out of order across midnight.
+            if (currentDay?.isAfter(today) == true) {
+                return RestraintVerdict.DeferredByBudget("事项属于已结算日期", bufferedForMorningBriefing = false)
+            }
             currentDay = today
             pushesToday = 0
             dirty = true
@@ -237,7 +243,7 @@ class ProactiveRestraintGate(
         // 1. 静默时段硬拦截（默认 23:00–08:00 严禁任何 IM 主动推送，攒入次日晨报）
         if (quietHours.isInQuietHours(nowEpochMs)) {
             if (noteworthy && summary.isNotBlank()) {
-                bufferedPulseItems.add(summary)
+                bufferForMorning(summary)
                 dirty = true
             }
             if (dirty) persistToDisk()
@@ -276,7 +282,7 @@ class ProactiveRestraintGate(
 
         if (!noteworthy || score < effectiveMinScore) {
             if (noteworthy && score >= budgetConfig.defaultMinScore && summary.isNotBlank()) {
-                bufferedPulseItems.add(summary)
+                bufferForMorning(summary)
                 dirty = true
             }
             if (dirty) persistToDisk()
@@ -291,7 +297,7 @@ class ProactiveRestraintGate(
         // 这里对 >= effectiveMinScore 的事项继续检查冷却与日预算桶
         val lastTopicPush = lastPushByTopic[topicKey]
         if (lastTopicPush != null && nowEpochMs - lastTopicPush < budgetConfig.topicCooldownMs) {
-            bufferedPulseItems.add(summary)
+            bufferForMorning(summary)
             persistToDisk()
             return RestraintVerdict.DeferredByBudget(
                 reason = "同一话题 ($topicKey) 处于冷却间隔内",
@@ -303,7 +309,7 @@ class ProactiveRestraintGate(
             nowEpochMs - lastGlobalPushEpochMs < budgetConfig.globalCooldownMs &&
             score < 20
         ) {
-            bufferedPulseItems.add(summary)
+            bufferForMorning(summary)
             persistToDisk()
             return RestraintVerdict.DeferredByBudget(
                 reason = "全局主动触达冷却间隔未满",
@@ -311,7 +317,7 @@ class ProactiveRestraintGate(
         }
 
         if (pushesToday >= budgetConfig.dailyMaxPushes) {
-            bufferedPulseItems.add(summary)
+            bufferForMorning(summary)
             persistToDisk()
             return RestraintVerdict.DeferredByBudget(
                 reason = "今日主动强触达预算已用尽 (${budgetConfig.dailyMaxPushes} 次/天)，已转入 Pulse 简报汇总",
@@ -334,6 +340,11 @@ class ProactiveRestraintGate(
             tier = tier,
             silentDelivery = tier <= 2,
         )
+    }
+
+    private fun bufferForMorning(summary: String) {
+        if (bufferedPulseItems.size >= MAX_PULSE_ITEMS) bufferedPulseItems.removeFirst()
+        bufferedPulseItems.addLast(summary.take(400))
     }
 
     private fun loadFromDisk() {
@@ -365,17 +376,17 @@ class ProactiveRestraintGate(
         mutedUntilByTopic.clear()
         mutedUntilByTopic.putAll(state.mutedUntilByTopic)
         bufferedPulseItems.clear()
-        bufferedPulseItems.addAll(state.bufferedPulseItems)
+        state.bufferedPulseItems.takeLast(MAX_PULSE_ITEMS).forEach(::bufferForMorning)
     }
 
-    private fun persistToDisk() {
+    private fun persistToDisk(quiet: QuietHoursConfig = quietHours, budget: InterruptionBudgetConfig = budgetConfig) {
         val file = persistenceFile ?: return
         val state = PersistedRestraintState(
-            quietHoursEnabled = quietHours.enabled,
-            quietHoursStart = quietHours.start.format(TIME_FMT),
-            quietHoursEnd = quietHours.end.format(TIME_FMT),
-            zoneId = quietHours.zoneId.id,
-            dailyMaxPushes = budgetConfig.dailyMaxPushes,
+            quietHoursEnabled = quiet.enabled,
+            quietHoursStart = quiet.start.format(TIME_FMT),
+            quietHoursEnd = quiet.end.format(TIME_FMT),
+            zoneId = quiet.zoneId.id,
+            dailyMaxPushes = budget.dailyMaxPushes,
             currentDay = currentDay?.toString(),
             pushesToday = pushesToday,
             lastGlobalPushEpochMs = lastGlobalPushEpochMs,

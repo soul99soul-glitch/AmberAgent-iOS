@@ -1,5 +1,8 @@
 package app.amber.cloud.proactive
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
 import java.io.File
 import java.nio.file.Files
@@ -9,6 +12,7 @@ import java.time.ZoneId
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
@@ -62,6 +66,7 @@ class CloudProactivePersistenceTest {
                 webhookId = "wh_ci",
                 webhookName = "GitHub CI",
                 deliveryId = "deliv-100",
+                signedPayloadHash = "body-hash",
                 instruction = "关注构建失败",
                 redactedPayload = """{"status":"failed"}""",
                 timestampEpochMs = nowMs,
@@ -114,6 +119,49 @@ class CloudProactivePersistenceTest {
             )
         )
         assertIs<L1Outcome.DroppedUnchanged>(whReplay)
+        val sameSignedBody = ProactiveTriggerSignal.WebhookInboundSignal(
+            signalId = "wh-3", webhookId = "wh_ci", webhookName = "GitHub CI",
+            deliveryId = "different-id", signedPayloadHash = "body-hash", redactedPayload = """{"status":"failed"}""",
+        )
+        assertIs<L1Outcome.DroppedUnchanged>(filter2.evaluate(sameSignedBody))
+    }
+
+    @Test
+    fun `webhook dedup admits one concurrent evaluation and evicts oldest keys`() = runTest {
+        val filter = L1DeterministicFilter()
+        val signal = ProactiveTriggerSignal.WebhookInboundSignal("s", "w", "CI", "delivery", redactedPayload = "done")
+        val results = List(24) { async(Dispatchers.Default) { filter.evaluate(signal) } }.awaitAll()
+        assertEquals(1, results.count { it is L1Outcome.PassedWithDelta })
+        repeat(5_000) { filter.evaluate(signal.copy(deliveryId = it.toString())) }
+        assertFalse(filter.hasProcessedDeduplicationKey("webhook:w:delivery"))
+        assertTrue(filter.hasProcessedDeduplicationKey("webhook:w:4999"))
+    }
+
+    @Test
+    fun `budget cannot rewind after midnight and morning backlog stays bounded across restart`() = runTest {
+        val file = File(Files.createTempDirectory("proactive-budget").toFile(), "gate.json")
+        val gate = ProactiveRestraintGate(quietHours = QuietHoursConfig(enabled = false),
+            budgetConfig = InterruptionBudgetConfig(dailyMaxPushes = 1), persistenceFile = file)
+        val yesterday = epochMsAt(2026, 11, 23, 23, 59)
+        val today = yesterday + 60_000L
+        fun push(id: String, time: Long) = gate.evaluateAndConsume(id, id, 20, true, time)
+        assertIs<RestraintVerdict.AllowedToPush>(push("first", yesterday))
+        val results = List(12) { async(Dispatchers.Default) { push("next-$it", today) } }.awaitAll()
+        assertEquals(1, results.count { it is RestraintVerdict.AllowedToPush })
+        assertIs<RestraintVerdict.DeferredByBudget>(push("late", yesterday))
+        repeat(105) { assertIs<RestraintVerdict.DeferredByBudget>(push("buffer-$it", today)) }
+        val restored = ProactiveRestraintGate(persistenceFile = file)
+        assertEquals(0, restored.statusSnapshot(today).remainingToday)
+        assertEquals((5..104).map { "buffer-$it" }, restored.drainBufferedPulseItems())
+    }
+
+    @Test
+    fun `invalid budget cannot partially apply quiet hours`() {
+        val gate = ProactiveRestraintGate()
+        kotlin.test.assertFailsWith<IllegalArgumentException> {
+            gate.updateConfig(quietHoursEnabled = false, dailyMaxPushes = 0)
+        }
+        assertTrue(gate.quietHours.enabled)
     }
 
     @Test

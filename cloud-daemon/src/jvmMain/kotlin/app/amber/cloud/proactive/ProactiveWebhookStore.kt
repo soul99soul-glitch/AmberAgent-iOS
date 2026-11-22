@@ -148,23 +148,23 @@ class ProactiveWebhookStore(
         authorizationHeader: String?,
     ): Boolean {
         val secret = vault.getSecret(vaultKey(webhookId))?.takeIf { it.isNotBlank() } ?: return false
-        val trimmedSig = signatureHeader?.trim().orEmpty()
-        if (trimmedSig.isNotEmpty()) {
-            if (!trimmedSig.startsWith("sha256=", ignoreCase = true)) return false
-            val providedHex = trimmedSig.substringAfter('=').trim().lowercase()
+        if (signatureHeader != null) {
+            val signature = signatureHeader.trim()
+            if (!signature.startsWith("sha256=", ignoreCase = true)) return false
+            val hex = signature.substring(7)
+            if (hex.length != 64 || hex.any { it !in "0123456789abcdefABCDEF" }) return false
             val expectedHex = computeHmacSha256Hex(secret, rawBodyBytes)
             return MessageDigest.isEqual(
-                providedHex.toByteArray(StandardCharsets.UTF_8),
-                expectedHex.toByteArray(StandardCharsets.UTF_8),
+                expectedHex.toByteArray(Charsets.US_ASCII),
+                hex.lowercase().toByteArray(Charsets.US_ASCII),
             )
         }
-        val trimmedAuth = authorizationHeader?.trim().orEmpty()
-        if (trimmedAuth.startsWith("Bearer ", ignoreCase = true)) {
-            val providedToken = trimmedAuth.substringAfter(' ').trim()
-            if (providedToken.isEmpty()) return false
+        val auth = authorizationHeader?.trim().orEmpty()
+        if (auth.startsWith("Bearer ", ignoreCase = true)) {
+            val digest = MessageDigest.getInstance("SHA-256")
             return MessageDigest.isEqual(
-                providedToken.toByteArray(StandardCharsets.UTF_8),
-                secret.toByteArray(StandardCharsets.UTF_8),
+                digest.digest(secret.toByteArray(Charsets.UTF_8)),
+                digest.digest(auth.substringAfter(' ').trim().toByteArray(Charsets.UTF_8)),
             )
         }
         return false

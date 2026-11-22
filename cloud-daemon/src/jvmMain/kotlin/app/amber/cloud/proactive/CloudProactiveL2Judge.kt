@@ -73,11 +73,11 @@ class CloudProactiveL2Judge(
             )
         } catch (ce: CancellationException) {
             throw ce
-        } catch (_: Throwable) {
+        } catch (_: Exception) {
             return conservativeFallback("L2 模型不可用，保守跳过")
         }
 
-        val parsed = NoteworthyResponseParser.parse(reply.toText())
+        val parsed = NoteworthyResponseParser.parseModelReply(reply.toText())
             ?: return conservativeFallback("L2 输出非合法结构化 JSON，保守跳过")
 
         return parsed.copy(summary = CredentialRedactor.redact(parsed.summary).take(400))

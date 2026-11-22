@@ -7,11 +7,7 @@ import app.amber.cloud.channel.OutboundReceipt
 import app.amber.cloud.channels.FeishuCalendarEvent
 import app.amber.cloud.security.CredentialRedactor
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
-import io.ktor.client.request.get
-import io.ktor.client.request.header
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.HttpHeaders
+import java.net.InetAddress
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -64,9 +60,12 @@ class ProactiveEngine(
     val l1Filter: L1DeterministicFilter = L1DeterministicFilter(),
     private val l2Judge: NoteworthyJudgeProvider,
     val restraintGate: ProactiveRestraintGate = ProactiveRestraintGate(),
-    private val httpClient: HttpClient = HttpClient(OkHttp),
+    httpClient: HttpClient? = null,
     private val clockMs: () -> Long = { System.currentTimeMillis() },
+    dnsResolver: (String) -> List<InetAddress> = { InetAddress.getAllByName(it).toList() },
 ) {
+    private val watchtowerHttp by lazy { WatchtowerHttp(httpClient, dnsResolver) }
+
     private val l1Evaluated = AtomicInteger(0)
     private val l1Dropped = AtomicInteger(0)
     private val l2Calls = AtomicInteger(0)
@@ -231,22 +230,15 @@ class ProactiveEngine(
     ): ProactiveRunResult {
         val cleanUrl = url.trim()
         val prevEtag = l1Filter.getWatchtowerSnapshot(cleanUrl)?.etag
-        val response = httpClient.get(cleanUrl) {
-            if (!prevEtag.isNullOrBlank()) {
-                header(HttpHeaders.IfNoneMatch, prevEtag)
-            }
-        }
-        val status = response.status.value
-        val etag = response.headers[HttpHeaders.ETag]
-        val bodyText = if (status == 304) "" else response.bodyAsText()
+        val page = watchtowerHttp.fetch(cleanUrl, prevEtag)
 
         val signal = ProactiveTriggerSignal.WatchtowerPageSignal(
             signalId = "wt_" + UUID.randomUUID().toString().take(8),
             url = cleanUrl,
             title = title.ifBlank { cleanUrl },
-            httpStatusCode = status,
-            etag = etag,
-            rawBody = bodyText,
+            httpStatusCode = page.status,
+            etag = page.etag,
+            rawBody = page.body,
             timestampEpochMs = nowEpochMs,
         )
         return processSignal(signal, targetChatId = targetChatId, channel = channel, nowOverrideMs = nowEpochMs)

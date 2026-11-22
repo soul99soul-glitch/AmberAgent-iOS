@@ -107,12 +107,21 @@ internal class CloudRouterIngress(private val kernel: CloudAgentKernel) : Channe
         )
     }
 
-    suspend fun recordReply(conversationId: String, text: String, messageId:Uuid?=null) = conversationMutex.withLock {
+    suspend fun recordReply(
+        conversationId: String,
+        text: String,
+        messageId: Uuid? = null,
+        createPrimaryIfMissing: Boolean = false,
+    ) = conversationMutex.withLock {
         val id = Uuid.parse(conversationId)
-        val conversation = kernel.conversationStorage.loadConversation(id) ?: return@withLock
-        val reply=UIMessage.assistant(text).let {if(messageId==null)it else it.copy(id=messageId)}
+        val conversation = kernel.conversationStorage.loadConversation(id)
+            ?: if (createPrimaryIfMissing && id == PRIMARY_CONVERSATION_ID) {
+                Conversation(id = id, assistantId = DEFAULT_ASSISTANT_ID, title = "主时间线", messageNodes = emptyList())
+            } else return@withLock
+        val reply = UIMessage.assistant(text).let { if (messageId == null) it else it.copy(id = messageId) }
+        val nodes = conversation.messageNodes
         kernel.conversationStorage.saveConversation(conversation.copy(
-            messageNodes = if(conversation.messageNodes.any {it.currentMessage.id==reply.id})conversation.messageNodes else conversation.messageNodes + reply.toMessageNode(),
+            messageNodes = if (nodes.any { it.currentMessage.id == reply.id }) nodes else nodes + reply.toMessageNode(),
             updateAt = Clock.System.now(),
         ))
     }

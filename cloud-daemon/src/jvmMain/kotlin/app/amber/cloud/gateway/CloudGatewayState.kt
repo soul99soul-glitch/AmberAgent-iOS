@@ -447,7 +447,8 @@ class CloudGatewayState(
         silentDelivery: Boolean,
     ): PushMessagePayload? {
         if (device.platform.lowercase() !in setOf("ios", "watchos", "watch")) return null
-        val pushToken = device.pushToken?.takeIf { it.isNotBlank() } ?: return null
+        val pushToken = device.pushToken?.takeIf(::validPushToken) ?: return null
+        if (device.platform.equals("ios", ignoreCase = true) && device.pushEnvironment !in setOf("sandbox", "production")) return null
         val safeTitle = CredentialRedactor.redact(card.title).trim().ifBlank { "Amber 主动提醒" }.take(100)
         val firstLine = card.markdownBody
             .lineSequence()
@@ -502,13 +503,12 @@ class CloudGatewayState(
         )
     }
 
+    private fun validPushToken(token: String): Boolean = token.isNotEmpty() && token.length <= 4096 &&
+        token.all { it.code < 128 && (it.isLetterOrDigit() || it in ":_-.+/=") }
+
     @Synchronized
     fun registerPushToken(device: PairedDevice, token: String?, environment: String?): Pair<Int, String?> {
-        if (
-            token.isNullOrEmpty() ||
-            token.length > 4096 ||
-            !token.all { it.code < 128 && (it.isLetterOrDigit() || it in ":_-.+/=") }
-        ) {
+        if (token == null || !validPushToken(token)) {
             return 400 to "token 非法"
         }
         if (device.platform == "ios" && environment !in setOf("sandbox", "production")) {

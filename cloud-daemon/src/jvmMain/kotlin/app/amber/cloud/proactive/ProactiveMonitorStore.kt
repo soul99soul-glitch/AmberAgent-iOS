@@ -1,20 +1,13 @@
 package app.amber.cloud.proactive
 
 import app.amber.cloud.security.CredentialRedactor
-import app.amber.cloud.tasks.PublicHttp
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.okhttp.OkHttp
-import io.ktor.client.request.get
-import io.ktor.client.request.header
-import io.ktor.client.statement.bodyAsBytes
-import io.ktor.http.HttpHeaders
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.net.InetAddress
-import java.net.URI
-import java.nio.charset.StandardCharsets
 import java.util.UUID
 
 /**
@@ -35,73 +28,6 @@ data class ProactiveMonitorRecord(
     val consecutiveUnchanged: Int = 0,
     val nextRunAtMs: Long,
 )
-
-/**
- * 面向主动巡检的 URL 安全校验（仅允许无内嵌凭据的公网 `http`/`https`，拦截回环、私网与链路本地地址）。
- */
-object ProactiveUrlGuard {
-    private val BLOCKED_HOST_SUFFIXES = listOf(".localhost", ".local", ".internal", ".localdomain")
-
-    /**
-     * 静态校验（创建/更新监控规则时立即执行，不依赖外部网络 DNS）：
-     * - 必须是 `http` 或 `https`
-     * - 禁止内嵌 `userInfo`
-     * - 禁止 `localhost`、内网后缀、IPv4/IPv6 回环/私网/链路本地/多播字面量
-     */
-    fun validateSyntaxAndLiteralHost(rawUrl: String): URI {
-        val clean = rawUrl.trim()
-        require(clean.isNotEmpty()) { "监控 URL 不能为空" }
-        require(clean.length <= 2_048) { "监控 URL 过长" }
-        val uri = runCatching { URI(clean) }.getOrNull()
-            ?: throw IllegalArgumentException("监控 URL 格式非法")
-        val scheme = uri.scheme?.lowercase()
-        require(scheme in setOf("http", "https")) { "仅允许 http/https 公开地址" }
-        require(uri.userInfo == null) { "监控 URL 不允许内嵌凭据" }
-        val host = uri.host?.trim()?.lowercase()?.removePrefix("[")?.removeSuffix("]")
-            ?: throw IllegalArgumentException("监控 URL 缺少主机名")
-        require(host.isNotEmpty()) { "监控 URL 缺少主机名" }
-        if (host == "localhost" || BLOCKED_HOST_SUFFIXES.any { host.endsWith(it) }) {
-            throw IllegalArgumentException("拒绝本机或私网地址: $host")
-        }
-        // 若主机名是 IP 字面量（IPv4 或 IPv6），立即做公网校验
-        if (looksLikeIpLiteral(host)) {
-            val addr = runCatching { InetAddress.getByName(host) }.getOrNull()
-                ?: throw IllegalArgumentException("非法 IP 地址: $host")
-            if (!PublicHttp.publicAddress(addr)) {
-                throw IllegalArgumentException("拒绝回环、私网或链路本地地址: $host")
-            }
-        }
-        return uri
-    }
-
-    /**
-     * 请求前完整校验（含 DNS 解析校验，防 DNS 重绑定至私网/回环/链路本地地址）。
-     */
-    fun validatePublicUrl(
-        rawUrl: String,
-        dnsResolver: (String) -> List<InetAddress> = { InetAddress.getAllByName(it).toList() },
-    ): URI {
-        val uri = validateSyntaxAndLiteralHost(rawUrl)
-        val host = uri.host.trim().lowercase().removePrefix("[").removeSuffix("]")
-        val resolved = runCatching { dnsResolver(host) }.getOrElse {
-            throw IllegalArgumentException("无法解析主机名: $host")
-        }
-        require(resolved.isNotEmpty()) { "无法解析主机名: $host" }
-        for (addr in resolved) {
-            if (!PublicHttp.publicAddress(addr)) {
-                throw IllegalArgumentException("拒绝解析到非公网地址的目标: $host")
-            }
-        }
-        return uri
-    }
-
-    private fun looksLikeIpLiteral(host: String): Boolean {
-        if (host.contains(':')) return true // IPv6
-        if (host.all { it.isDigit() || it == '.' }) return true // dotted IPv4 or decimal IP
-        if (host.startsWith("0x") && host.drop(2).all { it.isDigit() || it in 'a'..'f' }) return true
-        return false
-    }
-}
 
 /**
  * Watchtower 静默巡检规则持久化存储（`dataDir/proactive/monitors.json`，权限 `0600`）。
@@ -262,12 +188,12 @@ class ProactiveMonitorStore(
 class WatchtowerMonitorTriggerSource(
     private val monitorStore: ProactiveMonitorStore,
     private val l1Filter: L1DeterministicFilter,
-    private val httpClient: HttpClient = HttpClient(OkHttp) {
-        followRedirects = false
-    },
-    private val dnsResolver: (String) -> List<InetAddress> = { InetAddress.getAllByName(it).toList() },
-    private val maxResponseBytes: Int = 512 * 1024,
+    httpClient: HttpClient? = null,
+    dnsResolver: (String) -> List<InetAddress> = { InetAddress.getAllByName(it).toList() },
+    maxResponseBytes: Int = WatchtowerHttp.MAX_RESPONSE_BYTES,
 ) : TriggerSource {
+    private val fetcher = WatchtowerHttp(httpClient, dnsResolver, maxResponseBytes)
+
 
     override val id: String = "watchtower_monitors"
     override val category: TriggerCategory = TriggerCategory.EXTERNAL_SENSOR
@@ -278,61 +204,31 @@ class WatchtowerMonitorTriggerSource(
         val signals = mutableListOf<ProactiveTriggerSignal>()
 
         for (monitor in due) {
-            val validation = runCatching {
-                ProactiveUrlGuard.validatePublicUrl(monitor.url, dnsResolver)
-            }
-            if (validation.isFailure) {
-                monitorStore.recordCheckResult(
-                    id = monitor.id,
-                    checkedAtMs = nowEpochMs,
-                    outcome = "blocked_ssrf",
-                    summary = validation.exceptionOrNull()?.message ?: "SSRF 校验拦截",
-                    consecutiveUnchanged = monitor.consecutiveUnchanged,
-                    effectiveIntervalMinutes = maxOf(monitor.intervalMinutes, 60),
-                )
-                continue
-            }
-
             val prevEtag = l1Filter.getWatchtowerSnapshot(monitor.url)?.etag
-            val fetchResult = runCatching {
-                val response = httpClient.get(monitor.url) {
-                    if (!prevEtag.isNullOrBlank()) {
-                        header(HttpHeaders.IfNoneMatch, prevEtag)
-                    }
-                }
-                val status = response.status.value
-                val etag = response.headers[HttpHeaders.ETag]
-                val body = if (status == 304) {
-                    ""
-                } else {
-                    val bytes = response.bodyAsBytes()
-                    val capped = if (bytes.size > maxResponseBytes) bytes.copyOf(maxResponseBytes) else bytes
-                    String(capped, StandardCharsets.UTF_8)
-                }
-                Triple(status, etag, body)
-            }
-
-            if (fetchResult.isFailure) {
+            val page = try {
+                fetcher.fetch(monitor.url, prevEtag)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val blocked = e is IllegalArgumentException || e is NonPublicWatchtowerHost
                 monitorStore.recordCheckResult(
                     id = monitor.id,
                     checkedAtMs = nowEpochMs,
-                    outcome = "error",
-                    summary = fetchResult.exceptionOrNull()?.message ?: "抓取失败",
+                    outcome = if (blocked) "blocked_ssrf" else "error",
+                    summary = e.message ?: "抓取失败",
                     consecutiveUnchanged = monitor.consecutiveUnchanged,
-                    effectiveIntervalMinutes = maxOf(monitor.intervalMinutes, 15),
+                    effectiveIntervalMinutes = maxOf(monitor.intervalMinutes, if (blocked) 60 else 15),
                 )
                 continue
             }
-
-            val (status, etag, bodyText) = fetchResult.getOrThrow()
             signals.add(
                 ProactiveTriggerSignal.WatchtowerPageSignal(
                     signalId = "wt_${monitor.id}_$nowEpochMs",
                     url = monitor.url,
                     title = monitor.title,
-                    httpStatusCode = status,
-                    etag = etag,
-                    rawBody = bodyText,
+                    httpStatusCode = page.status,
+                    etag = page.etag,
+                    rawBody = page.body,
                     conditionPrompt = monitor.conditionPrompt,
                     monitorId = monitor.id,
                     topicKey = "watchtower:${monitor.id}",

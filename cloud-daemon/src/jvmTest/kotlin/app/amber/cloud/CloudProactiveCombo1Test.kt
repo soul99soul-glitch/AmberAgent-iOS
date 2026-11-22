@@ -12,6 +12,7 @@ import app.amber.cloud.orchestration.ExecutionTargetNode
 import app.amber.cloud.proactive.CloudProactiveL2Judge
 import app.amber.cloud.proactive.L2EvaluationRequest
 import app.amber.cloud.proactive.ProactiveRunResult
+import app.amber.cloud.proactive.ProactiveTriggerSignal
 import app.amber.cloud.proactive.ProactiveUrlGuard
 import app.amber.cloud.proactive.ProactiveWebhookStore
 import app.amber.cloud.proactive.RestraintVerdict
@@ -35,9 +36,14 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
 import io.ktor.http.contentType
+import io.ktor.utils.io.ByteReadChannel
 import io.ktor.http.headersOf
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -269,6 +275,19 @@ class CloudProactiveCombo1Test {
         val garbageJudge = CloudProactiveL2Judge(CloudModelClient { _, _ -> UIMessage.assistant("抱歉，我现在无法判断。") })
         val fallback2 = garbageJudge.evaluate(req)
         assertFalse(fallback2.noteworthy)
+
+        for (badReply in listOf(
+            """{"noteworthy":true,"summary":"missing scores"}""",
+            """{"noteworthy":"true","urgency":5,"importance":5,"actionable":true,"recommended_channel":"pulse","summary":"wrong boolean"}""",
+            """{"noteworthy":true,"urgency":6,"importance":5,"actionable":true,"recommended_channel":"pulse","summary":"out of range"}""",
+            """{"noteworthy":true,"urgency":5,"importance":5,"summary":{"unexpected":true}}""",
+        )) {
+            val judge = CloudProactiveL2Judge(CloudModelClient { _, tools ->
+                assertTrue(tools.isEmpty())
+                UIMessage.assistant(badReply)
+            })
+            assertFalse(judge.evaluate(req).noteworthy, badReply)
+        }
     }
 
     @Test
@@ -376,6 +395,9 @@ class CloudProactiveCombo1Test {
             // Seed relevant memory in CloudMemoryStore
             kernel.memoryStore.upsertMemory("Q4 预算评审：研发预算上限 50 万，需确认 iOS 联调排期")
 
+            kernel.memoryStore.upsertMemory("无关的家庭旅行计划", pinned = true)
+            assertTrue(kernel.memoryStore.recallForPrompt("独立无匹配会议", requireMatch = true).isEmpty())
+
             // Upload iOS device context snapshot:
             // - 1 upcoming non-all-day event in 20 min (should trigger!)
             // - 1 all-day event in 20 min (must NOT trigger!)
@@ -385,7 +407,7 @@ class CloudProactiveCombo1Test {
             val device = kernel.gatewayState.findDeviceById(ios.deviceId)!!
             val snapshotJson = """
                 {
-                  "capturedAtEpochMs": $nowMs,
+                  "capturedAtEpochMs": ${nowMs - 11 * 60_000L},
                   "ttlSeconds": 86400,
                   "domains": {
                     "calendarUpcoming": {
@@ -398,6 +420,7 @@ class CloudProactiveCombo1Test {
                     "remindersDue": {
                       "items": [
                         {"title": "提交报销单", "dueMs": ${nowMs - 30 * 3_600_000L}, "priority": 2},
+                        {"title": "恰好到期一天", "dueMs": ${nowMs - 24 * 3_600_000L}, "priority": 2},
                         {"title": "刚到期一小时的提醒", "dueMs": ${nowMs - 3_600_000L}, "priority": 1}
                       ]
                     }
@@ -407,12 +430,21 @@ class CloudProactiveCombo1Test {
             val putRes = kernel.gatewayState.deviceContextStore.putRawJson(device, snapshotJson.toByteArray(), nowMs)
             assertIs<app.amber.cloud.gateway.DeviceContextSnapshotStore.PutResult.Stored>(putRes)
 
+            val source = kernel.deviceContextPrepTriggerSource
+            val startMs = nowMs + 20 * 60_000L
+            for ((delta, count) in listOf(15 * 60_000L - 1 to 0, 15 * 60_000L to 1, 30 * 60_000L to 1, 30 * 60_000L + 1 to 0)) {
+                assertEquals(count, source.pollAll(startMs - delta).filterIsInstance<ProactiveTriggerSignal.UpcomingEventPrepSignal>().size)
+            }
+            val overdue = source.pollAll(nowMs).filterIsInstance<ProactiveTriggerSignal.OverdueReminderPrepSignal>().single()
+            assertEquals(1, overdue.overdueItems.size)
+
             // Cycle 1: produces 1 UpcomingEventPrep + 1 OverdueReminderPrep
             val cycle1 = kernel.runProactiveCycle(nowOverrideMs = nowMs)
             assertEquals(2, cycle1.size)
             val pushedCards = cycle1.filterIsInstance<ProactiveRunResult.PushedAtL3>()
             assertEquals(2, pushedCards.size)
             assertTrue(seenPrompts.any { it.contains("研发预算上限 50 万") }, "会前准备应结合 CloudMemoryStore 历史记忆")
+            assertFalse(seenPrompts.any { it.contains("无关的家庭旅行计划") })
             assertTrue(pushedCards.any { it.card.markdownBody.contains("会前 3 条要点") })
             assertTrue(pushedCards.any { it.card.markdownBody.contains("提交报销单") && it.card.markdownBody.contains("是否需要改期") })
             assertEquals(2, capturedPushes.size)
@@ -427,6 +459,57 @@ class CloudProactiveCombo1Test {
             assertEquals(2, cycle2.size)
             assertTrue(cycle2.all { it is ProactiveRunResult.DroppedAtL1 }, "同场会议与当日延期提醒不得重复触发")
             assertEquals(2, capturedPushes.size)
+
+            // Orphaned snapshots can survive a lost pairing registry.
+            kernel.gatewayState.saveDevicesStrict(emptyList())
+            assertTrue(kernel.deviceContextPrepTriggerSource.pollAll(nowMs).isEmpty())
+        } finally {
+            closeKernel(kernel)
+        }
+    }
+
+    @Test
+    fun `a failing push cannot lose the timeline card or prevent other current recipients`() = runBlocking {
+        val dir = Files.createTempDirectory("proactive-push-isolation").toFile()
+        val kernel = CloudAgentKernel(dir, CloudModelClient { _, _ ->
+            UIMessage.assistant("""{"noteworthy":true,"urgency":4,"importance":4,"actionable":true,"recommended_channel":"pulse","summary":"通知"}""")
+        }, masterSecretOverride = "push-test")
+        try {
+            val first = pairIosWithPush(kernel, pushToken = "first")
+            val retired = pairIosWithPush(kernel, pushToken = "retired")
+            val invalid = pairIosWithPush(kernel, pushToken = "legacy")
+            val last = pairIosWithPush(kernel, pushToken = "last")
+            val state = kernel.gatewayState
+            state.saveDevicesStrict(state.loadDevicesStrict().map {
+                if (it.id == invalid.deviceId) it.copy(pushToken = "invalid token") else it
+            })
+            val attempts = mutableListOf<PushMessagePayload>()
+            state.pushSender = PushSender { payload ->
+                attempts += payload
+                if (payload.deviceId == first.deviceId) {
+                    state.unpairDevice(retired.deviceId)
+                    error("test sender unavailable")
+                }
+                Result.success(Unit)
+            }
+            val signal = ProactiveTriggerSignal.EdgeNodeSensorSignal("notice", "mac", "finished", "one", "任务已完成")
+            assertIs<ProactiveRunResult.PushedAtL3>(kernel.triggerProactiveSignal(signal, epochMsAt(2026, 11, 23, 10, 0)))
+            assertEquals(listOf(first.deviceId, last.deviceId), attempts.map { it.deviceId })
+            assertTrue(attempts.all { it.silent })
+            val messages = kernel.conversationStorage.loadConversation(PRIMARY_CONVERSATION_ID)!!.messageNodes
+            assertTrue(messages.single().currentMessage.toText().contains("任务已完成"))
+
+            // Simultaneous webhook and polling outcomes append through the same timeline lock.
+            state.pushSender = PushSender { Result.success(Unit) }
+            kernel.proactiveEngine.restraintGate.updateConfig(dailyMaxPushes = 20)
+            val outcomes = (1..8).map { i ->
+                async(Dispatchers.IO) {
+                    val next = signal.copy(signalId = "s-$i", topicKey = "topic-$i", deduplicationKey = "key-$i")
+                    kernel.triggerProactiveSignal(next, epochMsAt(2026, 11, 23, 11, 0))
+                }
+            }.awaitAll()
+            assertTrue(outcomes.all { it is ProactiveRunResult.PushedAtL3 })
+            assertEquals(9, kernel.conversationStorage.loadConversation(PRIMARY_CONVERSATION_ID)!!.messageNodes.size)
         } finally {
             closeKernel(kernel)
         }
@@ -602,6 +685,12 @@ class CloudProactiveCombo1Test {
                 assertEquals(401, badSig.status.value)
                 assertEquals(0, l2Calls.get())
 
+                assertEquals("no-store", whResp.headers[HttpHeaders.CacheControl])
+                assertEquals("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
+                    ProactiveWebhookStore.computeHmacSha256Hex("Jefe", "what do ya want for nothing?".toByteArray()))
+                val bytes = "event".toByteArray()
+                assertFalse(kernel.proactiveWebhookStore.verifyInboundAuth(whId, bytes, "", "Bearer $whSecret"))
+
                 // 2) Payload > 64KB -> 413
                 val oversized = "x".repeat(65 * 1024)
                 val tooBig = client.post(inboundPath) {
@@ -610,8 +699,15 @@ class CloudProactiveCombo1Test {
                 }
                 assertEquals(413, tooBig.status.value)
 
+                fun streamed(size: Int) = object : OutgoingContent.ReadChannelContent() {
+                    override fun readFrom() = ByteReadChannel(ByteArray(size) { 65 })
+                }
+                // Missing Content-Length exercises the stream limit before authentication.
+                assertEquals(413, client.post(inboundPath) { setBody(streamed(65_537)) }.status.value)
+                assertEquals(401, client.post(inboundPath) { setBody(streamed(65_536)) }.status.value)
+
                 // 3) Valid HMAC-SHA256 signature with sensitive token in body -> 200 pushed + redacted + APNs sent!
-                val hmacPayload = """{"repo":"amber","status":"failed","token":"sk-live-secret-99887766554433221100"}"""
+                val hmacPayload = """{"repo":"amber","status":"failed $whSecret","token":"sk-live-secret-99887766554433221100"}"""
                 val validSig = "sha256=" + ProactiveWebhookStore.computeHmacSha256Hex(
                     whSecret,
                     hmacPayload.toByteArray(StandardCharsets.UTF_8),
@@ -642,6 +738,19 @@ class CloudProactiveCombo1Test {
                 assertEquals("duplicate", json.parseToJsonElement(replayResp.bodyAsText()).jsonObject["outcome"]!!.jsonPrimitive.content)
                 assertEquals(1, l2Calls.get(), "重放投递必须在 L1 幂等拦截，0 次模型调用")
                 assertEquals(1, capturedPushes.size)
+
+                val sameSignedContent = client.post(inboundPath) {
+                    header("X-Amber-Signature", validSig.uppercase())
+                    header("X-Amber-Delivery", whSecret)
+                    setBody(hmacPayload)
+                }
+                val duplicate = sameSignedContent.bodyAsText()
+                assertEquals("duplicate", json.parseToJsonElement(duplicate).jsonObject["outcome"]!!.jsonPrimitive.content)
+                assertEquals(1, l2Calls.get())
+                assertFalse(duplicate.contains(whSecret))
+                assertFalse(primaryText.contains(whSecret))
+                assertFalse(File(dir, "audit.jsonl").readText().contains(whSecret))
+                assertFalse(File(dir, "proactive/l1-filter.json").readText().contains(whSecret))
 
                 // 5) Valid Authorization: Bearer <secret> on a fresh webhook (separate topic cooldown) -> 200 pushed!
                 val wh2Resp = client.post("/v2/proactive/webhooks") {
@@ -682,6 +791,20 @@ class CloudProactiveCombo1Test {
                 assertEquals("22:00", summaryJson["restraint"]!!.jsonObject["quietHoursStart"]!!.jsonPrimitive.content)
                 assertEquals(8, summaryJson["restraint"]!!.jsonObject["dailyMaxPushes"]!!.jsonPrimitive.int)
                 assertTrue(summaryJson["recentRuns"]!!.jsonArray.isNotEmpty())
+
+                // Payload fallback hashes the original bytes, even for non-text deliveries.
+                val binaryReceipts = listOf(0xfe, 0xff, 0xfe).map {
+                    val response = client.post(wh2Path) {
+                        bearerAuth(wh2Secret)
+                        setBody(byteArrayOf(it.toByte()))
+                    }
+                    assertEquals(200, response.status.value)
+                    json.parseToJsonElement(response.bodyAsText()).jsonObject
+                }
+                val keys = binaryReceipts.map { it.getValue("deliveryId").jsonPrimitive.content }
+                assertTrue(keys[0] != keys[1])
+                assertEquals(keys[0], keys[2])
+                assertEquals("duplicate", binaryReceipts.last().getValue("outcome").jsonPrimitive.content)
 
                 // 7) Disable webhook via PATCH -> inbound returns 403
                 val disableWh = client.patch("/v2/proactive/webhooks/$whId") {
