@@ -2,6 +2,8 @@
 
 `schemaVersion = 1` · 平台中立（macOS / iOS / Android / HarmonyOS / Cloud Daemon）
 
+v1 客户端在对话写入、回执查询及事件分页请求上发送 `X-Amber-Dialogue-Version: 1`。省略此头时沿用旧协议。到达时已失效的补充或停止请求保留事务审计，旧端提交和重试得到 `409 task_terminal`，已正常受理的输入仍可重放。旧端分页只包含原有事件种类，并跳过无效的 `stop_requested`；v1 分页返回完整审计。
+
 ## 设计原则
 
 - **Local-First 与执行者单写（Single-Writer Per Run）**：每个 run 在同一 `epoch` 内仅由单一执行者推进状态，不中途静默迁移。

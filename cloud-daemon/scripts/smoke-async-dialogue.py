@@ -21,7 +21,7 @@ from urllib.request import Request, urlopen
 
 
 def request(url, body=None, token=None):
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", "X-Amber-Dialogue-Version": "1"}
     if token:
         headers["Authorization"] = "Bearer " + token
     try:

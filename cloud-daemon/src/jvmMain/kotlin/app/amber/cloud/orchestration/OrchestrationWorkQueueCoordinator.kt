@@ -1,6 +1,7 @@
 package app.amber.cloud.orchestration
 
 import app.amber.ai.ui.UIMessage
+import app.amber.cloud.channel.ChannelKind
 import app.amber.cloud.channel.PRIMARY_CONVERSATION_ID
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.core.model.Conversation
@@ -82,6 +83,12 @@ internal class OrchestrationWorkQueueCoordinator(
         val all = kernel.store.listWorkItems()
         val toRelaunch = mutableListOf<CloudWorkItemRecord>()
         for (item in all) {
+            // A direct /cancel may have persisted its intent just before the daemon exited.
+            if (!item.state.isTerminal && kernel.store.dialogue.isStopping(item.workItemId)) {
+                val coordinator = CloudPrincipal.CloudCoordinator(activeSessionId = PRIMARY_CONVERSATION_ID.toString(), activeTurnId = "recover-cancel")
+                kernel.cancelWorkItem(coordinator, item.workItemId)
+                continue
+            }
             if (item.state == WorkItemState.STARTING || item.state == WorkItemState.WORKING) {
                 kernel.store.appendDiagnosticEvent(
                     sessionId = item.workerSessionId ?: item.workItemId,
@@ -171,6 +178,10 @@ internal class OrchestrationWorkQueueCoordinator(
         val scopeSeed = provenanceList.joinToString("|") { "${it.sessionId}:${it.messageId}:${it.rawTextHash}" }
         val scopeKey = "source:" + OrchestrationHash.sha256Hex(scopeSeed).take(32)
         val batchId = "batch:" + OrchestrationHash.sha256Hex("${coord.activeSessionId}|$scopeKey|$requestId").take(24)
+        val conversationId = provenanceList.asSequence()
+            .filter { it.channelId == ChannelKind.APP.wireName && it.messageId.startsWith("native:") }
+            .mapNotNull { kernel.store.dialogue.findById(it.messageId.removePrefix("native:"))?.conversationId }
+            .distinct().singleOrNull()
 
         val resultItems = mutableListOf<CloudWorkItemRecord>()
         val replayedIds = linkedSetOf<String>()
@@ -250,6 +261,7 @@ internal class OrchestrationWorkQueueCoordinator(
                 progressRevision = 0,
                 lastActivityAtMs = nowEpochMs,
                 sourceProvenance = provenanceList,
+                conversationId = conversationId,
                 subscribedThreadKeys = spec.subscribedThreadKeys,
                 createdAtMs = nowEpochMs,
                 updatedAtMs = nowEpochMs,

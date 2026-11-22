@@ -142,9 +142,13 @@ class DialogueContractV1Test {
 
                 expected["requiredEvents"]?.jsonArray?.forEach { reqEl ->
                     val req = reqEl.jsonObject
-                    val eventId = req.getValue("id").jsonPrimitive.content
-                    val actual = eventsById[eventId]
-                        ?: fail("[$scenarioId] missing required event $eventId; actual=${page.items.map { it.id }}")
+                    val expectedId = req["id"]?.jsonPrimitive?.content
+                    val actual = if (expectedId != null) eventsById[expectedId] else {
+                        val cause = req.getValue("causedByInputId").jsonPrimitive.content
+                        page.items.singleOrNull { it.kind == req.getValue("kind").jsonPrimitive.content && it.causedByInputId == cause }
+                    }
+                    assertNotNull(actual, "[$scenarioId] missing or ambiguous event $req")
+                    val eventId = actual.id
                     assertEquals(req.getValue("kind").jsonPrimitive.content, actual.kind, "[$scenarioId] kind mismatch")
                     req["workItemId"]?.jsonPrimitive?.contentOrNull?.let {
                         assertEquals(it, actual.workItemId, "[$scenarioId] workItemId mismatch on $eventId")
@@ -222,6 +226,11 @@ class DialogueContractV1Test {
                 assertNull(legacyReceipt.conversationId)
                 assertNotEquals(msgReceipt.topicId, legacyReceipt.topicId)
 
+                // A duplicate event ID must not advance the epoch or complete the work item.
+                val run = DialogueEvent("local-run", DialogueEventKinds.RUN_STARTED, "system", "", "test", task.id, epoch = 2)
+                k.orchestrationStore.dialogue.append(run)
+                k.orchestrationStore.dialogue.append(run.copy(kind = DialogueEventKinds.RUN_FINISHED, outcome = "completed", epoch = 9))
+
                 // 3. Stale epoch (1 < 2) on workItem returns HTTP 409 stale_epoch
                 val staleResp = client.post("/v2/work-items/${task.id}/inputs") {
                     bearerAuth(pair.token)
@@ -252,7 +261,9 @@ class DialogueContractV1Test {
                 assertEquals("consumed", k.nativeDialogue.receipt(device, "f-same-2")!!.state)
 
                 // 5. Abandon remaining pending followup -> cancelled with causedByInputId
+                val previousPending = k.orchestrationStore.dialogue.pending("followup", task.id)
                 k.orchestrationStore.dialogue.abandonPending(task.id)
+                k.orchestrationStore.dialogue.consume(previousPending)
                 assertEquals("cancelled", k.nativeDialogue.receipt(device, "f-same-1")!!.state)
 
                 // 6. Mark workItem COMPLETED and send stop -> HTTP 200 + stop_too_late event
@@ -263,6 +274,7 @@ class DialogueContractV1Test {
                 )
                 val lateStopResp = client.post("/v2/work-items/${task.id}/stop") {
                     bearerAuth(pair.token)
+                    header("X-Amber-Dialogue-Version", "1")
                     setBody("""{"requestId":"stop-after-done","conversationId":"conv-shared-42","epoch":2}""")
                 }
                 assertEquals(200, lateStopResp.status.value)
@@ -270,11 +282,32 @@ class DialogueContractV1Test {
                 assertEquals("cancelled", lateStopReceipt.state)
                 assertEquals("conv-shared-42", lateStopReceipt.conversationId)
 
+                suspend fun legacyInput(path: String, requestId: String, text: String = "") =
+                    client.post("/v2/work-items/${task.id}/$path") {
+                        bearerAuth(pair.token)
+                        setBody("""{"requestId":"$requestId","text":"$text"}""")
+                    }
+                repeat(2) {
+                    val rejected = legacyInput("stop", "legacy-late-stop")
+                    assertEquals(409, rejected.status.value)
+                    assertContains(rejected.bodyAsText(), "task_terminal")
+                    assertEquals(409, legacyInput("inputs", "legacy-late-followup", "late").status.value)
+                }
+                // An input accepted before the stop remains replayable even after it was abandoned.
+                val replay = client.post("/v2/work-items/${task.id}/inputs") {
+                    bearerAuth(pair.token)
+                    setBody("""{"requestId":"f-same-1","text":"同一句补充","epoch":2}""")
+                }
+                assertEquals(200, replay.status.value)
+                assertTrue(json.decodeFromString<DialogueReceipt>(replay.bodyAsText()).replayed)
+
                 val pageText = client.get("/v2/dialogue/events?after=0&limit=100") {
                     bearerAuth(pair.token)
+                    header("X-Amber-Dialogue-Version", "1")
                 }.bodyAsText()
                 val page = json.decodeFromString<DialoguePage>(pageText)
                 assertEquals(DIALOGUE_CONTRACT_SCHEMA_VERSION, page.schemaVersion)
+                assertFalse(page.items.any { it.kind == DialogueEventKinds.INPUT_CONSUMED && it.causedByInputId == f1Receipt.eventId })
                 assertTrue(page.items.any {
                     it.kind == DialogueEventKinds.INPUT_CONSUMED &&
                         it.causedByInputId == f2Receipt.eventId &&
@@ -293,6 +326,16 @@ class DialogueContractV1Test {
                         it.causedByRequestId == "stop-after-done" &&
                         it.conversationId == "conv-shared-42"
                 })
+                assertEquals(1, page.items.count {
+                    it.kind == DialogueEventKinds.STOP_TOO_LATE && it.causedByRequestId == "legacy-late-stop"
+                })
+                val beforeLateStop = page.items.single { it.id == lateStopReceipt.eventId }.seq - 1
+                val legacyPage = client.get("/v2/dialogue/events?after=$beforeLateStop&limit=1") { bearerAuth(pair.token) }
+                val visible = json.decodeFromString<DialoguePage>(legacyPage.bodyAsText())
+                val nextVisible = page.items.first { it.seq > beforeLateStop &&
+                    it.kind != DialogueEventKinds.STOP_REQUESTED && it.kind != DialogueEventKinds.STOP_TOO_LATE }
+                assertEquals(nextVisible.id, visible.items.single().id)
+                assertEquals(visible.items.single().seq, visible.nextCursor)
             }
         } finally {
             k.router.awaitIdle(includeWorkers = true)

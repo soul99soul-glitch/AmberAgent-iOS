@@ -66,7 +66,6 @@
         "pendingInputIds": ["inp-dup-1"],
         "requiredEvents": [
           {
-            "id": "consumed:inp-dup-2",
             "kind": "input_consumed",
             "workItemId": "work:dup-followup-1",
             "conversationId": "conv-dup-1",
@@ -74,7 +73,7 @@
             "causedByRequestId": "req-dup-2"
           }
         ],
-        "absentEventIds": ["consumed:inp-dup-1"]
+        "eventCountByKind": { "input_consumed": 1 }
       }
     },
     {
@@ -296,7 +295,6 @@
         "pendingFollowupIds": [],
         "requiredEvents": [
           {
-            "id": "cancelled:inp-late-followup-1",
             "kind": "input_cancelled",
             "workItemId": "work:stop-then-followup-1",
             "conversationId": "conv-stop-1",
@@ -361,7 +359,6 @@
         "pendingInputIds": [],
         "requiredEvents": [
           {
-            "id": "stop_too_late:inp-late-stop-1",
             "kind": "stop_too_late",
             "workItemId": "work:completed-1",
             "conversationId": "conv-completed-1",

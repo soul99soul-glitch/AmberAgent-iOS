@@ -44,6 +44,7 @@ class NativeDialogueService(private val kernel: CloudAgentKernel, private val in
         parentRunId: String? = null,
         observedSeq: Long? = null,
         ledgerId: String? = null,
+        legacyClient: Boolean = false,
     ): DialogueReceipt {
         require(Regex("[A-Za-z0-9._:-]{1,128}").matches(requestId))
         require(kind == "message" || workItemId != null) { "work_item_required" }
@@ -72,7 +73,8 @@ class NativeDialogueService(private val kernel: CloudAgentKernel, private val in
         val (accepted, replayed) = events.accept(
             input,
             fingerprint(kind, text, workItemId, conversationId = conversationId, epoch = epoch),
-        ) {}
+        )
+        if (legacyClient && rejectedForLegacy(accepted)) throw DialogueConflict("task_terminal")
         if (events.disposition(accepted.id) == "received") {
             if (kind == "stop") stop(accepted)
             else if (kind == "message") enqueue(accepted)
@@ -80,7 +82,11 @@ class NativeDialogueService(private val kernel: CloudAgentKernel, private val in
         }
         return receipt(accepted, replayed)
     }
-    fun receipt(device: PairedDevice, requestId: String): DialogueReceipt? = events.find(device.id, requestId)?.let { receipt(it, true) }
+    private fun rejectedForLegacy(input: DialogueInput): Boolean =
+        input.closedOnArrival || (input.kind == "stop" && events.disposition(input.id) == "cancelled")
+
+    fun receipt(device: PairedDevice, requestId: String, legacyClient: Boolean = false): DialogueReceipt? =
+        events.find(device.id, requestId)?.takeUnless { legacyClient && rejectedForLegacy(it) }?.let { receipt(it, true) }
     private fun receipt(input: DialogueInput, replayed: Boolean): DialogueReceipt {
         val work = if (input.workItemId != null) listOf(input.workItemId) else store.listWorkItems().filter { item -> item.sourceProvenance.any { it.messageId == "native:${input.id}" } }.map { it.workItemId }
         return DialogueReceipt(

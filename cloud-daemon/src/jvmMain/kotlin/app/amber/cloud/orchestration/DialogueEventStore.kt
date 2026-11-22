@@ -42,6 +42,8 @@ object DialogueEventKinds {
     val observedSeq: Long? = null,
     val ledgerId: String? = null,
     val schemaVersion: Int = DIALOGUE_CONTRACT_SCHEMA_VERSION,
+    // Stored at admission so a legacy retry can distinguish a rejected input from one cancelled later.
+    internal val closedOnArrival: Boolean = false,
 )
 
 @Serializable data class DialogueReceipt(
@@ -134,6 +136,7 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
     init { synchronized(lock) {
         db.execSQL("CREATE TABLE IF NOT EXISTS dialogue_inputs(id TEXT PRIMARY KEY, device_id TEXT NOT NULL, request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, payload TEXT NOT NULL, consumed INTEGER NOT NULL DEFAULT 0, UNIQUE(device_id,request_id))")
         db.execSQL("CREATE TABLE IF NOT EXISTS dialogue_events(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,payload TEXT NOT NULL)")
+        db.execSQL("""CREATE INDEX IF NOT EXISTS dialogue_late_stop_causes ON dialogue_events(json_extract(payload,'$.causedByInputId')) WHERE json_extract(payload,'$.kind')='stop_too_late'""")
         db.execSQL("CREATE TABLE IF NOT EXISTS dialogue_plans(id TEXT PRIMARY KEY,payload TEXT NOT NULL)")
         db.execSQL("CREATE TABLE IF NOT EXISTS task_processes(id TEXT PRIMARY KEY,owner TEXT NOT NULL,pid INTEGER NOT NULL,started_ms INTEGER NOT NULL,finished INTEGER NOT NULL DEFAULT 0)")
         db.execSQL("CREATE TABLE IF NOT EXISTS dialogue_work_item_state(work_item_id TEXT PRIMARY KEY,max_epoch INTEGER,lifecycle_state TEXT)")
@@ -235,6 +238,14 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
         return if (hasPendingStop) WorkItemLifecycle.STOPPING else null
     }
 
+    fun markStopping(workItemId: String) = transaction {
+        upsertWorkItemLifecycleLocked(workItemId, WorkItemLifecycle.STOPPING)
+    }
+
+    fun isStopping(workItemId: String): Boolean = synchronized(lock) {
+        resolveWorkItemLifecycleLocked(workItemId) == WorkItemLifecycle.STOPPING
+    }
+
     private fun DialogueInput.toUserEvent(): DialogueEvent = DialogueEvent(
         id = id,
         kind = when (kind) {
@@ -262,6 +273,13 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
         }
     }
 
+    fun findById(inputId: String): DialogueInput? = synchronized(lock) {
+        db.prepare("SELECT payload FROM dialogue_inputs WHERE id=?").use {
+            it.bindText(1, inputId)
+            if (it.step()) json.decodeFromString<DialogueInput>(it.getText(0)) else null
+        }
+    }
+
     fun accept(input: DialogueInput, fingerprint: String, validate: () -> Unit = {}): Pair<DialogueInput, Boolean> = transaction {
         db.prepare("SELECT payload,fingerprint FROM dialogue_inputs WHERE device_id=? AND request_id=?").use {
             it.bindText(1, input.deviceId); it.bindText(2, input.requestId)
@@ -279,65 +297,45 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
             }
         }
         val lifecycle = targetWorkItemId?.let(::resolveWorkItemLifecycleLocked)
-        if (targetWorkItemId != null && input.kind == "followup" && lifecycle != null && lifecycle.isStoppingOrTerminal) {
-            insertInput(input, fingerprint, consumed = 2)
-            updateWorkItemEpochLocked(targetWorkItemId, input.epoch)
-            appendEventRawLocked(input.toUserEvent())
-            appendEventRawLocked(
-                DialogueEvent(
-                    id = "cancelled:${input.id}",
-                    kind = DialogueEventKinds.INPUT_CANCELLED,
-                    role = "system",
-                    text = "任务已停止，这条补充未执行",
-                    topicId = input.topicId,
-                    workItemId = targetWorkItemId,
-                    conversationId = input.conversationId,
-                    executorKind = input.executorKind,
-                    executorId = input.executorId,
-                    epoch = input.epoch,
-                    causedByInputId = input.id,
-                    causedByRequestId = input.requestId,
-                    parentRunId = input.parentRunId,
-                    observedSeq = input.observedSeq,
-                    ledgerId = input.ledgerId,
-                )
-            )
-            return@transaction input to false
+        val cancelledFollowup = input.kind == "followup" && lifecycle?.isStoppingOrTerminal == true
+        val terminalStop = input.kind == "stop" && lifecycle?.isTerminal == true
+        val lateStop = input.kind == "stop" && lifecycle == WorkItemLifecycle.COMPLETED
+        val accepted = input.copy(closedOnArrival = cancelledFollowup || terminalStop)
+        val consumed = when {
+            cancelledFollowup || lateStop -> 2
+            terminalStop -> 1 // Stopping an already cancelled or failed task is a handled no-op.
+            else -> 0
         }
-        if (targetWorkItemId != null && input.kind == "stop" && lifecycle == WorkItemLifecycle.COMPLETED) {
-            insertInput(input, fingerprint, consumed = 2)
-            updateWorkItemEpochLocked(targetWorkItemId, input.epoch)
-            appendEventRawLocked(input.toUserEvent())
-            appendEventRawLocked(
-                DialogueEvent(
-                    id = "stop_too_late:${input.id}",
-                    kind = DialogueEventKinds.STOP_TOO_LATE,
-                    role = "system",
-                    text = "任务已完成，停止请求到达过晚",
-                    topicId = input.topicId,
-                    workItemId = targetWorkItemId,
-                    conversationId = input.conversationId,
-                    executorKind = input.executorKind,
-                    executorId = input.executorId,
-                    epoch = input.epoch,
-                    causedByInputId = input.id,
-                    causedByRequestId = input.requestId,
-                    parentRunId = input.parentRunId,
-                    observedSeq = input.observedSeq,
-                    ledgerId = input.ledgerId,
-                )
-            )
-            return@transaction input to false
-        }
-        insertInput(input, fingerprint, consumed = 0)
+        insertInput(accepted, fingerprint, consumed)
         if (targetWorkItemId != null) {
             updateWorkItemEpochLocked(targetWorkItemId, input.epoch)
-            if (input.kind == "stop" && (lifecycle == null || !lifecycle.isTerminal)) {
+            if (input.kind == "stop" && !terminalStop) {
                 upsertWorkItemLifecycleLocked(targetWorkItemId, WorkItemLifecycle.STOPPING)
             }
         }
         appendEventRawLocked(input.toUserEvent())
-        input to false
+        if (cancelledFollowup || lateStop) {
+            appendEventRawLocked(
+                DialogueEvent(
+                    id = if (lateStop) "stop_too_late:${input.id}" else "cancelled:${input.id}",
+                    kind = if (lateStop) DialogueEventKinds.STOP_TOO_LATE else DialogueEventKinds.INPUT_CANCELLED,
+                    role = "system",
+                    text = if (lateStop) "任务已完成，停止请求到达过晚" else "任务已停止，这条补充未执行",
+                    topicId = input.topicId,
+                    workItemId = targetWorkItemId,
+                    conversationId = input.conversationId,
+                    executorKind = input.executorKind,
+                    executorId = input.executorId,
+                    epoch = input.epoch,
+                    causedByInputId = input.id,
+                    causedByRequestId = input.requestId,
+                    parentRunId = input.parentRunId,
+                    observedSeq = input.observedSeq,
+                    ledgerId = input.ledgerId,
+                )
+            )
+        }
+        accepted to false
     }
 
     private fun insertInput(input: DialogueInput, fingerprint: String, consumed: Int = 0) {
@@ -396,8 +394,11 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
 
     fun consume(inputs: List<DialogueInput>) = transaction {
         inputs.forEach { input ->
-            db.prepare("UPDATE dialogue_inputs SET consumed=1 WHERE id=?").use { it.bindText(1, input.id); it.step() }
-            if (input.kind == "followup") {
+            val consumed = db.prepare("UPDATE dialogue_inputs SET consumed=1 WHERE id=? AND consumed=0 RETURNING id").use {
+                it.bindText(1, input.id)
+                it.step()
+            }
+            if (consumed && input.kind == "followup") {
                 appendEventRawLocked(
                     DialogueEvent(
                         id = "consumed:${input.id}",
@@ -445,14 +446,13 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
         db.prepare("UPDATE dialogue_inputs SET consumed=1 WHERE id=?").use { it.bindText(1, input.id); it.step() }
     }
 
-    private fun appendEventRawLocked(event: DialogueEvent) {
-        db.prepare("INSERT OR IGNORE INTO dialogue_events(id,payload) VALUES(?,?)").use {
+    private fun appendEventRawLocked(event: DialogueEvent): Boolean =
+        db.prepare("INSERT OR IGNORE INTO dialogue_events(id,payload) VALUES(?,?) RETURNING id").use {
             it.bindText(1, event.id); it.bindText(2, json.encodeToString(event)); it.step()
         }
-    }
 
     fun append(event: DialogueEvent) = transaction {
-        appendEventRawLocked(event)
+        if (!appendEventRawLocked(event)) return@transaction
         val workItemId = event.workItemId
         if (workItemId != null) {
             updateWorkItemEpochLocked(workItemId, event.epoch)
@@ -524,9 +524,19 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
         )
     }
 
-    fun page(after: Long, limit: Int): DialoguePage = synchronized(lock) {
+    fun page(after: Long, limit: Int, legacyClient: Boolean = false): DialoguePage = synchronized(lock) {
         require(after >= 0 && limit in 1..100)
-        val items = db.prepare("SELECT seq,payload FROM dialogue_events WHERE seq>? ORDER BY seq LIMIT ?").use {
+        // Filter before LIMIT. A legacy client never advances its cursor for an empty page.
+        val visible = if (legacyClient) """
+            AND json_extract(e.payload,'$.kind') IN ('user_message','followup','stop_requested','assistant_reply',
+                'input_consumed','input_cancelled','process_event','task_result')
+            AND (json_extract(e.payload,'$.kind') <> 'stop_requested' OR (
+                NOT EXISTS (SELECT 1 FROM dialogue_inputs i WHERE i.id=e.id AND json_extract(i.payload,'$.closedOnArrival')=1)
+                AND NOT EXISTS (SELECT 1 FROM dialogue_events late WHERE json_extract(late.payload,'$.kind')='stop_too_late'
+                    AND json_extract(late.payload,'$.causedByInputId')=e.id)
+            ))
+        """ else ""
+        val items = db.prepare("SELECT e.seq,e.payload FROM dialogue_events e WHERE e.seq>? $visible ORDER BY e.seq LIMIT ?").use {
             it.bindLong(1, after); it.bindLong(2, limit.toLong())
             buildList { while (it.step()) add(json.decodeFromString<DialogueEvent>(it.getText(1)).copy(seq = it.getLong(0))) }
         }
@@ -553,7 +563,7 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
         }
     }
 
-    fun processFinished(id: String, owner: String, topic: String, text: String) = transaction {
+    fun processFinished(id: String, owner: String, topic: String, text: String): Unit = transaction {
         db.prepare("UPDATE task_processes SET finished=1 WHERE id=?").use { it.bindText(1, id); it.step() }
         val eventId = UUID.nameUUIDFromBytes("process:$id".toByteArray()).toString()
         val safe = CredentialRedactor.redact(text)

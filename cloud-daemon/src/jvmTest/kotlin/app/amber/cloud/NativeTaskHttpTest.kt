@@ -133,6 +133,17 @@ class NativeTaskHttpTest {
                     val duplicate = client.post("/v2/work-items") { bearerAuth(pair.token); setBody(body) }
                     assertEquals(200, duplicate.status.value)
                     assertEquals(401, client.post("/v2/work-items/$id/cancel").status.value)
+                    val stopProcesses = kernel.orchestrationKernel.stopTaskProcesses
+                    kernel.orchestrationKernel.stopTaskProcesses = { workItemId ->
+                        val duringStop = client.post("/v2/work-items/$workItemId/inputs") {
+                            bearerAuth(pair.token)
+                            header("X-Amber-Dialogue-Version", "1")
+                            setBody("""{"requestId":"during-cancel","text":"late"}""")
+                        }
+                        assertEquals(200, duringStop.status.value)
+                        assertEquals("cancelled", Json.parseToJsonElement(duringStop.bodyAsText()).jsonObject.getValue("state").jsonPrimitive.content)
+                        stopProcesses(workItemId)
+                    }
                     val cancelled = client.post("/v2/work-items/$id/cancel") { bearerAuth(pair.token) }
                     assertEquals(200, cancelled.status.value)
                     assertEquals("CANCELLED", Json.parseToJsonElement(cancelled.bodyAsText()).jsonObject["workItem"]!!.jsonObject["state"]!!.jsonPrimitive.content)

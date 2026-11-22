@@ -10,8 +10,12 @@ class WorkerEventInbox(private val kernel:DefaultCloudOrchestrationKernel) {
     private val signals=ConcurrentHashMap<String,Channel<Unit>>()
     private val stopping=ConcurrentHashMap.newKeySet<String>()
     fun signal(id:String){signals.computeIfAbsent(id){Channel(Channel.CONFLATED)}.trySend(Unit)}
-    fun requestStop(id:String){stopping.add(id);signal(id)}
-    fun isStopping(id:String)=id in stopping || kernel.store.dialogue.pending("stop",id).isNotEmpty()
+    fun requestStop(id: String) {
+        kernel.store.dialogue.markStopping(id)
+        stopping.add(id)
+        signal(id)
+    }
+    fun isStopping(id:String)=id in stopping || kernel.store.dialogue.isStopping(id)
     fun pending(id:String)=kernel.store.dialogue.pending(workItemId=id).filter {it.kind=="followup"||it.kind=="process"}
     suspend fun prepare(item:CloudWorkItemRecord):List<DialogueInput> {
         val inputs=pending(item.workItemId)
