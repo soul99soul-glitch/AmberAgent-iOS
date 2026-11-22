@@ -70,7 +70,7 @@ class MessageStreamAccumulator(
         // (e.g. Claude `message_start`) attach to the new assistant message
         // rather than polluting the preceding user message.
         chunk.usage?.let { usage ->
-            active.usage = active.usage.merge(usage)
+            active.usage = delta.usage ?: active.usage.merge(usage)
         }
 
         active.append(delta)

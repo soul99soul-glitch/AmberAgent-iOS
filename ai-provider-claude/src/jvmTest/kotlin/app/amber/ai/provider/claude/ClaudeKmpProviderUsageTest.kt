@@ -137,8 +137,9 @@ class ClaudeKmpProviderUsageTest {
             "content_block_delta" to """{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"cached write"}}""",
             "message_delta" to """{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":32}}""",
         )
+        val firstStream = provider.StreamEventParser()
         turn1Events.forEach { (type, data) ->
-            provider.parseStreamEvent(id = "msg_1", type = type, data = data)?.let(turn1Accumulator::append)
+            firstStream.parse(id = "msg_1", type = type, data = data)?.let(turn1Accumulator::append)
         }
 
         val turn1Snapshot = turn1Accumulator.snapshot()
@@ -163,8 +164,9 @@ class ClaudeKmpProviderUsageTest {
             "content_block_delta" to """{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"cached read"}}""",
             "message_delta" to """{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":48}}""",
         )
+        val secondStream = provider.StreamEventParser()
         turn2Events.forEach { (type, data) ->
-            provider.parseStreamEvent(id = "msg_2", type = type, data = data)?.let(turn2Accumulator::append)
+            secondStream.parse(id = "msg_2", type = type, data = data)?.let(turn2Accumulator::append)
         }
 
         val turn2Usage = assertNotNull(turn2Accumulator.snapshot().last().usage)
@@ -190,6 +192,26 @@ class ClaudeKmpProviderUsageTest {
         val sessionCost1h = sessionUsage.estimatePromptCacheInputCost(PromptCacheWriteTier.EPHEMERAL_1H)
         assertApprox(2_100.0, sessionCost1h.effectiveInputTokens)
         assertApprox(0.05, sessionCost1h.netDeltaRatio)
+    }
+
+    @Test
+    fun partial_stream_usage_preserves_omitted_counters_and_applies_explicit_zero() {
+        val stream = provider.StreamEventParser()
+        val accumulator = MessageStreamAccumulator(userMessages)
+        fun append(type: String, data: String) =
+            accumulator.append(assertNotNull(stream.parse("msg", type, data)))
+
+        append("message_start", """{"message":{"usage":{"input_tokens":120,"cache_read_input_tokens":300,"cache_creation_input_tokens":1000,"output_tokens":1}}}""")
+        append("message_delta", """{"usage":{"cache_creation_input_tokens":1000,"output_tokens":45}}""")
+        val usage = assertNotNull(accumulator.snapshot().last().usage)
+        assertEquals(1_420, usage.promptTokens)
+        assertEquals(1_465, usage.totalTokens)
+        assertEquals(1_400.0, usage.estimatePromptCacheInputCost().effectiveInputTokens)
+
+        append("message_delta", """{"usage":{"cache_read_input_tokens":0,"output_tokens":46}}""")
+        val corrected = assertNotNull(accumulator.snapshot().last().usage)
+        assertEquals(0, corrected.cachedTokens)
+        assertEquals(1_120, corrected.promptTokens)
     }
 
     private fun assertApprox(expected: Double, actual: Double, epsilon: Double = 1e-9) {
