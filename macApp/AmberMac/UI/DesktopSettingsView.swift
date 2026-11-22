@@ -39,6 +39,7 @@ struct DesktopSettingsView: View {
     @State private var didLoad = false
     @State private var deleting = false
     @State private var grokSignedIn = false
+    @State private var siwcLoggingOut = false
     @State private var presetPickerPresented = false
     @State private var advancedConnection = false
     @State private var pendingPreset: (DesktopProviderPreset, Bool)?
@@ -144,10 +145,15 @@ struct DesktopSettingsView: View {
         .confirmationDialog("移除这个服务商？", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("移除服务商", role: .destructive) { deleteProvider() }
         } message: { Text("API Key 和登录凭证也会从钥匙串移除。已有会话会保留。") }
-        .alert("You're using your ChatGPT plan", isPresented: $siwcLogin.showFirstTimePlanConfirmation) {
-            Button("Got it") { siwcLogin.acknowledgePlanConfirmation() }
-        } message: {
-            Text("Amber will send OpenAI Responses requests using your ChatGPT subscription plan. You can check or manage your usage anytime at chatgpt.com/settings/usage.")
+        .onChange(of: siwcLogin.isBusy) { _, busy in
+            if !busy { siwcLoggingOut = false }
+        }
+        .sheet(isPresented: $siwcLogin.showFirstTimePlanConfirmation, onDismiss: {
+            siwcLogin.acknowledgePlanConfirmation()
+        }) {
+            DesktopSIWCWelcomeSheet(appearance: settings.appearance) {
+                siwcLogin.acknowledgePlanConfirmation()
+            }
         }
     }
 
@@ -316,6 +322,7 @@ struct DesktopSettingsView: View {
                      ? "通过官方 Sign in with ChatGPT 使用你的 ChatGPT 订阅额度（公开 Responses API）。"
                      : "按调用量计费的 OpenAI API Key。")
                     .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let preset, let plan = preset.plan {
                 LabeledContent("计费方式") {
@@ -375,59 +382,107 @@ struct DesktopSettingsView: View {
                 || (draft.authMode == .codexOAuth && (editingID == nil || login.account == nil))
                 || (draft.authMode == .chatgptSiwc && (editingID == nil || siwcLogin.account == nil || siwcLogin.account?.planAvailable == false))
                 || (draft.authMode == .grokOAuth && (editingID == nil || !grokSignedIn)))
-            if let message = catalogRequest.status { statusText(message, failed: catalogRequest.failed) }
+            if let message = catalogRequest.status {
+                statusText(message, failed: catalogRequest.failed)
+                if draft.authMode == .chatgptSiwc, catalogRequest.failed,
+                   let planError = DesktopSIWCError.planError(in: message),
+                   planError == .usageLimitExceeded || planError == .usageUnavailable {
+                    siwcManageUsageLink
+                }
+            }
         }
+    }
+
+    private var siwcManageUsageLink: some View {
+        Link(destination: DesktopChatGPTSIWCConstants.usageSettingsURL) {
+            HStack(alignment: .center, spacing: 3) {
+                Text("Manage usage")
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 9.5, weight: .semibold))
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(DesktopTheme.accent)
+        }
+        .fixedSize()
     }
 
     private var siwcAuthentication: some View {
         Section("Sign in with ChatGPT") {
             if let account = siwcLogin.account {
-                LabeledContent("已登录") {
-                    HStack(spacing: 8) {
-                        let summary = [account.displayName, account.plan].compactMap { $0 }.joined(separator: " · ")
-                        Text(summary)
-                            .font(.system(size: 13))
-                            .foregroundStyle(DesktopTheme.ink)
-                        if account.planAvailable {
-                            Text("Using ChatGPT plan")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(DesktopTheme.accentInk)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(DesktopTheme.honeySoft, in: Capsule())
-                                .overlay(Capsule().strokeBorder(DesktopTheme.honeyEdge, lineWidth: 0.5))
-                        } else {
-                            Text("套餐不可用")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(DesktopTheme.danger)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(DesktopTheme.danger.opacity(0.1), in: Capsule())
-                        }
+                let summary = [account.displayName, account.plan]
+                    .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " · ")
+                HStack(alignment: .center, spacing: 8) {
+                    Text("已登录")
+                        .foregroundStyle(DesktopTheme.ink)
+                        .fixedSize()
+                    Spacer(minLength: 12)
+                    Text(summary)
+                        .font(.system(size: 13))
+                        .foregroundStyle(DesktopTheme.ink)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(summary)
+                    if account.planAvailable {
+                        Text("Using ChatGPT plan")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(DesktopTheme.accentInk)
+                            .lineLimit(1)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(DesktopTheme.honeySoft, in: Capsule())
+                            .overlay(Capsule().strokeBorder(DesktopTheme.honeyEdge, lineWidth: 0.5))
+                            .fixedSize(horizontal: true, vertical: true)
+                    } else {
+                        Text("套餐不可用")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(DesktopTheme.danger)
+                            .lineLimit(1)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(DesktopTheme.danger.opacity(0.1), in: Capsule())
+                            .overlay(Capsule().strokeBorder(DesktopTheme.danger.opacity(0.28), lineWidth: 0.5))
+                            .fixedSize(horizontal: true, vertical: true)
                     }
                 }
                 if account.planAvailable {
-                    HStack(spacing: 12) {
-                        Link("Manage usage", destination: DesktopChatGPTSIWCConstants.usageSettingsURL)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(DesktopTheme.accent)
-                        Spacer()
-                        Button("刷新模型列表") { fetchModels(testOnly: false) }
-                            .disabled(editingID == nil || catalogRequest.isLoading || siwcLogin.isBusy)
-                        Button("退出登录", action: logoutSIWC)
-                            .disabled(editingID == nil || siwcLogin.isBusy)
+                    HStack(alignment: .center, spacing: 8) {
+                        siwcManageUsageLink
+                        Spacer(minLength: 12)
+                        if siwcLogin.isBusy {
+                            ProgressView().controlSize(.small)
+                            if siwcLoggingOut {
+                                Text("正在退出…")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(DesktopTheme.inkSecondary)
+                            }
+                        } else {
+                            Button("刷新模型列表") { fetchModels(testOnly: false) }
+                                .disabled(editingID == nil || catalogRequest.isLoading)
+                            Button("退出登录", action: logoutSIWC)
+                                .disabled(editingID == nil)
+                        }
                     }
+                    .frame(minHeight: 28)
                 } else {
                     Text("当前授权缺少 chatgpt.tokens.use.direct 权限，暂不可使用 ChatGPT 套餐额度。请重新授权或切换为 OpenAI API Key。")
                         .font(.system(size: 12))
                         .foregroundStyle(DesktopTheme.danger)
-                    HStack(spacing: 10) {
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .center, spacing: 8) {
                         if siwcLogin.isBusy {
                             ProgressView().controlSize(.small)
-                            Button("取消登录") { siwcLogin.cancel() }
+                            Text(siwcLoggingOut ? "正在退出…" : "等待浏览器回调…")
+                                .font(.system(size: 12))
+                                .foregroundStyle(DesktopTheme.inkSecondary)
+                            if !siwcLoggingOut {
+                                Spacer(minLength: 8)
+                                Button("取消登录") { siwcLogin.cancel() }
+                            }
                         } else {
                             Button("Continue with ChatGPT") { startSIWCLogin() }
-                                .buttonStyle(.borderedProminent)
+                                .buttonStyle(.desktopProminent)
                                 .disabled(!canSave)
                             Button("切换为 API Key") {
                                 draft.authMode = .apiKey
@@ -437,26 +492,33 @@ struct DesktopSettingsView: View {
                                 .disabled(editingID == nil)
                         }
                     }
+                    .frame(minHeight: 28)
                 }
             } else {
-                Text("点击下方按钮在系统浏览器完成官方 ChatGPT 登录。登录成功后将通过 https://api.openai.com/v1 自动拉取可用模型。")
+                Text("在系统浏览器完成官方 ChatGPT 登录，成功后将自动拉取可用模型。")
                     .font(.system(size: 12))
                     .foregroundStyle(DesktopTheme.inkTertiary)
-                HStack(spacing: 10) {
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .center, spacing: 8) {
                     if siwcLogin.isBusy {
                         ProgressView().controlSize(.small)
                         Text("等待浏览器回调…")
                             .font(.system(size: 12))
                             .foregroundStyle(DesktopTheme.inkSecondary)
+                        Spacer(minLength: 8)
                         Button("取消登录") { siwcLogin.cancel() }
                     } else {
                         Button("Continue with ChatGPT") { startSIWCLogin() }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.desktopProminent)
                             .disabled(!canSave)
                     }
                 }
+                .frame(minHeight: 28)
             }
-            if let message = siwcLogin.status { statusText(message, failed: siwcLogin.failed) }
+            if let message = siwcLogin.status,
+               !(siwcLogin.account?.planAvailable == false && message == DesktopSIWCError.planScopeUnavailable.localizedDescription) {
+                statusText(message, failed: siwcLogin.failed)
+            }
         }
     }
 
@@ -464,6 +526,7 @@ struct DesktopSettingsView: View {
         guard let id = editingID else { return }
         catalogRequest.cancel()
         selectedCatalogIDs = []
+        siwcLoggingOut = true
         siwcLogin.logout(id)
     }
 
@@ -475,6 +538,7 @@ struct DesktopSettingsView: View {
             guard save(), let savedID = editingID else { return }
             targetID = savedID
         }
+        siwcLoggingOut = false
         siwcLogin.login(targetID) { account in
             if account.planAvailable && editingID == targetID && draft.authMode == .chatgptSiwc {
                 fetchModels(testOnly: false)
@@ -528,8 +592,11 @@ struct DesktopSettingsView: View {
     private var models: some View {
         Section("模型") {
             if draft.models.isEmpty {
-                Text("填好地址和 API Key 后，点「获取模型列表」勾选要用的模型；服务商不提供列表时再手动添加。")
+                Text(draft.authMode == .chatgptSiwc
+                     ? "完成 ChatGPT 登录后将自动拉取可用模型，也可点击上方「获取模型列表」或手动添加。"
+                     : "填好地址和 API Key 后，点「获取模型列表」勾选要用的模型；服务商不提供列表时再手动添加。")
                     .font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 ForEach(draft.models) { model in
                     HStack(spacing: 10) {
@@ -921,6 +988,7 @@ struct DesktopSettingsView: View {
         modelBeingEdited = draft.selectedModel?.id ?? draft.models.first?.id
         savedDraft = draft; savedKey = apiKey; savedParameters = parameters
         login.selectProvider(id)
+        siwcLoggingOut = false
         siwcLogin.selectProvider(id)
         #if !AMBER_MAC_PREVIEW
         grokSignedIn = id.map { IOSGrokOAuthAuthStore.load(providerId: $0.uuidString.lowercased()) != nil } ?? false
@@ -966,6 +1034,66 @@ struct DesktopSettingsView: View {
     }
     private static func emptyProvider() -> DesktopProviderConfiguration {
         DesktopProviderConfiguration(name: "", kind: .openAI, baseURL: DesktopProviderKind.openAI.defaultBaseURL, models: [])
+    }
+}
+
+private struct DesktopSIWCWelcomeSheet: View {
+    let appearance: String
+    let onAcknowledge: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Using ChatGPT plan")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(DesktopTheme.accentInk)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(DesktopTheme.honeySoft, in: Capsule())
+            .overlay(Capsule().strokeBorder(DesktopTheme.honeyEdge, lineWidth: 0.5))
+
+            Text("You're using your ChatGPT plan")
+                .font(DesktopTheme.serif(size: 20, weight: .semibold))
+                .foregroundStyle(DesktopTheme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("Amber will send OpenAI Responses requests using your ChatGPT subscription plan. You can check or manage your usage anytime at chatgpt.com/settings/usage.")
+                .font(.system(size: 13))
+                .foregroundStyle(DesktopTheme.inkSecondary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Rectangle()
+                .fill(DesktopTheme.hairline)
+                .frame(height: 1)
+                .padding(.top, 4)
+
+            HStack(alignment: .center, spacing: 12) {
+                Link(destination: DesktopChatGPTSIWCConstants.usageSettingsURL) {
+                    HStack(alignment: .center, spacing: 3) {
+                        Text("Manage usage")
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 9.5, weight: .semibold))
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DesktopTheme.accent)
+                }
+                .fixedSize()
+                Spacer()
+                Button("Got it", action: onAcknowledge)
+                    .buttonStyle(.desktopProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 420)
+        .background(DesktopTheme.paper)
+        .tint(DesktopTheme.accent)
+        .preferredColorScheme(DesktopTheme.colorScheme(for: appearance))
+        .onExitCommand(perform: onAcknowledge)
     }
 }
 
