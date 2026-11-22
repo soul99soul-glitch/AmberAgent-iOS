@@ -15,6 +15,7 @@ struct PreviewSettingsView: View {
                 .frame(maxWidth: .infinity)
                 .background(.bar)
             DesktopSettingsView(settings: workspace.settings, catalog: UnavailablePreviewCatalog(), oauth: UnavailablePreviewAuthorizer(),
+                siwc: UnavailablePreviewSIWCAuthorizer(),
                 onOpenBackup: { backupPresented = true }, mcp: workspace.mcp, syncWorkspace: workspace,
                 notifications: workspace.notifications, onOpenStorage: { storagePresented = true }, speech: workspace.speech)
         }
@@ -37,5 +38,13 @@ struct PreviewSettingsView: View {
     func requestCode(providerID: UUID) async throws -> DesktopDeviceAuthorization { throw unavailable }
     func poll(providerID: UUID, code: DesktopDeviceAuthorization) async throws -> DesktopOAuthAccount { throw unavailable }
     func logout(providerID: UUID) async throws {}
+    private var unavailable: DesktopRuntimeError { .message("界面预览不执行登录，请使用完整 Amber 应用。") }
+}
+
+@MainActor private struct UnavailablePreviewSIWCAuthorizer: DesktopSIWCAuthorizer {
+    func account(providerID: UUID) -> DesktopSIWCAccount? { nil }
+    func signIn(providerID: UUID) async throws -> DesktopSIWCAccount { throw unavailable }
+    func logout(providerID: UUID) async throws {}
+    func deleteProvider(providerID: UUID) async throws {}
     private var unavailable: DesktopRuntimeError { .message("界面预览不执行登录，请使用完整 Amber 应用。") }
 }

@@ -37,6 +37,23 @@ import Foundation
             run.installCancellation { task.cancel() }
             return run
         }
+        if configuration.authMode == .chatgptSiwc {
+            let task = Task {
+                do {
+                    let providerID = configuration.id.uuidString.lowercased()
+                    let token = try await DesktopChatGPTSIWCClient(providerId: providerID).getValidAccessToken()
+                    try Task.checkCancellation()
+                    let provider = try bridge.configurationWithAuth(kind: "responses", id: configuration.id.uuidString,
+                        name: configuration.name, baseUrl: DesktopChatGPTSIWCConstants.apiBaseURL,
+                        apiKey: token, authMode: configuration.authMode.rawValue)
+                    try self.startKMP(provider: provider, messages: input, params: params, responseID: responseID, run: run)
+                } catch is CancellationError { run.yield(.cancelled) }
+                catch let siwcError as DesktopSIWCError { run.yield(.failed(siwcError.localizedDescription)) }
+                catch { run.yield(.failed(Self.failureMessage(error.localizedDescription))) }
+            }
+            run.installCancellation { task.cancel() }
+            return run
+        }
         if configuration.authMode == .grokOAuth {
             let task = Task {
                 do {
@@ -91,12 +108,15 @@ import Foundation
         let accumulator = DesktopKMPAccumulator(messages: input, model: params.model, responseID: responseID, run: run)
         let job: Kotlinx_coroutines_coreJob
         if let value = provider as? ProviderSetting.OpenAI {
+            let siwc = value.authMode == .chatgptSiwc
             job = openAI.streamTextCancellable(providerSetting: value, messages: input, params: params,
                 onChunk: { @Sendable in accumulator.append($0) },
                 onComplete: { @Sendable in if accumulator.flushAndStop() { run.yield(.complete) } },
                 onError: { @Sendable in
                     _ = accumulator.flushAndStop()
-                    run.yield(.failed(Self.failureMessage($0.message ?? "")))
+                    let message = $0.message ?? ""
+                    let planError = siwc ? DesktopSIWCError.planError(in: message) : nil
+                    run.yield(.failed(planError?.localizedDescription ?? Self.failureMessage(message)))
                 })
         } else if let value = provider as? ProviderSetting.Claude {
             job = claude.streamTextCancellable(providerSetting: value, messages: input, params: params,

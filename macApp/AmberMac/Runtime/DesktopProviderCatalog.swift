@@ -62,7 +62,7 @@ enum DesktopModelCatalogMerge {
             } catch {
                 guard token == request else { return }
                 failed = true
-                status = "请求失败，请核对网络、协议、API 地址与凭证后重试。"
+                status = (error as? DesktopSIWCError)?.localizedDescription ?? "请求失败，请核对网络、协议、API 地址与凭证后重试。"
             }
         }
     }

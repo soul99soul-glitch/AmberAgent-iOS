@@ -86,10 +86,12 @@ internal fun desktopModelParams(json: String): TextGenerationParams {
     )
 }
 
-internal fun desktopCatalogJSON(models: List<Model>): String = modelJson.encodeToString(models.map { model ->
+internal fun desktopCatalogJSON(models: List<Model>, authMode: OpenAIAuthMode? = null): String = modelJson.encodeToString(models.map { model ->
+    val supportsVision = Modality.IMAGE in model.inputModalities ||
+        (authMode != OpenAIAuthMode.CHATGPT_SIWC && Modality.IMAGE in ModelRegistry.MODEL_INPUT_MODALITIES.getData(model.modelId))
     DesktopCatalogModel(model.modelId, model.displayName.ifBlank { model.modelId },
         model.contextWindowTokens ?: ModelRegistry.MODEL_CONTEXT_WINDOW.getData(model.modelId),
-        Modality.IMAGE in model.inputModalities || Modality.IMAGE in ModelRegistry.MODEL_INPUT_MODALITIES.getData(model.modelId))
+        supportsVision)
 }.distinctBy { it.modelID })
 
 internal fun desktopAuthenticatedConfiguration(kind: String, id: String, name: String, baseUrl: String,
@@ -100,6 +102,15 @@ internal fun desktopAuthenticatedConfiguration(kind: String, id: String, name: S
         "codexOAuth" -> {
             require(provider is ProviderSetting.OpenAI && kind == "responses") { "Codex OAuth requires Responses protocol" }
             provider.copy(authMode = OpenAIAuthMode.CODEX_OAUTH, useResponseApi = true)
+        }
+        "chatgptSiwc" -> {
+            require(provider is ProviderSetting.OpenAI && kind == "responses") { "Sign in with ChatGPT requires Responses protocol" }
+            provider.copy(
+                authMode = OpenAIAuthMode.CHATGPT_SIWC,
+                brand = app.amber.ai.provider.OpenAIBrand.OPENAI,
+                baseUrl = OpenAIAuthMode.CHATGPT_SIWC.fixedBaseUrl() ?: "https://api.openai.com/v1",
+                useResponseApi = true,
+            )
         }
         // Coding / Token plans: same key, plan endpoint; KMP pins the base URL and adds the plan User-Agent.
         "zhipuCodingPlan", "kimiCodingPlan", "mimoCodingPlan", "minimaxTokenPlan" -> {

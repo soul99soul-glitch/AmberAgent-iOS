@@ -395,4 +395,32 @@ class DesktopCodingPlanBridgeTest {
             desktopAuthenticatedConfiguration("claude", "00000000-0000-0000-0000-000000000002", "x", "https://a.b/v1", "k", "kimiCodingPlan")
         }
     }
+
+    @kotlin.test.Test
+    fun chatGptSiwcModePinsOfficialOpenAIResponsesEndpoint() {
+        val siwc = desktopAuthenticatedConfiguration(
+            "responses",
+            "00000000-0000-0000-0000-000000000002",
+            "OpenAI",
+            "https://ignored.example/v1",
+            "siwc-token",
+            "chatgptSiwc",
+        ) as app.amber.ai.provider.ProviderSetting.OpenAI
+        kotlin.test.assertEquals(app.amber.ai.provider.OpenAIAuthMode.CHATGPT_SIWC, siwc.authMode)
+        kotlin.test.assertEquals("https://api.openai.com/v1", siwc.baseUrl)
+        kotlin.test.assertTrue(siwc.useResponseApi)
+        val textOnly = Model(modelId = "gpt-5.4-mini", inputModalities = listOf(app.amber.ai.provider.Modality.TEXT))
+        val catalog = Json.decodeFromString<List<DesktopCatalogModel>>(desktopCatalogJSON(listOf(textOnly), siwc.authMode))
+        assertEquals(false, catalog.single().supportsVision)
+        kotlin.test.assertFailsWith<IllegalArgumentException> {
+            desktopAuthenticatedConfiguration(
+                "openai",
+                "00000000-0000-0000-0000-000000000002",
+                "OpenAI",
+                "https://api.openai.com/v1",
+                "siwc-token",
+                "chatgptSiwc",
+            )
+        }
+    }
 }

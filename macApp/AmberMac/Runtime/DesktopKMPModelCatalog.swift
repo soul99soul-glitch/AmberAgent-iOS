@@ -8,6 +8,18 @@ import Foundation
                 let models = try await IOSCodexOAuthClient(providerId: configuration.id.uuidString.lowercased()).fetchCodexModelsOrThrow()
                 return models.map { DesktopCatalogModel(modelID: $0.modelId, name: $0.displayName) }
             }
+            if configuration.authMode == .chatgptSiwc {
+                let token = try await DesktopChatGPTSIWCClient(providerId: configuration.id.uuidString.lowercased()).getValidAccessToken()
+                let json = try await DesktopProviderBridge.shared.listModelsOrThrow(
+                    kind: "responses",
+                    id: configuration.id.uuidString,
+                    name: configuration.name,
+                    baseUrl: DesktopChatGPTSIWCConstants.apiBaseURL,
+                    apiKey: token,
+                    authMode: configuration.authMode.rawValue
+                )
+                return try DesktopJSON.decode([DesktopCatalogModel].self, from: json)
+            }
             if configuration.authMode == .grokOAuth {
                 let models = try await IOSGrokOAuthClients.shared(providerId: configuration.id.uuidString.lowercased()).fetchGrokModelsOrThrow()
                 return models.map { DesktopCatalogModel(modelID: $0.modelId, name: $0.displayName) }
@@ -27,7 +39,14 @@ import Foundation
             }
             return try DesktopJSON.decode([DesktopCatalogModel].self, from: json)
         } catch is CancellationError { throw CancellationError() }
-        catch { throw DesktopRuntimeError.message("获取模型失败，请核对协议、地址、凭证与网络。") }
+        catch let siwcError as DesktopSIWCError {
+            throw siwcError
+        }
+        catch {
+            if configuration.authMode == .chatgptSiwc,
+               let planError = DesktopSIWCError.planError(in: error.localizedDescription) { throw planError }
+            throw DesktopRuntimeError.message("获取模型失败，请核对协议、地址、凭证与网络。")
+        }
     }
 
     func testConnection(for configuration: DesktopProviderConfiguration, apiKey: String) async throws {
@@ -45,7 +64,9 @@ import Foundation
                             case .complete:
                                 guard received else { throw DesktopRuntimeError.message("服务商未返回文字内容。") }
                                 return true
-                            case .failed: throw DesktopRuntimeError.message("模型生成请求失败。")
+                            case .failed(let message):
+                                if configuration.authMode == .chatgptSiwc, let error = DesktopSIWCError.planError(in: message) { throw error }
+                                throw DesktopRuntimeError.message("模型生成请求失败。")
                             case .cancelled: throw CancellationError()
                             }
                         }

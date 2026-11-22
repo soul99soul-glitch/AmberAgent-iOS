@@ -231,17 +231,26 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         return Self.finishingCitation(result, tracker: citationTracker)
     }
 
+    private func providerErrorText(_ error: Error, for setting: ProviderSetting, fallback: String? = nil) -> String {
+        #if os(macOS)
+        let generic = "模型请求失败，请检查网络、认证与模型配置后重试。"
+        if (setting as? ProviderSetting.OpenAI)?.authMode == .chatgptSiwc {
+            return DesktopSIWCError.planError(in: error.localizedDescription)?.localizedDescription ?? generic
+        }
+        return fallback ?? generic
+        #else
+        return error.localizedDescription
+        #endif
+    }
+
     private func providerFailureResult(
         _ error: Error,
+        providerSetting: ProviderSetting,
         working: [UIMessage],
         steps: Int,
         onMessagesUpdated: (@Sendable ([UIMessage]) -> Void)?
     ) -> IOSAgentToolEngineResult {
-        #if os(iOS)
-        let message = error.localizedDescription
-        #else
-        let message = "模型请求失败，请检查网络、认证与模型配置后重试。"
-        #endif
+        let message = providerErrorText(error, for: providerSetting)
         let failureMessage = UIMessage(
             id: KotlinUuid.companion.random(),
             role: MessageRole.assistant,
@@ -524,12 +533,12 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                     return IOSAgentToolEngineResult(messages: working, stepsExecuted: steps,
                                                     pendingApproval: nil, hitStepLimit: false, wasCancelled: true)
                 }
-                return providerFailureResult(failure.underlying, working: working, steps: steps, onMessagesUpdated: onMessagesUpdated)
+                return providerFailureResult(failure.underlying, providerSetting: providerSetting, working: working, steps: steps, onMessagesUpdated: onMessagesUpdated)
             } catch is CancellationError {
                 return IOSAgentToolEngineResult(messages: working, stepsExecuted: steps,
                                                 pendingApproval: nil, hitStepLimit: false, wasCancelled: true)
             } catch {
-                return providerFailureResult(error, working: working, steps: steps, onMessagesUpdated: onMessagesUpdated)
+                return providerFailureResult(error, providerSetting: providerSetting, working: working, steps: steps, onMessagesUpdated: onMessagesUpdated)
             }
 
             let originalAssistantMessage = assistantMessage(from: chunk)
@@ -987,14 +996,15 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                     finalMessages.append(recorded)
                 }
             }
+            let failureText = providerErrorText(failure.underlying, for: providerSetting, fallback: failure.underlying.localizedDescription)
             if !cancelled {
-                finalMessages.append(Self.toolLoopGuardFallbackMessage(error: failure.underlying.localizedDescription))
+                finalMessages.append(Self.toolLoopGuardFallbackMessage(error: failureText))
             }
             onMessagesUpdated?(finalMessages)
             return IOSAgentToolEngineResult(
                 messages: finalMessages, stepsExecuted: stepsExecuted,
                 pendingApproval: nil, hitStepLimit: false,
-                providerFailureMessage: cancelled ? nil : failure.underlying.localizedDescription,
+                providerFailureMessage: cancelled ? nil : failureText,
                 wasCancelled: cancelled, guardStopped: true
             )
         } catch is CancellationError {
@@ -1007,7 +1017,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 guardStopped: true
             )
         } catch {
-            let fallback = Self.toolLoopGuardFallbackMessage(error: error.localizedDescription)
+            let failureText = providerErrorText(error, for: providerSetting, fallback: error.localizedDescription)
+            let fallback = Self.toolLoopGuardFallbackMessage(error: failureText)
             let finalMessages = messages + [fallback]
             onMessagesUpdated?(finalMessages)
             return IOSAgentToolEngineResult(
@@ -1015,7 +1026,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 stepsExecuted: stepsExecuted,
                 pendingApproval: nil,
                 hitStepLimit: false,
-                providerFailureMessage: error.localizedDescription,
+                providerFailureMessage: failureText,
                 guardStopped: true
             )
         }

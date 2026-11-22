@@ -33,6 +33,7 @@ enum DesktopAgentStopReason: Equatable {
     case loopGuard
     case outputLimit
     case providerFailure
+    case chatGPTPlan(DesktopSIWCError)
     case timeLimit(minutes: Int)
 
     /// 输入框上方的横幅文案。
@@ -46,6 +47,7 @@ enum DesktopAgentStopReason: Equatable {
             "模型回复达到输出上限，已停止本次任务；已收到的结果已保留。"
         case .providerFailure:
             "模型请求失败，已停止本次任务；请检查网络、认证与模型配置后重试。"
+        case .chatGPTPlan(let error): error.localizedDescription
         case .timeLimit(let minutes):
             "已达 \(minutes) 分钟的运行时长上限，任务已停止；已收到的结果已保留。"
         }
@@ -58,6 +60,7 @@ enum DesktopAgentStopReason: Equatable {
         case .loopGuard: "重复同一工具调用被停止。"
         case .outputLimit: "模型回复达到输出上限。"
         case .providerFailure: "模型请求失败。"
+        case .chatGPTPlan(let error): error.localizedDescription
         case .timeLimit(let minutes): "达到 \(minutes) 分钟运行时长上限。"
         }
     }
