@@ -962,7 +962,7 @@ private extension View {
                     conversationStore: conversationStore
                 )
             case .macGateway:
-                MacGatewaySettingsView()
+                MacGatewaySettingsView(sharedSettings: sharedSettings)
             case .macTasks:
                 MacTasksBoardView()
             case .phoneControl:

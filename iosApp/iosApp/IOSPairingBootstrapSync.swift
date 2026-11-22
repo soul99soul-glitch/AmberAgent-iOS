@@ -135,6 +135,7 @@ struct IOSPairingBootstrapSyncSummary: Equatable, Sendable {
     var modelId: String
     var authMode: String
     var siwcConfigured: Bool
+    var requiresLocalSignIn: Bool = false
     var credentialsImported: Bool
     var soulSynced: Bool
     var soulRevision: Int64
@@ -542,6 +543,7 @@ enum IOSPairingBootstrapImporter {
             modelId: modelId,
             authMode: authMode,
             siwcConfigured: siwcConfigured,
+            requiresLocalSignIn: requiresLocalSignIn,
             credentialsImported: credentialsImported,
             soulSynced: soulSynced,
             soulRevision: soulRevision,

@@ -1,15 +1,54 @@
 import SwiftUI
+import UIKit
+@preconcurrency import Shared
 
 struct MacGatewaySettingsView: View {
+    var sharedSettings: IOSSharedSettingsStore? = nil
+
+    private struct LocalSiwcPromptState: Equatable {
+        let providerId: String?
+        let modelLabel: String
+    }
+
+    private struct SiwcCheckKey: Equatable {
+        let gatewayId: String?
+        let summary: IOSPairingBootstrapSyncSummary?
+        let configRevision: Int?
+        let cloudSiwcConfigured: Bool
+        let cloudAuthMode: String
+        let nonce: Int
+    }
+
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(RouterPath.self) private var router
     @State private var confirmsUnpair = false
     @State private var presentingCloudCompose = false
+    @State private var copiedFingerprint = false
+    @State private var copyFingerprintResetTask: Task<Void, Never>?
+    @State private var localSiwcPrompt: LocalSiwcPromptState?
+    @State private var presentingSiwcProviderId: String?
+    @State private var siwcCheckNonce = 0
 
     private let store = MacGatewayStore.shared
     private let ruleStore = IOSProceduralRuleStore.shared
     private static let refreshInterval: Duration = .seconds(10)
+
+    private var resolvedSharedSettings: IOSSharedSettingsStore? {
+        sharedSettings ?? store.boundSharedSettings
+    }
+
+    private var siwcCheckKey: SiwcCheckKey {
+        SiwcCheckKey(
+            gatewayId: store.connection?.gatewayId,
+            summary: store.lastBootstrapSyncSummary,
+            configRevision: store.cloudConfig?.revision,
+            cloudSiwcConfigured: store.cloudConfig?.model?.siwcConfigured ?? false,
+            cloudAuthMode: store.cloudConfig?.model?.authMode ?? "",
+            nonce: siwcCheckNonce
+        )
+    }
 
     var body: some View {
         ZStack {
@@ -22,6 +61,9 @@ struct MacGatewaySettingsView: View {
                             confirmSection(pending)
                         } else if let connection = store.connection {
                             macSection(connection)
+                            if let siwcPrompt = localSiwcPrompt {
+                                siwcSignInGuidanceSection(siwcPrompt)
+                            }
                             if let health = store.status?.health { healthSection(health) }
                             cloudConfigSection
                             deviceContextSharingSection
@@ -46,6 +88,13 @@ struct MacGatewaySettingsView: View {
                 try? await Task.sleep(for: Self.refreshInterval)
             }
         }
+        .task(id: siwcCheckKey) {
+            refreshLocalSiwcPrompt()
+        }
+        .onDisappear {
+            copyFingerprintResetTask?.cancel()
+            copyFingerprintResetTask = nil
+        }
         .confirmationDialog(L("取消与这台 Mac 的配对？"), isPresented: $confirmsUnpair, titleVisibility: .visible) {
             Button(L("取消配对"), role: .destructive) { Task { await store.unpair() } }
             Button(L("保留"), role: .cancel) {}
@@ -55,6 +104,29 @@ struct MacGatewaySettingsView: View {
         .sheet(isPresented: $presentingCloudCompose) {
             MacGatewayCloudTaskComposeSheet(store: store) { _ in
                 router.navigate(to: .macTasks)
+            }
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { presentingSiwcProviderId != nil },
+                set: { if !$0 { presentingSiwcProviderId = nil } }
+            ),
+            onDismiss: {
+                siwcCheckNonce += 1
+            }
+        ) {
+            if let providerId = presentingSiwcProviderId {
+                ChatGptSiwcLoginView(
+                    providerId: providerId,
+                    autoStartLogin: false,
+                    onAuthModeChange: { mode in
+                        _ = resolvedSharedSettings?.setOpenAIAuthMode(providerId: providerId, authMode: mode)
+                        siwcCheckNonce += 1
+                    },
+                    onModelsFetched: { _ in
+                        siwcCheckNonce += 1
+                    }
+                )
             }
         }
     }
@@ -104,33 +176,115 @@ struct MacGatewaySettingsView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "确认配对")
             AmberFormGroup {
-                MacGatewayRow(icon: "desktopcomputer", title: payload.name, detail: payload.addrs.joined(separator: " · ")) {
-                    EmptyView()
-                }
-                MacGatewayRowDivider()
-                MacGatewayRow(icon: "checkmark.shield", title: L("证书指纹"), detail: payload.fp) {
-                    EmptyView()
-                }
-                if let hint = payload.bootstrap {
-                    MacGatewayRowDivider()
-                    MacGatewayRow(
-                        icon: "lock.shield",
-                        title: L("单次扫码加密同步"),
-                        detail: bootstrapHintSummary(hint)
-                    ) {
-                        EmptyView()
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 12) {
+                        MacGatewayIconPlate(icon: "desktopcomputer")
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(verbatim: payload.name)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(AmberTheme.foreground)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(verbatim: payload.addrs.joined(separator: " · "))
+                                .font(.caption.monospaced())
+                                .foregroundStyle(AmberTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+
+                MacGatewayRowDivider()
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
+                        MacGatewayIconPlate(icon: "checkmark.shield")
+                        Text(verbatim: L("TLS 证书指纹"))
+                            .font(.body)
+                            .foregroundStyle(AmberTheme.foreground)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button {
+                            copyFingerprint(payload.fp)
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: copiedFingerprint ? "checkmark" : "doc.on.doc")
+                                    .font(.caption.weight(.semibold))
+                                Text(verbatim: copiedFingerprint ? L("已复制") : L("复制"))
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .foregroundStyle(copiedFingerprint ? MacDelegationSemanticInk.success : AmberTheme.accent)
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: 34)
+                            .background(
+                                copiedFingerprint
+                                    ? MacDelegationSemanticInk.success.opacity(colorScheme == .dark ? 0.18 : 0.11)
+                                    : AmberTheme.accentTint,
+                                in: Capsule()
+                            )
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .accessibilityLabel(Text(verbatim: copiedFingerprint ? L("已复制证书指纹") : L("复制证书指纹")))
+                    }
+
+                    Text(verbatim: payload.fp)
+                        .font(.footnote.monospaced())
+                        .foregroundStyle(AmberTheme.foreground)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(AmberTheme.borderSoft, lineWidth: 0.5)
+                        )
+                        .accessibilityLabel(Text(verbatim: L("完整证书指纹：") + payload.fp))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+
+                if let hint = payload.bootstrap {
+                    MacGatewayRowDivider()
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .top, spacing: 12) {
+                            MacGatewayIconPlate(icon: "lock.shield")
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(verbatim: L("单次扫码加密同步"))
+                                    .font(.body)
+                                    .foregroundStyle(AmberTheme.foreground)
+                                Text(verbatim: bootstrapHintSummary(hint))
+                                    .font(.caption)
+                                    .foregroundStyle(AmberTheme.foreground2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if hint.siwcConfigured || hint.authMode == "chatgptSiwc" {
+                                    Text(verbatim: L("云端使用 ChatGPT（SIWC）；登录态与设备绑定，配对后请在本机完成登录。"))
+                                        .font(.caption)
+                                        .foregroundStyle(MacDelegationSemanticInk.warning)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                }
             }
-            MacGatewaySectionFooter(text: L("请核对与 Mac 终端显示的证书指纹一致。"))
+            MacGatewaySectionFooter(text: L("请完整核对与 Mac 终端显示的 TLS 证书指纹一致后再确认配对。"))
             AmberFormGroup {
-                actionRow(L("配对"), color: AmberTheme.accent, isBusy: store.isBusy) {
+                actionRow(L("配对"), busyTitle: L("正在配对并同步…"), color: AmberTheme.accent, isBusy: store.isBusy) {
                     Task { await store.confirmPairing() }
                 }
                 Divider().overlay(AmberTheme.borderSoft)
                 actionRow(L("取消"), color: AmberTheme.muted, isBusy: false) {
                     store.pendingPairing = nil
                 }
+                .opacity(store.isBusy ? 0.45 : 1)
                 .disabled(store.isBusy)
             }
             .padding(.top, 20)
@@ -154,6 +308,7 @@ struct MacGatewaySettingsView: View {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 18, weight: .medium))
                                 .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .foregroundStyle(AmberTheme.accent)
@@ -172,19 +327,134 @@ struct MacGatewaySettingsView: View {
                 }
                 if let syncSummary = store.lastBootstrapSyncSummary {
                     MacGatewayRowDivider()
-                    MacGatewayRow(
-                        icon: "checkmark.seal",
-                        title: L("最近一次配对同步"),
-                        detail: syncSummary.summaryText
-                    ) {
-                        EmptyView()
-                    }
+                    bootstrapSyncSummaryRow(syncSummary)
                 }
             }
             noticeFooter(fallback: store.isReachable == false
                 ? L("云端或 Mac 睡眠、断网时无法推送，也无法在这里查看状态。")
                 : nil)
         }
+    }
+
+    private func bootstrapSyncSummaryRow(_ summary: IOSPairingBootstrapSyncSummary) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 12) {
+                MacGatewayIconPlate(icon: "checkmark.seal", tint: MacDelegationSemanticInk.success)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(verbatim: L("最近一次配对同步"))
+                            .font(.body)
+                            .foregroundStyle(AmberTheme.foreground)
+                        Spacer(minLength: 4)
+                        Text(verbatim: L("非敏感摘要"))
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(AmberTheme.muted)
+                    }
+                    Text(verbatim: summary.summaryText)
+                        .font(.footnote)
+                        .foregroundStyle(AmberTheme.foreground2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if summary.credentialsImported {
+                        Text(verbatim: L("凭据已通过临时密钥端到端加密导入，界面不展示明文密钥或 Token。"))
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
+    private func siwcSignInGuidanceSection(_ prompt: LocalSiwcPromptState) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "person.badge.key.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(MacDelegationSemanticInk.warning)
+                    .padding(.top, 2)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(verbatim: L("云端已配置 ChatGPT（SIWC），需在本机登录"))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AmberTheme.foreground)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(verbatim: prompt.modelLabel.isEmpty
+                         ? L("ChatGPT（SIWC）登录态仅保存在当前设备，不会随扫码同步导出；请在本机完成登录以继续使用。")
+                         : L("当前云端模型为 \(prompt.modelLabel)。SIWC 登录态与设备绑定，不会随扫码同步导出；请在本机完成登录。"))
+                        .font(.footnote)
+                        .foregroundStyle(AmberTheme.foreground2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    siwcPrimaryButton(prompt)
+                    siwcSecondaryButton
+                }
+                VStack(spacing: 8) {
+                    siwcPrimaryButton(prompt)
+                    siwcSecondaryButton
+                }
+            }
+        }
+        .padding(14)
+        .background(
+            MacDelegationSemanticInk.warning.opacity(colorScheme == .dark ? 0.14 : 0.08),
+            in: RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous)
+                .strokeBorder(MacDelegationSemanticInk.warning.opacity(0.45), lineWidth: 1)
+        )
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+    }
+
+    private func siwcPrimaryButton(_ prompt: LocalSiwcPromptState) -> some View {
+        Button {
+            if let providerId = prompt.providerId {
+                presentingSiwcProviderId = providerId
+            } else {
+                router.navigate(to: .providers)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "person.crop.circle.badge.checkmark")
+                    .font(.subheadline.weight(.semibold))
+                Text(verbatim: prompt.providerId != nil ? L("立即在本机登录 SIWC") : L("前往配置并登录 SIWC"))
+                    .font(.subheadline.weight(.semibold))
+            }
+            .foregroundStyle(AmberTheme.accentInk)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .padding(.horizontal, 12)
+            .background(AmberTheme.accent, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var siwcSecondaryButton: some View {
+        Button {
+            router.navigate(to: .providers)
+        } label: {
+            Text(verbatim: L("模型服务商"))
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(AmberTheme.foreground)
+                .frame(minWidth: 96, maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil, minHeight: 44)
+                .padding(.horizontal, 12)
+                .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .strokeBorder(AmberTheme.borderSoft, lineWidth: 0.75)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func healthSection(_ health: MacGatewayStatus.Health) -> some View {
@@ -368,11 +638,58 @@ struct MacGatewaySettingsView: View {
 
     private var unpairSection: some View {
         AmberFormGroup {
-            actionRow(L("取消配对"), color: AmberTheme.accentRed, isBusy: store.isBusy) {
+            actionRow(L("取消配对"), color: MacDelegationSemanticInk.danger, isBusy: store.isBusy) {
                 confirmsUnpair = true
             }
         }
         .padding(.top, 28)
+    }
+
+    // MARK: - Helpers
+
+    private func copyFingerprint(_ fingerprint: String) {
+        UIPasteboard.general.string = fingerprint
+        copiedFingerprint = true
+        copyFingerprintResetTask?.cancel()
+        copyFingerprintResetTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.8))
+            guard !Task.isCancelled else { return }
+            copiedFingerprint = false
+        }
+    }
+
+    /// Evaluates local SIWC sign-in state off `body` (no Keychain/disk IO during layout).
+    private func refreshLocalSiwcPrompt() {
+        guard store.connection != nil else {
+            localSiwcPrompt = nil
+            return
+        }
+        let summary = store.lastBootstrapSyncSummary
+        let cloudModel = store.cloudConfig?.model
+        let cloudUsesSiwc = (summary?.requiresLocalSignIn == true)
+            || (summary?.siwcConfigured == true)
+            || (summary?.authMode == "chatgptSiwc")
+            || (cloudModel?.siwcConfigured == true)
+            || (cloudModel?.authMode == "chatgptSiwc")
+        guard cloudUsesSiwc else {
+            localSiwcPrompt = nil
+            return
+        }
+
+        let providers = resolvedSharedSettings?.snapshot.providers ?? []
+        let siwcProviders = providers.filter { $0.enabled && IOSCodexProviderResolver.isChatGptSiwcProvider($0) }
+        if siwcProviders.contains(where: { IOSCodexProviderResolver.isSignedIn($0) }) {
+            localSiwcPrompt = nil
+            return
+        }
+
+        let providerName = (summary?.provider.isEmpty == false ? summary?.provider : cloudModel?.provider) ?? ""
+        let modelId = (summary?.modelId.isEmpty == false ? summary?.modelId : cloudModel?.modelId) ?? ""
+        let label = [providerName, modelId].filter { !$0.isEmpty }.joined(separator: " · ")
+        localSiwcPrompt = LocalSiwcPromptState(
+            providerId: siwcProviders.first?.id.description(),
+            modelLabel: label
+        )
     }
 
     // MARK: - Text
@@ -380,11 +697,11 @@ struct MacGatewaySettingsView: View {
     private var sessionStatusDotColor: Color {
         switch store.cloudSessionHealth {
         case .healthy:
-            return AmberTheme.accentGreen
+            return MacDelegationSemanticInk.success
         case .checking, .modelUnconfigured, .degraded:
-            return .orange
+            return MacDelegationSemanticInk.warning
         case .offline:
-            return AmberTheme.accentRed
+            return MacDelegationSemanticInk.danger
         case .unpaired:
             return AmberTheme.muted
         }
@@ -422,13 +739,28 @@ struct MacGatewaySettingsView: View {
 
     // MARK: - Rows
 
-    private func actionRow(_ title: String, color: Color, isBusy: Bool, action: @escaping () -> Void) -> some View {
+    private func actionRow(
+        _ title: String,
+        busyTitle: String? = nil,
+        color: Color,
+        isBusy: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
-            ZStack {
+            HStack(spacing: 8) {
                 if isBusy {
                     ProgressView()
+                        .controlSize(.small)
+                        .tint(color)
+                    if let busyTitle {
+                        Text(verbatim: busyTitle)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(color)
+                    }
                 } else {
-                    Text(verbatim: title).font(.body.weight(.semibold)).foregroundStyle(color)
+                    Text(verbatim: title)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(color)
                 }
             }
             .frame(maxWidth: .infinity, minHeight: 52)
@@ -461,7 +793,10 @@ struct MacGatewaySettingsView: View {
     @ViewBuilder
     private func noticeFooter(fallback: String?) -> some View {
         if let notice = store.notice {
-            MacGatewaySectionFooter(text: notice.text, color: notice.isError ? .orange : AmberTheme.muted)
+            MacGatewaySectionFooter(
+                text: notice.text,
+                color: notice.isError ? MacDelegationSemanticInk.warning : AmberTheme.muted
+            )
         } else if let fallback {
             MacGatewaySectionFooter(text: fallback)
         }

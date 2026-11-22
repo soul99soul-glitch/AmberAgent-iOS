@@ -832,6 +832,7 @@ struct IOSProceduralRulesAndPairingSyncTests {
         #expect(summary.soulSynced == true)
         #expect(summary.activeRulesImported == 1)
         #expect(summary.credentialsImported == true)
+        #expect(summary.requiresLocalSignIn == true)
         #expect(summary.summaryText.contains("需在本机登录 SIWC"))
         #expect(!summary.summaryText.contains(secretApiKey))
         let noticeText = try #require(gatewayStore.notice?.text)
