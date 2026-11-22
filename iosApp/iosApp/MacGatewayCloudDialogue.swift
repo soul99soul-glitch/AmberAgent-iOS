@@ -609,6 +609,7 @@ struct MacGatewayCloudDialoguePersistedSubmission: Codable, Equatable, Identifia
     var retryOfWorkItemId: String? = nil
     var isOutcomeUnknown: Bool = false
     var isAbandoned: Bool = false
+    var isUnifiedDelegation: Bool = false
 
     init(
         gatewayId: String,
@@ -624,7 +625,8 @@ struct MacGatewayCloudDialoguePersistedSubmission: Codable, Equatable, Identifia
         conversationId: String? = nil,
         isOutcomeUnknown: Bool = false,
         isAbandoned: Bool = false,
-        retryOfWorkItemId: String? = nil
+        retryOfWorkItemId: String? = nil,
+        isUnifiedDelegation: Bool = false
     ) {
         self.gatewayId = gatewayId
         self.deviceId = deviceId
@@ -638,13 +640,14 @@ struct MacGatewayCloudDialoguePersistedSubmission: Codable, Equatable, Identifia
         self.isConfirmedNotExecuted = isConfirmedNotExecuted
         self.conversationId = conversationId
         self.isOutcomeUnknown = isOutcomeUnknown
+        self.isUnifiedDelegation = isUnifiedDelegation
         self.isAbandoned = isAbandoned
         self.retryOfWorkItemId = retryOfWorkItemId
     }
 
     private enum CodingKeys: String, CodingKey {
         case gatewayId, deviceId, kind, requestId, workItemId, text, receipt, lastError, updatedAt
-        case isConfirmedNotExecuted, conversationId, isOutcomeUnknown, isAbandoned, retryOfWorkItemId
+        case isConfirmedNotExecuted, conversationId, isOutcomeUnknown, isAbandoned, retryOfWorkItemId, isUnifiedDelegation
     }
 
     init(from decoder: Decoder) throws {
@@ -662,6 +665,7 @@ struct MacGatewayCloudDialoguePersistedSubmission: Codable, Equatable, Identifia
         conversationId = try c.decodeIfPresent(String.self, forKey: .conversationId)
         isOutcomeUnknown = try c.decodeIfPresent(Bool.self, forKey: .isOutcomeUnknown) ?? false
         retryOfWorkItemId = try c.decodeIfPresent(String.self, forKey: .retryOfWorkItemId)
+        isUnifiedDelegation = try c.decodeIfPresent(Bool.self, forKey: .isUnifiedDelegation) ?? false
         isAbandoned = try c.decodeIfPresent(Bool.self, forKey: .isAbandoned) ?? false
     }
 
@@ -1427,7 +1431,8 @@ extension MacGatewayStore {
         text: String,
         requestId: String = UUID().uuidString.lowercased(),
         conversationId: String? = nil,
-        retryOfWorkItemId: String? = nil
+        retryOfWorkItemId: String? = nil,
+        isUnifiedDelegation: Bool = false
     ) async -> Result<MacGatewayCloudDialogueReceipt, Error> {
         guard let connection, let client else {
             return .failure(MacGatewayError.server(localized("未与云端或 Mac 配对")))
@@ -1465,10 +1470,11 @@ extension MacGatewayStore {
                 updatedAt: Date(),
                 isConfirmedNotExecuted: false,
                 conversationId: request.conversationId,
-                retryOfWorkItemId: existing?.retryOfWorkItemId ?? retryOfWorkItemId
+                retryOfWorkItemId: existing?.retryOfWorkItemId ?? retryOfWorkItemId,
+                isUnifiedDelegation: existing?.isUnifiedDelegation ?? isUnifiedDelegation
             )
         )
-        if existing == nil, retryOfWorkItemId == nil, let explicitId = Self.nonEmptyTrimmed(conversationId) {
+        if !isUnifiedDelegation, existing == nil, retryOfWorkItemId == nil, let explicitId = Self.nonEmptyTrimmed(conversationId) {
             cloudDialogueConversationId = explicitId
         }
         persistCloudDialogueState(immediately: true)
@@ -1482,7 +1488,7 @@ extension MacGatewayStore {
             cloudDialogueTransportState = .healthy
             isReachable = true
             applyReceipt(receipt)
-            if selectedCloudDialogueWorkItemId == nil,
+            if !isUnifiedDelegation, selectedCloudDialogueWorkItemId == nil,
                (receipt.conversationId ?? request.conversationId) == cloudDialogueConversationId,
                let firstWorkItem = receipt.workItemIds.first {
                 selectedCloudDialogueWorkItemId = firstWorkItem
@@ -1513,7 +1519,8 @@ extension MacGatewayStore {
         workItemId: String,
         text: String,
         requestId: String = UUID().uuidString.lowercased(),
-        conversationId: String? = nil
+        conversationId: String? = nil,
+        isUnifiedDelegation: Bool = false
     ) async -> Result<MacGatewayCloudDialogueReceipt, Error> {
         guard let connection, let client else {
             return .failure(MacGatewayError.server(localized("未与云端或 Mac 配对")))
@@ -1549,7 +1556,8 @@ extension MacGatewayStore {
                 lastError: nil,
                 updatedAt: Date(),
                 isConfirmedNotExecuted: false,
-                conversationId: request.conversationId
+                conversationId: request.conversationId,
+                isUnifiedDelegation: existing?.isUnifiedDelegation ?? isUnifiedDelegation
             )
         )
         upsertFollowupRecord(
@@ -1771,6 +1779,10 @@ extension MacGatewayStore {
                             ?? Self.nonEmptyTrimmed(detail.failure)
                             ?? Self.nonEmptyTrimmed(detail.workItem.progress)
                         if let summary { progress.statusLine = summary }
+                        progress.sourceRefs = MacGatewayCloudDialogueEvent.mergedSourceAnnotations(
+                            sourceRefs: progress.sourceRefs, sourcePaths: detail.sourceRefs ?? detail.workItem.sourceRefs)
+                        progress.sourcePaths = MacGatewayCloudDialogueEvent.mergedSourceAnnotations(
+                            sourceRefs: progress.sourcePaths, sourcePaths: detail.sourcePaths ?? detail.workItem.sourcePaths)
                         cloudDialogueProgressByWorkItem[workItemId] = progress
                         clearOutcomeUnknownFlagsForWorkItem(workItemId, abandoned: false)
                         persistCloudDialogueState()
@@ -1835,7 +1847,8 @@ extension MacGatewayStore {
             text: retryText,
             requestId: retryId,
             conversationId: conversationId(forWorkItemId: workItemId),
-            retryOfWorkItemId: workItemId
+            retryOfWorkItemId: workItemId,
+            isUnifiedDelegation: cloudDialogueSubmissions.contains { $0.isUnifiedDelegation && ($0.workItemId == workItemId || $0.receipt?.workItemIds.contains(workItemId) == true) }
         )
     }
 
@@ -1862,11 +1875,11 @@ extension MacGatewayStore {
     /// (claiming existing server receipts or re-sending with the original `requestId` when not yet accepted).
     /// Cursor only advances when `page.items` is non-empty.
     @discardableResult
-    func pollCloudDialogueEvents(limit: Int = 100) async -> Result<MacGatewayCloudDialogueEventsPage, Error> {
+    func pollCloudDialogueEvents(limit: Int = 100, reconcileSubmissions: Bool = true) async -> Result<MacGatewayCloudDialogueEventsPage, Error> {
         guard let client else {
             return .failure(MacGatewayError.server(localized("未与云端或 Mac 配对")))
         }
-        await reconcilePendingCloudDialogueSubmissionsIfNeeded()
+        if reconcileSubmissions { await reconcilePendingCloudDialogueSubmissionsIfNeeded() }
         guard self.client === client else { return .failure(CancellationError()) }
         let currentCursor = cloudDialogueCursor
         do {
@@ -1935,7 +1948,7 @@ extension MacGatewayStore {
                 } catch {
                     guard self.client === client else { return }
                     if forgetIfRevoked(error, for: client) { return }
-                    guard Self.isReceiptNotFoundError(error), !busyCloudDialogueRequestIds.contains(submission.requestId),
+                    guard !submission.isUnifiedDelegation, Self.isReceiptNotFoundError(error), !busyCloudDialogueRequestIds.contains(submission.requestId),
                           cloudDialogueSubmissions.first(where: { $0.requestId == submission.requestId })?.isAwaitingReceiptConfirmation == true
                     else { continue }
                     switch submission.kind {
@@ -2292,7 +2305,7 @@ extension MacGatewayStore {
         case .userMessage:
             if cloudDialogueConversationId == nil, let id = Self.nonEmptyTrimmed(event.conversationId),
                cloudDialogueSubmissions.contains(where: {
-                   $0.kind == .mainMessage && $0.retryOfWorkItemId == nil && $0.receipt?.eventId == event.id
+                   !$0.isUnifiedDelegation && $0.kind == .mainMessage && $0.retryOfWorkItemId == nil && $0.receipt?.eventId == event.id
                }) {
                 cloudDialogueConversationId = id
             }
@@ -2374,7 +2387,8 @@ extension MacGatewayStore {
                 processEventCount: 0,
                 lastEventSeq: eventSeq ?? cloudDialogueCursor,
                 outcome: nil,
-                isStopRequested: true
+                isStopRequested: true,
+                conversationId: conversationId(forWorkItemId: workItemId)
             )
         }
     }
@@ -2549,6 +2563,9 @@ extension MacGatewayStore {
         if let receipt = cloudDialogueReceipts.values.first(where: { $0.workItemIds.contains(id) && $0.conversationId != nil }) {
             return receipt.conversationId
         }
+        if let submission = cloudDialogueSubmissions.first(where: {
+            $0.conversationId != nil && ($0.workItemId == id || $0.receipt?.workItemIds.contains(id) == true)
+        }) { return submission.conversationId }
         if let event = cloudDialogueEvents.last(where: { $0.workItemId == id && $0.conversationId != nil }) {
             return event.conversationId
         }
@@ -2596,7 +2613,7 @@ extension MacGatewayStore {
                     clearOutcomeUnknownFlagsForWorkItem(original, abandoned: false)
                     if selectedCloudDialogueWorkItemId == original { selectedCloudDialogueWorkItemId = nil }
                 }
-            } else if submission?.kind == .mainMessage, cloudDialogueConversationId == nil {
+            } else if submission?.kind == .mainMessage, submission?.isUnifiedDelegation != true, cloudDialogueConversationId == nil {
                 let userEvent = cloudDialogueEvents.first { $0.id == receipt.eventId && $0.kind == .userMessage }
                 cloudDialogueConversationId = Self.nonEmptyTrimmed(receipt.conversationId ?? userEvent?.conversationId)
             }
@@ -2632,7 +2649,7 @@ extension MacGatewayStore {
 
     private static func isDeterministicNonExecutionError(_ error: Error) -> Bool {
         switch error {
-        case MacGatewayError.unauthorized, MacGatewayError.conflict:
+        case MacGatewayError.unauthorized, MacGatewayError.forbidden, MacGatewayError.conflict:
             return true
         case MacGatewayError.server(let message):
             let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -2725,20 +2742,27 @@ enum MacDelegationAttributionBadge: String, Equatable, Sendable {
     case failed
     case cancelled
 
-    var label: String {
+    case followup
+    case retried
+    case trackingEnded
+
+    var label: LocalizedStringKey {
         switch self {
+        case .followup: return "Mac 任务补充"
+        case .retried: return "已发起重试"
+        case .trackingEnded: return "已取消回执跟踪"
         case .running:
-            return IOSAppLocalization.string("Mac 执行中", defaultValue: "Mac 执行中")
+            return "Mac 执行中"
         case .awaitingMacApproval:
-            return IOSAppLocalization.string("等待 Mac 确认", defaultValue: "等待 Mac 确认")
+            return "等待 Mac 确认"
         case .completed:
-            return IOSAppLocalization.string("Mac 已完成", defaultValue: "Mac 已完成")
+            return "Mac 已完成"
         case .outcomeUnknown:
-            return IOSAppLocalization.string("结果待确认", defaultValue: "结果待确认")
+            return "结果待确认"
         case .failed:
-            return IOSAppLocalization.string("Mac 执行失败", defaultValue: "Mac 执行失败")
+            return "Mac 执行失败"
         case .cancelled:
-            return IOSAppLocalization.string("Mac 已取消", defaultValue: "Mac 已取消")
+            return "Mac 已取消"
         }
     }
 }
@@ -2822,7 +2846,16 @@ struct MacGatewayApprovalCardItem: Identifiable, Equatable, Sendable {
             highRisk: highRisk,
             requiresLocalApproval: requiresLocalApproval
         )
-        self.workItemId = workItemId
+        // Stage 2-A identifies worker approvals as amber:wi:<work item>:<approval UUID>.
+        let prefix = "amber:wi:"
+        let workerKey = sessionKey.dropFirst(prefix.count)
+        if let workItemId, !workItemId.isEmpty {
+            self.workItemId = workItemId
+        } else if sessionKey.hasPrefix(prefix), let separator = workerKey.lastIndex(of: ":"),
+                  separator != workerKey.startIndex,
+                  UUID(uuidString: String(workerKey[workerKey.index(after: separator)...])) != nil {
+            self.workItemId = String(workerKey[..<separator])
+        }
         self.conversationId = conversationId
     }
 
@@ -2893,13 +2926,15 @@ extension MacGatewayStore {
                 workItemId: targetWorkItemId,
                 text: text,
                 requestId: requestId,
-                conversationId: normalizedConversationId
+                conversationId: normalizedConversationId,
+                isUnifiedDelegation: true
             )
         }
         return await sendCloudDialogueMessage(
             text: text,
             requestId: requestId,
-            conversationId: normalizedConversationId
+            conversationId: normalizedConversationId,
+            isUnifiedDelegation: true
         )
     }
 
@@ -2917,7 +2952,7 @@ extension MacGatewayStore {
                 lastError = error
             }
         }
-        if case .failure(let error) = await pollCloudDialogueEvents() {
+        if case .failure(let error) = await pollCloudDialogueEvents(reconcileSubmissions: false) {
             if case MacGatewayError.unauthorized = error { return .failure(error) }
             lastError = error
         }
@@ -2933,6 +2968,9 @@ extension MacGatewayStore {
            cloudDialogueSubmissions.first(where: { $0.requestId == requestId })?.isAwaitingReceiptConfirmation == true {
             return .failure(lastError)
         }
+        if let requestId, cloudDialogueReceipts[requestId] != nil {
+            startCloudDialoguePollingIfNeeded()
+        }
         return .success(())
     }
 
@@ -2943,21 +2981,39 @@ extension MacGatewayStore {
         requestId: String?,
         workItemId: String?
     ) async -> Bool {
-        if let workItemId = Self.nonEmptyTrimmed(workItemId) {
-            if cloudDialogueProgressByWorkItem[workItemId]?.needsOutcomeUnknownAction == true {
-                return abandonOutcomeUnknownCloudWorkItem(workItemId: workItemId)
-            }
-            let result = await stopCloudWorkItem(workItemId: workItemId)
-            if case .success = result { return true }
-        }
-        guard let requestId = Self.nonEmptyTrimmed(requestId),
-              let idx = cloudDialogueSubmissions.firstIndex(where: { $0.requestId == requestId }) else {
+        guard let requestId, var submission = cloudDialogueSubmissions.first(where: { $0.requestId == requestId }) else {
             return false
         }
-        cloudDialogueSubmissions[idx].isAbandoned = true
-        cloudDialogueSubmissions[idx].lastError = localized("已显式取消（未回退本机）")
-        cloudDialogueSubmissions[idx].updatedAt = Date()
-        persistCloudDialogueState()
+        if submission.isAbandoned { return true }
+        guard !busyCloudDialogueRequestIds.contains(requestId) else { return false }
+
+        if submission.kind == .mainMessage {
+            if submission.isAwaitingReceiptConfirmation {
+                // A lost response can conceal a running task. Resolve its id before sending stop.
+                let lookup = await refreshCloudDialogueReceipt(requestId: requestId)
+                if case .failure(let error) = lookup, !Self.isReceiptNotFoundError(error) {
+                    return false
+                }
+                guard let current = cloudDialogueSubmissions.first(where: { $0.requestId == requestId }) else { return false }
+                submission = current
+            }
+            let targets = Set((submission.receipt?.workItemIds ?? []) + [workItemId].compactMap { $0 })
+            for target in targets {
+                if cloudDialogueProgressByWorkItem[target]?.isLive == false { continue }
+                let stop = cloudDialogueSubmissions.first { $0.kind == .stopWorkItem && $0.workItemId == target }
+                if stop?.receipt != nil { continue }
+                let stopId = stop?.requestId ?? UUID().uuidString.lowercased()
+                guard !busyCloudDialogueRequestIds.contains(stopId),
+                      case .success = await stopCloudWorkItem(workItemId: target, requestId: stopId,
+                                                             conversationId: submission.conversationId) else { return false }
+            }
+            if !targets.isEmpty { return true }
+        }
+        // Without an execution id (or for a follow-up) cancel only local receipt tracking.
+        guard let index = cloudDialogueSubmissions.firstIndex(where: { $0.requestId == requestId }) else { return false }
+        cloudDialogueSubmissions[index].isAbandoned = true
+        cloudDialogueSubmissions[index].updatedAt = Date()
+        persistCloudDialogueState(immediately: true)
         return true
     }
 
@@ -2966,16 +3022,18 @@ extension MacGatewayStore {
     func activeMacApprovalCardItems(for conversationId: String? = nil) -> [MacGatewayApprovalCardItem] {
         let deviceName = connection?.name ?? localized("Mac")
         var items: [MacGatewayApprovalCardItem] = []
-        var seenCallIds = Set<String>()
+        var seenApprovalIds = Set<String>()
 
         for boardItem in boardItems {
-            guard let approval = boardItem.approval, seenCallIds.insert(approval.toolCallId).inserted else { continue }
+            guard let approval = boardItem.approval else { continue }
             var card = MacGatewayApprovalCardItem(
                 approval: approval,
                 title: boardItem.title,
                 fallbackDeviceName: deviceName
             )
-            if localApprovalOnlyCallIds.contains(approval.toolCallId) {
+            guard seenApprovalIds.insert(card.id).inserted else { continue }
+            card.conversationId = card.conversationId ?? boardItem.conversationId
+            if requiresLocalApprovalOnly(sessionKey: card.sessionKey, toolCallId: card.toolCallId) {
                 card.requiresLocalApproval = true
                 card.riskTier = .l3
             }
@@ -2983,7 +3041,7 @@ extension MacGatewayStore {
         }
 
         for session in status?.sessions ?? [] {
-            guard let pending = session.pendingApproval, seenCallIds.insert(pending.toolCallId).inserted else { continue }
+            guard let pending = session.pendingApproval else { continue }
             let requiresLocal = pending.requiresLocalApproval || localApprovalOnlyCallIds.contains(pending.toolCallId)
             let card = MacGatewayApprovalCardItem(
                 sessionKey: session.key,
@@ -2997,27 +3055,29 @@ extension MacGatewayStore {
                 requiresLocalApproval: requiresLocal,
                 riskLevel: pending.riskLevel,
                 workItemId: pending.workItemId,
-                conversationId: pending.conversationId
+                conversationId: pending.conversationId ?? session.conversationId
             )
-            items.append(card)
+            if seenApprovalIds.insert(card.id).inserted { items.append(card) }
         }
 
         guard let targetConversationId = Self.nonEmptyTrimmed(conversationId) else {
             return items
         }
         return items.filter { card in
-            guard let cardConvId = Self.nonEmptyTrimmed(card.conversationId) else { return true }
+            let ownerId = card.workItemId.flatMap { self.conversationId(forWorkItemId: $0) } ?? card.conversationId
+            guard let cardConvId = Self.nonEmptyTrimmed(ownerId) else { return true }
             return cardConvId.caseInsensitiveCompare(targetConversationId) == .orderedSame
         }
     }
 
     /// Equatable projection of Mac-delegated runs belonging to the given unified conversation timeline.
-    /// Does zero disk I/O and is safe to call from SwiftUI projection boundaries.
-    func unifiedMacDelegatedRuns(for conversationId: String?) -> [MacDelegatedTimelineRun] {
+    /// Includes localized status text. The dock observes this projection outside view evaluation.
+    func unifiedMacDelegatedRuns(for conversationId: String?, approvals suppliedApprovals: [MacGatewayApprovalCardItem]? = nil) -> [MacDelegatedTimelineRun] {
         guard let targetConversationId = Self.nonEmptyTrimmed(conversationId) else { return [] }
-        let approvals = activeMacApprovalCardItems(for: targetConversationId)
+        let approvals = suppliedApprovals ?? activeMacApprovalCardItems(for: targetConversationId)
         var runs: [MacDelegatedTimelineRun] = []
         var coveredWorkItemIds = Set<String>()
+        var coveredRequestIds = Set<String>()
 
         let matchingProgresses = cloudDialogueProgressByWorkItem.values.filter { progress in
             guard let progressConvId = Self.nonEmptyTrimmed(progress.conversationId) else { return false }
@@ -3029,28 +3089,24 @@ extension MacGatewayStore {
             let relatedSubmission = cloudDialogueSubmissions.first { submission in
                 submission.kind == .mainMessage && (
                     submission.workItemId == progress.workItemId ||
-                    submission.receipt?.workItemIds.contains(progress.workItemId) == true
+                    submission.receipt?.workItemIds.contains(progress.workItemId) == true ||
+                    (submission.receipt?.topicId == progress.topicId && submission.receipt?.workItemIds.isEmpty == true)
                 )
             }
+            if let relatedSubmission { coveredRequestIds.insert(relatedSubmission.requestId) }
             let relatedUserEvent = cloudDialogueEvents.last { event in
                 (event.kind == .userMessage || event.kind == .followup) && (
                     event.workItemId == progress.workItemId ||
-                    (!progress.topicId.isEmpty && event.topicId == progress.topicId)
+                    (event.workItemId == nil && !progress.topicId.isEmpty && event.topicId == progress.topicId)
                 )
             }
             let relatedResultEvent = cloudDialogueEvents.last { event in
                 (event.kind == .taskResult || (event.kind == .assistantReply && !event.isUpfrontAcknowledgement)) && (
                     event.workItemId == progress.workItemId ||
-                    (!progress.topicId.isEmpty && event.topicId == progress.topicId)
+                    (event.workItemId == nil && !progress.topicId.isEmpty && event.topicId == progress.topicId)
                 )
             }
-            let matchedApproval = approvals.first { card in
-                if let cardWorkId = Self.nonEmptyTrimmed(card.workItemId) {
-                    return cardWorkId == progress.workItemId
-                }
-                return card.conversationId?.caseInsensitiveCompare(targetConversationId) == .orderedSame
-                    && progress.outcome == .blocked
-            }
+            let matchedApproval = approvals.first { $0.workItemId == progress.workItemId }
 
             let promptText = Self.nonEmptyTrimmed(relatedSubmission?.text)
                 ?? Self.nonEmptyTrimmed(relatedUserEvent?.text)
@@ -3064,7 +3120,11 @@ extension MacGatewayStore {
                 badge = .awaitingMacApproval
             } else if progress.needsOutcomeUnknownAction {
                 badge = .outcomeUnknown
-            } else if progress.outcomeUnknownResolution == .abandoned || progress.outcome == .cancelled {
+            } else if progress.outcomeUnknownResolution == .retried {
+                badge = .retried
+            } else if progress.outcomeUnknownResolution == .abandoned {
+                badge = .trackingEnded
+            } else if progress.outcome == .cancelled {
                 badge = .cancelled
             } else if progress.outcome == .failed {
                 badge = .failed
@@ -3075,7 +3135,7 @@ extension MacGatewayStore {
             }
 
             let resultText: String? = {
-                guard let event = relatedResultEvent, !event.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                guard let event = relatedResultEvent, event.outcomeUnknown != true, !event.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     return nil
                 }
                 return cloudDialogueDisplayText(for: event)
@@ -3098,8 +3158,8 @@ extension MacGatewayStore {
                     pendingApproval: matchedApproval,
                     lastError: relatedSubmission?.lastError,
                     isBusy: isBusy,
-                    canFollowup: !progress.needsOutcomeUnknownAction && progress.outcomeUnknownResolution != .abandoned,
-                    canStop: progress.isLive && !progress.isStopRequested && !progress.needsOutcomeUnknownAction,
+                    canFollowup: progress.isLive && !progress.isStopRequested && !progress.needsOutcomeUnknownAction && !progress.workItemId.hasPrefix("topic:"),
+                    canStop: progress.isLive && !progress.isStopRequested && !progress.needsOutcomeUnknownAction && !progress.workItemId.hasPrefix("topic:"),
                     sortSeq: max(progress.lastEventSeq, relatedResultEvent?.seq ?? 0)
                 )
             )
@@ -3107,10 +3167,13 @@ extension MacGatewayStore {
 
         // Also surface pending / weak-network / receipt-missing submissions bound to this conversation.
         let matchingSubmissions = cloudDialogueSubmissions.filter { submission in
-            guard submission.kind == .mainMessage,
+            guard submission.kind != .stopWorkItem, !coveredRequestIds.contains(submission.requestId),
                   let subConvId = Self.nonEmptyTrimmed(submission.conversationId),
                   subConvId.caseInsensitiveCompare(targetConversationId) == .orderedSame else {
                 return false
+            }
+            if submission.kind == .followupInput {
+                return submission.isUnifiedDelegation
             }
             let linkedWorkIds = (submission.receipt?.workItemIds ?? []) + (submission.workItemId.map { [$0] } ?? [])
             return !linkedWorkIds.contains(where: { coveredWorkItemIds.contains($0) })
@@ -3120,23 +3183,38 @@ extension MacGatewayStore {
             let workItemId = submission.workItemId ?? submission.receipt?.workItemIds.first
             let isBusy = busyCloudDialogueRequestIds.contains(submission.requestId)
             let isUnconfirmed = submission.isAwaitingReceiptConfirmation && !isBusy
+            let directReply = submission.receipt.flatMap { receipt -> MacGatewayCloudDialogueEvent? in
+                guard submission.kind == .mainMessage, receipt.workItemIds.isEmpty else { return nil }
+                return cloudDialogueEvents.last { event in
+                    event.kind == .assistantReply && !event.isUpfrontAcknowledgement && event.workItemId == nil
+                        && event.topicId == receipt.topicId
+                        && (event.causedByRequestId == nil || event.causedByRequestId == submission.requestId)
+                        && (event.causedByInputId == nil || event.causedByInputId == receipt.eventId)
+                }
+            }
             let badge: MacDelegationAttributionBadge
             let statusLine: String
             if submission.isAbandoned {
-                badge = .cancelled
-                statusLine = localized("已显式取消（未回退本机）")
+                badge = .trackingEnded
+                statusLine = localized("已停止跟踪回执，Mac 执行结果未确认")
+            } else if let directReply {
+                badge = directReply.outcome == .failed ? .failed : .completed
+                statusLine = directReply.text
             } else if submission.isOutcomeUnknown {
                 badge = .outcomeUnknown
                 statusLine = localized("结果待确认")
             } else if submission.isConfirmedNotExecuted {
                 badge = .failed
                 statusLine = submission.lastError ?? localized("Mac 未接收请求（未回退本机）")
+            } else if submission.kind == .followupInput, let followup = cloudDialogueFollowups.first(where: { $0.requestId == submission.requestId }) {
+                badge = .followup
+                statusLine = followup.deliveryStatus(isSending: isBusy)
             } else if isUnconfirmed {
                 badge = .running
                 statusLine = submission.lastError ?? localized("弱网待确认回执 · 不会静默回退本机")
             } else {
                 badge = .running
-                statusLine = localized("正在派发给 Mac…")
+                statusLine = submission.receipt == nil ? localized("正在派发给 Mac…") : localized("Mac 已接收，等待进展")
             }
 
             runs.append(
@@ -3148,15 +3226,15 @@ extension MacGatewayStore {
                     promptText: Self.nonEmptyTrimmed(submission.text) ?? localized("已交给 Mac 执行"),
                     badge: badge,
                     statusLine: statusLine,
-                    resultText: nil,
-                    sourceAnnotations: [],
-                    isReceiptUnconfirmed: isUnconfirmed || submission.isConfirmedNotExecuted,
+                    resultText: directReply?.text,
+                    sourceAnnotations: directReply?.displaySourceAnnotations ?? [],
+                    isReceiptUnconfirmed: !submission.isAbandoned && (isUnconfirmed || (submission.isOutcomeUnknown && workItemId == nil)),
                     isOutcomeUnknown: submission.isOutcomeUnknown,
                     pendingApproval: nil,
                     lastError: submission.lastError,
                     isBusy: isBusy,
-                    canFollowup: workItemId != nil && !submission.isAbandoned,
-                    canStop: !submission.isAbandoned && !submission.isConfirmedNotExecuted,
+                    canFollowup: submission.kind == .mainMessage && workItemId != nil && !submission.isAbandoned && !submission.isConfirmedNotExecuted,
+                    canStop: submission.kind == .mainMessage && !submission.isAbandoned && !submission.isConfirmedNotExecuted,
                     sortSeq: Int64(1_000_000 + index)
                 )
             )

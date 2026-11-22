@@ -68,6 +68,7 @@ struct MacGatewayStatus: Decodable, Equatable, Sendable {
         /// Running or waiting; only these can still push, so only these get a push switch.
         var isOpen: Bool { state == "running" || state == "waiting" || state == "stalled" }
         /// Amber scheduled runs waiting on a tool call (answered with `decide`).
+        var conversationId: String? = nil
         var pendingApproval: PendingApproval?
         var id: String { key }
     }
@@ -95,7 +96,7 @@ struct MacGatewayStatus: Decodable, Equatable, Sendable {
 
         private enum CodingKeys: String, CodingKey {
             case toolCallId, tool, detail, highRisk, requiresLocalApproval
-            case summary, diffPreview, targetDeviceName, riskLevel, workItemId, conversationId
+            case targetSummary, summary, diffPreview, targetDevice, targetDeviceName, riskLevel, workItemId, conversationId
         }
     }
 
@@ -119,9 +120,11 @@ extension MacGatewayStatus.PendingApproval {
         detail = try container.decodeIfPresent(String.self, forKey: .detail)
         highRisk = try container.decodeIfPresent(Bool.self, forKey: .highRisk) ?? true
         requiresLocalApproval = try container.decodeIfPresent(Bool.self, forKey: .requiresLocalApproval) ?? false
-        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        summary = try container.decodeIfPresent(String.self, forKey: .targetSummary)
+            ?? container.decodeIfPresent(String.self, forKey: .summary)
         diffPreview = try container.decodeIfPresent(String.self, forKey: .diffPreview)
-        targetDeviceName = try container.decodeIfPresent(String.self, forKey: .targetDeviceName)
+        targetDeviceName = try container.decodeIfPresent(String.self, forKey: .targetDevice)
+            ?? container.decodeIfPresent(String.self, forKey: .targetDeviceName)
         riskLevel = try container.decodeIfPresent(String.self, forKey: .riskLevel)
         workItemId = try container.decodeIfPresent(String.self, forKey: .workItemId)
         conversationId = try container.decodeIfPresent(String.self, forKey: .conversationId)
@@ -164,7 +167,7 @@ struct MacGatewayBoardItem: Decodable, Equatable, Sendable, Identifiable {
 
         private enum CodingKeys: String, CodingKey {
             case sessionKey, toolCallId, tool, detail, highRisk, requiresLocalApproval
-            case summary, diffPreview, targetDeviceName, riskLevel, workItemId, conversationId
+            case targetSummary, summary, diffPreview, targetDevice, targetDeviceName, riskLevel, workItemId, conversationId
         }
     }
 
@@ -175,6 +178,7 @@ struct MacGatewayBoardItem: Decodable, Equatable, Sendable, Identifiable {
     var detail: String
     var updatedAt: Date
     var scheduleId: String?
+    var conversationId: String? = nil
     var nextRunAt: Date?
     var waitingForReply: Bool
     var failed: Bool
@@ -197,9 +201,11 @@ extension MacGatewayBoardItem.Approval {
         detail = try container.decodeIfPresent(String.self, forKey: .detail)
         highRisk = try container.decodeIfPresent(Bool.self, forKey: .highRisk) ?? true
         requiresLocalApproval = try container.decodeIfPresent(Bool.self, forKey: .requiresLocalApproval) ?? false
-        summary = try container.decodeIfPresent(String.self, forKey: .summary)
+        summary = try container.decodeIfPresent(String.self, forKey: .targetSummary)
+            ?? container.decodeIfPresent(String.self, forKey: .summary)
         diffPreview = try container.decodeIfPresent(String.self, forKey: .diffPreview)
-        targetDeviceName = try container.decodeIfPresent(String.self, forKey: .targetDeviceName)
+        targetDeviceName = try container.decodeIfPresent(String.self, forKey: .targetDevice)
+            ?? container.decodeIfPresent(String.self, forKey: .targetDeviceName)
         riskLevel = try container.decodeIfPresent(String.self, forKey: .riskLevel)
         workItemId = try container.decodeIfPresent(String.self, forKey: .workItemId)
         conversationId = try container.decodeIfPresent(String.self, forKey: .conversationId)

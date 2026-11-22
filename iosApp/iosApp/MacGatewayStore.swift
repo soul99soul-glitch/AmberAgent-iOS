@@ -525,6 +525,10 @@ final class MacGatewayStore {
                     notice = Notice(text: localized("前台或配对状态已变化，请重新核对批准"), isError: true)
                     return false
                 }
+                guard !requiresLocalApprovalOnly(sessionKey: sessionKey, toolCallId: toolCallId) else {
+                    notice = Notice(text: localized("此高危操作请在 Mac 上批准"), isError: true)
+                    return false
+                }
                 trustContext = .verifiedForegroundApp()
             } else {
                 trustContext = .unverifiedForegroundApp
@@ -559,11 +563,9 @@ final class MacGatewayStore {
         if localApprovalOnlyCallIds.contains(toolCallId) {
             return true
         }
-        if let boardApproval = boardItems.compactMap(\.approval).first(where: {
-            $0.sessionKey == sessionKey && $0.toolCallId == toolCallId
-        }) {
-            return boardApproval.requiresLocalApproval
-        }
+        if boardItems.contains(where: {
+            $0.approval?.sessionKey == sessionKey && $0.approval?.toolCallId == toolCallId && $0.approval?.requiresLocalApproval == true
+        }) { return true }
         if let session = status?.sessions.first(where: { $0.key == sessionKey }),
            let pending = session.pendingApproval,
            pending.toolCallId == toolCallId {
@@ -629,7 +631,11 @@ final class MacGatewayStore {
                 detail: IOSAppLocalization.string("等你确认", defaultValue: "等你确认") + " · " + pending.tool,
                 updatedAt: session.updatedAt, scheduleId: nil, nextRunAt: nil, waitingForReply: false, failed: false,
                 approval: .init(sessionKey: session.key, toolCallId: pending.toolCallId, tool: pending.tool,
-                                detail: pending.detail, highRisk: pending.highRisk))
+                                detail: pending.detail, highRisk: pending.highRisk,
+                                requiresLocalApproval: pending.requiresLocalApproval, summary: pending.summary,
+                                diffPreview: pending.diffPreview, targetDeviceName: pending.targetDeviceName,
+                                riskLevel: pending.riskLevel, workItemId: pending.workItemId,
+                                conversationId: pending.conversationId ?? session.conversationId))
         }
         // Same rule as the Mac's board: sessions with no prompt have nothing to show but their directory name.
         let items = approvals + sessions.filter { $0.agent != "amber" && $0.agent != "run" }

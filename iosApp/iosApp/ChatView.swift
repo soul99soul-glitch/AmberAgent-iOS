@@ -541,6 +541,7 @@ struct ChatView: View {
             composerState.activeDuetTab = .chat
         }
         .onChange(of: router.sharePrefillRevision) { _, _ in
+            _ = composerState.takeUnifiedMacTarget()
             composerState.activeDuetTab = .chat
             composerState.sharePrefillNotice = MacGatewayStore.shared.connection != nil
                 ? macGatewayL("来自系统分享 · 可直接发送或点「交给 Mac」")
@@ -685,6 +686,8 @@ struct ChatView: View {
     }
 
     private func handleConversationSwitch() {
+        _ = composerState.takeUnifiedMacTarget()
+        activeMacApprovalCard = nil
         requestedMessageAnchor = nil
         islandHoldToken &+= 1
         islandPresentation = nil
@@ -1042,64 +1045,18 @@ struct ChatView: View {
     private var unifiedMacDelegationDock: some View {
         let macGateway = MacGatewayStore.shared
         if macGateway.connection != nil {
-            let macRuns = macGateway.unifiedMacDelegatedRuns(for: currentConversationIdString)
-            let attachedApprovalIds = Set(macRuns.compactMap { $0.pendingApproval?.toolCallId })
-            let standaloneApprovals = macGateway.activeMacApprovalCardItems(for: currentConversationIdString).filter {
-                !attachedApprovalIds.contains($0.toolCallId)
-            }
-            if !macRuns.isEmpty || !standaloneApprovals.isEmpty {
-                ScrollView(.vertical, showsIndicators: false) {
-                    UnifiedMacDelegationTimelineSection(
-                        runs: macRuns,
-                        pendingStandaloneApprovals: standaloneApprovals,
-                        onRecheckPending: { run in
-                            Task { @MainActor in
-                                _ = await MacGatewayStore.shared.recheckPendingMacSubmission(
-                                    requestId: run.requestId,
-                                    workItemId: run.workItemId
-                                )
-                            }
-                        },
-                        onCancelPending: { run in
-                            Task { @MainActor in
-                                _ = await MacGatewayStore.shared.cancelPendingMacSubmission(
-                                    requestId: run.requestId,
-                                    workItemId: run.workItemId
-                                )
-                            }
-                        },
-                        onRecheckUnknown: { workItemId in
-                            Task { @MainActor in
-                                _ = await MacGatewayStore.shared.recheckOutcomeUnknownCloudWorkItem(workItemId: workItemId)
-                            }
-                        },
-                        onRetryUnknown: { workItemId in
-                            Task { @MainActor in
-                                _ = await MacGatewayStore.shared.retryOutcomeUnknownCloudWorkItem(workItemId: workItemId)
-                            }
-                        },
-                        onAbandonUnknown: { workItemId in
-                            _ = MacGatewayStore.shared.abandonOutcomeUnknownCloudWorkItem(workItemId: workItemId)
-                        },
-                        onFollowup: { workItemId in
-                            composerState.unifiedMacFollowupWorkItemId = workItemId
-                            composerState.isDelegateToMacArmed = false
-                            composerState.isInputFocused = true
-                        },
-                        onStop: { workItemId in
-                            Task { @MainActor in
-                                _ = await MacGatewayStore.shared.stopCloudWorkItem(workItemId: workItemId)
-                            }
-                        },
-                        onOpenApproval: { approval in
-                            activeMacApprovalCard = approval
-                        }
-                    )
-                    .padding(.horizontal, ChatLayout.contentHorizontalInset)
+            UnifiedMacDelegationTimelineSection(
+                conversationId: currentConversationIdString,
+                onFollowup: { workItemId in
+                    composerState.unifiedMacFollowupWorkItemId = workItemId
+                    composerState.isDelegateToMacArmed = false
+                    composerState.isInputFocused = true
+                },
+                onOpenApproval: { approval in
+                    activeMacApprovalCard = approval
                 }
-                .scrollBounceBehavior(.basedOnSize)
-                .frame(maxHeight: 220)
-            }
+            )
+            .id(currentConversationIdString)
         }
     }
 

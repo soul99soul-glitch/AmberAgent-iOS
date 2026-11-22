@@ -56,7 +56,7 @@ struct AmberSharePayload: Codable, Equatable, Sendable {
         if trimmedExisting.isEmpty {
             return cleanIncoming
         }
-        return "\(trimmedExisting)\n\n\(cleanIncoming)"
+        return "\(existingDraft)\n\n\(cleanIncoming)"
     }
 }
 
@@ -65,37 +65,25 @@ final class AmberShareHandoffStore: @unchecked Sendable {
     static let storageKey = "app.amber.ios.shareHandoff.pendingPayloads.v1"
     static let maxRetainedPayloads = 8
 
-    static let shared = AmberShareHandoffStore(
-        defaults: UserDefaults(suiteName: resolvedAppGroupIdentifier(forBundleIdentifier: Bundle.main.bundleIdentifier))
-            ?? .standard
-    )
+    static let shared: AmberShareHandoffStore? = {
+        guard let group = Bundle.main.object(forInfoDictionaryKey: "AmberShareAppGroup") as? String,
+              let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else { return nil }
+        return AmberShareHandoffStore(directory: container.appendingPathComponent("AmberShareInbox", isDirectory: true),
+                                      legacyDefaults: UserDefaults(suiteName: group))
+    }()
 
-    private let defaults: UserDefaults
+    private let directory: URL
+    private let legacyDefaults: UserDefaults?
     private let lock = NSLock()
 
-    init(defaults: UserDefaults) {
-        self.defaults = defaults
-    }
-
-    static func resolvedAppGroupIdentifier(forBundleIdentifier bundleIdentifier: String?) -> String {
-        let bundleId = bundleIdentifier ?? ""
-        if bundleId.contains(".experimental-gpl") {
-            return "group.app.amber.ios.experimental-gpl.watchkit"
-        }
-        return "group.app.amber.ios.watchkit"
-    }
-
-    static func resolvedURLScheme(forBundleIdentifier bundleIdentifier: String?) -> String {
-        let bundleId = bundleIdentifier ?? ""
-        if bundleId.contains(".experimental-gpl") {
-            return "amber-experimental"
-        }
-        return "amber"
+    init(directory: URL, legacyDefaults: UserDefaults? = nil) {
+        self.directory = directory
+        self.legacyDefaults = legacyDefaults
     }
 
     static func shareDeepLinkURL(
         for handoffID: String,
-        scheme: String = resolvedURLScheme(forBundleIdentifier: Bundle.main.bundleIdentifier)
+        scheme: String
     ) -> URL? {
         guard !handoffID.isEmpty, handoffID.count <= 64 else { return nil }
         var components = URLComponents()
@@ -107,57 +95,75 @@ final class AmberShareHandoffStore: @unchecked Sendable {
 
     @discardableResult
     func save(_ payload: AmberSharePayload, now: Date = Date()) -> Bool {
-        guard payload.formattedPrefillText != nil else { return false }
+        guard payload.formattedPrefillText != nil, let file = fileURL(id: payload.id) else { return false }
         return lock.withLock {
-            var items = loadAllLocked(now: now)
-            items.removeAll { $0.id.caseInsensitiveCompare(payload.id) == .orderedSame }
-            items.append(payload)
-            if items.count > Self.maxRetainedPayloads {
-                items = Array(items.suffix(Self.maxRetainedPayloads))
-            }
-            return persistLocked(items)
+            do {
+                // Commit one file before opening the host. Consuming a different share cannot undo this write.
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try JSONEncoder().encode(payload).write(to: file, options: .atomic)
+                for item in pendingFiles(now: now).dropLast(Self.maxRetainedPayloads) {
+                    try? FileManager.default.removeItem(at: item.file)
+                }
+                return true
+            } catch { return false }
         }
     }
 
     func consume(id: String, now: Date = Date()) -> AmberSharePayload? {
         lock.withLock {
-            var items = loadAllLocked(now: now)
-            guard let index = items.firstIndex(where: { $0.id.caseInsensitiveCompare(id) == .orderedSame }) else {
-                _ = persistLocked(items)
-                return nil
+            if let file = fileURL(id: id), let item = read(file, now: now) {
+                return take(item, file: file)
             }
-            let payload = items.remove(at: index)
-            _ = persistLocked(items)
-            return payload
+            return consumeLegacy(id: id, now: now)
         }
     }
 
     func consumeLatestPending(now: Date = Date()) -> AmberSharePayload? {
         lock.withLock {
-            var items = loadAllLocked(now: now)
-            guard let latest = items.popLast() else {
-                return nil
-            }
-            _ = persistLocked(items)
-            return latest
+            guard let latest = pendingFiles(now: now).last else { return consumeLegacy(id: nil, now: now) }
+            return take(latest.payload, file: latest.file)
         }
     }
 
-    private func loadAllLocked(now: Date) -> [AmberSharePayload] {
-        guard let data = defaults.data(forKey: Self.storageKey),
-              let decoded = try? JSONDecoder().decode([AmberSharePayload].self, from: data) else {
-            return []
-        }
-        return decoded.filter { now.timeIntervalSince($0.createdAt) <= AmberSharePayload.expirationSeconds }
+    private func fileURL(id: String) -> URL? {
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+        guard !id.isEmpty, id.utf8.count <= 64, id.unicodeScalars.allSatisfy(allowed.contains) else { return nil }
+        return directory.appendingPathComponent(id.lowercased()).appendingPathExtension("json")
     }
 
-    private func persistLocked(_ items: [AmberSharePayload]) -> Bool {
-        if items.isEmpty {
-            defaults.removeObject(forKey: Self.storageKey)
-            return true
+    private func take(_ payload: AmberSharePayload, file: URL) -> AmberSharePayload? {
+        do {
+            try FileManager.default.removeItem(at: file)
+            return payload
+        } catch { return nil }
+    }
+
+    private func read(_ file: URL, now: Date) -> AmberSharePayload? {
+        guard let data = try? Data(contentsOf: file),
+              let payload = try? JSONDecoder().decode(AmberSharePayload.self, from: data) else { return nil }
+        guard now.timeIntervalSince(payload.createdAt) <= AmberSharePayload.expirationSeconds else {
+            try? FileManager.default.removeItem(at: file)
+            return nil
         }
-        guard let data = try? JSONEncoder().encode(items) else { return false }
-        defaults.set(data, forKey: Self.storageKey)
-        return true
+        return payload
+    }
+
+    private func pendingFiles(now: Date) -> [(file: URL, payload: AmberSharePayload)] {
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        return files.filter { $0.pathExtension == "json" }.compactMap { file in
+            read(file, now: now).map { (file: file, payload: $0) }
+        }.sorted { $0.payload.createdAt < $1.payload.createdAt }
+    }
+
+    // Shares queued by the previous extension version live for up to 30 minutes.
+    private func consumeLegacy(id: String?, now: Date) -> AmberSharePayload? {
+        guard let defaults = legacyDefaults, let data = defaults.data(forKey: Self.storageKey),
+              var items = try? JSONDecoder().decode([AmberSharePayload].self, from: data) else { return nil }
+        items.removeAll { now.timeIntervalSince($0.createdAt) > AmberSharePayload.expirationSeconds }
+        let index = id.flatMap { target in items.firstIndex { $0.id.caseInsensitiveCompare(target) == .orderedSame } }
+        let payload = id == nil ? items.popLast() : index.map { items.remove(at: $0) }
+        if items.isEmpty { defaults.removeObject(forKey: Self.storageKey) }
+        else if let remaining = try? JSONEncoder().encode(items) { defaults.set(remaining, forKey: Self.storageKey) }
+        return payload
     }
 }

@@ -90,6 +90,9 @@ struct MacGatewayCloudWorkItem: Codable, Equatable, Identifiable, Sendable {
     var ledgerId: String? = nil
     var outcomeUnknown: Bool? = nil
 
+    var sourceRefs: [String]? = nil
+    var sourcePaths: [String]? = nil
+
     init(
         id: String,
         agentId: String,
@@ -250,6 +253,9 @@ struct MacGatewayCloudWorkDetail: Codable, Equatable, Sendable {
     var observedSeq: Int64? = nil
     var ledgerId: String? = nil
     var outcomeUnknown: Bool? = nil
+
+    var sourceRefs: [String]? = nil
+    var sourcePaths: [String]? = nil
 
     init(
         workItem: MacGatewayCloudWorkItem,

@@ -41,6 +41,16 @@ struct ChatComposerLocalState {
     var unifiedMacFollowupWorkItemId: String? = nil
     var sharePrefillNotice: String? = nil
 
+    /// Transfer exactly one send to the remote owner before waiting for its receipt.
+    mutating func takeUnifiedMacTarget() -> String? {
+        let target = unifiedMacFollowupWorkItemId
+        unifiedMacFollowupWorkItemId = nil
+        isDelegateToMacArmed = false
+        cloudDialogueErrorMessage = nil
+        sharePrefillNotice = nil
+        return target
+    }
+
     static func cloudDialogueFingerprint(text: String, targetWorkItemId: String?) -> String {
         "\(targetWorkItemId ?? "main")\u{0000}\(text)"
     }

@@ -336,6 +336,9 @@ struct AppShell: View {
         IOSSubAgentActivityStore.shared.start()
         conversationActivityCenter.start()
         await openPendingAgentActivityIfReady()
+        if scenePhase == .active, pendingAppDeepLinkDestination == nil {
+            consumePendingShareInboxIfAvailable()
+        }
         await openPendingAppDeepLinkIfReady()
         if scenePhase == .active {
             await IOSWakeScheduler.shared.applicationBecameActive()
@@ -730,7 +733,7 @@ struct AppShell: View {
                 _ = await MacGatewayStore.shared.ensureCloudTaskLoaded(workItemId: workItemId)
             }
         case .shareInbox(let handoffID):
-            if let payload = AmberShareHandoffStore.shared.consume(id: handoffID),
+            if let payload = AmberShareHandoffStore.shared?.consume(id: handoffID),
                let prefill = payload.formattedPrefillText {
                 applySharePrefillToMainTimeline(prefill)
             }
@@ -749,9 +752,8 @@ struct AppShell: View {
     }
 
     private func consumePendingShareInboxIfAvailable() {
-        guard didBootstrapConversations else { return }
-        if case .shareInbox = pendingAppDeepLinkDestination { return }
-        guard let payload = AmberShareHandoffStore.shared.consumeLatestPending(),
+        guard didBootstrapConversations, pendingAppDeepLinkDestination == nil, pendingAgentActivityTarget == nil else { return }
+        guard let payload = AmberShareHandoffStore.shared?.consumeLatestPending(),
               let prefill = payload.formattedPrefillText else { return }
         applySharePrefillToMainTimeline(prefill)
     }

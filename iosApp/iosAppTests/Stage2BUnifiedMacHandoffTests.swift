@@ -171,10 +171,16 @@ struct Stage2BUnifiedMacHandoffTests {
             conversationId: convId,
             requestId: reqCancel
         )
+        let postsBeforeLookup = await recorder.snapshot().1.count
+        _ = await store.recheckPendingMacSubmission(requestId: reqCancel, workItemId: nil)
+        #expect(await recorder.snapshot().1.count == postsBeforeLookup)
         let cancelled = await store.cancelPendingMacSubmission(requestId: reqCancel, workItemId: nil)
         #expect(cancelled == true)
         let cancelledRun = try #require(store.unifiedMacDelegatedRuns(for: convId).first(where: { $0.requestId == reqCancel }))
-        #expect(cancelledRun.badge == .cancelled)
+        #expect(cancelledRun.badge == .trackingEnded)
+        #expect(await store.cancelPendingMacSubmission(requestId: reqCancel, workItemId: nil))
+        store.loadPersistedCloudDialogueState()
+        #expect(store.unifiedMacDelegatedRuns(for: convId).first { $0.requestId == reqCancel }?.badge == .trackingEnded)
     }
 
     // MARK: - 2. Local B Unblocked While Mac A Runs + Source Annotations + Targeted Follow-Up
@@ -254,13 +260,15 @@ struct Stage2BUnifiedMacHandoffTests {
         // Arm "交给 Mac" in composer, submit Mac task A, then confirm composer resets to local default for B.
         var composerState = ChatComposerLocalState()
         composerState.isDelegateToMacArmed = true
+        let targetA = composerState.takeUnifiedMacTarget()
+        #expect(!composerState.isDelegateToMacArmed && !composerState.isSubmittingCloudDialogue)
         let receiptA = try await store.delegateToMacInUnifiedTimeline(
             text: "分析本地仓库日志",
             conversationId: convId,
-            requestId: reqA
+            requestId: reqA,
+            targetWorkItemId: targetA
         ).get()
         store.stopCloudDialoguePolling()
-        composerState.isDelegateToMacArmed = false
 
         #expect(receiptA.workItemIds == ["work:mac-a"])
         #expect(composerState.isDelegateToMacArmed == false, "After dispatching Mac A, local B must immediately default to local chat")
@@ -310,9 +318,10 @@ struct Stage2BUnifiedMacHandoffTests {
               "conversationId": "\(convId)",
               "sourceRefs": ["log://gateway#L42", "Sources/App.swift"],
               "sourcePaths": ["Sources/App.swift", "docs/report.md"]
-            }
+            },
+            {"seq":3,"id":"evt-sibling","kind":"task_result","role":"assistant","text":"另一项任务","topicId":"topic-mac-a","workItemId":"work:sibling","outcome":"completed","conversationId":"\(convId)","sourcePaths":["other.txt"]}
           ],
-          "nextCursor": 2,
+          "nextCursor": 3,
           "conversationId": "\(convId)"
         }
         """
@@ -322,6 +331,7 @@ struct Stage2BUnifiedMacHandoffTests {
         )
         let completedRun = try #require(store.unifiedMacDelegatedRuns(for: convId).first(where: { $0.workItemId == "work:mac-a" }))
         #expect(completedRun.badge == .completed)
+        #expect(!completedRun.canFollowup)
         #expect(completedRun.resultText == "日志分析完成：发现 2 处超时重试。")
         #expect(completedRun.sourceAnnotations == ["log://gateway#L42", "Sources/App.swift", "docs/report.md"])
 
@@ -424,7 +434,8 @@ struct Stage2BUnifiedMacHandoffTests {
                             "detail": "sudo chmod 600 /etc/hosts",
                             "highRisk": true,
                             "requiresLocalApproval": true,
-                            "summary": "修改系统 hosts 权限",
+                            "targetSummary": "修改系统 hosts 权限",
+                            "targetDevice": "studio-01",
                             "diffPreview": "- rw-r--r-- /etc/hosts\\n+ rw------- /etc/hosts",
                             "riskLevel": "L3"
                           }
@@ -478,10 +489,20 @@ struct Stage2BUnifiedMacHandoffTests {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         await store.refresh()
+        let fallback = MacGatewayStore.fallbackBoard(sessions: store.status?.sessions ?? [])
+        let fallbackApproval = try #require(fallback.compactMap(\.approval).first { $0.toolCallId == "call-local-only" })
+        #expect(fallbackApproval.requiresLocalApproval && fallbackApproval.targetDeviceName == "studio-01")
         let cards = store.activeMacApprovalCardItems()
         let localOnlyCard = try #require(cards.first(where: { $0.toolCallId == "call-local-only" }))
         #expect(localOnlyCard.requiresLocalApproval == true)
         #expect(localOnlyCard.riskTier == .l3)
+        #expect(localOnlyCard.summary == "修改系统 hosts 权限")
+        #expect(localOnlyCard.targetDeviceName == "studio-01")
+        let workerApproval = try JSONDecoder().decode(MacGatewayBoardItem.Approval.self, from: Data(#"{"sessionKey":"amber:wi:work:mac-a:92196b26-b4b1-435f-95ca-2428a3bbbd66","toolCallId":"one","tool":"edit","targetSummary":"修改计划","targetDevice":"Mac mini"}"#.utf8))
+        let workerCard = MacGatewayApprovalCardItem(approval: workerApproval, title: nil, fallbackDeviceName: "Mac")
+        #expect(workerCard.workItemId == "work:mac-a")
+        #expect(workerCard.summary == "修改计划" && workerCard.targetDeviceName == "Mac mini")
+        #expect(localOnlyCard.workItemId == nil)
         #expect(localOnlyCard.effectivePreviewText?.contains("/etc/hosts") == true)
 
         // 1. requiresLocalApproval == true -> remote allow MUST fail closed locally without sending HTTP request.
@@ -562,6 +583,8 @@ struct Stage2BUnifiedMacHandoffTests {
                       "failure": null,
                       "sessionArchived": false,
                       "resultMarkdown": "核对后确认已完成",
+                      "sourceRefs": ["commit:123"],
+                      "sourcePaths": ["out.txt"],
                       "outcomeUnknown": false
                     }
                     """
@@ -617,18 +640,21 @@ struct Stage2BUnifiedMacHandoffTests {
         let rechecked = try #require(store.unifiedMacDelegatedRuns(for: convId).first(where: { $0.workItemId == "work:u-recheck" }))
         #expect(rechecked.isOutcomeUnknown == false)
         #expect(rechecked.badge == .completed)
+        #expect(rechecked.sourceAnnotations == ["commit:123", "out.txt"])
+        #expect(rechecked.resultText?.contains("状态未知") != true)
 
         // 2. Retry after confirming not executed
         _ = try await store.retryOutcomeUnknownCloudWorkItem(workItemId: "work:u-retry", requestId: retryReqId).get()
         store.stopCloudDialoguePolling()
         let retried = try #require(store.unifiedMacDelegatedRuns(for: convId).first(where: { $0.workItemId == "work:u-retry" }))
         #expect(retried.isOutcomeUnknown == false)
+        #expect(retried.badge == .retried && !retried.canFollowup)
 
         // 3. Abandon
         #expect(store.abandonOutcomeUnknownCloudWorkItem(workItemId: "work:u-abandon") == true)
         let abandoned = try #require(store.unifiedMacDelegatedRuns(for: convId).first(where: { $0.workItemId == "work:u-abandon" }))
         #expect(abandoned.isOutcomeUnknown == false)
-        #expect(abandoned.badge == .cancelled)
+        #expect(abandoned.badge == .trackingEnded)
     }
 
     // MARK: - 5. Share Sheet Prefill Routing
@@ -659,23 +685,32 @@ struct Stage2BUnifiedMacHandoffTests {
                 == "先看这段：\n\n\(prefill)"
         )
 
+        #expect(AmberSharePayload.mergeIntoDraft(existingDraft: "  code  \n", incoming: "url") == "  code  \n\n\nurl")
+
         // App Group store save + single-use consume + expiration.
         let suiteName = "Stage2BTests.ShareStore.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        let store = AmberShareHandoffStore(defaults: defaults)
-        #expect(store.save(payload) == true)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suiteName)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let publisher = AmberShareHandoffStore(directory: directory)
+        let store = AmberShareHandoffStore(directory: directory, legacyDefaults: defaults)
+        #expect(publisher.save(payload))
         let consumed = try #require(store.consume(id: handoffId))
         #expect(consumed.id == handoffId)
         #expect(consumed.formattedPrefillText == prefill)
         // Single-use: second consume returns nil.
         #expect(store.consume(id: handoffId) == nil)
+        let legacyData = try JSONEncoder().encode([payload])
+        defaults.set(legacyData, forKey: AmberShareHandoffStore.storageKey)
+        #expect(store.consume(id: handoffId) == payload)
+        #expect(store.consume(id: handoffId) == nil)
 
         // Fallback consumeLatestPending works when host openURL wasn't triggered.
         let fallbackPayload = AmberSharePayload(id: "share-fallback-1", urlString: "https://apple.com")
-        #expect(store.save(fallbackPayload) == true)
+        #expect(publisher.save(fallbackPayload))
         let latest = try #require(store.consumeLatestPending())
         #expect(latest.id == "share-fallback-1")
         #expect(latest.formattedPrefillText == "https://apple.com")

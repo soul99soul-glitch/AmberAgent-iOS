@@ -1,4 +1,3 @@
-import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
@@ -77,16 +76,16 @@ final class ShareViewController: UIViewController {
         }
 
         let store = AmberShareHandoffStore.shared
-        guard store.save(payload) else {
+        guard store?.save(payload) == true else {
             statusLabel.text = "无法写入共享队列"
             detailLabel.text = "请返回 Amber 后重试。"
             closeButton.isHidden = false
             return
         }
 
-        let scheme = AmberShareHandoffStore.resolvedURLScheme(forBundleIdentifier: Bundle.main.bundleIdentifier)
-        if let url = AmberShareHandoffStore.shareDeepLinkURL(for: payload.id, scheme: scheme),
-           openHostApp(url: url) {
+        if let scheme = Bundle.main.object(forInfoDictionaryKey: "AmberHostURLScheme") as? String,
+           let url = AmberShareHandoffStore.shareDeepLinkURL(for: payload.id, scheme: scheme),
+           await extensionContext?.open(url) == true {
             extensionContext?.completeRequest(returningItems: nil)
             return
         }
@@ -162,25 +161,4 @@ final class ShareViewController: UIViewController {
         }
     }
 
-    @MainActor
-    private func openHostApp(url: URL) -> Bool {
-        let openSelector = NSSelectorFromString("openURL:options:completionHandler:")
-        let legacySelector = NSSelectorFromString("openURL:")
-        var responder: UIResponder? = self
-        while let current = responder {
-            if current.responds(to: openSelector) {
-                let imp = current.method(for: openSelector)
-                typealias OpenFunc = @convention(c) (AnyObject, Selector, NSURL, NSDictionary, Any?) -> Void
-                let fn = unsafeBitCast(imp, to: OpenFunc.self)
-                fn(current, openSelector, url as NSURL, [:], nil)
-                return true
-            }
-            if current.responds(to: legacySelector) {
-                _ = current.perform(legacySelector, with: url)
-                return true
-            }
-            responder = current.next
-        }
-        return false
-    }
 }

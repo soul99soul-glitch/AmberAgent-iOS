@@ -54,7 +54,8 @@ struct MacReadOnlyDiffApprovalSheet: View {
 
                     if isLocalApprovalRequired {
                         macLocalRedlineBanner
-                    } else if let localNotice, !localNotice.isEmpty {
+                    }
+                    if let localNotice, !localNotice.isEmpty {
                         Text(verbatim: localNotice)
                             .font(.footnote)
                             .foregroundStyle(AmberTheme.accentAmber)
@@ -232,7 +233,7 @@ struct MacReadOnlyDiffApprovalSheet: View {
             .disabled(isBusy)
             .accessibilityIdentifier("mac.approval.rejectButton")
 
-            if let onRequestModification {
+            if let onRequestModification, item.workItemId != nil {
                 Button {
                     dismiss()
                     onRequestModification(item)
@@ -289,7 +290,7 @@ struct MacReadOnlyDiffApprovalSheet: View {
             isSubmitting = false
             if delivered {
                 dismiss()
-            } else if !isLocalApprovalRequired {
+            } else if !allow || !isLocalApprovalRequired {
                 localNotice = store.notice?.text ?? macGatewayL("操作未完成，请稍后重试")
             }
         }
@@ -392,56 +393,98 @@ struct ComposerDelegateToMacPill: View {
 // MARK: - Unified Timeline Mac Delegation Cards
 
 struct UnifiedMacDelegationTimelineSection: View {
-    let runs: [MacDelegatedTimelineRun]
-    let pendingStandaloneApprovals: [MacGatewayApprovalCardItem]
-    let onRecheckPending: (MacDelegatedTimelineRun) -> Void
-    let onCancelPending: (MacDelegatedTimelineRun) -> Void
-    let onRecheckUnknown: (String) -> Void
-    let onRetryUnknown: (String) -> Void
-    let onAbandonUnknown: (String) -> Void
+    let conversationId: String?
+    private struct Projection: Equatable, Sendable {
+        var runs: [MacDelegatedTimelineRun]
+        var standalone: [MacGatewayApprovalCardItem]
+    }
+    @Environment(\.locale) private var locale
+    @State private var projection = Projection(runs: [], standalone: [])
+    @State private var actionError: String?
+    private let store = MacGatewayStore.shared
     let onFollowup: (String) -> Void
-    let onStop: (String) -> Void
     let onOpenApproval: (MacGatewayApprovalCardItem) -> Void
 
     var body: some View {
-        if !runs.isEmpty || !pendingStandaloneApprovals.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(runs) { run in
-                    UnifiedMacDelegationRunCard(
-                        run: run,
-                        onRecheckPending: { onRecheckPending(run) },
-                        onCancelPending: { onCancelPending(run) },
-                        onRecheckUnknown: {
-                            if let id = run.workItemId { onRecheckUnknown(id) }
-                        },
-                        onRetryUnknown: {
-                            if let id = run.workItemId { onRetryUnknown(id) }
-                        },
-                        onAbandonUnknown: {
-                            if let id = run.workItemId { onAbandonUnknown(id) }
-                        },
-                        onFollowup: {
-                            if let id = run.workItemId { onFollowup(id) }
-                        },
-                        onStop: {
-                            if let id = run.workItemId { onStop(id) }
-                        },
-                        onOpenApproval: {
-                            if let approval = run.pendingApproval { onOpenApproval(approval) }
-                        }
-                    )
+        VStack(spacing: 0) {
+            if !projection.runs.isEmpty || !projection.standalone.isEmpty {
+                ScrollView(.vertical, showsIndicators: false) {
+                    cards.padding(.horizontal, ChatLayout.contentHorizontalInset)
                 }
-
-                ForEach(pendingStandaloneApprovals) { approval in
-                    MacPendingApprovalTimelineBanner(approval: approval) {
-                        onOpenApproval(approval)
-                    }
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(maxHeight: 220)
+                if let actionError {
+                    Text(verbatim: actionError).font(.caption).foregroundStyle(AmberTheme.accentAmber)
                 }
             }
-            .padding(.top, 10)
-            .padding(.bottom, 6)
-            .accessibilityIdentifier("chat.unifiedTimeline.macDelegations")
         }
+        .task(id: locale.identifier) {
+            let updates = Observations { @MainActor in
+                let approvals = store.activeMacApprovalCardItems(for: conversationId)
+                let runs = store.unifiedMacDelegatedRuns(for: conversationId, approvals: approvals)
+                let attached = Set(runs.compactMap { $0.pendingApproval?.id })
+                return Projection(runs: runs, standalone: approvals.filter { !attached.contains($0.id) })
+            }
+            for await update in updates {
+                guard !Task.isCancelled else { break }
+                if projection != update { projection = update }
+            }
+        }
+    }
+
+    private func performAction(_ action: @escaping @MainActor () async throws -> Void) {
+        actionError = nil
+        Task { @MainActor in
+            do { try await action() }
+            catch { actionError = error.localizedDescription }
+        }
+    }
+
+    private var cards: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(projection.runs) { run in
+                UnifiedMacDelegationRunCard(
+                    run: run,
+                    onRecheckPending: {
+                        performAction { try await store.recheckPendingMacSubmission(requestId: run.requestId, workItemId: run.workItemId).get() }
+                    },
+                    onCancelPending: {
+                        performAction {
+                            guard await store.cancelPendingMacSubmission(requestId: run.requestId, workItemId: run.workItemId) else {
+                                throw MacGatewayError.server(macGatewayL("未能确认取消，请重新核对 Mac 状态"))
+                            }
+                        }
+                    },
+                    onRecheckUnknown: {
+                        if let id = run.workItemId { performAction { _ = try await store.recheckOutcomeUnknownCloudWorkItem(workItemId: id).get() } }
+                    },
+                    onRetryUnknown: {
+                        if let id = run.workItemId { performAction { _ = try await store.retryOutcomeUnknownCloudWorkItem(workItemId: id).get() } }
+                    },
+                    onAbandonUnknown: {
+                        if let id = run.workItemId { _ = store.abandonOutcomeUnknownCloudWorkItem(workItemId: id) }
+                    },
+                    onFollowup: {
+                        if let id = run.workItemId { onFollowup(id) }
+                    },
+                    onStop: {
+                        if let id = run.workItemId { performAction { _ = try await store.stopCloudWorkItem(workItemId: id).get() } }
+                    },
+                    onOpenApproval: {
+                        if let approval = run.pendingApproval { onOpenApproval(approval) }
+                    }
+                )
+            }
+
+            ForEach(projection.standalone) { approval in
+                MacPendingApprovalTimelineBanner(approval: approval) {
+                    onOpenApproval(approval)
+                }
+            }
+        }
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+        .accessibilityIdentifier("chat.unifiedTimeline.macDelegations")
     }
 }
 
@@ -458,11 +501,11 @@ private struct UnifiedMacDelegationRunCard: View {
 
     private var badgeTint: Color {
         switch run.badge {
-        case .running: return AmberTheme.accent
+        case .running, .followup: return AmberTheme.accent
         case .awaitingMacApproval, .outcomeUnknown: return AmberTheme.accentAmber
         case .completed: return AmberTheme.accentGreen
         case .failed: return AmberTheme.accentRed
-        case .cancelled: return AmberTheme.muted
+        case .cancelled, .retried, .trackingEnded: return AmberTheme.muted
         }
     }
 
@@ -472,7 +515,7 @@ private struct UnifiedMacDelegationRunCard: View {
                 HStack(spacing: 4) {
                     Image(systemName: "desktopcomputer")
                         .font(.system(size: 10.5, weight: .semibold))
-                    Text(verbatim: "[\(run.badge.label)]")
+                    Text("[\(Text(run.badge.label))]")
                         .font(.caption2.weight(.semibold))
                 }
                 .foregroundStyle(badgeTint)
@@ -488,7 +531,7 @@ private struct UnifiedMacDelegationRunCard: View {
                 Spacer(minLength: 4)
 
                 if run.canStop, run.workItemId != nil, !run.isReceiptUnconfirmed {
-                    Button(macGatewayL("停止"), action: onStop)
+                    Button("停止", action: onStop)
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(AmberTheme.accentRed)
                         .padding(.horizontal, 8)
@@ -551,32 +594,32 @@ private struct UnifiedMacDelegationRunCard: View {
     private var actionBar: some View {
         if run.isOutcomeUnknown, run.workItemId != nil {
             HStack(spacing: 8) {
-                compactPill(macGatewayL("重查状态"), tint: AmberTheme.accent, action: onRecheckUnknown)
-                compactPill(macGatewayL("确认未执行后重试"), tint: AmberTheme.accentAmber, action: onRetryUnknown)
-                compactPill(macGatewayL("放弃"), tint: AmberTheme.muted, action: onAbandonUnknown)
+                compactPill("重查状态", tint: AmberTheme.accent, action: onRecheckUnknown)
+                compactPill("确认未执行后重试", tint: AmberTheme.accentAmber, action: onRetryUnknown)
+                compactPill("放弃", tint: AmberTheme.muted, action: onAbandonUnknown)
             }
             .accessibilityIdentifier("chat.macRun.outcomeUnknownActions")
         } else if run.isReceiptUnconfirmed {
             HStack(spacing: 8) {
-                compactPill(macGatewayL("重查状态"), tint: AmberTheme.accent, action: onRecheckPending)
-                compactPill(macGatewayL("显式取消"), tint: AmberTheme.accentRed, action: onCancelPending)
+                compactPill("重查状态", tint: AmberTheme.accent, action: onRecheckPending)
+                compactPill("显式取消", tint: AmberTheme.accentRed, action: onCancelPending)
             }
             .accessibilityIdentifier("chat.macRun.weakNetworkActions")
         } else {
             HStack(spacing: 8) {
                 if run.pendingApproval != nil {
-                    compactPill(macGatewayL("查看 Diff 并审批"), tint: AmberTheme.accentAmber, action: onOpenApproval)
+                    compactPill("查看 Diff 并审批", tint: AmberTheme.accentAmber, action: onOpenApproval)
                 }
                 if run.canFollowup, run.workItemId != nil {
-                    compactPill(macGatewayL("点名补充修改"), tint: AmberTheme.accent, action: onFollowup)
+                    compactPill("点名补充修改", tint: AmberTheme.accent, action: onFollowup)
                 }
             }
         }
     }
 
-    private func compactPill(_ title: String, tint: Color, action: @escaping () -> Void) -> some View {
+    private func compactPill(_ title: LocalizedStringKey, tint: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(verbatim: title)
+            Text(title)
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(tint)
                 .padding(.horizontal, 10)
@@ -599,13 +642,13 @@ private struct MacPendingApprovalTimelineBanner: View {
                     .foregroundStyle(approval.requiresLocalApproval ? AmberTheme.accentRed : AmberTheme.accentAmber)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: "[\(macGatewayL("等待 Mac 确认"))] \(approval.summary)")
+                    Text("[等待 Mac 确认] \(approval.summary)")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground)
                         .lineLimit(1)
-                    Text(verbatim: approval.requiresLocalApproval
-                         ? macGatewayL("此高危操作请在 Mac 上批准 · 点按查看只读差异")
-                         : macGatewayL("点按打开半屏只读 Diff 审批卡"))
+                    Text(approval.requiresLocalApproval
+                         ? LocalizedStringKey("此高危操作请在 Mac 上批准 · 点按查看只读差异")
+                         : "点按打开半屏只读 Diff 审批卡")
                         .font(.caption2)
                         .foregroundStyle(AmberTheme.muted)
                         .lineLimit(1)

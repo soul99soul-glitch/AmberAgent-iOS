@@ -300,7 +300,7 @@ extension ChatView {
                         VStack(spacing: 6) {
                             if !isCloudMainDialogueActive,
                                !collapsesComposerForDuetPanel,
-                               let macConnection = MacGatewayStore.shared.connection {
+                               MacGatewayStore.shared.connection != nil || isUnifiedMacDelegationTargeted {
                                 HStack(spacing: 8) {
                                     if let followupId = composerState.unifiedMacFollowupWorkItemId {
                                         HStack(spacing: 6) {
@@ -331,7 +331,7 @@ extension ChatView {
                                     } else {
                                         ComposerDelegateToMacPill(
                                             isArmed: composerState.isDelegateToMacArmed,
-                                            deviceName: macConnection.name,
+                                            deviceName: MacGatewayStore.shared.connection?.name ?? "Mac",
                                             isReachable: MacGatewayStore.shared.isReachable != false
                                         ) {
                                             composerState.isDelegateToMacArmed.toggle()
@@ -385,8 +385,7 @@ extension ChatView {
                                     .foregroundStyle(AmberTheme.muted)
                             }
 
-                            if (isCloudMainDialogueActive || isUnifiedMacDelegationTargeted),
-                               let cloudError = composerState.cloudDialogueErrorMessage,
+                            if let cloudError = composerState.cloudDialogueErrorMessage,
                                !collapsesComposerForDuetPanel {
                                 Text(verbatim: cloudError)
                                     .font(.caption)
@@ -693,9 +692,7 @@ extension ChatView {
     }
 
     var isUnifiedMacDelegationTargeted: Bool {
-        MacGatewayStore.shared.connection != nil
-            && !isCloudMainDialogueActive
-            && (composerState.isDelegateToMacArmed || composerState.unifiedMacFollowupWorkItemId != nil)
+        !isCloudMainDialogueActive && (composerState.isDelegateToMacArmed || composerState.unifiedMacFollowupWorkItemId != nil)
     }
 
     private func sendEnabled(for text: String) -> Bool {
@@ -722,6 +719,7 @@ extension ChatView {
             return
         }
         composerState.sharePrefillNotice = nil
+        composerState.cloudDialogueErrorMessage = nil
         viewportState.followPaused = false
         viewModel.sendMessage(startsGenerationAfterInsertion: true)
     }
@@ -733,73 +731,38 @@ extension ChatView {
     /// falls back to local execution on weak network / receipt loss.
     private func delegateToMacFromUnifiedTimeline(text: String) {
         let store = MacGatewayStore.shared
-        let targetWorkItemId = composerState.unifiedMacFollowupWorkItemId
-        let submission = composerState.beginCloudDialogueSubmit(
-            text: text,
-            targetWorkItemId: targetWorkItemId
-        )
-        composerState.sharePrefillNotice = nil
+        guard let conversationId = currentConversationIdString, store.client != nil else {
+            composerState.cloudDialogueErrorMessage = macGatewayL("会话或配对尚未就绪，草稿已保留")
+            return
+        }
+        let request = MacGatewayCloudDialogueInputRequest(text: text, conversationId: conversationId)
+        if let error = request.validationError {
+            composerState.cloudDialogueErrorMessage = error
+            return
+        }
 
-        Task { @MainActor in
-            let stableConversationId: String
-            if let existingId = currentConversationIdString, !existingId.isEmpty {
-                stableConversationId = existingId
-            } else if await conversationStore.newConversation(),
-                      let createdId = conversationStore.currentConversation?.id.toHexDashString() {
-                stableConversationId = createdId
-            } else {
-                stableConversationId = UUID().uuidString.lowercased()
-            }
-
+        let target = composerState.takeUnifiedMacTarget()
+        viewModel.inputText = ""
+        // Start on the current actor so the validated pairing and draft are still the ones selected at tap.
+        Task.immediate { @MainActor in
             let result = await store.delegateToMacInUnifiedTimeline(
                 text: text,
-                conversationId: stableConversationId,
-                requestId: submission.requestId,
-                targetWorkItemId: targetWorkItemId
+                conversationId: conversationId,
+                requestId: request.requestId,
+                targetWorkItemId: target
             )
-
-            var currentDraft = composerInputController.currentText() ?? viewModel.inputText
-            var selectedFollowupId = composerState.unifiedMacFollowupWorkItemId
-            composerState.finishCloudDialogueSubmit(
-                generation: submission.generation,
-                submittedText: text,
-                submittedTargetWorkItemId: targetWorkItemId,
-                submittedFingerprint: submission.fingerprint,
-                currentInputText: &currentDraft,
-                selectedWorkItemId: &selectedFollowupId,
-                result: result
-            )
-            if viewModel.inputText != currentDraft {
-                viewModel.inputText = currentDraft
-            }
-            if composerState.unifiedMacFollowupWorkItemId != selectedFollowupId {
-                composerState.unifiedMacFollowupWorkItemId = selectedFollowupId
-            }
-            // Return to local default so the user can immediately chat locally (B) while Mac runs (A).
-            composerState.isDelegateToMacArmed = false
-            if case .success = result {
-                composerState.cloudDialogueErrorMessage = nil
-                _ = await store.pollCloudDialogueEvents()
-            } else {
-                // Weak network / missing receipt: NEVER silently fall back to local execution.
-                // Clear draft if persisted as an unconfirmed Mac run so user sees recheck/cancel on the card.
-                if viewModel.inputText == text {
-                    viewModel.inputText = ""
-                }
-                composerState.cloudDialogueErrorMessage = macGatewayL("回执未确认，已保留在时间线（不会回退本机），可点「重查状态」或「显式取消」")
+            if case .failure(let error) = result, currentConversationIdString == conversationId,
+               !store.cloudDialogueSubmissions.contains(where: { $0.requestId == request.requestId }) {
+                composerState.cloudDialogueErrorMessage = error.localizedDescription
             }
         }
     }
 
     func beginMacModificationFromApproval(_ approval: MacGatewayApprovalCardItem) {
+        guard let workItemId = approval.workItemId else { return }
         composerState.activeDuetTab = .chat
-        if let workItemId = approval.workItemId, !workItemId.isEmpty {
-            composerState.unifiedMacFollowupWorkItemId = workItemId
-            composerState.isDelegateToMacArmed = false
-        } else {
-            composerState.unifiedMacFollowupWorkItemId = nil
-            composerState.isDelegateToMacArmed = true
-        }
+        composerState.unifiedMacFollowupWorkItemId = workItemId
+        composerState.isDelegateToMacArmed = false
         if viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             viewModel.inputText = "修改「\(approval.summary)」："
         }
