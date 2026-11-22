@@ -54,6 +54,7 @@ kotlin {
                 implementation(libs.junit)
                 implementation(libs.kotlinx.coroutines.test)
                 implementation("io.ktor:ktor-server-test-host-jvm:${libs.versions.ktor.get()}")
+                implementation("io.ktor:ktor-client-mock-jvm:${libs.versions.ktor.get()}")
             }
         }
     }

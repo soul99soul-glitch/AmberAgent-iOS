@@ -621,7 +621,18 @@ class CloudRouter(
     // ------------------------------------------------------------------------
 
     private fun registerRouterTools(registry: CloudToolRegistry) {
-        kernel.toolRegistry.get("device_context_read")?.let(registry::register)
+        listOf(
+            "device_context_read",
+            "proactive_monitor_create",
+            "proactive_monitor_list",
+            "proactive_monitor_update",
+            "proactive_monitor_delete",
+            "proactive_webhook_create",
+            "proactive_webhook_list",
+            "proactive_webhook_delete",
+        ).forEach { name ->
+            kernel.toolRegistry.get(name)?.let(registry::register)
+        }
         registry.register(CloudToolDefinition("cancel_work_item","显式取消指定任务并停止其实际进程",false,ToolEffect.PURE) {
             buildJsonObject {put("ok",true);put("status","Accepted")}
         })
@@ -762,6 +773,13 @@ class CloudRouter(
             "agent_soul_get",
             "agent_soul_update",
             "device_context_read",
+            "proactive_monitor_create",
+            "proactive_monitor_list",
+            "proactive_monitor_update",
+            "proactive_monitor_delete",
+            "proactive_webhook_create",
+            "proactive_webhook_list",
+            "proactive_webhook_delete",
         )
 
         fun parseDispatchSpecs(args: JsonObject): List<WorkItemSubmissionSpec> {

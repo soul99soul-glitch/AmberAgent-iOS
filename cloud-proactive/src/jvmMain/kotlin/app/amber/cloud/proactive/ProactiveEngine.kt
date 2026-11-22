@@ -98,11 +98,22 @@ class ProactiveEngine(
     suspend fun pollAllSources(
         targetChatId: String,
         channel: ChannelConnector? = null,
+        nowOverrideMs: Long? = null,
     ): List<ProactiveRunResult> {
+        val nowMs = nowOverrideMs ?: clockMs()
         val results = mutableListOf<ProactiveRunResult>()
-        for (source in registeredSources) {
-            val signal = source.poll() ?: continue
-            results.add(processSignal(signal, targetChatId = targetChatId, channel = channel))
+        for (source in registeredSources.toList()) {
+            val signals = source.pollAll(nowMs)
+            for (signal in signals) {
+                val res = processSignal(
+                    signal = signal,
+                    targetChatId = targetChatId,
+                    channel = channel,
+                    nowOverrideMs = nowOverrideMs,
+                )
+                source.onResult(signal, res, nowMs)
+                results.add(res)
+            }
         }
         return results
     }

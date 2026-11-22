@@ -74,6 +74,7 @@ fun Application.configureCloudGateway(
     agentApi: AgentCentricApi? = null,
     soulStore: app.amber.cloud.soul.CloudSoulStore? = agentApi?.kernel?.soulStore,
     ruleStore: ProceduralRuleStore? = agentApi?.kernel?.proceduralRuleStore,
+    proactiveKernel: app.amber.cloud.runtime.CloudAgentKernel? = agentApi?.kernel,
     gatewayPort: Int = 47821,
     publicAddresses: List<String> = emptyList(),
 ) {
@@ -89,6 +90,7 @@ fun Application.configureCloudGateway(
     if (agentApi != null) configureAgentCentricRoutes(state, agentApi)
     if (soulStore != null) configureSoulRoutes(state, soulStore, agentApi)
     if (ruleStore != null) configureProceduralRuleRoutes(state, ruleStore)
+    if (proactiveKernel != null) configureProactiveRoutes(state, proactiveKernel)
 
     suspend fun ApplicationCall.respondJson(status: Int, payload: String) {
         respondText(

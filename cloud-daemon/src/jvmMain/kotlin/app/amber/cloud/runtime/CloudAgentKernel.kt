@@ -42,14 +42,20 @@ import app.amber.cloud.supertags.ConversationTagger
 import app.amber.cloud.supertags.HubService
 import app.amber.cloud.supertags.SupertagMaintenance
 import app.amber.cloud.supertags.SupertagStore
+import app.amber.cloud.proactive.CloudProactiveL2Judge
+import app.amber.cloud.proactive.DeviceContextPrepTriggerSource
 import app.amber.cloud.proactive.InterruptionBudgetConfig
-import app.amber.cloud.proactive.L2NoteworthyScore
-import app.amber.cloud.proactive.NoteworthyJudgeProvider
+import app.amber.cloud.proactive.L1DeterministicFilter
 import app.amber.cloud.proactive.ProactiveEngine
-import app.amber.cloud.proactive.ProactiveRunResult
+import app.amber.cloud.proactive.ProactiveFilePersistence
+import app.amber.cloud.proactive.ProactiveMonitorStore
 import app.amber.cloud.proactive.ProactiveRestraintGate
+import app.amber.cloud.proactive.ProactiveRunHistoryStore
+import app.amber.cloud.proactive.ProactiveRunResult
 import app.amber.cloud.proactive.ProactiveTriggerSignal
+import app.amber.cloud.proactive.ProactiveWebhookStore
 import app.amber.cloud.proactive.QuietHoursConfig
+import app.amber.cloud.proactive.WatchtowerMonitorTriggerSource
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.security.EnvelopeCredentialVault
 import app.amber.cloud.security.PlaceholderCredentialException
@@ -137,21 +143,20 @@ class CloudAgentKernel(
         persistenceFile = File(dataDir, "owner-bindings.json"),
     ),
     val proactiveEngine: ProactiveEngine = ProactiveEngine(
-        l2Judge = NoteworthyJudgeProvider { req ->
-            L2NoteworthyScore(
-                noteworthy = true,
-                urgency = 4,
-                importance = 4,
-                summary = req.deltaSummary.lines().firstOrNull()?.take(80) ?: req.topicKey,
-            )
-        },
+        l1Filter = L1DeterministicFilter(
+            persistenceFile = File(File(dataDir, "proactive"), "l1-filter.json"),
+        ),
+        l2Judge = CloudProactiveL2Judge(modelClient),
         restraintGate = ProactiveRestraintGate(
             quietHours = QuietHoursConfig(),
             budgetConfig = InterruptionBudgetConfig(),
+            persistenceFile = File(File(dataDir, "proactive"), "restraint-gate.json"),
         ),
     ),
     val workerApprovals: Boolean = false,
     val workerApprovalTtlMs: Long = 30 * 60_000L,
+    proactiveHttpClient: io.ktor.client.HttpClient? = null,
+    proactiveDnsResolver: (String) -> List<java.net.InetAddress> = { java.net.InetAddress.getAllByName(it).toList() },
 ) : ChannelIngress {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -160,12 +165,16 @@ class CloudAgentKernel(
     val memoryDir = File(dataDir, "memory").also { it.mkdirs() }
     val checkpointsDir = File(dataDir, "checkpoints").also { it.mkdirs() }
     val workspaceDir = File(dataDir, "workspace").also { it.mkdirs() }
+    val proactiveDir = File(dataDir, "proactive").also { ProactiveFilePersistence.ensureOwnerOnlyDir(it) }
 
     val conversationStorage = JsonConversationStorage(ConversationFile(conversationsDir.absolutePath))
     val vault = vaultOverride ?: EnvelopeCredentialVault(
         vaultFile = File(dataDir, "secrets.enc.json"),
         masterSecretOverride = masterSecretOverride,
     )
+    val proactiveMonitorStore = ProactiveMonitorStore(proactiveDir)
+    val proactiveWebhookStore = ProactiveWebhookStore(proactiveDir, vault)
+    val proactiveRunHistoryStore = ProactiveRunHistoryStore(proactiveDir)
     val memoryStore = CloudMemoryStore(memoryDir)
     val proceduralRuleStore = app.amber.cloud.rules.ProceduralRuleStore(dataDir)
     val soulStore = app.amber.cloud.soul.CloudSoulStore(dataDir = dataDir, memoryDir = memoryDir, workspaceDir = workspaceDir).also { s ->
@@ -234,6 +243,26 @@ class CloudAgentKernel(
         routerIngress.recordReply(PRIMARY_CONVERSATION_ID.toString(),text,Uuid.parse(java.util.UUID.nameUUIDFromBytes(id.toByteArray()).toString()))
     } }
     val scheduleRunner by lazy { app.amber.cloud.gateway.CloudScheduleRunner(this) }
+    val watchtowerTriggerSource: WatchtowerMonitorTriggerSource = if (proactiveHttpClient != null) {
+        WatchtowerMonitorTriggerSource(
+            monitorStore = proactiveMonitorStore,
+            l1Filter = proactiveEngine.l1Filter,
+            httpClient = proactiveHttpClient,
+            dnsResolver = proactiveDnsResolver,
+        )
+    } else {
+        WatchtowerMonitorTriggerSource(
+            monitorStore = proactiveMonitorStore,
+            l1Filter = proactiveEngine.l1Filter,
+            dnsResolver = proactiveDnsResolver,
+        )
+    }
+    val deviceContextPrepTriggerSource: DeviceContextPrepTriggerSource = DeviceContextPrepTriggerSource(
+        deviceContextStore = gatewayState.deviceContextStore,
+        memoryStore = memoryStore,
+        pairedDevicesProvider = { runCatching { gatewayState.loadDevicesStrict() }.getOrDefault(emptyList()) },
+        zoneIdProvider = { proactiveEngine.restraintGate.budgetConfig.zoneId },
+    )
 
     private val connectors = ConcurrentHashMap<ChannelKind, ChannelConnector>()
     private val pendingRunsBySessionKey = ConcurrentHashMap<String, PendingRunRecord>()
@@ -252,6 +281,8 @@ class CloudAgentKernel(
 
     init {
         registerBuiltinTools()
+        proactiveEngine.registerTriggerSource(watchtowerTriggerSource)
+        proactiveEngine.registerTriggerSource(deviceContextPrepTriggerSource)
         app.amber.cloud.tasks.TaskExecutionTools(taskWorkspace, taskProcesses).register(toolRegistry)
         app.amber.cloud.tasks.TaskNetworkTools(publicHttp, taskWorkspace).register(toolRegistry)
         search.register(toolRegistry) {
@@ -489,8 +520,13 @@ class CloudAgentKernel(
                 )
             }
         }
-        val rawResults = proactiveEngine.pollAllSources(targetChatId = "", channel = null)
+        val rawResults = proactiveEngine.pollAllSources(
+            targetChatId = "",
+            channel = null,
+            nowOverrideMs = nowMs,
+        )
         return rawResults.map { res ->
+            proactiveRunHistoryStore.recordFromResult(res, timestampEpochMs = nowMs)
             if (res is ProactiveRunResult.PushedAtL3) {
                 deliverProactiveCardToOwner(res)
             } else {
@@ -502,18 +538,20 @@ class CloudAgentKernel(
     /**
      * Evaluates a single [ProactiveTriggerSignal] in the kernel (enforcing L1, L2, quiet hours,
      * and interruption budget) and delivers any produced L3 card to the owner's private chats
-     * across registered outbound [ChannelConnector]s while recording it on [PRIMARY_CONVERSATION_ID].
+     * across registered outbound [ChannelConnector]s and paired APNs devices while recording it on [PRIMARY_CONVERSATION_ID].
      */
     suspend fun triggerProactiveSignal(
         signal: ProactiveTriggerSignal,
         nowOverrideMs: Long? = null,
     ): ProactiveRunResult {
+        val evalNowMs = nowOverrideMs ?: signal.timestampEpochMs
         val res = proactiveEngine.processSignal(
             signal = signal,
             targetChatId = "",
             channel = null,
             nowOverrideMs = nowOverrideMs,
         )
+        proactiveRunHistoryStore.recordFromResult(res, fallbackSignal = signal, timestampEpochMs = evalNowMs)
         return if (res is ProactiveRunResult.PushedAtL3) {
             deliverProactiveCardToOwner(res)
         } else {
@@ -560,6 +598,19 @@ class CloudAgentKernel(
                 firstReceipt = receipt
             }
         }
+
+        // Dispatch APNs push to paired owner iOS/Watch devices with push tokens, honoring silentDelivery
+        val pairedDevices = runCatching { gatewayState.loadDevicesStrict() }.getOrDefault(emptyList())
+        for (device in pairedDevices) {
+            val pushPayload = gatewayState.buildProactivePushPayload(
+                device = device,
+                card = card,
+                signalId = pushed.l1Delta.signalId,
+                silentDelivery = pushed.restraintVerdict.silentDelivery,
+            ) ?: continue
+            runCatching { gatewayState.pushSender.send(pushPayload) }
+        }
+
         return pushed.copy(receipt = firstReceipt)
     }
 
@@ -987,6 +1038,8 @@ class CloudAgentKernel(
             workspaceDir = workspaceDir,
             deviceContextStore = gatewayState.deviceContextStore,
             pairedIosDevicesProvider = { gatewayState.loadDevicesStrict() },
+            proactiveMonitorStore = proactiveMonitorStore,
+            proactiveWebhookStore = proactiveWebhookStore,
         )
     }
 }

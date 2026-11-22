@@ -7,13 +7,16 @@ import app.amber.cloud.channels.FeishuCalendarClient
 import app.amber.cloud.channels.FeishuCalendarEvent
 import app.amber.cloud.channels.FeishuFreeSlot
 import app.amber.cloud.channels.ImApprovalGate
+import app.amber.cloud.security.CredentialRedactor
 import app.amber.core.native.AmberNativeBridge
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.io.File
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 
@@ -99,11 +102,22 @@ data class CalendarConflictPair(
 class L1DeterministicFilter(
     private val maxStoredLines: Int = STORED_LINES,
     private val maxReportedDiffLines: Int = REPORTED_LINES,
+    private val persistenceFile: File? = null,
 ) {
+    @Serializable
+    private data class PersistedL1State(
+        val version: Int = 1,
+        val watchtowerSnapshots: Map<String, WatchtowerPageSnapshot> = emptyMap(),
+        val reportedConflictSignatures: List<String> = emptyList(),
+        val processedDeduplicationKeys: List<String> = emptyList(),
+    )
+
     companion object {
         const val STORED_LINES = 400
         const val REPORTED_LINES = 8
         const val MAX_LINE_CHARS = 300
+        private const val MAX_DEDUP_KEYS = 5_000
+        private val persistenceJson = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
 
         private val SCRIPT_STYLE_REGEX = Regex("""(?is)<(script|style)\b[^>]*>.*?</\1>""")
         private val HTML_TAG_REGEX = Regex("""<[^>]+>""")
@@ -217,19 +231,67 @@ class L1DeterministicFilter(
     private val reportedConflictSignatures = LinkedHashSet<String>()
     private val processedDeduplicationKeys = LinkedHashSet<String>()
 
+    init {
+        loadFromDisk()
+    }
+
     @Synchronized
     fun getWatchtowerSnapshot(url: String): WatchtowerPageSnapshot? = watchtowerSnapshots[url.trim()]
 
     @Synchronized
+    fun hasProcessedDeduplicationKey(key: String): Boolean = processedDeduplicationKeys.contains(key)
+
+    @Synchronized
     fun evaluate(signal: ProactiveTriggerSignal): L1Outcome {
-        return when (signal) {
+        val outcome = when (signal) {
             is ProactiveTriggerSignal.WatchtowerPageSignal -> evaluateWatchtower(signal)
             is ProactiveTriggerSignal.CalendarSnapshotSignal -> evaluateCalendar(signal)
+            is ProactiveTriggerSignal.UpcomingEventPrepSignal -> evaluateUpcomingEventPrep(signal)
+            is ProactiveTriggerSignal.WebhookInboundSignal -> evaluateWebhookInbound(signal)
             is ProactiveTriggerSignal.ClockCronSignal -> evaluateClockCron(signal)
             is ProactiveTriggerSignal.EdgeNodeSensorSignal -> evaluateEdgeNode(signal)
             is ProactiveTriggerSignal.MemoryCommitmentSignal -> evaluateMemoryCommitment(signal)
+            is ProactiveTriggerSignal.OverdueReminderPrepSignal -> evaluateOverdueReminderPrep(signal)
             is ProactiveTriggerSignal.TaskLifecycleSignal -> evaluateTaskLifecycle(signal)
         }
+        persistToDisk()
+        return outcome
+    }
+
+    private fun recordDedupKey(key: String): Boolean {
+        val added = processedDeduplicationKeys.add(key)
+        if (added && processedDeduplicationKeys.size > MAX_DEDUP_KEYS) {
+            val iter = processedDeduplicationKeys.iterator()
+            while (processedDeduplicationKeys.size > MAX_DEDUP_KEYS && iter.hasNext()) {
+                iter.next()
+                iter.remove()
+            }
+        }
+        return added
+    }
+
+    private fun loadFromDisk() {
+        val file = persistenceFile ?: return
+        if (!file.isFile) return
+        val state = runCatching {
+            persistenceJson.decodeFromString<PersistedL1State>(file.readText())
+        }.getOrNull() ?: return
+        watchtowerSnapshots.clear()
+        watchtowerSnapshots.putAll(state.watchtowerSnapshots)
+        reportedConflictSignatures.clear()
+        reportedConflictSignatures.addAll(state.reportedConflictSignatures.takeLast(MAX_DEDUP_KEYS))
+        processedDeduplicationKeys.clear()
+        processedDeduplicationKeys.addAll(state.processedDeduplicationKeys.takeLast(MAX_DEDUP_KEYS))
+    }
+
+    private fun persistToDisk() {
+        val file = persistenceFile ?: return
+        val snapshot = PersistedL1State(
+            watchtowerSnapshots = watchtowerSnapshots.toMap(),
+            reportedConflictSignatures = reportedConflictSignatures.toList().takeLast(MAX_DEDUP_KEYS),
+            processedDeduplicationKeys = processedDeduplicationKeys.toList().takeLast(MAX_DEDUP_KEYS),
+        )
+        ProactiveFilePersistence.atomicWrite0600(file, persistenceJson.encodeToString(snapshot))
     }
 
     private fun evaluateWatchtower(signal: ProactiveTriggerSignal.WatchtowerPageSignal): L1Outcome {
@@ -320,6 +382,9 @@ class L1DeterministicFilter(
         val pageTitle = signal.title.ifBlank { cleanUrl }
         val deltaSummary = buildString {
             append("监控页面异动：$pageTitle ($cleanUrl)\n")
+            if (signal.conditionPrompt.isNotBlank()) {
+                append("用户关注条件：").append(CredentialRedactor.redact(signal.conditionPrompt.trim())).append('\n')
+            }
             if (added.isNotEmpty()) {
                 append("新增内容 (${added.size} 行)：\n")
                 added.forEach { append("+ ").append(it).append('\n') }
@@ -388,7 +453,7 @@ class L1DeterministicFilter(
 
     private fun evaluateClockCron(signal: ProactiveTriggerSignal.ClockCronSignal): L1Outcome {
         val dedupKey = "cron:${signal.scheduleName}:${signal.dateString}"
-        if (!processedDeduplicationKeys.add(dedupKey)) {
+        if (!recordDedupKey(dedupKey)) {
             return L1Outcome.DroppedUnchanged(reason = "定时任务 $dedupKey 今日已执行")
         }
         val dayEvents = signal.calendarEvents.filter { it.startTime.startsWith(signal.dateString) }
@@ -417,9 +482,91 @@ class L1DeterministicFilter(
         )
     }
 
+    private fun evaluateUpcomingEventPrep(signal: ProactiveTriggerSignal.UpcomingEventPrepSignal): L1Outcome {
+        val dedupKey = "prep:event:${signal.eventSignature}"
+        if (!recordDedupKey(dedupKey)) {
+            return L1Outcome.DroppedUnchanged(reason = "临近日程 $dedupKey 已生成过会前准备")
+        }
+        val safeTitle = CredentialRedactor.redact(signal.eventTitle.trim()).ifBlank { "临近日程" }
+        val deltaSummary = buildString {
+            append("临近日程「$safeTitle」将在约 ${signal.minutesUntilStart} 分钟后开始")
+            if (signal.deviceName.isNotBlank()) {
+                append("（来源设备：${CredentialRedactor.redact(signal.deviceName)}）")
+            }
+            append("。\n")
+            if (signal.recalledMemories.isNotEmpty()) {
+                append("相关历史记忆：\n")
+                signal.recalledMemories.take(5).forEach { mem ->
+                    append("• ").append(CredentialRedactor.redact(mem.trim()).take(180)).append('\n')
+                }
+            } else {
+                append("未检索到历史关联记忆，请结合日程标题准备 3 条简明会前要点。")
+            }
+        }.trim()
+
+        return L1Outcome.PassedWithDelta(
+            signalId = signal.signalId,
+            category = signal.category,
+            topicKey = signal.topicKey,
+            title = "会前主动准备 · $safeTitle",
+            deltaSummary = deltaSummary,
+        )
+    }
+
+    private fun evaluateOverdueReminderPrep(signal: ProactiveTriggerSignal.OverdueReminderPrepSignal): L1Outcome {
+        if (signal.overdueItems.isEmpty()) {
+            return L1Outcome.DroppedUnchanged(reason = "无延期超过 24 小时的待办提醒")
+        }
+        val dedupKey = "prep:overdue:${signal.dateKey}"
+        if (!recordDedupKey(dedupKey)) {
+            return L1Outcome.DroppedUnchanged(reason = "延期提醒跟进 $dedupKey 今日已发送")
+        }
+        val safeItems = signal.overdueItems.take(8).map { CredentialRedactor.redact(it.trim()).take(160) }
+        val deltaSummary = buildString {
+            append("有 ${safeItems.size} 项待办已延期超过 24 小时：\n")
+            safeItems.forEach { append("• ").append(it).append('\n') }
+            append("是否需要改期，或先拆出最小第一步？")
+        }.trim()
+
+        return L1Outcome.PassedWithDelta(
+            signalId = signal.signalId,
+            category = signal.category,
+            topicKey = signal.topicKey,
+            title = "延期提醒温和跟进 · ${signal.dateKey}",
+            deltaSummary = deltaSummary,
+        )
+    }
+
+    private fun evaluateWebhookInbound(signal: ProactiveTriggerSignal.WebhookInboundSignal): L1Outcome {
+        val dedupKey = "webhook:${signal.webhookId}:${signal.deliveryId}"
+        if (!recordDedupKey(dedupKey)) {
+            return L1Outcome.DroppedUnchanged(reason = "Webhook 投递 $dedupKey 重复到达，已幂等忽略")
+        }
+        val safeName = CredentialRedactor.redact(signal.webhookName.trim()).ifBlank { signal.webhookId }
+        val safeInstruction = CredentialRedactor.redact(signal.instruction.trim())
+        val safePayload = CredentialRedactor.redact(signal.redactedPayload.trim()).take(4_000)
+        val deltaSummary = buildString {
+            append("收到个人 Webhook「$safeName」入站事件（delivery=${signal.deliveryId.take(32)}）\n")
+            if (safeInstruction.isNotBlank()) {
+                append("处理指引：$safeInstruction\n")
+            }
+            if (safePayload.isNotBlank()) {
+                append("载荷摘要：\n").append(safePayload)
+            }
+        }.trim()
+
+        return L1Outcome.PassedWithDelta(
+            signalId = signal.signalId,
+            category = signal.category,
+            topicKey = signal.topicKey,
+            title = "Webhook 触发 · $safeName",
+            deltaSummary = deltaSummary,
+        )
+    }
+
     private fun evaluateEdgeNode(signal: ProactiveTriggerSignal.EdgeNodeSensorSignal): L1Outcome {
         val dedupKey = "edge:${signal.nodeId}:${signal.deduplicationKey}"
-        if (!processedDeduplicationKeys.add(dedupKey)) {
+        if (!recordDedupKey(dedupKey)) {
             return L1Outcome.DroppedUnchanged(reason = "边缘节点事件 $dedupKey 已处理")
         }
         return L1Outcome.PassedWithDelta(
@@ -433,7 +580,7 @@ class L1DeterministicFilter(
 
     private fun evaluateMemoryCommitment(signal: ProactiveTriggerSignal.MemoryCommitmentSignal): L1Outcome {
         val dedupKey = "commitment:${signal.memoryId}:${signal.dueDateTime}"
-        if (!processedDeduplicationKeys.add(dedupKey)) {
+        if (!recordDedupKey(dedupKey)) {
             return L1Outcome.DroppedUnchanged(reason = "承诺到期提醒 $dedupKey 已触发")
         }
         return L1Outcome.PassedWithDelta(
@@ -447,7 +594,7 @@ class L1DeterministicFilter(
 
     private fun evaluateTaskLifecycle(signal: ProactiveTriggerSignal.TaskLifecycleSignal): L1Outcome {
         val dedupKey = "lifecycle:${signal.taskId}:${signal.lifecycleState}"
-        if (!processedDeduplicationKeys.add(dedupKey)) {
+        if (!recordDedupKey(dedupKey)) {
             return L1Outcome.DroppedUnchanged(reason = "任务生命周期事件 $dedupKey 已通知")
         }
         return L1Outcome.PassedWithDelta(
@@ -526,7 +673,7 @@ object NoteworthyResponseParser {
             importance = importance.coerceIn(1, 5),
             actionable = actionable,
             recommendedChannel = channel,
-            summary = summary.take(80),
+            summary = summary.take(400),
         )
     }
 }

@@ -6,9 +6,10 @@ import app.amber.cloud.config.CloudConfigLoader
 import app.amber.cloud.config.CloudDaemonConfig
 import app.amber.cloud.config.CloudConfigurationManager
 import app.amber.cloud.gateway.CloudGatewayState
-import app.amber.cloud.proactive.L2NoteworthyScore
-import app.amber.cloud.proactive.NoteworthyJudgeProvider
+import app.amber.cloud.proactive.CloudProactiveL2Judge
+import app.amber.cloud.proactive.L1DeterministicFilter
 import app.amber.cloud.proactive.ProactiveEngine
+import app.amber.cloud.proactive.ProactiveFilePersistence
 import app.amber.cloud.proactive.ProactiveRestraintGate
 import app.amber.cloud.runtime.CloudAgentKernel
 import app.amber.cloud.security.EnvelopeCredentialVault
@@ -32,14 +33,21 @@ internal fun loadConfiguredDaemon(
     val ownerBinding = OwnerBindingManager(persistenceFile = File(dataDir, "owner-bindings.json"))
     val config = CloudConfigLoader.loadAndIngest(configFile, env, vault, logger, ownerBinding)
     val manager = CloudConfigurationManager(vault, CloudGatewayState(dataDir).identity.id, config)
+    val proactiveDir = File(dataDir, "proactive").also { ProactiveFilePersistence.ensureOwnerOnlyDir(it) }
+    val l2ModelClient = CloudProactiveL2Judge.resolveModelClient(
+        config = config,
+        vault = vault,
+        fallback = manager.modelClient,
+        env = env,
+    )
     val proactive = ProactiveEngine(
-        l2Judge = NoteworthyJudgeProvider { req ->
-            L2NoteworthyScore(
-                noteworthy = true, urgency = 4, importance = 4,
-                summary = req.deltaSummary.lineSequence().firstOrNull()?.take(80) ?: req.topicKey,
-            )
-        },
-        restraintGate = ProactiveRestraintGate(quietHours = config.toQuietHoursConfig(), budgetConfig = config.toInterruptionBudgetConfig()),
+        l1Filter = L1DeterministicFilter(persistenceFile = File(proactiveDir, "l1-filter.json")),
+        l2Judge = CloudProactiveL2Judge(l2ModelClient),
+        restraintGate = ProactiveRestraintGate(
+            quietHours = config.toQuietHoursConfig(),
+            budgetConfig = config.toInterruptionBudgetConfig(),
+            persistenceFile = File(proactiveDir, "restraint-gate.json"),
+        ),
     )
     return ConfiguredCloudDaemon(config, CloudAgentKernel(
         dataDir = dataDir, modelClient = manager.modelClient, masterSecretOverride = masterSecret,

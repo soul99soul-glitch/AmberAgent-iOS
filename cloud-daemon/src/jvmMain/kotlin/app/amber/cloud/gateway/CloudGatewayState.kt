@@ -1,5 +1,6 @@
 package app.amber.cloud.gateway
 
+import app.amber.cloud.channel.OutboundCard
 import app.amber.cloud.config.ConfigurationApiException
 import app.amber.cloud.config.PairingBootstrapSnapshot
 import app.amber.cloud.security.CredentialRedactor
@@ -204,6 +205,7 @@ data class PushMessagePayload(
     val highRisk: Boolean = false,
     val deepLink: String? = null,
     val workItemId: String? = null,
+    val silent: Boolean = false,
 )
 
 fun interface PushSender {
@@ -437,6 +439,37 @@ class CloudGatewayState(
     @Synchronized
     fun findDeviceById(deviceId: String): PairedDevice? =
         runCatching { loadDevicesStrict().firstOrNull { it.id == deviceId } }.getOrNull()
+
+    fun buildProactivePushPayload(
+        device: PairedDevice,
+        card: OutboundCard,
+        signalId: String,
+        silentDelivery: Boolean,
+    ): PushMessagePayload? {
+        if (device.platform.lowercase() !in setOf("ios", "watchos", "watch")) return null
+        val pushToken = device.pushToken?.takeIf { it.isNotBlank() } ?: return null
+        val safeTitle = CredentialRedactor.redact(card.title).trim().ifBlank { "Amber 主动提醒" }.take(100)
+        val firstLine = card.markdownBody
+            .lineSequence()
+            .map { it.trim().removePrefix("**摘要**：").removePrefix("**摘要**:").trim() }
+            .firstOrNull { it.isNotEmpty() }
+            ?: safeTitle
+        val safeBody = CredentialRedactor.redact(firstLine).take(180)
+        return PushMessagePayload(
+            deviceId = device.id,
+            platform = device.platform,
+            pushToken = pushToken,
+            title = safeTitle,
+            body = safeBody,
+            sessionKey = null,
+            toolCallId = null,
+            category = "amber.proactive.card",
+            highRisk = false,
+            deepLink = "amber://proactive/$signalId",
+            workItemId = null,
+            silent = silentDelivery,
+        )
+    }
 
     /**
      * Privacy-preserving push payload for scheduled Cloud tasks (X2).
