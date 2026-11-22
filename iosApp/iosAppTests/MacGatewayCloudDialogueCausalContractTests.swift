@@ -75,7 +75,7 @@ struct MacGatewayCloudDialogueCausalContractTests {
           "items": [
             {"seq":1,"id":"evt-in-1","kind":"followup","role":"user","text":"按第二版","topicId":"topic-dup","workItemId":"work:dup","causedByRequestId":"110e8400-e29b-41d4-a716-446655440001"},
             {"seq":2,"id":"evt-in-2","kind":"followup","role":"user","text":"按第二版","topicId":"topic-dup","workItemId":"work:dup","causedByRequestId":"110e8400-e29b-41d4-a716-446655440002"},
-            {"seq":3,"id":"evt-consumed-v1-2","kind":"input_consumed","role":"system","text":"补充已被任务消费","topicId":"topic-dup","workItemId":"work:dup","causedByInputId":"evt-in-2"}
+            {"seq":3,"id":"evt-consumed-v1-2","kind":"input_consumed","role":"system","text":"补充已被任务消费","topicId":"topic-dup","workItemId":"work:dup","causedByInputId":"evt-in-2","causedByRequestId":"110e8400-e29b-41d4-a716-446655440001"}
           ],
           "nextCursor": 3
         }
@@ -91,6 +91,7 @@ struct MacGatewayCloudDialogueCausalContractTests {
         #expect(second.isShownAsExecuted == true)
         #expect(store.cloudDialogueReceipts[req1]?.state == .received)
         #expect(store.cloudDialogueReceipts[req2]?.state == .consumed)
+        #expect(store.cloudDialogueSubmissions.first { $0.requestId == req1 }?.receipt?.state == .received)
 
         // Strict causal lookup for rendering never confuses identical text rows
         let evt1 = try #require(store.cloudDialogueEvents.first(where: { $0.id == "evt-in-1" }))
@@ -105,6 +106,13 @@ struct MacGatewayCloudDialogueCausalContractTests {
         #expect(store.cloudDialogueFollowups.first(where: { $0.requestId == req2 })?.state == .consumed)
         #expect(store.cloudDialogueReceipts[req1]?.state == .received)
         #expect(store.cloudDialogueReceipts[req2]?.state == .consumed)
+
+        // A GET sampled before consumption can return after the event was applied.
+        _ = try await store.refreshCloudDialogueReceipt(requestId: req2).get()
+        store.loadPersistedCloudDialogueState()
+        #expect(store.cloudDialogueFollowups.first { $0.requestId == req2 }?.state == .consumed)
+        #expect(store.cloudDialogueReceipts[req2]?.state == .consumed)
+        #expect(store.cloudDialogueSubmissions.first { $0.requestId == req2 }?.receipt?.state == .consumed)
     }
 
     // MARK: - 2. Causal Priority 2 (causedByRequestId) & Priority 3 (consumed:<id> / cancelled:<id>)
@@ -207,6 +215,14 @@ struct MacGatewayCloudDialogueCausalContractTests {
                     json: #"{"eventId":"evt-leg-2","requestId":"220e8400-e29b-41d4-a716-446655440002","topicId":"topic-leg","workItemIds":["work:leg"],"state":"consumed","replayed":true}"#
                 )
             }
+            if method == "GET", path == "/v2/dialogue/events", url.query == "after=1&limit=100" {
+                return Self.jsonResponse(url: url, status: 200, json: #"""
+                    {"items":[
+                      {"seq":2,"id":"opaque-final","kind":"input_cancelled","role":"system","text":"","topicId":"topic-leg","workItemId":"work:leg"},
+                      {"seq":3,"id":"result","kind":"task_result","role":"assistant","text":"已完成","topicId":"topic-leg","workItemId":"work:leg","outcome":"completed"}
+                    ],"nextCursor":3}
+                    """#)
+            }
             return Self.jsonResponse(url: url, status: 404, json: #"{"error":"not_found"}"#)
         }
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -247,6 +263,11 @@ struct MacGatewayCloudDialogueCausalContractTests {
         #expect(store.cloudDialogueFollowups.first(where: { $0.requestId == req2 })?.state == .consumed)
         #expect(store.cloudDialogueFollowups.first(where: { $0.requestId == req1 })?.needsReceiptReconciliation == false)
         #expect(store.cloudDialogueFollowups.first(where: { $0.requestId == req2 })?.needsReceiptReconciliation == false)
+
+        // The final page must finish its own receipt check when the user has switched back to local.
+        _ = try await store.pollCloudDialogueEvents().get()
+        #expect(store.activeCloudDialogueWorkItemIds.isEmpty)
+        #expect(await probe.allPaths() == queried + ["/v2/dialogue/receipts/\(req1)"])
     }
 
     // MARK: - 4. stop_too_late State Transitions
@@ -254,7 +275,10 @@ struct MacGatewayCloudDialogueCausalContractTests {
     @Test @MainActor func stopTooLateMarksCompletedBeforeStopRatherThanCancelled() async throws {
         let stopReqId = "330e8400-e29b-41d4-a716-446655440001"
         let (store, defaults, suiteName) = try makeTestStore(suiteSuffix: "StopTooLate") { request, _ in
-            Self.jsonResponse(
+            if request.url?.path == "/v2/work-items/legacy/stop" {
+                return Self.jsonResponse(url: request.url!, status: 409, json: #"{"error":"task_terminal"}"#)
+            }
+            return Self.jsonResponse(
                 url: request.url!, status: 200,
                 json: #"{"eventId":"evt-stop-req","requestId":"330e8400-e29b-41d4-a716-446655440001","topicId":"topic-stl","workItemIds":["work:stl"],"state":"consumed","replayed":false}"#
             )
@@ -329,6 +353,12 @@ struct MacGatewayCloudDialogueCausalContractTests {
         #expect(afterLateStop.outcome == .completed)
         #expect(afterLateStop.isStopRequested == false)
         #expect(afterLateStop.isStopTooLate == true)
+
+        // An old node can confirm that work ended without reporting how it ended.
+        _ = await store.stopCloudWorkItem(workItemId: "legacy")
+        let legacy = try #require(store.cloudDialogueProgressByWorkItem["legacy"])
+        #expect(!legacy.isStopRequested)
+        #expect(legacy.outcome == nil && legacy.needsOutcomeUnknownAction)
     }
 
     // MARK: - 5. outcomeUnknown State & Callable Actions (Recheck / Retry / Abandon)
@@ -497,6 +527,54 @@ struct MacGatewayCloudDialogueCausalContractTests {
         #expect(abandonedProgress.displaySingleLine.contains("已放弃"))
         #expect(store.outcomeUnknownCloudDialogueProgressItems.isEmpty)
         #expect(!store.activeCloudDialogueWorkItemIds.contains("work:unk-3"))
+
+        // A different, late uncertainty event survives event-ID deduplication.
+        let late = (1...3).map { n in
+            MacGatewayCloudDialogueEvent(seq: 1, id: "late-unknown-\(n)", kind: .taskResult, role: "assistant",
+                text: "仍待确认", topicId: "topic-unk-\(n)", workItemId: "work:unk-\(n)", outcomeUnknown: true)
+        }
+        store.ingestCloudDialogueEventsPage(.init(items: late, nextCursor: 4), requestedAfter: 0)
+        store.persistCloudDialogueState(immediately: true)
+        store.loadPersistedCloudDialogueState()
+        #expect(store.outcomeUnknownCloudDialogueProgressItems.isEmpty)
+        #expect(store.cloudDialogueProgressByWorkItem["work:unk-1"]?.outcome == .completed)
+        #expect(store.cloudDialogueProgressByWorkItem["work:unk-2"]?.outcomeUnknownResolution == .retried)
+        #expect(store.cloudDialogueProgressByWorkItem["work:unk-3"]?.outcomeUnknownResolution == .abandoned)
+        _ = await store.retryOutcomeUnknownCloudWorkItem(workItemId: "work:unk-2")
+        #expect(await server.allRetryBodies().count == 1)
+    }
+
+    @Test @MainActor func lostRetryResponseRecoversTheSameRequestAfterRelaunch() async throws {
+        actor Server {
+            var posts: [String] = []
+            func handle(_ request: URLRequest) throws -> (Data, URLResponse) {
+                let url = try #require(request.url)
+                guard request.httpMethod == "POST" else {
+                    return MacGatewayCloudDialogueCausalContractTests.jsonResponse(url: url, status: 200, json: #"{"items":[],"nextCursor":1}"#)
+                }
+                let body = try JSONDecoder().decode(MacGatewayCloudDialogueInputRequest.self, from: #require(request.httpBody))
+                posts.append(body.requestId)
+                if posts.count == 1 { throw URLError(.networkConnectionLost) }
+                return MacGatewayCloudDialogueCausalContractTests.jsonResponse(url: url, status: 200, json: """
+                    {"eventId":"retried","requestId":"\(body.requestId)","topicId":"retry-topic","workItemIds":[],"state":"received","replayed":true}
+                    """)
+            }
+        }
+        let server = Server()
+        let (store, defaults, suiteName) = try makeTestStore(suiteSuffix: "LostRetry") { req, _ in
+            try await server.handle(req)
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let unknown = MacGatewayCloudDialogueEvent(seq: 1, id: "uncertain", kind: .taskResult,
+            role: "assistant", text: "结果待确认", topicId: "original", workItemId: "w", outcomeUnknown: true)
+        store.ingestCloudDialogueEventsPage(.init(items: [unknown], nextCursor: 1), requestedAfter: 0)
+        _ = await store.retryOutcomeUnknownCloudWorkItem(workItemId: "w", text: "重试原任务", requestId: "first-retry")
+        store.resetCloudDialogueMemoryState()
+        store.loadPersistedCloudDialogueState()
+        _ = try await store.retryOutcomeUnknownCloudWorkItem(workItemId: "w", text: "重试原任务", requestId: "another-id").get()
+        store.stopCloudDialoguePolling()
+        #expect(await server.posts == ["first-retry", "first-retry"])
+        #expect(store.cloudDialogueProgressByWorkItem["w"]?.outcomeUnknownResolution == .retried)
     }
 
     // MARK: - 6. Stable conversationId Propagation on Message / Followup / Stop Requests
@@ -558,6 +636,12 @@ struct MacGatewayCloudDialogueCausalContractTests {
         store.stopCloudDialoguePolling()
         #expect(store.cloudDialogueConversationId == "conv-main-001")
 
+        // The event stream contains all paired conversations, including another device's history.
+        let foreign = MacGatewayCloudDialogueEvent(seq: 10, id: "foreign-progress", kind: .processEvent, role: "system",
+            text: "另一个会话的任务", topicId: "foreign-topic", workItemId: "work:other", conversationId: "conv-other")
+        store.ingestCloudDialogueEventsPage(.init(items: [foreign], nextCursor: 10), requestedAfter: 0)
+        #expect(store.cloudDialogueConversationId == "conv-main-001")
+
         _ = try await store.sendCloudWorkItemInput(
             workItemId: "work:c",
             text: "补充一条要求",
@@ -571,12 +655,18 @@ struct MacGatewayCloudDialogueCausalContractTests {
         ).get()
         store.stopCloudDialoguePolling()
 
+        // Replaying the first POST must keep its omitted conversationId, even after its receipt supplied one.
+        _ = try await store.sendCloudDialogueMessage(
+            text: "启动主对话任务", requestId: "550e8400-e29b-41d4-a716-446655440010"
+        ).get()
+        store.stopCloudDialoguePolling()
+
         let capturedRaw = await capture.all()
         let captured = try capturedRaw.map { entry -> (path: String, json: [String: Any]) in
             let obj = try #require(JSONSerialization.jsonObject(with: entry.data) as? [String: Any])
             return (entry.path, obj)
         }
-        #expect(captured.count == 3)
+        #expect(captured.count == 4)
         // First message had no conversationId yet -> omitted for legacy server compatibility
         #expect(captured[0].json["conversationId"] == nil)
         #expect(captured[0].json["requestId"] as? String == "550e8400-e29b-41d4-a716-446655440010")
@@ -585,6 +675,7 @@ struct MacGatewayCloudDialogueCausalContractTests {
         #expect(captured[1].json["requestId"] as? String == "550e8400-e29b-41d4-a716-446655440011")
         #expect(captured[2].json["conversationId"] as? String == "conv-main-001")
         #expect(captured[2].json["requestId"] as? String == "550e8400-e29b-41d4-a716-446655440012")
+        #expect(captured[3].json["conversationId"] == nil)
 
         // Persisted conversationId survives cold reload
         store.persistCloudDialogueState(immediately: true)
@@ -592,6 +683,17 @@ struct MacGatewayCloudDialogueCausalContractTests {
         #expect(store.cloudDialogueConversationId == nil)
         store.loadPersistedCloudDialogueState()
         #expect(store.cloudDialogueConversationId == "conv-main-001")
+
+        // Hold an older queued write while the next conversation's send intent is saved synchronously.
+        let gate = DispatchSemaphore(value: 0)
+        MacGatewayStore.persistenceQueue.async { gate.wait() }
+        store.persistCloudDialogueState(forceAsync: true)
+        DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) { gate.signal() }
+        store.cloudDialogueConversationId = "conv-next"
+        store.persistCloudDialogueState(immediately: true)
+        MacGatewayStore.persistenceQueue.sync {}
+        store.loadPersistedCloudDialogueState()
+        #expect(store.cloudDialogueConversationId == "conv-next")
     }
 
     // MARK: - 7. Legacy JSON Backward Compatibility & Full Contract v1 Decoding

@@ -293,6 +293,7 @@ struct MacGatewayCloudDialogueTests {
                 let query = url.query
                 let body = request.httpBody.flatMap { String(data: $0, encoding: .utf8) }
                 seenRequests.append((method, path, query, body))
+                #expect(request.value(forHTTPHeaderField: "X-Amber-Dialogue-Version") == "1")
 
                 func respond(_ status: Int, _ json: String) -> (Data, URLResponse) {
                     let response = HTTPURLResponse(
@@ -471,7 +472,7 @@ struct MacGatewayCloudDialogueTests {
         #expect(followup2BeforeStop.state == .received)
         #expect(followup2BeforeStop.isShownAsExecuted == false)
 
-        // 5. Stop work:1 before followup2 is consumed -> followup2 is marked cancelled and NEVER shown as executed
+        // The stop receipt acknowledges the control request. Each follow-up has its own disposition.
         let stopReceipt = try await store.stopCloudWorkItem(
             workItemId: "work:1",
             requestId: "770e8400-e29b-41d4-a716-446655440002"
@@ -482,15 +483,16 @@ struct MacGatewayCloudDialogueTests {
         #expect(store.cloudDialogueProgressByWorkItem["work:1"]?.outcome == nil)
 
         let followup2AfterStop = try #require(store.cloudDialogueFollowups.first(where: { $0.requestId == "660e8400-e29b-41d4-a716-446655440002" }))
-        #expect(followup2AfterStop.state == .cancelled)
+        #expect(followup2AfterStop.state == .received)
+        #expect(followup2AfterStop.needsReceiptReconciliation)
         #expect(followup2AfterStop.isShownAsExecuted == false)
-        #expect(followup2AfterStop.state.displayBadgeText == "已取消（未执行）")
 
         // Verify GET /v2/dialogue/receipts/{requestId} also confirms consumed vs cancelled
         let queried1 = try await store.refreshCloudDialogueReceipt(requestId: "660e8400-e29b-41d4-a716-446655440001").get()
         #expect(queried1.state == .consumed)
         let queried2 = try await store.refreshCloudDialogueReceipt(requestId: "660e8400-e29b-41d4-a716-446655440002").get()
         #expect(queried2.state == .cancelled)
+        #expect(store.cloudDialogueFollowups.first { $0.requestId == queried2.requestId }?.state.displayBadgeText == "已取消（未执行）")
 
         await server.setPhase(3)
         _ = try await store.pollCloudDialogueEvents().get()
