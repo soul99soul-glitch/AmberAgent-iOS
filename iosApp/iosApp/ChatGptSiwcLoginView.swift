@@ -57,6 +57,7 @@ final class ChatGptSiwcLoginModel: ObservableObject {
     @Published var showFirstSignInConfirmation = false
     @Published private(set) var isRefreshingModels = false
     @Published private(set) var modelRefreshMessage: String?
+    @Published private(set) var modelRefreshIsError = false
 
     let providerId: String
     private let client: IOSChatGptSiwcOAuthClient
@@ -146,6 +147,7 @@ final class ChatGptSiwcLoginModel: ObservableObject {
                 self.safariItem = nil
                 self.restorePersistedPhase()
                 if self.isSignedIn {
+                    self.modelRefreshIsError = true
                     self.modelRefreshMessage = "重新登录失败：\(error.localizedDescription)"
                 } else {
                     self.phase = .failed(error.localizedDescription)
@@ -182,12 +184,16 @@ final class ChatGptSiwcLoginModel: ObservableObject {
             do {
                 try await client.logout {
                     phase = .idle
+                    modelRefreshIsError = false
                     modelRefreshMessage = nil
                     onLoggedOut()
                 }
             } catch {
                 guard generation == modelRequestGeneration else { return }
-                if isSignedIn { modelRefreshMessage = error.localizedDescription }
+                if isSignedIn {
+                    modelRefreshIsError = true
+                    modelRefreshMessage = error.localizedDescription
+                }
                 else { phase = .failed(error.localizedDescription) }
             }
         }
@@ -196,6 +202,7 @@ final class ChatGptSiwcLoginModel: ObservableObject {
     private func applyModels(generation: Int) async {
         guard generation == modelRequestGeneration, !isRefreshingModels else { return }
         isRefreshingModels = true
+        modelRefreshIsError = false
         modelRefreshMessage = nil
         defer {
             if generation == modelRequestGeneration {
@@ -207,6 +214,7 @@ final class ChatGptSiwcLoginModel: ObservableObject {
             let models = try await client.fetchModelsOrThrow()
             guard generation == modelRequestGeneration, !Task.isCancelled, isSignedIn else { return }
             onModelsFetched(models)
+            modelRefreshIsError = false
             modelRefreshMessage = models.isEmpty
                 ? "已连接 ChatGPT 套餐，当前账号未返回可列出的模型。"
                 : "已刷新 \(models.count) 个 ChatGPT 官方模型。"
@@ -215,6 +223,7 @@ final class ChatGptSiwcLoginModel: ObservableObject {
             if IOSChatGptSiwcAuthStore.load(providerId: providerId) == nil {
                 phase = .failed(error.localizedDescription)
             } else {
+                modelRefreshIsError = true
                 modelRefreshMessage = "模型刷新失败：\(error.localizedDescription)"
             }
         }
@@ -246,6 +255,12 @@ struct ChatGptSiwcLoginView: View {
     @State private var didAutoStart = false
     @Environment(\.openURL) private var openURL
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var siwcStatusGreen: Color {
+        colorScheme == .dark ? Color(hex: 0x4EC38E) : AmberTheme.accentGreen
+    }
 
     init(
         providerId: String,
@@ -271,7 +286,7 @@ struct ChatGptSiwcLoginView: View {
                 .padding(20)
             }
             .background(AmberTheme.background.ignoresSafeArea())
-            .navigationTitle("ChatGPT 套餐登录（官方 SIWC）")
+            .navigationTitle("ChatGPT 登录")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -320,114 +335,170 @@ struct ChatGptSiwcLoginView: View {
             Text("ChatGPT 套餐登录（官方 SIWC）")
                 .font(.headline)
                 .foregroundStyle(AmberTheme.foreground)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
             Text("使用 OpenAI 官方 Sign in with ChatGPT 授权你的 ChatGPT 套餐，通过公开 Responses API 推理，无需手动填写 API Key。")
                 .font(.footnote)
                 .foregroundStyle(AmberTheme.muted)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     @ViewBuilder
     private var content: some View {
-        switch model.phase {
-        case .idle:
-            VStack(spacing: 14) {
-                continueWithChatGPTButton {
-                    model.startLogin { onAuthModeChange(OpenAIAuthMode.chatgptSiwc) }
+        Group {
+            switch model.phase {
+            case .idle:
+                VStack(spacing: 14) {
+                    continueWithChatGPTButton {
+                        model.startLogin { onAuthModeChange(OpenAIAuthMode.chatgptSiwc) }
+                    }
+                    Text("授权将在应用内安全浏览器中完成，成功后自动返回并刷新可用模型。")
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("授权将在应用内安全浏览器中完成，成功后自动返回并刷新可用模型。")
-                    .font(.caption)
-                    .foregroundStyle(AmberTheme.muted)
-                    .multilineTextAlignment(.center)
-            }
 
-        case .preparing:
-            progressCard(text: "正在准备安全回环通道…")
+            case .preparing:
+                progressCard(text: "正在准备安全回环通道…")
 
-        case .authorizing:
-            progressCard(text: "请在弹出的 ChatGPT 页面完成授权…")
+            case .authorizing:
+                progressCard(text: "请在弹出的 ChatGPT 页面完成授权…")
 
-        case .exchanging:
-            progressCard(text: "正在验证授权签名并保存凭据…")
+            case .exchanging:
+                progressCard(text: "正在验证授权签名并保存凭据…")
 
-        case let .signedIn(email, name):
-            signedInView(email: email, name: name)
+            case let .signedIn(email, name):
+                signedInView(email: email, name: name)
 
-        case let .failed(message):
-            VStack(spacing: 14) {
-                Text(message)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity)
-                    .padding(14)
-                    .background(
-                        Color.red.opacity(0.08),
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    )
-                continueWithChatGPTButton {
-                    model.startLogin { onAuthModeChange(OpenAIAuthMode.chatgptSiwc) }
+            case let .failed(message):
+                VStack(spacing: 14) {
+                    errorBanner(message: message)
+                    continueWithChatGPTButton {
+                        model.startLogin { onAuthModeChange(OpenAIAuthMode.chatgptSiwc) }
+                    }
                 }
             }
+        }
+        .animation(.easeInOut(duration: 0.2), value: model.phase)
+    }
+
+    private func errorBanner(message: String) -> some View {
+        let radius = AmberTheme.radiusLarge
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(AmberTheme.accentRed)
+                .padding(.top, 1)
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(AmberTheme.accentRed)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(
+            AmberTheme.accentRed.opacity(0.08),
+            in: RoundedRectangle(cornerRadius: radius, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .stroke(AmberTheme.accentRed.opacity(0.22), lineWidth: 0.5)
         }
     }
 
     private func progressCard(text: String) -> some View {
-        VStack(spacing: 14) {
+        let cardRadius = AmberTheme.radiusXLarge
+        return VStack(spacing: 14) {
             ProgressView()
             Text(text)
                 .font(.footnote)
                 .foregroundStyle(AmberTheme.muted)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
             Button("取消") { model.cancelLogin() }
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(AmberTheme.muted)
+                .padding(.horizontal, 16)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        .padding(.top, 24)
+        .padding(.bottom, 12)
         .padding(.horizontal, 16)
-        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: cardRadius, style: .continuous)
                 .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
         }
     }
 
     private func signedInView(email: String?, name: String?) -> some View {
-        VStack(spacing: 16) {
+        let cardRadius = AmberTheme.radiusXLarge
+        let buttonRadius = AmberTheme.controlRadius(14)
+        return VStack(spacing: 16) {
             VStack(spacing: 8) {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.footnote.weight(.semibold))
                     Text("Using ChatGPT plan")
                         .font(.footnote.weight(.semibold))
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                        .minimumScaleFactor(0.85)
                 }
-                .foregroundStyle(AmberTheme.accentGreen)
+                .foregroundStyle(siwcStatusGreen)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
-                .background(AmberTheme.accentGreen.opacity(0.12), in: Capsule())
+                .background(
+                    siwcStatusGreen.opacity(colorScheme == .dark ? 0.16 : 0.12),
+                    in: Capsule()
+                )
 
                 if let email, !email.isEmpty {
                     Text(email)
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(AmberTheme.foreground)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else if let name, !name.isEmpty {
                     Text(name)
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(AmberTheme.foreground)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Text("端点：https://api.openai.com/v1/responses")
                     .font(.caption.monospaced())
                     .foregroundStyle(AmberTheme.muted)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 18)
             .padding(.horizontal, 16)
-            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                RoundedRectangle(cornerRadius: cardRadius, style: .continuous)
                     .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
+            }
+
+            if let message = model.modelRefreshMessage {
+                if model.modelRefreshIsError {
+                    errorBanner(message: message)
+                } else {
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundStyle(AmberTheme.muted)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 12)
+                }
             }
 
             VStack(spacing: 10) {
@@ -440,14 +511,25 @@ struct ChatGptSiwcLoginView: View {
                                 .controlSize(.small)
                         } else {
                             Image(systemName: "arrow.clockwise")
+                                .font(.subheadline.weight(.semibold))
                         }
                         Text(model.isRefreshingModels ? "正在刷新模型…" : "刷新模型")
-                            .fontWeight(.medium)
+                            .font(.subheadline.weight(.semibold))
+                            .multilineTextAlignment(.center)
                     }
+                    .foregroundStyle(AmberTheme.foreground)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
                     .frame(maxWidth: .infinity)
-                    .frame(minHeight: 44)
+                    .frame(minHeight: 48)
+                    .background(
+                        AmberTheme.surface2.opacity(0.9),
+                        in: RoundedRectangle(cornerRadius: buttonRadius, style: .continuous)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: buttonRadius, style: .continuous))
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
+                .opacity(model.isRefreshingModels ? 0.65 : 1)
                 .disabled(model.isRefreshingModels)
 
                 Button {
@@ -457,16 +539,25 @@ struct ChatGptSiwcLoginView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Text("Manage usage")
-                            .fontWeight(.medium)
+                            .font(.subheadline.weight(.semibold))
+                            .multilineTextAlignment(.center)
                         Image(systemName: "arrow.up.right")
                             .font(.caption.weight(.semibold))
                     }
+                    .foregroundStyle(AmberTheme.accent)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
                     .frame(maxWidth: .infinity)
-                    .frame(minHeight: 44)
+                    .frame(minHeight: 48)
+                    .background(
+                        AmberTheme.accent.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: buttonRadius, style: .continuous)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: buttonRadius, style: .continuous))
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
 
-                continueWithChatGPTButton {
+                continueWithChatGPTButton(prominent: false) {
                     model.startLogin { onAuthModeChange(OpenAIAuthMode.chatgptSiwc) }
                 }
 
@@ -474,33 +565,54 @@ struct ChatGptSiwcLoginView: View {
                     model.logout { onAuthModeChange(OpenAIAuthMode.apiKey) }
                 } label: {
                     Text("退出登录")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AmberTheme.accentRed)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
                         .frame(maxWidth: .infinity)
-                        .frame(minHeight: 44)
+                        .frame(minHeight: 48)
+                        .background(
+                            AmberTheme.accentRed.opacity(0.09),
+                            in: RoundedRectangle(cornerRadius: buttonRadius, style: .continuous)
+                        )
+                        .contentShape(RoundedRectangle(cornerRadius: buttonRadius, style: .continuous))
                 }
-                .buttonStyle(.bordered)
-            }
-
-            if let message = model.modelRefreshMessage {
-                Text(message)
-                    .font(.footnote)
-                    .foregroundStyle(AmberTheme.muted)
-                    .multilineTextAlignment(.center)
+                .buttonStyle(.plain)
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: model.modelRefreshMessage)
+        .animation(.easeInOut(duration: 0.18), value: model.isRefreshingModels)
     }
 
-    private func continueWithChatGPTButton(action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func continueWithChatGPTButton(
+        prominent: Bool = true,
+        action: @escaping () -> Void
+    ) -> some View {
+        let radius = AmberTheme.controlRadius(14)
+        return Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
                     .font(.subheadline.weight(.semibold))
                 Text("Continue with ChatGPT")
                     .font(.subheadline.weight(.semibold))
+                    .multilineTextAlignment(.center)
             }
-            .foregroundStyle(AmberTheme.background)
+            .foregroundStyle(prominent ? AmberTheme.background : AmberTheme.foreground)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
             .frame(maxWidth: .infinity)
             .frame(minHeight: 48)
-            .background(AmberTheme.foreground, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(
+                prominent ? AmberTheme.foreground : AmberTheme.surface,
+                in: RoundedRectangle(cornerRadius: radius, style: .continuous)
+            )
+            .overlay {
+                if !prominent {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .stroke(AmberTheme.border, lineWidth: 1)
+                }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         }
         .buttonStyle(.plain)
     }

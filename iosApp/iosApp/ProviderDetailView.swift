@@ -8,6 +8,7 @@ struct ProviderDetailView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
 
     let providerId: String
 
@@ -477,7 +478,7 @@ struct ProviderDetailView: View {
             ProviderRowContent(
                 title: "接口协议",
                 subtitle: "",
-                value: protocolOption?.title ?? "待移植",
+                value: protocolOption == .chatGptSiwc ? "ChatGPT (SIWC)" : (protocolOption?.title ?? "待移植"),
                 valueStyle: .body,
                 showsChevron: provider is ProviderSetting.OpenAI || provider is ProviderSetting.Claude,
                 stacksValueOnAccessibility: true
@@ -708,6 +709,111 @@ struct ProviderDetailView: View {
         }
     }
 
+    private var siwcStatusGreen: Color {
+        colorScheme == .dark ? Color(hex: 0x4EC38E) : AmberTheme.accentGreen
+    }
+
+    private var siwcPlanBadge: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.caption.weight(.semibold))
+            Text("Using ChatGPT plan")
+                .font(.caption.weight(.semibold))
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                .minimumScaleFactor(0.85)
+        }
+        .foregroundStyle(siwcStatusGreen)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+            siwcStatusGreen.opacity(colorScheme == .dark ? 0.16 : 0.12),
+            in: Capsule()
+        )
+    }
+
+    private var siwcManageButton: some View {
+        Button {
+            openChatGptSiwcSheet(autoStart: false)
+        } label: {
+            Text("管理")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(AmberTheme.accent)
+                .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 0 : 8)
+                .frame(
+                    minWidth: 44,
+                    minHeight: 44,
+                    alignment: dynamicTypeSize.isAccessibilitySize ? .leading : .trailing
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+    }
+
+    private var siwcRefreshModelsButton: some View {
+        let radius = AmberTheme.controlRadius(10)
+        return Button {
+            fetchModels(saveBeforeFetch: true, revealModels: true, reportsConnectionStatus: false)
+        } label: {
+            HStack(spacing: 6) {
+                if fetchState.isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.caption.weight(.semibold))
+                }
+                Text(fetchState.isLoading ? "刷新中…" : "刷新模型")
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    .minimumScaleFactor(0.86)
+            }
+            .foregroundStyle(AmberTheme.foreground)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 44)
+            .background(
+                AmberTheme.surface2.opacity(0.86),
+                in: RoundedRectangle(cornerRadius: radius, style: .continuous)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .opacity(fetchState.isLoading ? 0.65 : 1)
+        .disabled(fetchState.isLoading)
+        .animation(.easeInOut(duration: 0.18), value: fetchState.isLoading)
+    }
+
+    private var siwcManageUsageButton: some View {
+        let radius = AmberTheme.controlRadius(10)
+        return Button {
+            if let url = URL(string: IOSChatGptSiwcConstants.usageSettingsUrl) {
+                openURL(url)
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Text("Manage usage")
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    .minimumScaleFactor(0.86)
+                Image(systemName: "arrow.up.right")
+                    .font(.caption2.weight(.semibold))
+            }
+            .foregroundStyle(AmberTheme.accent)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 44)
+            .background(
+                AmberTheme.accent.opacity(0.10),
+                in: RoundedRectangle(cornerRadius: radius, style: .continuous)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
     /// Official Sign in with ChatGPT (SIWC) entry, shown for the official OpenAI
     /// brand or a provider using `CHATGPT_SIWC`. Parallel to legacy `codexSection`.
     @ViewBuilder
@@ -719,83 +825,54 @@ struct ProviderDetailView: View {
             AmberSectionLabel(text: "ChatGPT 套餐登录（官方 SIWC）")
             AmberFormGroup {
                 if let siwcCreds = chatGptSiwcCredentials {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(alignment: .center, spacing: 8) {
-                            HStack(spacing: 5) {
-                                Image(systemName: "checkmark.seal.fill")
-                                    .font(.system(size: 11, weight: .semibold))
-                                Text("Using ChatGPT plan")
-                                    .font(.caption.weight(.semibold))
+                    let identity = (siwcCreds.email?.isEmpty == false ? siwcCreds.email : nil)
+                        ?? (siwcCreds.name?.isEmpty == false ? siwcCreds.name : nil)
+                    VStack(alignment: .leading, spacing: 8) {
+                        if dynamicTypeSize.isAccessibilitySize {
+                            VStack(alignment: .leading, spacing: 6) {
+                                siwcPlanBadge
+                                siwcManageButton
                             }
-                            .foregroundStyle(AmberTheme.accentGreen)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(AmberTheme.accentGreen.opacity(0.12), in: Capsule())
-
-                            Spacer(minLength: 8)
-
-                            Button {
-                                openChatGptSiwcSheet(autoStart: false)
-                            } label: {
-                                Text("管理")
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(AmberTheme.accent)
+                        } else {
+                            HStack(alignment: .center, spacing: 8) {
+                                siwcPlanBadge
+                                Spacer(minLength: 8)
+                                siwcManageButton
                             }
-                            .buttonStyle(.plain)
                         }
 
-                        if let email = siwcCreds.email, !email.isEmpty {
-                            Text(email)
+                        if let identity {
+                            Text(identity)
                                 .font(.subheadline)
                                 .foregroundStyle(AmberTheme.foreground)
-                                .lineLimit(1)
+                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                                 .truncationMode(.middle)
+                                .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
+                    .padding(.vertical, 10)
 
                     ProviderDetailDivider()
 
-                    HStack(spacing: 10) {
-                        Button {
-                            fetchModels(saveBeforeFetch: true, revealModels: true, reportsConnectionStatus: false)
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.caption.weight(.semibold))
-                                Text("刷新模型")
-                                    .font(.subheadline.weight(.medium))
+                    Group {
+                        if dynamicTypeSize >= .xxLarge {
+                            VStack(spacing: 10) {
+                                siwcRefreshModelsButton
+                                siwcManageUsageButton
                             }
-                            .foregroundStyle(AmberTheme.foreground)
-                            .frame(maxWidth: .infinity)
-                            .frame(minHeight: 40)
-                            .background(AmberTheme.surface2.opacity(0.86), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        } else {
+                            HStack(spacing: 10) {
+                                siwcRefreshModelsButton
+                                siwcManageUsageButton
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .disabled(fetchState.isLoading)
-
-                        Button {
-                            if let url = URL(string: IOSChatGptSiwcConstants.usageSettingsUrl) {
-                                openURL(url)
-                            }
-                        } label: {
-                            HStack(spacing: 5) {
-                                Text("Manage usage")
-                                    .font(.subheadline.weight(.medium))
-                                Image(systemName: "arrow.up.right")
-                                    .font(.caption2.weight(.semibold))
-                            }
-                            .foregroundStyle(AmberTheme.accent)
-                            .frame(maxWidth: .infinity)
-                            .frame(minHeight: 40)
-                            .background(AmberTheme.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                 } else {
+                    let ctaRadius = AmberTheme.controlRadius(12)
                     VStack(alignment: .leading, spacing: 12) {
                         Text("使用你的 ChatGPT Plus / Pro 套餐额度，通过 OpenAI 官方公开 Responses API 推理，无需 API Key。")
                             .font(.footnote)
@@ -810,18 +887,27 @@ struct ProviderDetailView: View {
                                     .font(.subheadline.weight(.semibold))
                                 Text("Continue with ChatGPT")
                                     .font(.subheadline.weight(.semibold))
+                                    .multilineTextAlignment(.center)
                             }
                             .foregroundStyle(AmberTheme.background)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
                             .frame(maxWidth: .infinity)
-                            .frame(minHeight: 44)
-                            .background(AmberTheme.foreground, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .frame(minHeight: 48)
+                            .background(
+                                AmberTheme.foreground,
+                                in: RoundedRectangle(cornerRadius: ctaRadius, style: .continuous)
+                            )
+                            .contentShape(RoundedRectangle(cornerRadius: ctaRadius, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                 }
             }
+            .animation(.easeInOut(duration: 0.2), value: chatGptSiwcCredentials != nil)
         }
     }
 

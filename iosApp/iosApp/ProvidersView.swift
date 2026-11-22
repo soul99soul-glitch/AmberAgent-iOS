@@ -363,6 +363,7 @@ struct ProviderAddView: View {
     let sharedSettings: IOSSharedSettingsStore
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(RouterPath.self) private var router
 
     @State private var name = "New Provider"
@@ -458,31 +459,35 @@ struct ProviderAddView: View {
                 Button {
                     applyChatGptSiwcTemplate()
                 } label: {
-                    HStack(spacing: 12) {
+                    HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: 12) {
                         Image(systemName: "sparkles")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(AmberTheme.accent)
                             .frame(width: 34, height: 34)
                             .background(AmberTheme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: 3) {
                             Text("ChatGPT 套餐登录（官方 SIWC）")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(AmberTheme.foreground)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
                             Text("Continue with ChatGPT · 使用 ChatGPT 套餐额度，无需 API Key")
                                 .font(.caption)
                                 .foregroundStyle(AmberTheme.muted)
-                                .lineLimit(2)
+                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-
-                        Spacer(minLength: 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
                         Image(systemName: protocolOption == .chatGptSiwc ? "checkmark.circle.fill" : "plus.circle")
                             .font(.system(size: 18, weight: .medium))
                             .foregroundStyle(protocolOption == .chatGptSiwc ? AmberTheme.accentGreen : AmberTheme.accent)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
+                    .frame(minHeight: 58)
+                    .padding(.horizontal, 15)
+                    .padding(.vertical, 10)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -498,12 +503,15 @@ struct ProviderAddView: View {
                     Text("Continue with ChatGPT")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground)
+                        .multilineTextAlignment(.leading)
                     Text("保存后将直接进入服务商详情页，点击 Continue with ChatGPT 完成官方 OAuth 授权并自动拉取可用模型。")
                         .font(.footnote)
                         .foregroundStyle(AmberTheme.muted)
+                        .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.horizontal, 14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 15)
                 .padding(.vertical, 12)
             }
         }
@@ -553,6 +561,7 @@ struct ProviderAddView: View {
                     ProviderDraftValueRow(
                         title: "API 地址",
                         value: ProviderProtocolOption.chatGptSiwc.defaultBaseURL,
+                        monospace: true,
                         showsChevron: false
                     )
                 } else {
@@ -926,6 +935,8 @@ private struct ProviderDraftTextFieldRow: View {
 }
 
 private struct ProviderDraftValueRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let title: String
     let value: String
     var monospace = false
@@ -941,7 +952,9 @@ private struct ProviderDraftValueRow: View {
                 Text(value)
                     .font(monospace ? .system(size: 14, weight: .regular, design: .monospaced) : .body)
                     .foregroundStyle(AmberTheme.foreground)
-                    .lineLimit(1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
                     .minimumScaleFactor(0.82)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
