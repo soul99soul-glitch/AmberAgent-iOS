@@ -60,6 +60,11 @@ data class PendingApprovalDto(
     val tool: String,
     val detail: String? = null,
     val highRisk: Boolean,
+    val riskLevel: String? = null,
+    val targetDevice: String? = null,
+    val targetSummary: String? = null,
+    val diffPreview: String? = null,
+    val requiresLocalApproval: Boolean? = null,
 )
 
 @Serializable
@@ -117,6 +122,11 @@ data class BoardApprovalDto(
     val tool: String,
     val detail: String? = null,
     val highRisk: Boolean,
+    val riskLevel: String? = null,
+    val targetDevice: String? = null,
+    val targetSummary: String? = null,
+    val diffPreview: String? = null,
+    val requiresLocalApproval: Boolean? = null,
 )
 
 @Serializable
@@ -600,6 +610,11 @@ class CloudGatewayState(
                     tool = it.tool,
                     detail = it.detail?.let(CredentialRedactor::redact),
                     highRisk = it.highRisk,
+                    riskLevel = it.riskLevel ?: if (it.highRisk) "L3" else "L2",
+                    targetDevice = it.targetDevice,
+                    targetSummary = it.targetSummary?.let(CredentialRedactor::redact),
+                    diffPreview = it.diffPreview?.let(CredentialRedactor::redact),
+                    requiresLocalApproval = it.requiresLocalApproval ?: it.highRisk,
                 )
             }
             val detail = when {
@@ -710,6 +725,8 @@ class CloudGatewayState(
         // C3 v2 + Defect #1: High-risk or IM `allow=true` from any non-trusted or non-foreground source -> 403!
         if (allow && (pending.highRisk || !trustedForegroundSource)) {
             if (!trustedForegroundSource) {
+                val resolvedRiskLevel = pending.riskLevel ?: if (pending.highRisk) "L3" else "L2"
+                val requiresLocal = pending.requiresLocalApproval ?: pending.highRisk
                 recordAudit(
                     "amber-decision-result",
                     mapOf(
@@ -719,14 +736,21 @@ class CloudGatewayState(
                         "toolCallId" to toolCallId,
                         "allow" to "true",
                         "decision" to "allow",
+                        "riskLevel" to resolvedRiskLevel,
+                        "requiresLocalApproval" to requiresLocal.toString(),
                         "outcome" to "rejected_high_risk",
                         "device" to actorDevice,
                     ),
                 )
                 return DecisionHttpResult(
                     status = 403,
-                    error = "操作只能在已配对、解锁且经过生物识别的原生 App 前台核对后批准（IM 仅可拒绝）",
+                    error = "操作（$resolvedRiskLevel）只能在已配对、解锁且经过生物识别的原生 App 前台核对后批准（IM 仅可拒绝）",
                     outcome = "rejected_high_risk",
+                    riskLevel = resolvedRiskLevel,
+                    targetDevice = pending.targetDevice,
+                    targetSummary = pending.targetSummary,
+                    diffPreview = pending.diffPreview,
+                    requiresLocalApproval = requiresLocal,
                 )
             }
         }
@@ -780,6 +804,11 @@ class CloudGatewayState(
         val status: Int,
         val error: String? = null,
         val outcome: String = "",
+        val riskLevel: String? = null,
+        val targetDevice: String? = null,
+        val targetSummary: String? = null,
+        val diffPreview: String? = null,
+        val requiresLocalApproval: Boolean? = null,
     )
 
     @Synchronized

@@ -55,6 +55,11 @@ internal class ToolApprovalHelper(
         redactedArgsJson: String,
         highRisk: Boolean,
         nowSec: Double = CloudGatewayState.nowEpochSeconds(),
+        riskLevel: String? = null,
+        targetDevice: String? = null,
+        targetSummary: String? = null,
+        diffPreview: String? = null,
+        requiresLocalApproval: Boolean? = null,
     ) {
         val gw = gatewayState ?: return
         gw.upsertSession(
@@ -73,6 +78,11 @@ internal class ToolApprovalHelper(
                     tool = toolName,
                     detail = CredentialRedactor.redact(redactedArgsJson),
                     highRisk = highRisk,
+                    riskLevel = riskLevel,
+                    targetDevice = targetDevice,
+                    targetSummary = targetSummary?.let(CredentialRedactor::redact),
+                    diffPreview = diffPreview?.let(CredentialRedactor::redact),
+                    requiresLocalApproval = requiresLocalApproval,
                 ),
             )
         )

@@ -177,6 +177,8 @@ class ModelWorkerTurnRunner(
             if (memories.isNotEmpty()) append("\n<agent_memory>\n").append(memories.joinToString("\n") { it.content }).append("\n</agent_memory>")
         }
         var lastText = ""
+        val observedSourcePaths = linkedSetOf<String>()
+        val observedSourceRefs = linkedSetOf<String>()
         repeat(maxSteps) {
             if(kernel.workerEvents.isStopping(item.workItemId)) throw CancellationException("任务停止")
             if (kernel.store.getWorkItem(item.workItemId)?.state?.isTerminal != false)
@@ -255,10 +257,47 @@ class ModelWorkerTurnRunner(
                     if(kernel.workerEvents.isStopping(item.workItemId))throw CancellationException("任务停止")
                     if(call.toolName=="task_finish")require(kernel.workerEvents.pending(item.workItemId).isEmpty()) {"有尚未消费的任务事件，请先读取下一轮输入"}
                     val result = kernel.executeWorkerTool(principal, call.toolName, args)
-                    if (call.toolName == "task_finish" && result.jsonObject["ok"]?.jsonPrimitive?.booleanOrNull == true) {
-                        finish = WorkerSettlementReport(item.workItemId, result.jsonObject.getValue("outcome").jsonPrimitive.content,
-                            CredentialRedactor.redact(result.jsonObject.getValue("summary").jsonPrimitive.content),
-                            artifacts = result.jsonObject["artifacts"]?.jsonArray?.map { it.jsonObject.getValue("path").jsonPrimitive.content }.orEmpty())
+                    val resultObj = runCatching { result.jsonObject }.getOrNull()
+                    if (resultObj != null && resultObj["ok"]?.jsonPrimitive?.booleanOrNull == true) {
+                        if (call.toolName == "workspace_file_read") {
+                            val readPath = resultObj["path"]?.jsonPrimitive?.contentOrNull
+                                ?: args["path"]?.jsonPrimitive?.contentOrNull
+                            if (!readPath.isNullOrBlank()) {
+                                val safePath = CredentialRedactor.redact(readPath.trim())
+                                observedSourcePaths.add(safePath)
+                                val contentSnippet = resultObj["content"]?.jsonPrimitive?.contentOrNull
+                                    ?.trim()?.replace(Regex("\\s+"), " ")?.take(80)
+                                val ref = if (!contentSnippet.isNullOrBlank()) {
+                                    "$safePath: ${CredentialRedactor.redact(contentSnippet)}"
+                                } else {
+                                    safePath
+                                }
+                                observedSourceRefs.add(ref)
+                            }
+                        } else if (call.toolName == "workspace_file_search") {
+                            resultObj["matches"]?.jsonArray?.forEach { hit ->
+                                val hitPath = runCatching { hit.jsonObject["path"]?.jsonPrimitive?.contentOrNull }.getOrNull()
+                                if (!hitPath.isNullOrBlank()) {
+                                    val safePath = CredentialRedactor.redact(hitPath.trim())
+                                    observedSourcePaths.add(safePath)
+                                    observedSourceRefs.add(safePath)
+                                }
+                            }
+                        }
+                    }
+                    if (call.toolName == "task_finish" && resultObj?.get("ok")?.jsonPrimitive?.booleanOrNull == true) {
+                        val declaredPaths = resultObj["sourcePaths"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty()
+                        val declaredRefs = resultObj["sourceRefs"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty()
+                        val mergedPaths = (observedSourcePaths + declaredPaths).map { CredentialRedactor.redact(it.trim()) }.filter { it.isNotEmpty() }.distinct()
+                        val mergedRefs = (observedSourceRefs + declaredRefs).map { CredentialRedactor.redact(it.trim()) }.filter { it.isNotEmpty() }.distinct()
+                        finish = WorkerSettlementReport(
+                            workItemId = item.workItemId,
+                            outcome = resultObj.getValue("outcome").jsonPrimitive.content,
+                            summary = CredentialRedactor.redact(resultObj.getValue("summary").jsonPrimitive.content),
+                            artifacts = resultObj["artifacts"]?.jsonArray?.map { it.jsonObject.getValue("path").jsonPrimitive.content }.orEmpty(),
+                            sourceRefs = mergedRefs,
+                            sourcePaths = mergedPaths,
+                        )
                     }
                     result.toString()
                 } catch (e: CancellationException) { throw e }

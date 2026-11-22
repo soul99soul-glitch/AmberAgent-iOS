@@ -208,7 +208,19 @@ fun Application.configureCloudGateway(
                 trustedForegroundSource = trustedForeground,
             )
             if (decisionResult.error != null) {
-                call.respondError(decisionResult.status, decisionResult.error)
+                if (decisionResult.requiresLocalApproval != null || decisionResult.riskLevel != null) {
+                    val payload = buildJsonObject {
+                        put("error", decisionResult.error)
+                        decisionResult.requiresLocalApproval?.let { put("requiresLocalApproval", it) }
+                        decisionResult.riskLevel?.let { put("riskLevel", it) }
+                        decisionResult.targetDevice?.let { put("targetDevice", it) }
+                        decisionResult.targetSummary?.let { put("targetSummary", it) }
+                        decisionResult.diffPreview?.let { put("diffPreview", it) }
+                    }
+                    call.respondJson(decisionResult.status, gatewayJson.encodeToString(JsonObject.serializer(), payload))
+                } else {
+                    call.respondError(decisionResult.status, decisionResult.error)
+                }
             } else {
                 call.respondJson(200, "{}")
             }

@@ -713,6 +713,7 @@ class CloudAgentKernel(
                 highRisk = highRisk,
                 status = AgentRunStatus.AWAITING_PERMISSION,
             )
+            val approvalPreview = toolRegistry.approvalPreview(toolCall.toolName, parsedArgs, targetDevice = "cloud-daemon")
             approvalHelper.upsertPendingApprovalSession(
                 sessionKey = sessionKey,
                 agent = "amber",
@@ -725,6 +726,11 @@ class CloudAgentKernel(
                 redactedArgsJson = redactedArgsJson,
                 highRisk = highRisk,
                 nowSec = nowSec,
+                riskLevel = approvalPreview.riskLevel,
+                targetDevice = approvalPreview.targetDevice,
+                targetSummary = approvalPreview.targetSummary,
+                diffPreview = approvalPreview.diffPreview,
+                requiresLocalApproval = approvalPreview.requiresLocalApproval,
             )
             val card = ChannelApprovalCard(
                 sessionKey = sessionKey,
@@ -733,6 +739,11 @@ class CloudAgentKernel(
                 redactedDetail = redactedArgsJson,
                 highRisk = highRisk,
                 allowApproveInChannel = false,
+                riskLevel = approvalPreview.riskLevel,
+                targetDevice = approvalPreview.targetDevice,
+                targetSummary = approvalPreview.targetSummary,
+                diffPreview = approvalPreview.diffPreview,
+                requiresLocalApproval = approvalPreview.requiresLocalApproval,
             )
             val notice = if (highRisk) {
                 "正在等待你在已配对且已解锁的原生 App 前台核对批准高风险工具 `${toolCall.toolName}`（当前通道仅可点拒绝）。"

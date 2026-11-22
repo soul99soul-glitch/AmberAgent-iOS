@@ -124,6 +124,7 @@ class NativeDialogueService(private val kernel: CloudAgentKernel, private val in
                     put("thread_key", "native:${input.topicId}")
                     put("native_event_id", input.id)
                     if (input.conversationId != null) put("conversation_id", input.conversationId)
+                    if (input.parentRunId != null) put("parent_run_id", input.parentRunId)
                 }
                 ingress(InboundMessage(messageId = "native:${input.id}", channel = ChannelKind.APP, chatId = input.deviceId,
                     threadId = input.topicId, senderId = input.deviceId, senderRole = SenderRole.OWNER, scope = ConversationScope.DIRECT, text = input.text,
@@ -274,6 +275,8 @@ class NativeDialogueService(private val kernel: CloudAgentKernel, private val in
             if (report.outcome == "completed") "任务已完成。" else if (report.outcome == "cancelled") "任务已停止。" else "任务未完成。"
         }
         persistReply("result:${item.workItemId}", "${item.title} · ${if(report.outcome=="completed") "已完成" else if(report.outcome=="cancelled") "已停止" else "未完成"}\n$text")
+        val mergedSourceRefs = (item.sourceRefs + report.sourceRefs).map { CredentialRedactor.redact(it.trim()) }.filter { it.isNotEmpty() }.distinct()
+        val mergedSourcePaths = (item.sourcePaths + report.sourcePaths).map { CredentialRedactor.redact(it.trim()) }.filter { it.isNotEmpty() }.distinct()
         events.append(
             DialogueEvent(
                 id = "result:${item.workItemId}",
@@ -293,6 +296,8 @@ class NativeDialogueService(private val kernel: CloudAgentKernel, private val in
                 observedSeq = item.observedSeq,
                 ledgerId = item.ledgerId,
                 outcomeUnknown = item.outcomeUnknown,
+                sourceRefs = mergedSourceRefs.takeIf { it.isNotEmpty() },
+                sourcePaths = mergedSourcePaths.takeIf { it.isNotEmpty() },
             )
         )
         feedback.filterValues { state -> workFor(state.input).let { work -> work.isNotEmpty() && work.all { it.state.isTerminal } } }
@@ -306,7 +311,7 @@ class NativeDialogueService(private val kernel: CloudAgentKernel, private val in
         events.pending("stop").forEach {stop(it)}
         store.listWorkItems().filter {it.state.isTerminal&&it.subscribedThreadKeys.any {key->key.startsWith("native:")}}.forEach {item->
             val markdown=item.settlementReportPath?.let(store::readArchivedDocumentText).orEmpty()
-            settlement(item,WorkerSettlementReport(item.workItemId,item.settlementOutcome?:"failed",markdown.substringAfter("## Summary\n",markdown).substringBefore("\n## ")))
+            settlement(item,WorkerSettlementReport(item.workItemId,item.settlementOutcome?:"failed",markdown.substringAfter("## Summary\n",markdown).substringBefore("\n## "), sourceRefs = item.sourceRefs, sourcePaths = item.sourcePaths))
         }
         events.pending("message").forEach {enqueue(it)}
         // Resume feedback for already-consumed dispatches too; published IDs prevent replay bubbles.

@@ -650,6 +650,8 @@ class DefaultCloudOrchestrationKernel(
         val sessionKey = v2ApprovalSessionKey(item.workItemId, approvalId)
         val topic = item.subscribedThreadKeys.firstOrNull { it.startsWith("native:") }?.removePrefix("native:") ?: item.workItemId
 
+        val targetDevice = (item.targetNode as? ExecutionTargetNode.PairedMacNode)?.deviceId ?: "cloud-daemon"
+        val approvalPreview = toolRegistry.approvalPreview(toolCall.toolName, parsedArgs, targetDevice = targetDevice)
         val createdApproval: WorkerApprovalRecord? = synchronized(store) {
             val live = store.getWorkItem(item.workItemId)
             if (live == null || live.state.isTerminal || workerEvents.isStopping(item.workItemId)) {
@@ -680,6 +682,16 @@ class DefaultCloudOrchestrationKernel(
                         text = "等待你在已配对且已解锁的原生 App 前台核对批准高危工具 `${toolCall.toolName}`（IM 仅可拒绝）",
                         topicId = topic,
                         workItemId = item.workItemId,
+                        conversationId = live.conversationId,
+                        executorKind = live.executorKind,
+                        executorId = live.executorId,
+                        epoch = live.epoch,
+                        parentRunId = live.parentRunId,
+                        riskLevel = approvalPreview.riskLevel,
+                        targetDevice = approvalPreview.targetDevice,
+                        targetSummary = approvalPreview.targetSummary,
+                        diffPreview = approvalPreview.diffPreview,
+                        requiresLocalApproval = approvalPreview.requiresLocalApproval,
                     )
                 )
                 rec
@@ -710,6 +722,11 @@ class DefaultCloudOrchestrationKernel(
             redactedArgsJson = redactedArgsJson,
             highRisk = true,
             nowSec = now / 1000.0,
+            riskLevel = approvalPreview.riskLevel,
+            targetDevice = approvalPreview.targetDevice,
+            targetSummary = approvalPreview.targetSummary,
+            diffPreview = approvalPreview.diffPreview,
+            requiresLocalApproval = approvalPreview.requiresLocalApproval,
         )
         runCatching {
             onWorkerApprovalRequested?.invoke(
@@ -721,6 +738,11 @@ class DefaultCloudOrchestrationKernel(
                     redactedDetail = redactedArgsJson,
                     highRisk = true,
                     allowApproveInChannel = false,
+                    riskLevel = approvalPreview.riskLevel,
+                    targetDevice = approvalPreview.targetDevice,
+                    targetSummary = approvalPreview.targetSummary,
+                    diffPreview = approvalPreview.diffPreview,
+                    requiresLocalApproval = approvalPreview.requiresLocalApproval,
                 ),
             )
         }

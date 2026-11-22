@@ -94,6 +94,13 @@ object DialogueEventKinds {
     val ledgerId: String? = null,
     val outcomeUnknown: Boolean = false,
     val schemaVersion: Int = DIALOGUE_CONTRACT_SCHEMA_VERSION,
+    val riskLevel: String? = null,
+    val targetDevice: String? = null,
+    val targetSummary: String? = null,
+    val diffPreview: String? = null,
+    val requiresLocalApproval: Boolean? = null,
+    val sourceRefs: List<String>? = null,
+    val sourcePaths: List<String>? = null,
 )
 
 @Serializable data class DialoguePage(

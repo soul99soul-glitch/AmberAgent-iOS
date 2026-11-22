@@ -263,10 +263,12 @@ internal class OrchestrationWorkQueueCoordinator(
         val scopeSeed = provenanceList.joinToString("|") { "${it.sessionId}:${it.messageId}:${it.rawTextHash}" }
         val scopeKey = "source:" + OrchestrationHash.sha256Hex(scopeSeed).take(32)
         val batchId = "batch:" + OrchestrationHash.sha256Hex("${coord.activeSessionId}|$scopeKey|$requestId").take(24)
-        val conversationId = provenanceList.asSequence()
+        val nativeInputs = provenanceList.asSequence()
             .filter { it.channelId == ChannelKind.APP.wireName && it.messageId.startsWith("native:") }
-            .mapNotNull { kernel.store.dialogue.findById(it.messageId.removePrefix("native:"))?.conversationId }
-            .distinct().singleOrNull()
+            .mapNotNull { kernel.store.dialogue.findById(it.messageId.removePrefix("native:")) }
+            .toList()
+        val primaryNativeInput = nativeInputs.singleOrNull()
+        val conversationId = nativeInputs.mapNotNull { it.conversationId }.distinct().singleOrNull()
 
         val resultItems = mutableListOf<CloudWorkItemRecord>()
         val replayedIds = linkedSetOf<String>()
@@ -330,6 +332,7 @@ internal class OrchestrationWorkQueueCoordinator(
                 )
             )
 
+            val macNode = spec.targetNode as? ExecutionTargetNode.PairedMacNode
             val record = CloudWorkItemRecord(
                 workItemId = workItemId,
                 batchId = batchId,
@@ -346,7 +349,15 @@ internal class OrchestrationWorkQueueCoordinator(
                 progressRevision = 0,
                 lastActivityAtMs = nowEpochMs,
                 sourceProvenance = provenanceList,
-                conversationId = conversationId,
+                conversationId = spec.conversationId ?: conversationId,
+                executorKind = spec.executorKind ?: primaryNativeInput?.executorKind ?: if (macNode != null) "mac" else null,
+                executorId = spec.executorId ?: primaryNativeInput?.executorId ?: macNode?.deviceId,
+                epoch = primaryNativeInput?.epoch,
+                causedByInputId = primaryNativeInput?.id,
+                causedByRequestId = primaryNativeInput?.requestId,
+                parentRunId = spec.parentRunId ?: primaryNativeInput?.parentRunId,
+                observedSeq = primaryNativeInput?.observedSeq,
+                ledgerId = primaryNativeInput?.ledgerId,
                 subscribedThreadKeys = spec.subscribedThreadKeys,
                 createdAtMs = nowEpochMs,
                 updatedAtMs = nowEpochMs,

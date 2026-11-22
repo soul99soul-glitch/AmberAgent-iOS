@@ -24,9 +24,20 @@ import Foundation
 
         for task in tasks {
             if let run = liveByTask[task.id] {
-                let approval = run.approval.map { approval in
-                    AmberControl.BoardItem.Approval(sessionKey: run.sessionKey ?? "", toolCallId: approval.id, tool: approval.name,
-                        detail: DesktopGatewayReporter.excerpt(approval.arguments), highRisk: DesktopToolRegistry.isHighRisk(approval.name))
+                let approval = run.approval.map { approval -> AmberControl.BoardItem.Approval in
+                    let meta = DesktopToolRegistry.approvalMetadata(for: approval.name, arguments: approval.arguments)
+                    return AmberControl.BoardItem.Approval(
+                        sessionKey: run.sessionKey ?? "",
+                        toolCallId: approval.id,
+                        tool: approval.name,
+                        detail: DesktopGatewayReporter.excerpt(approval.arguments),
+                        highRisk: DesktopToolRegistry.isHighRisk(approval.name),
+                        riskLevel: meta.riskLevel.rawValue,
+                        targetDevice: meta.targetDevice,
+                        targetSummary: meta.targetSummary,
+                        diffPreview: meta.diffPreview,
+                        requiresLocalApproval: meta.requiresLocalApproval
+                    )
                 }
                 items.append(.init(id: "run:\(task.id.uuidString)", kind: .run, column: approval == nil ? .running : .needsYou,
                     title: task.name, detail: approval == nil ? "运行中" : "等你确认 · " + (approval?.tool ?? ""),

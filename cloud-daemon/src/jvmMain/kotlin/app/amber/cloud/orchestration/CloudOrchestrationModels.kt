@@ -249,6 +249,10 @@ data class WorkItemSubmissionSpec(
     val subscribedThreadKeys: List<String> = emptyList(),
     val agentId: String = app.amber.cloud.agents.MAIN_AGENT_ID,
     val replyAddress: ImAddress? = null,
+    val conversationId: String? = null,
+    val parentRunId: String? = null,
+    val executorKind: String? = null,
+    val executorId: String? = null,
 ) {
     init {
         require(TASK_KEY_REGEX.matches(taskKey)) {
@@ -309,6 +313,8 @@ data class CloudWorkItemRecord(
     val ledgerId: String? = null,
     val outcomeUnknown: Boolean = false,
     val schemaVersion: Int = DIALOGUE_CONTRACT_SCHEMA_VERSION,
+    val sourceRefs: List<String> = emptyList(),
+    val sourcePaths: List<String> = emptyList(),
 )
 
 @Serializable
@@ -332,6 +338,8 @@ data class WorkerSettlementReport(
     val summary: String,
     val blockers: List<String> = emptyList(),
     val artifacts: List<String> = emptyList(),
+    val sourceRefs: List<String> = emptyList(),
+    val sourcePaths: List<String> = emptyList(),
     /** 刻意不含动态生成时间戳，确保内容哈希稳定去重 */
     val contentSha256: String = OrchestrationHash.sha256Hex(
         buildString {
@@ -340,6 +348,10 @@ data class WorkerSettlementReport(
             append(summary.trim()).append('\n')
             append(blockers.joinToString("\n")).append('\n')
             append(artifacts.joinToString("\n"))
+            if (sourceRefs.isNotEmpty() || sourcePaths.isNotEmpty()) {
+                append('\n').append(sourceRefs.joinToString("\n"))
+                append('\n').append(sourcePaths.joinToString("\n"))
+            }
         }
     ),
 )

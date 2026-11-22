@@ -20,6 +20,11 @@ data class NativeTaskRequest(
     val text: String,
     val agentId: String = MAIN_AGENT_ID,
     val title: String = "云端任务",
+    val conversationId: String? = null,
+    val parentRunId: String? = null,
+    val executorKind: String? = null,
+    val executorId: String? = null,
+    val targetDeviceId: String? = null,
 )
 
 @Serializable
@@ -55,11 +60,18 @@ class NativeTaskApi(private val api: AgentCentricApi) {
             sessionId = PRIMARY_CONVERSATION_ID.toString(), messageId = operationId,
             senderId = device.id, channelId = "c3", rawTextHash = fingerprint, createdAtEpochMs = now,
         ), sourceText)
+        val targetNode = request.targetDeviceId?.trim()?.takeIf { it.isNotEmpty() }
+            ?.let { ExecutionTargetNode.PairedMacNode(deviceId = it) }
+            ?: ExecutionTargetNode.CloudSubagent(rolePrompt = "")
         val result = kernel.orchestrationKernel.submitWorkBatch(
             principal = CloudPrincipal.OwnerUser(device.id, "c3"), requestId = operationId,
             contextMessageIds = listOf(operationId), items = listOf(WorkItemSubmissionSpec(
                 taskKey = operationId, title = CredentialRedactor.redact(request.title), brief = request.text,
-                targetNode = ExecutionTargetNode.CloudSubagent(rolePrompt = ""), agentId = request.agentId,
+                targetNode = targetNode, agentId = request.agentId,
+                conversationId = request.conversationId,
+                parentRunId = request.parentRunId,
+                executorKind = request.executorKind,
+                executorId = request.executorId,
             )), nowEpochMs = now,
         )
         val item = result.items.single()

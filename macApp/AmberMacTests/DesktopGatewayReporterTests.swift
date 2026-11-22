@@ -98,4 +98,51 @@ import XCTest
         XCTAssertEqual(long?.count, DesktopGatewayReporter.detailLimit)
         XCTAssertEqual(long?.last, "…")
     }
+
+    func testStructuredApprovalAndSourceProvenanceEvents() async throws {
+        let (reporter, spool) = try make()
+        let conversation = UUID(), run = UUID()
+        reporter.runStarted(
+            runID: run,
+            conversationID: conversation,
+            taskName: "周报整理",
+            parentRunId: "ios-run-7",
+            workItemId: "work:abc123"
+        )
+        reporter.approval(
+            conversationID: conversation,
+            DesktopToolApproval(
+                id: "call-edit",
+                name: "workspace_file_write",
+                arguments: #"{"path":"notes/weekly.md","content":"第二条：已完成接口迁移"}"#,
+                reason: "写入"
+            )
+        )
+        reporter.approval(conversationID: conversation, nil)
+        reporter.runFinished(
+            conversationID: conversation,
+            succeeded: true,
+            sourceRefs: ["notes/weekly.md: 第二条：已完成接口迁移"],
+            sourcePaths: ["notes/weekly.md"]
+        )
+
+        let events = await drained(spool, count: 4)
+        XCTAssertEqual(events.map(\.kind), [.runStart, .permissionRequest, .toolDone, .runExit])
+        XCTAssertEqual(events[0].conversationId, conversation.uuidString.lowercased())
+        XCTAssertEqual(events[0].parentRunId, "ios-run-7")
+        XCTAssertEqual(events[0].workItemId, "work:abc123")
+
+        let ask = events[1]
+        XCTAssertEqual(ask.riskLevel, "L2")
+        XCTAssertEqual(ask.requiresLocalApproval, false)
+        XCTAssertEqual(ask.targetSummary, "workspace_file_write: notes/weekly.md")
+        XCTAssertTrue(ask.diffPreview?.contains("notes/weekly.md") == true)
+        XCTAssertNotNil(ask.targetDevice)
+
+        let exit = events[3]
+        XCTAssertEqual(exit.sourcePaths, ["notes/weekly.md"])
+        XCTAssertEqual(exit.sourceRefs, ["notes/weekly.md: 第二条：已完成接口迁移"])
+        XCTAssertEqual(exit.parentRunId, "ios-run-7")
+        XCTAssertEqual(exit.workItemId, "work:abc123")
+    }
 }

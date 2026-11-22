@@ -202,6 +202,11 @@ data class ChannelApprovalCard(
      * C3 v2 rule: IM channels (including OWNER) can ONLY deny, never approve.
      */
     val allowApproveInChannel: Boolean = false,
+    val riskLevel: String? = null,
+    val targetDevice: String? = null,
+    val targetSummary: String? = null,
+    val diffPreview: String? = null,
+    val requiresLocalApproval: Boolean? = null,
 )
 
 @Serializable

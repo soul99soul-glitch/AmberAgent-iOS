@@ -118,6 +118,17 @@ class CloudToolRegistry(
     }
 
     @Synchronized
+    fun riskLevel(toolName: String, args: JsonObject = JsonObject(emptyMap())): ToolRiskLevel =
+        ToolRiskPolicy.classify(toolName, tools[toolName], args)
+
+    @Synchronized
+    fun approvalPreview(
+        toolName: String,
+        args: JsonObject = JsonObject(emptyMap()),
+        targetDevice: String? = null,
+    ): ToolApprovalPreview = ToolRiskPolicy.buildPreview(toolName, tools[toolName], args, targetDevice)
+
+    @Synchronized
     fun isWorkerApprovalTool(toolName: String): Boolean {
         val def = tools[toolName] ?: return false
         if (def.ownerOnly || def.name in EXCLUDED_WORKER_APPROVAL_TOOLS) return false
