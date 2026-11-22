@@ -1,5 +1,7 @@
 package app.amber.cloud.gateway
 
+import app.amber.cloud.config.ConfigurationApiException
+import app.amber.cloud.config.PairingBootstrapSnapshot
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.security.EnvelopeCredentialVault
 import app.amber.core.native.AmberNativeBridge
@@ -12,6 +14,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.io.File
+import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
@@ -272,8 +275,16 @@ class CloudGatewayState(
         return created
     }
 
+    // The CLI and the HTTP gateway can issue a ticket in different processes.
+    private inline fun <T> withTicketLock(action: () -> T): T {
+        val path = File(dataDir, "pairing.lock").toPath()
+        return FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.WRITE).use { channel ->
+            channel.lock().use { action() }
+        }
+    }
+
     @Synchronized
-    fun issuePairingTicket(nowSeconds: Double = clockEpochSeconds(), ttlSeconds: Double = 300.0): String {
+    fun issuePairingTicket(nowSeconds: Double = clockEpochSeconds(), ttlSeconds: Double = 300.0): String = withTicketLock {
         val secretBytes = ByteArray(16).also { secureRandom.nextBytes(it) }
         val secret = Base64.getUrlEncoder().withoutPadding().encodeToString(secretBytes)
         val ticket = PairingTicket(
@@ -282,12 +293,12 @@ class CloudGatewayState(
         )
         atomicWrite(pairingFile, json.encodeToString(ticket))
         recordAudit("pair-code")
-        return secret
+        secret
     }
 
     /**
      * Validates a one-time pairing secret and registers the device in `devices.json`.
-     * Burns `pairing.json` immediately on first valid match.
+     * Consumes the ticket once registration parameters and any bootstrap response are ready.
      */
     @Synchronized
     fun pairDevice(
@@ -298,24 +309,25 @@ class CloudGatewayState(
         nodeRole: String = "hybrid",
         trustedApprovalSurface: Boolean? = null,
         nowSeconds: Double = clockEpochSeconds(),
-    ): PairResult {
+        prepareBootstrap: ((PairedDevice) -> PairingBootstrapSnapshot?)? = null,
+    ): PairResult = withTicketLock {
         val normalizedPlatform = platform.trim().lowercase()
         if (secret.isBlank() || normalizedPlatform !in VALID_PLATFORMS) {
-            return PairResult.BadRequest("需要 secret 与 platform（ios / android / harmony / macos / linux）")
+            return@withTicketLock PairResult.BadRequest("需要 secret 与 platform（ios / android / harmony / macos / linux）")
+        }
+        if (protocolVersion !in 1..2 || nodeRole !in setOf("viewer", "executor", "hybrid")) {
+            return@withTicketLock PairResult.BadRequest("invalid_pair_request")
         }
         if (!pairingFile.exists()) {
-            return PairResult.Forbidden("配对码无效或已过期，请重新运行 amber-cli pair")
+            return@withTicketLock PairResult.Forbidden("配对码无效或已过期，请重新运行 amber-cli pair")
         }
         val ticket = runCatching {
             json.decodeFromString<PairingTicket>(pairingFile.readText())
-        }.getOrNull() ?: return PairResult.Forbidden("配对码无效或已过期，请重新运行 amber-cli pair")
+        }.getOrNull() ?: return@withTicketLock PairResult.Forbidden("配对码无效或已过期，请重新运行 amber-cli pair")
 
         if (ticket.expiresAt <= nowSeconds || ticket.secretHash != sha256Hex(secret)) {
-            return PairResult.Forbidden("配对码无效或已过期，请重新运行 amber-cli pair")
+            return@withTicketLock PairResult.Forbidden("配对码无效或已过期，请重新运行 amber-cli pair")
         }
-
-        // Single-use invariant: burn ticket before issuing token
-        pairingFile.delete()
 
         val displayName = (deviceName?.takeIf { it.isNotBlank() } ?: normalizedPlatform).take(64)
         val tokenBytes = ByteArray(32).also { secureRandom.nextBytes(it) }
@@ -331,15 +343,17 @@ class CloudGatewayState(
             nodeRole = nodeRole,
             trustedApprovalSurface = trustedApprovalSurface ?: (normalizedPlatform in NATIVE_PLATFORMS),
         )
-        return try {
+        try {
             val current = loadDevicesStrict().toMutableList()
+            val bootstrap = prepareBootstrap?.invoke(device)
+            // Validation and encryption are complete. Consume before publishing a device token.
+            Files.delete(pairingFile.toPath())
             current.add(device)
             saveDevicesStrict(current)
             recordAudit(
                 "pair",
                 mapOf(
                     "device" to device.id,
-                    "name" to device.name,
                     "platform" to device.platform,
                 ),
             )
@@ -348,9 +362,12 @@ class CloudGatewayState(
                 token = token,
                 gatewayId = identity.id,
                 gatewayName = identity.name,
+                bootstrap = bootstrap,
             )
-        } catch (e: Exception) {
-            PairResult.ServerError("无法保存设备: ${e.message}")
+        } catch (e: ConfigurationApiException) {
+            if (e.status == 400) PairResult.BadRequest(e.code) else PairResult.ServerError(e.code)
+        } catch (_: Exception) {
+            PairResult.ServerError("pairing_unavailable")
         }
     }
 
@@ -360,6 +377,7 @@ class CloudGatewayState(
             val token: String,
             val gatewayId: String,
             val gatewayName: String,
+            val bootstrap: PairingBootstrapSnapshot? = null,
         ) : PairResult
 
         data class BadRequest(val error: String) : PairResult

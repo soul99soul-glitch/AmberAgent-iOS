@@ -152,6 +152,23 @@ struct DesktopIssuedPairingTicket: Decodable, Equatable, Sendable {
     var port: Int
     var expiresAt: Double
     var bootstrap: DesktopPairingBootstrapHint
+
+    // The daemon may be behind a TLS proxy with a different port and certificate.
+    func usingPairedEndpoint(_ connection: DesktopCloudConnection) throws -> Self {
+        guard var payload = DesktopCloudPairingPayload.parse(deepLinkUrl), payload.id == connection.gatewayId else {
+            throw DesktopCloudError.invalidResponse
+        }
+        payload.fp = connection.fingerprint
+        payload.addrs = connection.addrs
+        payload.port = connection.port
+        var ticket = self
+        ticket.deepLinkUrl = "amber://gateway/pair?p=" + DesktopCloudBase64URL.encode(try JSONEncoder().encode(payload))
+        ticket.fingerprint = payload.fp
+        ticket.addresses = payload.addrs
+        ticket.port = payload.port
+        return ticket
+    }
+
 }
 
 protocol DesktopCloudPairingBootstrapSync: Sendable {
@@ -161,9 +178,10 @@ protocol DesktopCloudPairingBootstrapSync: Sendable {
 
 struct DesktopCloudClientPairingBootstrapSync: DesktopCloudPairingBootstrapSync {
     let client: DesktopCloudClient
+    let connection: DesktopCloudConnection
 
     func issuePairingTicket() async throws -> DesktopIssuedPairingTicket {
-        try await client.issuePairingTicket()
+        try await client.issuePairingTicket().usingPairedEndpoint(connection)
     }
 
     func fetchBootstrapSnapshot(clientPublicJwk: [String: String]?) async throws -> DesktopPairingBootstrapSnapshot {
@@ -229,6 +247,7 @@ enum DesktopBootstrapJWE {
         ) as Data? else {
             throw DesktopCloudError.invalidResponse
         }
+        guard cekData.count == 32, iv.count == 12, tag.count == 16 else { throw DesktopCloudError.invalidResponse }
         let nonce = try AES.GCM.Nonce(data: iv)
         let box = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag)
         let plaintext = try AES.GCM.open(box, using: SymmetricKey(data: cekData), authenticating: Data(parts[0].utf8))

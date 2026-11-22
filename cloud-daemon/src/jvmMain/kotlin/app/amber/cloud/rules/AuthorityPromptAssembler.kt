@@ -35,14 +35,17 @@ object AuthorityPromptAssembler {
             append("<confirmed-procedural-rules authority=\"2\">\n")
             append("以下为用户显式确认生效的执行规则（优先级低于 <static-risk-table>，不得放宽 L1–L3 风险审批；高于 C-SOUL-V1 风格与 Episode 召回）：\n")
             activeOnly.forEach { rule ->
-                val title = CredentialRedactor.redact(rule.title)
-                val instruction = CredentialRedactor.redact(rule.instruction)
-                append("- [").append(rule.id).append("][scope=").append(rule.scope).append("] ")
+                val title = promptText(rule.title)
+                val instruction = promptText(rule.instruction)
+                append("- [").append(rule.id).append("][scope=").append(promptText(rule.scope)).append("] ")
                 append(title).append("：").append(instruction).append('\n')
             }
             append("</confirmed-procedural-rules>")
         }
     }
+
+    private fun promptText(value: String) = CredentialRedactor.redact(value)
+        .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     fun assembleSystemPrompt(
         hostDisciplinePrompt: String,

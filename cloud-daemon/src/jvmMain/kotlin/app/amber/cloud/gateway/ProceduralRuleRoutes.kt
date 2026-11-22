@@ -1,5 +1,7 @@
 package app.amber.cloud.gateway
 
+import app.amber.cloud.config.CloudConfigurationManager
+import app.amber.cloud.config.ConfigurationApiException
 import app.amber.cloud.rules.ProceduralRuleListResponseDto
 import app.amber.cloud.rules.ProceduralRuleRedirectDto
 import app.amber.cloud.rules.ProceduralRuleResponseDto
@@ -56,7 +58,13 @@ internal fun Application.configureProceduralRuleRoutes(
             ?.substringAfter(' ')
             ?.trim()
         return when (val auth = state.authenticateBearer(token)) {
-            is CloudGatewayState.AuthResult.Authenticated -> auth.device
+            is CloudGatewayState.AuthResult.Authenticated -> try {
+                CloudConfigurationManager.requireManagementDevice(auth.device)
+                auth.device
+            } catch (e: ConfigurationApiException) {
+                respondError(e.status, e.code)
+                null
+            }
             is CloudGatewayState.AuthResult.Unauthorized -> {
                 respondError(401, "unauthorized")
                 null
@@ -88,7 +96,6 @@ internal fun Application.configureProceduralRuleRoutes(
                         mapOf(
                             "device" to device.id,
                             "ruleId" to outcome.rule.id,
-                            "scope" to outcome.rule.scope,
                             "status" to outcome.rule.status.wireName,
                         ),
                     )
@@ -147,12 +154,12 @@ internal fun Application.configureProceduralRuleRoutes(
                     ?: return@get call.respondError(400, "invalid_rule_status")
             }
             val scope = call.request.queryParameters["scope"]
-            val rules = ruleStore.list(status = status, scope = scope)
-            val (activeCount, proposedCount) = ruleStore.counts()
+            val scopedRules = ruleStore.list(scope = scope)
+            val (activeCount, proposedCount) = ruleStore.counts(scopedRules)
             val payload = json.encodeToString(
                 ProceduralRuleListResponseDto.serializer(),
                 ProceduralRuleListResponseDto(
-                    rules = rules,
+                    rules = scopedRules.filter { status == null || it.status == status },
                     activeCount = activeCount,
                     proposedCount = proposedCount,
                 ),

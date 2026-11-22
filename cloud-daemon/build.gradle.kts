@@ -35,6 +35,7 @@ kotlin {
                 implementation(libs.kotlinx.datetime)
                 implementation(libs.ktor.client.core)
                 implementation(libs.ktor.client.okhttp)
+                implementation("com.google.zxing:core:3.5.4")
                 implementation("org.jsoup:jsoup:1.23.2")
                 implementation("com.nimbusds:nimbus-jose-jwt:10.10")
                 implementation(libs.ktor.client.content.negotiation)

@@ -143,32 +143,42 @@ class CloudConfigurationManager internal constructor(
         if (!Regex("[A-Za-z0-9._:-]{1,128}").matches(payload.requestId) || payload.expectedRevision < 0) fail(400, "invalid_request")
         val mutations = mutations(payload.credentials)
         // Canonical typed patch + selected operations; excludes envelope randomness and expiry so a client can re-seal a retry.
-        val operation = buildJsonObject {
-            put("configuration", json.encodeToJsonElement(payload.configuration))
-            put("credentials", JsonObject(mutations.toSortedMap().mapValues { (_, value) -> value?.let(::JsonPrimitive) ?: JsonNull }))
+        fun operationHash(configuration: ConfigurationPatch?): String {
+            val operation = buildJsonObject {
+                put("configuration", json.encodeToJsonElement(configuration))
+                put("credentials", JsonObject(mutations.toSortedMap().mapValues { (_, value) -> value?.let(::JsonPrimitive) ?: JsonNull }))
+            }
+            return MessageDigest.getInstance("SHA-256").digest(operation.toString().toByteArray()).joinToString("") { "%02x".format(it) }
         }
-        val hash = MessageDigest.getInstance("SHA-256").digest(operation.toString().toByteArray()).joinToString("") { "%02x".format(it) }
+        val patch = payload.configuration
+        val model = patch?.model
+        val hash = operationHash(patch)
         state.requests.firstOrNull { it.deviceId == device.id && it.requestId == payload.requestId }?.let {
-            if (it.operationHash != hash) fail(409, "request_id_conflict")
+            if (it.operationHash != "v2:$hash" && it.operationHash != hash) {
+                // Early Stage 3 receipts materialized both defaults even when the client omitted them.
+                if (it.operationHash.startsWith("v2:") || model == null) fail(409, "request_id_conflict")
+                val oldModel = model.copy(authMode = model.authMode ?: "apiKey", siwcConfigured = model.siwcConfigured ?: false)
+                if (it.operationHash != operationHash(patch.copy(model = oldModel))) fail(409, "request_id_conflict")
+            }
             return ConfigurationReceipt(payload.requestId, it.revision, state.revision, true)
         }
         val now = clockSeconds()
         if (payload.expiresAt <= now) fail(410, "envelope_expired")
         if (payload.issuedAt < now - 300 || payload.issuedAt > now + 60 || payload.expiresAt <= payload.issuedAt || payload.expiresAt - payload.issuedAt > 300) fail(400, "invalid_envelope")
         if (payload.expectedRevision != state.revision) throw ConfigurationApiException(409, "revision_conflict", state.revision)
-        payload.configuration?.model?.let(::validateRemoteModel)
+        val nextModel = model?.let {
+            val settings = it.settings()
+            if (destination(settings) == destination(state.model)) settings.copy(
+                authMode = if (it.authMode == null) state.model.authMode else settings.authMode,
+                siwcConfigured = it.siwcConfigured ?: state.model.siwcConfigured,
+            ) else settings
+        } ?: state.model
+        if (model != null) validateRemoteModel(nextModel)
         val next = state.copy(
             revision = state.revision + 1,
-            model = payload.configuration?.model?.let {
-                it.copy(
-                    provider = it.provider.trim().lowercase(),
-                    modelId = it.modelId.trim(),
-                    baseUrl = it.baseUrl.trim().trimEnd('/'),
-                    authMode = it.authMode.trim().ifEmpty { "apiKey" },
-                )
-            } ?: state.model,
+            model = nextModel,
             search = payload.configuration?.search ?: state.search,
-            requests = state.requests + RequestRecord(device.id, payload.requestId, hash, state.revision + 1),
+            requests = state.requests + RequestRecord(device.id, payload.requestId, "v2:$hash", state.revision + 1),
         )
         validateSearch(next.search)
         // Retention is not permission to forward a credential to a different provider/address.

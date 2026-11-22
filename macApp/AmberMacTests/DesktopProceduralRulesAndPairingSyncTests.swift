@@ -17,8 +17,20 @@ final class DesktopProceduralRulesAndPairingSyncTests: XCTestCase {
     private actor FakeRulesSync: DesktopCloudRulesSync {
         var rules: [DesktopProceduralRule] = []
         var nextId = 1
+        var suspendList = false
+        var pausedList: CheckedContinuation<Void, Never>?
 
-        func listRules() async throws -> [DesktopProceduralRule] { rules }
+        func pauseNextList() { suspendList = true }
+        func resumeList() { pausedList?.resume(); pausedList = nil }
+
+        func listRules() async throws -> [DesktopProceduralRule] {
+            let snapshot = rules
+            if suspendList {
+                suspendList = false
+                await withCheckedContinuation { pausedList = $0 }
+            }
+            return snapshot
+        }
 
         func proposeRule(title: String?, instruction: String, scope: String) async throws -> DesktopRuleProposalOutcome {
             if instruction.contains("温柔") || instruction.contains("人设") || instruction.contains("自称") {
@@ -157,6 +169,36 @@ final class DesktopProceduralRulesAndPairingSyncTests: XCTestCase {
 
         await store.revokeRule(id: created.id)
         XCTAssertEqual(store.rules.first?.status, .revoked)
+    }
+
+    func testRefreshStartedBeforeConfirmationCannotRestoreProposedState() async throws {
+        let sync = FakeRulesSync()
+        let store = makePairedStore(rulesSync: sync)
+        _ = await store.proposeRule(instruction: "构建前列出修改的文件")
+        let id = try XCTUnwrap(store.rules.first?.id)
+        await sync.pauseNextList()
+        let refresh = Task { await store.refreshRules() }
+        while await sync.pausedList == nil { await Task.yield() }
+        await store.confirmRule(id: id)
+        await sync.resumeList()
+        await refresh.value
+        XCTAssertEqual(store.rules.first?.status, .active)
+    }
+
+    func testIssuedLinkUsesConfirmedPublicEndpoint() throws {
+        let internalPayload = DesktopCloudPairingPayload(v: 1, id: "gw", name: "Amber", addrs: ["127.0.0.1"],
+                                                        port: 47822, fp: "upstream-pin", s: "one-time", bootstrap: .init())
+        let ticket = DesktopIssuedPairingTicket(
+            deepLinkUrl: "amber://gateway/pair?p=" + DesktopCloudBase64URL.encode(try JSONEncoder().encode(internalPayload)),
+            fingerprint: "upstream-pin", addresses: ["127.0.0.1"], port: 47822, expiresAt: 300, bootstrap: .init())
+        let connection = DesktopCloudConnection(gatewayId: "gw", name: "Amber", addrs: ["cloud.example"],
+                                               port: 443, fingerprint: "confirmed-proxy-pin", deviceId: "paired-mac")
+        let result = try ticket.usingPairedEndpoint(connection)
+        let payload = try XCTUnwrap(DesktopCloudPairingPayload.parse(result.deepLinkUrl))
+        XCTAssertEqual(payload.addrs, connection.addrs)
+        XCTAssertEqual(payload.port, 443)
+        XCTAssertEqual(payload.fp, connection.fingerprint)
+        XCTAssertEqual(payload.s, internalPayload.s)
     }
 
     func testSingleScanPairingPayloadWithBootstrapHintAndEphemeralJWERoundtrip() throws {

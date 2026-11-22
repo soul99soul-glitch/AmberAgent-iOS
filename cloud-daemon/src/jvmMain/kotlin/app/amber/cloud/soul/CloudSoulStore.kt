@@ -74,7 +74,7 @@ class CloudSoulStore(
         ignoreUnknownKeys = true
         encodeDefaults = true
     }
-    private val stateFile = File(dataDir, "agent_soul.json")
+    private val stateFile = File(dataDir, STATE_FILENAME)
     private val memorySoulFile = File(memoryDir, "SOUL.md")
     private val workspaceSoulFile = workspaceDir?.let { File(it, "SOUL.md") }
 
@@ -352,6 +352,15 @@ class CloudSoulStore(
     }
 
     companion object {
+        private const val STATE_FILENAME = "agent_soul.json"
+
+        // Reading a pairing hint from the CLI must not migrate or rewrite the running daemon's SOUL files.
+        fun persistedRevision(dataDir: File): Long {
+            val state = File(dataDir, STATE_FILENAME)
+            if (!state.exists()) return 0L
+            return Json { ignoreUnknownKeys = true }.decodeFromString<SoulStateDto>(state.readText()).revision
+        }
+
         const val DEFAULT_DISPLAY_NAME = "Amber"
         const val MAX_HISTORY = 8
         const val MAX_DISPLAY_NAME_CHARS = 64

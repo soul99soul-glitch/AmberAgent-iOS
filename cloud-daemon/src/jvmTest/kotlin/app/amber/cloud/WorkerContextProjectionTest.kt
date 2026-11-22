@@ -119,6 +119,29 @@ class WorkerContextProjectionTest {
     )
 
     @Test
+    fun worker_rechecks_rules_after_a_tool_round() = runBlocking {
+        val h = Harness { step, _ ->
+            if (step == 1) UIMessage.assistant("").copy(parts = listOf(UIMessagePart.Tool("probe", "test_probe", "{}")))
+            else finishCall()
+        }
+        try {
+            val store = h.kernel.proceduralRuleStore
+            val proposed = store.propose("先列出变更清单") as app.amber.cloud.rules.RuleProposalOutcome.Proposed
+            store.confirm(proposed.rule.id)
+            h.kernel.toolRegistry.register(CloudToolDefinition("test_probe", "test probe", false, ToolEffect.PURE) {
+                store.archive(proposed.rule.id)
+                buildJsonObject { put("ok", true) }
+            })
+            h.submit("rule-refresh", "查看变更后结算")
+            h.awaitIdle()
+            val prompts = h.capturedRequests.map { it.first().toText() }
+            assertTrue(prompts.first().contains(proposed.rule.instruction))
+            assertFalse(prompts.last().contains(proposed.rule.instruction))
+            assertEquals(1, store.get(proposed.rule.id)?.hitCount)
+        } finally { h.close() }
+    }
+
+    @Test
     fun parallel_large_tool_outputs_fit_the_budget_without_rewriting_history() = runBlocking {
         val h = Harness { step, _ ->
             if (step == 1) UIMessage.assistant("").copy(parts = (1..8).map {

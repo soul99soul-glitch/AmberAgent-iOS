@@ -40,7 +40,6 @@ internal fun runCli(args: Array<String>) {
             val addrs = CandidateAddressResolver.resolve(
                 publicAddresses = listOfNotNull(publicAddr),
             )
-            val soulStore = CloudSoulStore(dataDir)
             val ruleStore = ProceduralRuleStore(dataDir)
             val payload = PairingPayload(
                 v = 1,
@@ -52,7 +51,7 @@ internal fun runCli(args: Array<String>) {
                 s = secret,
                 bootstrap = PairingBootstrapHint(
                     syncSupported = true,
-                    soulRevision = soulStore.currentRevision(),
+                    soulRevision = CloudSoulStore.persistedRevision(dataDir),
                     activeRulesCount = ruleStore.activeSnapshot().size,
                 ),
             )

@@ -226,6 +226,7 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     @ObservationIgnored private var pairingBootstrapSync: (any DesktopCloudPairingBootstrapSync)?
     @ObservationIgnored private let soulCoordinator: DesktopCloudSoulCoordinator?
     @ObservationIgnored private var poll: Task<Void, Never>?
+    @ObservationIgnored private var rulesGeneration = 0
     @ObservationIgnored private var statusGeneration = 0
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let tokens: any DesktopCloudTokenStore
@@ -265,8 +266,8 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
         self.makeRulesSync = makeRulesSync ?? { client, _ in
             DesktopCloudClientRulesSync(client: client)
         }
-        self.makePairingBootstrapSync = makePairingBootstrapSync ?? { client, _ in
-            DesktopCloudClientPairingBootstrapSync(client: client)
+        self.makePairingBootstrapSync = makePairingBootstrapSync ?? { client, connection in
+            DesktopCloudClientPairingBootstrapSync(client: client, connection: connection)
         }
         if let data = defaults.data(forKey: Self.connectionKey),
            let saved = try? JSONDecoder().decode(DesktopCloudConnection.self, from: data),
@@ -279,6 +280,12 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     private func install(_ connection: DesktopCloudConnection, token: String) {
         let client = DesktopCloudClient(addrs: connection.addrs, port: connection.port,
                                         fingerprint: connection.fingerprint, token: token)
+        isMutatingRule = false
+        isIssuingPairing = false
+        rules = []
+        rulesError = nil
+        issuedPairingTicket = nil
+        ruleSoulRedirectNotice = nil
         self.client = client
         self.sync = makeSync(client, connection)
         self.rulesSync = makeRulesSync(client, connection)
@@ -308,19 +315,28 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
         defer { isBusy = false }
         let pairingClient = DesktopCloudClient(addrs: payload.addrs, port: payload.port, fingerprint: payload.fp, token: nil)
         do {
-            let ephemeralKeyPair = try? DesktopBootstrapJWE.generateEphemeralRSAKeyPair()
+            // This Mac manages the remote settings. Only a credential importer needs a JWE.
             let response = try await pairingClient.pair(
                 secret: payload.s,
                 deviceName: Self.deviceName,
-                requestBootstrapSync: true,
-                clientPublicJwk: ephemeralKeyPair?.publicJwk
+                requestBootstrapSync: true
             )
+            guard response.gatewayId == payload.id else { throw DesktopCloudError.invalidResponse }
+            let importKey = response.bootstrap?.importKey
+            let pins = DesktopCloudPinnedKidStore(defaults: defaults)
+            if let importKey {
+                _ = try importKey.validatedKey(gatewayId: response.gatewayId, deviceId: response.deviceId)
+                if let previous = pins.kid(forGateway: response.gatewayId), previous != importKey.kid {
+                    throw DesktopCloudError.importKeyChanged
+                }
+            }
             guard tokens.store(key: Self.tokenKey, value: response.token) else {
                 notice = Notice(text: "无法把配对凭据写入钥匙串", isError: true)
                 return
             }
             let saved = DesktopCloudConnection(gatewayId: response.gatewayId, name: response.gatewayName,
                 addrs: payload.addrs, port: payload.port, fingerprint: payload.fp, deviceId: response.deviceId)
+            if let importKey { pins.pin(importKey.kid, forGateway: saved.gatewayId) }
             defaults.set(try? JSONEncoder().encode(saved), forKey: Self.connectionKey)
             connection = saved
             install(saved, token: response.token)
@@ -332,11 +348,6 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
                 if let activeRules = bootstrap.activeRules {
                     rules = activeRules
                     rulesError = nil
-                }
-                if let importKey = bootstrap.importKey,
-                   importKey.gatewayId == saved.gatewayId,
-                   DesktopCloudRSA.jwkThumbprint(e: importKey.publicJwk.e, n: importKey.publicJwk.n) == importKey.kid {
-                    DesktopCloudPinnedKidStore(defaults: defaults).pin(importKey.kid, forGateway: saved.gatewayId)
                 }
             }
             pendingPairing = nil
@@ -386,12 +397,15 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     }
 
     func refreshRemoteConfig() async {
-        guard let sync else { return }
+        guard let client, let sync else { return }
         do {
-            remoteConfig = try await sync.fetchConfig()
+            let fetched = try await sync.fetchConfig()
+            guard self.client === client else { return }
+            remoteConfig = fetched
             remoteConfigError = nil
         } catch is CancellationError {
         } catch {
+            guard self.client === client else { return }
             if forgetIfRevoked(error) { return }
             remoteConfigError = error.localizedDescription
         }
@@ -421,12 +435,17 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     // MARK: - Procedural rule cards
 
     func refreshRules() async {
-        guard let rulesSync else { return }
+        guard let client, let rulesSync, !isMutatingRule else { return }
+        rulesGeneration += 1
+        let generation = rulesGeneration
         do {
-            rules = try await rulesSync.listRules()
+            let fetched = try await rulesSync.listRules()
+            guard self.client === client, rulesGeneration == generation else { return }
+            rules = fetched
             rulesError = nil
         } catch is CancellationError {
         } catch {
+            guard self.client === client, rulesGeneration == generation else { return }
             if forgetIfRevoked(error) { return }
             rulesError = error.localizedDescription
         }
@@ -434,16 +453,18 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
 
     @discardableResult
     func proposeRule(title: String? = nil, instruction: String, scope: String = "global") async -> DesktopRuleProposalOutcome? {
-        guard let rulesSync, !isMutatingRule else { return nil }
+        guard let client, let rulesSync, !isMutatingRule else { return nil }
+        rulesGeneration += 1
         isMutatingRule = true
         ruleSoulRedirectNotice = nil
-        defer { isMutatingRule = false }
+        defer { if self.client === client { isMutatingRule = false } }
         do {
             let outcome = try await rulesSync.proposeRule(title: title, instruction: instruction, scope: scope)
+            guard self.client === client else { return nil }
+            rulesError = nil
             switch outcome {
             case .proposed(let rule, _):
                 upsertRuleInState(rule)
-                rulesError = nil
             case .redirectToSoul(_, let message):
                 ruleSoulRedirectNotice = message
             case .rejected(_, let message):
@@ -451,6 +472,7 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
             }
             return outcome
         } catch {
+            guard self.client === client else { return nil }
             if !forgetIfRevoked(error) {
                 rulesError = error.localizedDescription
             }
@@ -471,14 +493,18 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     }
 
     private func mutateRule(_ action: (any DesktopCloudRulesSync) async throws -> DesktopProceduralRule) async {
-        guard let rulesSync, !isMutatingRule else { return }
+        guard let client, let rulesSync, !isMutatingRule else { return }
+        rulesGeneration += 1
         isMutatingRule = true
-        defer { isMutatingRule = false }
+        defer { if self.client === client { isMutatingRule = false } }
         do {
+            ruleSoulRedirectNotice = nil
             let updated = try await action(rulesSync)
+            guard self.client === client else { return }
             upsertRuleInState(updated)
             rulesError = nil
         } catch {
+            guard self.client === client else { return }
             if !forgetIfRevoked(error) {
                 rulesError = error.localizedDescription
             }
@@ -496,13 +522,16 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     // MARK: - Single-scan pairing QR (for onboarding a new phone)
 
     func issueSingleScanPairing() async {
-        guard let pairingBootstrapSync, !isIssuingPairing else { return }
+        guard let client, let pairingBootstrapSync, !isIssuingPairing else { return }
         isIssuingPairing = true
-        defer { isIssuingPairing = false }
+        defer { if self.client === client { isIssuingPairing = false } }
         do {
-            issuedPairingTicket = try await pairingBootstrapSync.issuePairingTicket()
+            let ticket = try await pairingBootstrapSync.issuePairingTicket()
+            guard self.client === client else { return }
+            issuedPairingTicket = ticket
             notice = nil
         } catch {
+            guard self.client === client else { return }
             if !forgetIfRevoked(error) {
                 notice = Notice(text: "生成配对二维码失败：\(error.localizedDescription)", isError: true)
             }

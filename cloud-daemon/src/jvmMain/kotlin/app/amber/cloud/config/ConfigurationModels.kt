@@ -2,6 +2,7 @@ package app.amber.cloud.config
 
 import app.amber.cloud.rules.ProceduralRuleRecord
 import app.amber.cloud.soul.SoulStateDto
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
@@ -13,7 +14,19 @@ import kotlinx.serialization.json.JsonObject
     val siwcConfigured: Boolean = false,
 )
 @Serializable data class ManagedSearchSettings(val sources: List<String>, val mode: String)
-@Serializable data class ConfigurationPatch(val model: ManagedModelSettings? = null, val search: ManagedSearchSettings? = null)
+@Serializable data class ModelSettingsPatch(
+    val provider: String,
+    val modelId: String,
+    val baseUrl: String = "",
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val authMode: String? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val siwcConfigured: Boolean? = null,
+) {
+    fun settings() = ManagedModelSettings(provider.trim().lowercase(), modelId.trim(), baseUrl.trim().trimEnd('/'),
+        authMode?.trim()?.ifEmpty { "apiKey" } ?: "apiKey", siwcConfigured ?: false)
+}
+@Serializable data class ConfigurationPatch(val model: ModelSettingsPatch? = null, val search: ManagedSearchSettings? = null)
 @Serializable data class CredentialMutation(val action: String, val value: String? = null)
 @Serializable data class CredentialPatch(val modelApiKey: CredentialMutation? = null, val exaApiKey: CredentialMutation? = null, val braveApiKey: CredentialMutation? = null)
 @Serializable data class ConfigurationEnvelopePayload(

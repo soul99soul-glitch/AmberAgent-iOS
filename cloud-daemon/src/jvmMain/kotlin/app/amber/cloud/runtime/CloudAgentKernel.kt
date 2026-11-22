@@ -597,6 +597,7 @@ class CloudAgentKernel(
         } else null
         val memoryAgentId = profile?.id?.takeUnless { it == MAIN_AGENT_ID } ?: GLOBAL_MEMORY_AGENT_ID
 
+        val ruleConversationId = orchestrationStore.dialogue.ruleConversationId(message.channel.wireName, message.messageId, convId.toString())
         // Auto-extract explicit memory directive & proposed procedural rules in direct owner chat
         if (message.scope == ConversationScope.DIRECT && message.senderRole == SenderRole.OWNER) {
             ownerBinding.bindOwnerDirectly(message.channel.wireName, message.senderId, message.chatId)
@@ -606,7 +607,7 @@ class CloudAgentKernel(
                 runCatching {
                     proceduralRuleStore.proposeFromCorrection(
                         userText = message.text,
-                        scope = convId.toString(),
+                        scope = "conversation:$ruleConversationId",
                         sourceEventId = message.messageId,
                     )
                 }
@@ -643,7 +644,7 @@ class CloudAgentKernel(
             emptyList()
         } else {
             proceduralRuleStore.selectActiveForInjection(
-                conversationId = convId.toString(),
+                conversationId = ruleConversationId,
                 recordHit = true,
             )
         }

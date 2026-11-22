@@ -76,7 +76,10 @@ class ModelRouterBrain(
         val cancel = mutableListOf<String>()
         var reply: String? = null
         var proposal: AgentProfile? = null
-        repeat(maxReadSteps + 1) {
+        repeat(maxReadSteps + 1) { step ->
+            if (step > 0 && messages.firstOrNull()?.role == MessageRole.SYSTEM) {
+                contextMessages(input).firstOrNull { it.role == MessageRole.SYSTEM }?.let { messages[0] = it }
+            }
             val answer = client.streamReply(messages, tools) {}
             val calls = answer.getTools()
             reply = answer.toText().takeIf { it.isNotBlank() } ?: reply
@@ -109,11 +112,6 @@ class ModelRouterBrain(
                 call.copy(output = listOf(UIMessagePart.Text(CredentialRedactor.redact(out))))
             }
             if (!needsFollowup) return RouterDecision(reply, dispatch, steer, proposal,cancel)
-            if (calls.any { it.toolName == "agent_soul_update" } && messages.firstOrNull()?.role == MessageRole.SYSTEM) {
-                contextMessages(input).firstOrNull { it.role == MessageRole.SYSTEM }?.let { freshSys ->
-                    messages[0] = freshSys
-                }
-            }
             messages += answer.copy(parts = answer.parts.map { part ->
                 if (part is UIMessagePart.Tool) executed.firstOrNull { it.toolCallId == part.toolCallId } ?: part else part
             })
@@ -164,19 +162,10 @@ class ModelWorkerTurnRunner(
         val client = profile?.modelPreference?.let { modelClients[it] ?: error("Agent 模型配置已移除") } ?: modelClient
         val memories = if (profile != null) memoryStore?.recallForPrompt(item.brief, agentId = profile.id, memoryPolicy = profile.memoryPolicy).orEmpty() else emptyList()
         val policy = profile?.memoryPolicy ?: AgentMemoryPolicy.SHARED_WITH_GLOBAL
-        val activeRules = if (policy == AgentMemoryPolicy.HUB_ISOLATED) {
-            emptyList()
-        } else {
-            proceduralRuleStore?.selectActiveForInjection(
-                conversationId = item.conversationId,
-                recordHit = true,
-            ).orEmpty()
-        }
-        val systemPrompt = buildString {
-            append(
-                soulStore?.renderDirectSystemPrompt(policy, activeRules = activeRules)
-                    ?: if (profile != null) memoryStore?.loadSoulPrompt(policy).orEmpty() else CloudMemoryStore.DEFAULT_SOUL_MARKDOWN
-            )
+        val ruleConversation = item.conversationId ?: item.sourceProvenance.map {
+            kernel.store.dialogue.ruleConversationId(it.channelId, it.messageId, it.sessionId)
+        }.distinct().singleOrNull()
+        val workerInstructions = buildString {
             append("\n你是受管 Worker，只处理当前任务；不得创建 agent、派单或向其他 agent 发送消息。\n")
             append("任务文件以相对路径访问。脚本执行受OS隔离且不能联网，用HTTP/搜索工具联网。工具失败必须检查并修正或报告阻塞。写代码文本不等于执行。最终必须调用 task_finish，明确completed/blocked/failed并列出实际产物；没有工具调用的回答不会自动成功。\n")
             append("耗时脚本用process_run后台启动（默认background=true），立刻继续处理补充；完成/失败/停止会作为任务事件送达。等待期间可不调用工具，系统会在新事件到达时继续；不要循环长时间process_wait。重启中断事件不表示旧命令已成功，先检查输出再决定下一步。\n")
@@ -193,10 +182,15 @@ class ModelWorkerTurnRunner(
             val pending = kernel.workerEvents.prepare(item)
             val preparedIds = pending.map { it.id }.toSet()
             val history = kernel.conversationStorage.loadConversation(uuid)?.messageNodes?.map { it.currentMessage }.orEmpty()
+            val systemPrompt = soulStore?.let { soul ->
+                val rules = if (policy == AgentMemoryPolicy.HUB_ISOLATED) emptyList() else
+                    proceduralRuleStore?.selectActiveForInjection(conversationId = ruleConversation).orEmpty()
+                soul.renderDirectSystemPrompt(policy, activeRules = rules)
+            } ?: if (profile != null) memoryStore?.loadSoulPrompt(policy).orEmpty() else CloudMemoryStore.DEFAULT_SOUL_MARKDOWN
             val requestMessages = projectWorkerRequestMessages(
                 sessionId = sessionId,
                 workItemId = item.workItemId,
-                systemPrompt = systemPrompt,
+                systemPrompt = systemPrompt + workerInstructions,
                 history = history,
             )
             val answer = streamWorkerReplyWithPreemption(

@@ -14,7 +14,7 @@ import app.amber.cloud.config.ConfigurationPatch
 import app.amber.cloud.config.CredentialMutation
 import app.amber.cloud.config.CredentialPatch
 import app.amber.cloud.config.IssuedPairingTicketDto
-import app.amber.cloud.config.ManagedModelSettings
+import app.amber.cloud.config.ModelSettingsPatch
 import app.amber.cloud.config.ManagedSearchSettings
 import app.amber.cloud.config.PairingBootstrapSnapshot
 import app.amber.cloud.gateway.AgentCentricApi
@@ -75,6 +75,37 @@ import kotlin.test.assertTrue
 
 class ProceduralRuleAndPairingSyncTest {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    @Test
+    fun scoped_rules_keep_distinct_ids_and_failed_writes_do_not_publish() {
+        val dir = Files.createTempDirectory("amber-rule-scopes").toFile()
+        try {
+            val store = ProceduralRuleStore(dir)
+            val instruction = "删除文件前不得跳过审批"
+            fun propose(scope: String) = (store.propose(instruction, scope = scope) as RuleProposalOutcome.Proposed).rule
+            val first = propose("project:Docs")
+            val second = propose("project:docs")
+            assertTrue(first.id != second.id)
+            store.confirm(first.id)
+            store.confirm(second.id)
+            assertEquals(listOf(first.id), store.list(scope = "project:Docs").map { it.id })
+            assertEquals(listOf(second.id), store.selectActiveForInjection(projectId = "docs").map { it.id })
+            assertTrue(store.selectActiveForInjection(conversationId = "docs").isEmpty())
+            assertTrue(store.selectActiveForInjection(conversationId = "project:docs").isEmpty())
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
+            try {
+                val hits = List(16) { pool.submit { store.selectActiveForInjection(projectId = "docs") } }
+                hits.forEach { it.get() }
+            } finally { pool.shutdown() }
+            assertEquals(17, ProceduralRuleStore(dir).get(second.id)?.hitCount)
+            assertEquals(0, store.get(first.id)?.hitCount)
+            File(dir, "procedural-rules.json.tmp").mkdir()
+            assertFailsWith<java.io.IOException> { store.revoke(first.id) }
+            assertEquals(ProceduralRuleStatus.ACTIVE, store.get(first.id)?.status)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
 
     @Test
     fun correction_proposes_only_explicit_confirm_activates_hitCount_increments_and_revoke_excludes_immediately() = runBlocking {
@@ -197,6 +228,10 @@ class ProceduralRuleAndPairingSyncTest {
             )
             assertTrue(riskRelaxOutcome is RuleProposalOutcome.Rejected)
             assertEquals("risk_table_immutable", riskRelaxOutcome.code)
+            assertTrue(ProceduralRuleStore.attemptsRiskTableRelaxation("L3 操作自动批准"))
+            assertFalse(ProceduralRuleStore.attemptsRiskTableRelaxation("L3 操作不得自动批准"))
+            assertTrue(kernel.proceduralRuleStore.propose(instruction = "以后禁止用傲娇口吻", title = "提交建议")
+                is RuleProposalOutcome.RedirectToSoul)
             assertTrue(kernel.proceduralRuleStore.list().isEmpty())
 
             // 3. Configure C-SOUL-V1, an active procedural rule, and core + dynamic episode memories
@@ -305,6 +340,12 @@ class ProceduralRuleAndPairingSyncTest {
 
         try {
             // Pair initial Mac management device
+            val state = kernel2.gatewayState
+            val retryTicket = state.issuePairingTicket()
+            val failure = state.pairDevice(retryTicket, "ios", "fixture") { error("fixture export unavailable") }
+            assertTrue(failure is app.amber.cloud.gateway.CloudGatewayState.PairResult.ServerError)
+            assertTrue(state.loadDevicesStrict().isEmpty())
+            assertTrue(state.pairDevice(retryTicket, "ios", "fixture") is app.amber.cloud.gateway.CloudGatewayState.PairResult.Success)
             val macSecret = kernel2.gatewayState.issuePairingTicket()
             val macPairResp = client.post("/v1/pair") {
                 contentType(ContentType.Application.Json)
@@ -312,7 +353,13 @@ class ProceduralRuleAndPairingSyncTest {
             }
             assertEquals(200, macPairResp.status.value)
             val macPairJson = json.parseToJsonElement(macPairResp.bodyAsText()).jsonObject
+            assertEquals(setOf("deviceId", "token", "gatewayId", "gatewayName"), macPairJson.keys)
             val macToken = macPairJson["token"]!!.jsonPrimitive.content
+
+            val viewer = kernel2.gatewayState.pairDevice(kernel2.gatewayState.issuePairingTicket(), "linux", "viewer")
+                as app.amber.cloud.gateway.CloudGatewayState.PairResult.Success
+            assertEquals(403, client.get("/v2/rules") { bearerAuth(viewer.token) }.status.value)
+            assertEquals(403, client.post("/v2/rules/example/confirm") { bearerAuth(viewer.token) }.status.value)
 
             // Push an encrypted provider config (with real secrets + SIWC metadata) via existing JWE channel
             val importKeyResp = client.get("/v2/configuration/import-key") { bearerAuth(macToken) }
@@ -329,7 +376,7 @@ class ProceduralRuleAndPairingSyncTest {
                 issuedAt = nowSec,
                 expiresAt = nowSec + 300,
                 configuration = ConfigurationPatch(
-                    model = ManagedModelSettings(
+                    model = ModelSettingsPatch(
                         provider = "openai",
                         modelId = "gpt-5.2",
                         baseUrl = "https://api.openai.com/v1",
@@ -358,6 +405,17 @@ class ProceduralRuleAndPairingSyncTest {
                 setBody(buildJsonObject { put("jwe", sealedConfig) }.toString())
             }
             assertEquals(200, applyResp.status.value)
+
+            val rename = envelopePayload.copy(requestId = "rename-model", expectedRevision = 1,
+                configuration = ConfigurationPatch(model = ModelSettingsPatch("openai", "renamed-model", "https://api.openai.com/v1")),
+                credentials = null)
+            val renameJwe = JWEObject(JWEObject.parse(sealedConfig).header, Payload(json.encodeToString(rename)))
+                .apply { encrypt(RSAEncrypter(serverPubKey)) }.serialize()
+            val renamed = client.post("/v2/configuration") {
+                bearerAuth(macToken)
+                setBody(buildJsonObject { put("jwe", renameJwe) }.toString())
+            }
+            assertEquals(200, renamed.status.value)
 
             // Update C-SOUL-V1 so revision > 0
             kernel2.soulStore.put(
@@ -425,7 +483,7 @@ class ProceduralRuleAndPairingSyncTest {
             val issued = json.decodeFromString<IssuedPairingTicketDto>(issueResp.bodyAsText())
             assertTrue(issued.deepLinkUrl.startsWith("amber://gateway/pair?p="))
             assertTrue(issued.bootstrap.syncSupported)
-            assertEquals(1, issued.bootstrap.configRevision)
+            assertEquals(2, issued.bootstrap.configRevision)
             assertEquals("openai", issued.bootstrap.provider)
             assertEquals("chatgptSiwc", issued.bootstrap.authMode)
             assertTrue(issued.bootstrap.siwcConfigured)
@@ -438,6 +496,18 @@ class ProceduralRuleAndPairingSyncTest {
             assertFalse(issued.deepLinkUrl.contains(secretExaKey), "QR URL 绝不可包含明文 Exa Key")
             val parsedQr = PairingPayload.parse(issued.deepLinkUrl)
             assertNotNull(parsedQr)
+            val rows = app.amber.cloud.gateway.TerminalQrGenerator.renderAnsi(issued.deepLinkUrl).trimEnd('\n').lines()
+                .map { it.removePrefix("\u001B[30;47m").removeSuffix("\u001B[0m") }
+            // Recover modules from the printed upper/lower half blocks, excluding the four-module quiet zone.
+            val modules = com.google.zxing.common.BitMatrix(rows.first().length - 8)
+            for (y in 0 until modules.height) {
+                val row = rows[(y + 4) / 2]
+                for (x in 0 until modules.width) {
+                    val block = row[x + 4]
+                    if (block == '█' || block == (if (y % 2 == 0) '▀' else '▄')) modules.set(x, y)
+                }
+            }
+            assertEquals(issued.deepLinkUrl, com.google.zxing.qrcode.decoder.Decoder().decode(modules).text)
             assertEquals(issued.bootstrap, parsedQr.bootstrap)
             assertFalse(parsedQr.toString().contains(secretModelKey))
 
@@ -475,6 +545,12 @@ class ProceduralRuleAndPairingSyncTest {
                 )
             }
             assertEquals(400, badJwkResp.status.value)
+
+            val invalidRole = client.post("/v1/pair") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"secret":"${parsedQr.s}","platform":"ios","nodeRole":"unsupported"}""")
+            }
+            assertEquals(400, invalidRole.status.value)
 
             // Now perform the real single-scan pair with public JWK only
             val phonePairResp = client.post("/v1/pair") {
@@ -524,7 +600,7 @@ class ProceduralRuleAndPairingSyncTest {
             assertEquals(kernel2.gatewayState.identity.id, decrypted.gatewayId)
             assertEquals(phoneDeviceId, decrypted.deviceId)
             assertEquals("openai", decrypted.model.provider)
-            assertEquals("gpt-5.2", decrypted.model.modelId)
+            assertEquals("renamed-model", decrypted.model.modelId)
             assertEquals("chatgptSiwc", decrypted.model.authMode)
             assertTrue(decrypted.model.siwcConfigured)
             assertEquals(secretModelKey, decrypted.credentials.modelApiKey)

@@ -4,6 +4,7 @@ import app.amber.cloud.security.EnvelopeCredentialVault
 import com.nimbusds.jose.*
 import com.nimbusds.jose.crypto.RSADecrypter
 import com.nimbusds.jose.crypto.RSAEncrypter
+import com.nimbusds.jose.jwk.KeyOperation
 import com.nimbusds.jose.jwk.KeyUse
 import com.nimbusds.jose.jwk.RSAKey
 import com.nimbusds.jose.jwk.gen.RSAKeyGenerator
@@ -62,7 +63,11 @@ internal class ConfigurationEncryption(private val vault: EnvelopeCredentialVaul
             } catch (_: Exception) {
                 throw ConfigurationApiException(400, "invalid_client_public_key")
             }
-            if (parsed.isPrivate) {
+            if (parsed.isPrivate || (parsed.keyUse != null && parsed.keyUse != KeyUse.ENCRYPTION) ||
+                (parsed.algorithm != null && parsed.algorithm != JWEAlgorithm.RSA_OAEP_256) ||
+                (parsed.keyOperations != null && KeyOperation.WRAP_KEY !in parsed.keyOperations &&
+                    KeyOperation.ENCRYPT !in parsed.keyOperations)
+            ) {
                 throw ConfigurationApiException(400, "invalid_client_public_key")
             }
             val publicKey = try {

@@ -272,6 +272,30 @@ class NativeDialogueReliabilityTest {
         }
     }
 
+    @Test fun native_rule_is_scoped_to_the_originating_conversation_on_the_shared_timeline() = runBlocking {
+        fixture { k, device ->
+            val prompts = CopyOnWriteArrayList<String>()
+            val ingress = CloudRouterIngress(k)
+            k.router.brain = RouterBrain { input ->
+                prompts += ingress.contextMessages(input).first().toText()
+                RouterDecision(reply = "收到")
+            }
+            suspend fun turn(id: String, text: String, conversation: String) {
+                k.nativeDialogue.submit(device, id, text, conversationId = conversation)
+                withTimeout(2_000) { while (k.nativeDialogue.receipt(device, id)?.state != "consumed") delay(10) }
+                k.router.awaitIdle()
+            }
+            turn("proposal", "以后提交前列出变更清单", "client-A")
+            val rule = k.proceduralRuleStore.list().single()
+            k.proceduralRuleStore.confirm(rule.id)
+            turn("elsewhere", "汇报进度", "client-B")
+            assertFalse(prompts.last().contains(rule.instruction))
+            turn("origin", "汇报进度", "client-A")
+            assertContains(prompts.last(), rule.instruction)
+            assertEquals(1, k.proceduralRuleStore.get(rule.id)?.hitCount)
+        }
+    }
+
     @Test fun settlement_is_readable_in_next_main_turn_without_a_model_rollup_or_redispatch() = runBlocking {
         fixture { k, device ->
             val contexts = CopyOnWriteArrayList<List<UIMessage>>()

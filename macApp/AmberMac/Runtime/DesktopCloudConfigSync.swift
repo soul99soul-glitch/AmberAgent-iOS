@@ -38,6 +38,18 @@ struct DesktopCloudImportKeyResponse: Decodable {
     var maxEnvelopeLifetimeSeconds: Int?
 
     struct JWK: Decodable { var kty: String; var e: String; var n: String }
+
+    func validatedKey(gatewayId: String, deviceId: String) throws -> SecKey {
+        guard self.version == 1,
+              self.gatewayId == gatewayId,
+              self.deviceId == deviceId,
+              self.publicJwk.kty == "RSA",
+              DesktopCloudRSA.jwkThumbprint(e: self.publicJwk.e, n: self.publicJwk.n) == self.kid
+        else { throw DesktopCloudError.invalidResponse }
+        return try DesktopCloudRSA.importKey(
+            jwkE: self.publicJwk.e, jwkN: self.publicJwk.n,
+            spkiDERBase64: self.publicKeySpkiDerBase64)
+    }
 }
 
 struct DesktopCloudApplyResponse: Decodable {
@@ -367,15 +379,7 @@ actor DesktopCloudClientConfigSync: DesktopCloudConfigSync {
     private func fetchImportKey() async throws -> (secKey: SecKey, kid: String, serverTime: Int, maxLifetime: Int) {
         let response: DesktopCloudImportKeyResponse =
             try await client.decode(client.send("GET", "/v2/configuration/import-key"))
-        guard response.version == 1,
-              response.gatewayId == gatewayId,
-              response.deviceId == deviceId,
-              response.publicJwk.kty == "RSA",
-              DesktopCloudRSA.jwkThumbprint(e: response.publicJwk.e, n: response.publicJwk.n) == response.kid
-        else { throw DesktopCloudError.invalidResponse }
-        let secKey = try DesktopCloudRSA.importKey(
-            jwkE: response.publicJwk.e, jwkN: response.publicJwk.n,
-            spkiDERBase64: response.publicKeySpkiDerBase64)
+        let secKey = try response.validatedKey(gatewayId: gatewayId, deviceId: deviceId)
         try checkPinnedKid(response.kid)
         let lifetime = min(max(response.maxEnvelopeLifetimeSeconds ?? 300, 60), 300)
         return (secKey, response.kid, response.serverTime, lifetime)

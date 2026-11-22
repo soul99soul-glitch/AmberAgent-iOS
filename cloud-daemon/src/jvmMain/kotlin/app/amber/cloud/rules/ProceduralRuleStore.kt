@@ -42,11 +42,11 @@ class ProceduralRuleStore(
         status: ProceduralRuleStatus? = null,
         scope: String? = null,
     ): List<ProceduralRuleRecord> {
-        val normalizedScope = scope?.trim()?.takeIf { it.isNotEmpty() }
+        val normalizedScope = scope?.takeUnless { it.isBlank() }?.let(::normalizeScope)
         return cached
             .asSequence()
             .filter { status == null || it.status == status }
-            .filter { normalizedScope == null || it.scope.equals(normalizedScope, ignoreCase = true) }
+            .filter { normalizedScope == null || it.scope == normalizedScope }
             .sortedWith(
                 compareBy<ProceduralRuleRecord> { statusSortOrder(it.status) }
                     .thenByDescending { it.updatedAt }
@@ -59,8 +59,7 @@ class ProceduralRuleStore(
     fun activeSnapshot(): List<ProceduralRuleRecord> =
         cached.filter { it.status == ProceduralRuleStatus.ACTIVE }
 
-    fun counts(): Pair<Int, Int> {
-        val current = cached
+    fun counts(current: List<ProceduralRuleRecord> = cached): Pair<Int, Int> {
         return current.count { it.status == ProceduralRuleStatus.ACTIVE } to
             current.count { it.status == ProceduralRuleStatus.PROPOSED }
     }
@@ -87,15 +86,15 @@ class ProceduralRuleStore(
             return RuleProposalOutcome.Rejected("empty_instruction", "规则内容不能为空")
         }
 
-        val combinedForGuard = listOfNotNull(title?.trim(), cleanInstruction).joinToString(" ")
-        if (attemptsRiskTableRelaxation(combinedForGuard)) {
+        val fields = listOfNotNull(title?.trim(), cleanInstruction)
+        if (fields.any(::attemptsRiskTableRelaxation)) {
             return RuleProposalOutcome.Rejected(
                 code = "risk_table_immutable",
                 reason = "静态风险表（L1–L3）由系统强制保留，规则卡不得放宽审批或绕过高风险确认。",
             )
         }
 
-        if (isPurePersonaDescription(combinedForGuard)) {
+        if (isPurePersonaDescription(cleanInstruction)) {
             return RuleProposalOutcome.RedirectToSoul(
                 target = "C-SOUL-V1",
                 reason = "该内容属于形象人设、称呼或说话口吻设定，而非任务执行规矩。",
@@ -103,6 +102,9 @@ class ProceduralRuleStore(
             )
         }
 
+        if (scope != null && (scope.trim().length > MAX_SCOPE_CHARS || scope.trim().any(Char::isISOControl))) {
+            return RuleProposalOutcome.Rejected("invalid_scope", "作用域不可包含控制字符或超过 ${MAX_SCOPE_CHARS} 个字符")
+        }
         val resolvedScope = normalizeScope(scope)
         val cleanTitle = sanitizeSingleLine(title, MAX_TITLE_CHARS).ifEmpty { deriveTitle(cleanInstruction) }
         val cleanSourceEventId = sanitizeSingleLine(sourceEventId, MAX_EVENT_ID_CHARS)
@@ -110,7 +112,7 @@ class ProceduralRuleStore(
         val current = cached.toMutableList()
         val existing = current.firstOrNull {
             (it.status == ProceduralRuleStatus.PROPOSED || it.status == ProceduralRuleStatus.ACTIVE) &&
-                it.scope.equals(resolvedScope, ignoreCase = true) &&
+                it.scope == resolvedScope &&
                 it.instruction.equals(cleanInstruction, ignoreCase = true)
         }
         if (existing != null) {
@@ -163,7 +165,7 @@ class ProceduralRuleStore(
         if (target.status == ProceduralRuleStatus.REVOKED || target.status == ProceduralRuleStatus.ARCHIVED) {
             throw IllegalStateException("已归档或已撤销的规则卡不可直接重新生效，请重新提议。")
         }
-        if (attemptsRiskTableRelaxation("${target.title} ${target.instruction}")) {
+        if (listOf(target.title, target.instruction).any(::attemptsRiskTableRelaxation)) {
             throw IllegalStateException("静态风险表（L1–L3）不可被规则卡放宽")
         }
         if (target.status == ProceduralRuleStatus.ACTIVE) return target
@@ -256,14 +258,12 @@ class ProceduralRuleStore(
 
     private fun loadFromDisk(): List<ProceduralRuleRecord> {
         if (!storeFile.exists()) return emptyList()
-        return runCatching {
-            json.decodeFromString<List<ProceduralRuleRecord>>(storeFile.readText())
-        }.getOrDefault(emptyList())
+        return json.decodeFromString<List<ProceduralRuleRecord>>(storeFile.readText())
     }
 
     private fun persist(records: List<ProceduralRuleRecord>) {
-        cached = records
         atomicWrite(storeFile, json.encodeToString(records))
+        cached = records
     }
 
     private fun atomicWrite(target: File, content: String) {
@@ -276,7 +276,7 @@ class ProceduralRuleStore(
     companion object {
         const val MAX_TITLE_CHARS = 80
         const val MAX_INSTRUCTION_CHARS = 1_000
-        const val MAX_SCOPE_CHARS = 128
+        const val MAX_SCOPE_CHARS = 141 // "conversation:" plus a 128-character native conversation ID
         const val MAX_EVENT_ID_CHARS = 128
 
         private val CORRECTION_PREFIXES = listOf(
@@ -303,14 +303,12 @@ class ProceduralRuleStore(
         )
 
         private val EXECUTION_ACTION_SIGNALS = listOf(
-            Regex("""(?i)(提交|推送|git|commit|push|merge|分支|代码|单测|测试|构建|编译|部署|发布|文件|路径|目录|命令|脚本|格式|markdown|json|表格|语言|中文|英文|日志|备份|删除|修改|创建|发送|邮件|日历|日程|报告|总结|输出|附带|禁止|先.*再)"""),
+            Regex("""(?i)(提交|推送|git|commit|push|merge|分支|代码|单测|测试|构建|编译|部署|发布|文件|路径|目录|命令|脚本|格式|markdown|json|表格|语言|中文|英文|日志|备份|删除|修改|创建|发送|邮件|日历|日程|报告|总结|输出|附带|先.*再)"""),
             Regex("""(?i)\b(git|commit|push|test|build|deploy|file|directory|command|script|json|markdown|table|format|output|include|avoid|never\s+run|always\s+run|before\s+editing)\b"""),
         )
 
         fun normalizeScope(raw: String?): String {
             val clean = raw?.trim().orEmpty()
-                .replace(Regex("""[\r\n]+"""), "")
-                .take(MAX_SCOPE_CHARS)
             if (clean.isEmpty() || clean.equals("global", ignoreCase = true)) {
                 return ProceduralRuleRecord.SCOPE_GLOBAL
             }
@@ -320,10 +318,12 @@ class ProceduralRuleStore(
         fun matchesScope(ruleScope: String, conversationId: String?, projectId: String?): Boolean {
             if (ruleScope.equals(ProceduralRuleRecord.SCOPE_GLOBAL, ignoreCase = true)) return true
             val conv = conversationId?.trim()?.takeIf { it.isNotEmpty() }
-            if (conv != null && (ruleScope == conv || ruleScope == "conversation:$conv")) return true
             val proj = projectId?.trim()?.takeIf { it.isNotEmpty() }
-            if (proj != null && (ruleScope == proj || ruleScope == "project:$proj")) return true
-            return false
+            return when {
+                ruleScope.startsWith("conversation:") -> conv != null && ruleScope.removePrefix("conversation:") == conv
+                ruleScope.startsWith("project:") -> proj != null && ruleScope.removePrefix("project:") == proj
+                else -> ruleScope == conv || ruleScope == proj
+            }
         }
 
         fun extractCorrectionInstruction(userText: String): String? {
@@ -338,8 +338,17 @@ class ProceduralRuleStore(
             return stripped.takeIf { it.length >= 3 }
         }
 
-        fun attemptsRiskTableRelaxation(text: String): Boolean =
-            RISK_RELAXATION_PATTERNS.any { it.containsMatchIn(text) }
+        private val AUTO_APPROVAL = Regex("""(?i)自动批准|自动同意|直接放行|auto[ -]?approve""")
+        private val PRECEDING_HIGH_RISK = Regex("""(?i)(L3|高风险|不可逆|high[ -]risk)[^。！？.!?；;，,\n]{0,18}$""")
+        private val PROHIBITS_ACTION = Regex("""(?i)(不要|不准|禁止|不得|不能|不可|切勿|严禁|不允许|never|do not|must not|don't)(?:再|擅自|\s+ever)?\s*$""")
+
+        fun attemptsRiskTableRelaxation(text: String): Boolean {
+            fun prohibited(match: MatchResult) = PROHIBITS_ACTION.containsMatchIn(text.substring(0, match.range.first))
+            return RISK_RELAXATION_PATTERNS.any { pattern -> pattern.findAll(text).any { !prohibited(it) } } ||
+                AUTO_APPROVAL.findAll(text).any { match ->
+                    !prohibited(match) && PRECEDING_HIGH_RISK.containsMatchIn(text.substring(0, match.range.first))
+                }
+        }
 
         fun isPurePersonaDescription(text: String): Boolean {
             val hasPersona = PERSONA_SIGNALS.any { it.containsMatchIn(text) }

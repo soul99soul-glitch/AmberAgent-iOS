@@ -2,6 +2,7 @@ package app.amber.cloud.orchestration
 
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.execSQL
+import app.amber.cloud.channel.ChannelKind
 import app.amber.cloud.security.CredentialRedactor
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -285,6 +286,14 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
             if (it.step()) json.decodeFromString<DialogueInput>(it.getText(0)) else null
         }
     }
+    // Native conversations share a physical timeline, but keep their own rule scope.
+    fun ruleConversationId(channel: String, messageId: String?, timelineId: String): String {
+        if (channel == ChannelKind.APP.wireName && messageId?.startsWith("native:") == true) {
+            return findById(messageId.removePrefix("native:"))?.conversationId ?: timelineId
+        }
+        return timelineId
+    }
+
     fun input(id: String): DialogueInput? = findById(id)
 
     fun findById(inputId: String): DialogueInput? = synchronized(lock) {

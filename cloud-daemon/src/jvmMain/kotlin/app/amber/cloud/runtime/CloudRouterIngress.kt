@@ -13,6 +13,7 @@ import app.amber.cloud.orchestration.ModelRouterBrain
 import app.amber.cloud.orchestration.RouterTurnInput
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.core.model.Conversation
+import app.amber.core.model.ConversationMemoryMode
 import app.amber.core.model.DEFAULT_ASSISTANT_ID
 import app.amber.core.model.MemoryScope
 import app.amber.core.model.toMessageNode
@@ -52,17 +53,22 @@ internal class CloudRouterIngress(private val kernel: CloudAgentKernel) : Channe
                     it.copy(id = Uuid.parse(deterministic.toString()))
                 }
             }
-            if (message.scope == ConversationScope.DIRECT && message.senderRole == SenderRole.OWNER) {
+            val alreadyRecorded = conversation.messageNodes.any { it.currentMessage.id == userMessage.id }
+            if (!alreadyRecorded && conversation.memoryMode == ConversationMemoryMode.ENABLED &&
+                message.scope == ConversationScope.DIRECT && message.senderRole == SenderRole.OWNER
+            ) {
                 runCatching {
+                    val ruleConversation = kernel.orchestrationStore.dialogue.ruleConversationId(
+                        message.channel.wireName, message.messageId, conversationId.toString())
                     kernel.proceduralRuleStore.proposeFromCorrection(
                         userText = message.text,
-                        scope = conversationId.toString(),
+                        scope = "conversation:$ruleConversation",
                         sourceEventId = userMessage.id.toString(),
                     )
                 }
             }
             kernel.conversationStorage.saveConversation(conversation.copy(
-                messageNodes = if(conversation.messageNodes.any {it.currentMessage.id==userMessage.id}) conversation.messageNodes else conversation.messageNodes + userMessage.toMessageNode(),
+                messageNodes = if (alreadyRecorded) conversation.messageNodes else conversation.messageNodes + userMessage.toMessageNode(),
                 updateAt = Clock.System.now(),
             ))
         }
@@ -84,8 +90,11 @@ internal class CloudRouterIngress(private val kernel: CloudAgentKernel) : Channe
         val memories = kernel.memoryStore.recallForPrompt(input.batchPrompt).let { recalled ->
             if (conversationId == PRIMARY_CONVERSATION_ID) recalled else recalled.filter { it.scope != MemoryScope.CORE }
         }
+        val ruleConversation = input.events.map { event ->
+            kernel.orchestrationStore.dialogue.ruleConversationId(event.channelId, event.sourceMessageId, event.conversationId)
+        }.distinct().singleOrNull()
         val activeRules = kernel.proceduralRuleStore.selectActiveForInjection(
-            conversationId = conversationId.toString(),
+            conversationId = ruleConversation,
             recordHit = true,
         )
         kernel.contextManager.prepareRequestMessages(

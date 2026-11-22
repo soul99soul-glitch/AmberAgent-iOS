@@ -23,8 +23,11 @@ import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
@@ -35,6 +38,18 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+
+@Serializable
+private data class PairRequest(
+    val secret: String,
+    val platform: String,
+    val deviceName: String? = null,
+    val protocolVersion: Int = 1,
+    val nodeRole: String = "hybrid",
+    val trustedApprovalSurface: Boolean? = null,
+    val requestBootstrapSync: Boolean = false,
+    val clientPublicJwk: JsonElement? = null,
+)
 
 /**
  * Ktor Server module implementing all C3 v1 endpoints and C3 v2 high-risk approval rules.
@@ -121,15 +136,12 @@ fun Application.configureCloudGateway(
     routing {
         post("/v1/pair") {
             call.response.header(HttpHeaders.CacheControl, "no-store")
-            val body = call.parseJsonBody()
-            val secret = body["secret"]?.jsonPrimitive?.contentOrNull.orEmpty()
-            val platform = body["platform"]?.jsonPrimitive?.contentOrNull.orEmpty()
-            val deviceName = body["deviceName"]?.jsonPrimitive?.contentOrNull
-            val protocolVersion = body["protocolVersion"]?.jsonPrimitive?.intOrNull ?: 1
-            val nodeRole = body["nodeRole"]?.jsonPrimitive?.contentOrNull ?: "hybrid"
-            val trustedApprovalSurface = body["trustedApprovalSurface"]?.jsonPrimitive?.booleanOrNull
-            val requestBootstrapSync = body["requestBootstrapSync"]?.jsonPrimitive?.booleanOrNull ?: false
-            val clientPublicJwkElement = body["clientPublicJwk"]
+            val request = try {
+                gatewayJson.decodeFromString<PairRequest>(call.receiveText())
+            } catch (_: SerializationException) {
+                return@post call.respondError(400, "invalid_pair_request")
+            }
+            val clientPublicJwkElement = request.clientPublicJwk
             val clientPublicJwk = if (clientPublicJwkElement != null) {
                 val obj = runCatching { clientPublicJwkElement.jsonObject }.getOrNull()
                     ?: return@post call.respondError(400, "invalid_client_public_key")
@@ -145,36 +157,23 @@ fun Application.configureCloudGateway(
 
             when (
                 val result = state.pairDevice(
-                    secret = secret,
-                    platform = platform,
-                    deviceName = deviceName,
-                    protocolVersion = protocolVersion,
-                    nodeRole = nodeRole,
-                    trustedApprovalSurface = trustedApprovalSurface,
-                )
+                    secret = request.secret,
+                    platform = request.platform,
+                    deviceName = request.deviceName,
+                    protocolVersion = request.protocolVersion,
+                    nodeRole = request.nodeRole,
+                    trustedApprovalSurface = request.trustedApprovalSurface,
+                ) { device ->
+                    if (request.requestBootstrapSync || clientPublicJwk != null) {
+                        buildPairingBootstrap(device, clientPublicJwk, agentApi?.kernel?.configurationManager, soulStore, ruleStore)
+                    } else null
+                }
             ) {
                 is CloudGatewayState.PairResult.Success -> {
-                    val bootstrapSnapshot = if (requestBootstrapSync || clientPublicJwk != null) {
-                        val pairedDevice = state.findDeviceById(result.deviceId)
-                        buildPairingBootstrap(
-                            device = pairedDevice,
-                            clientPublicJwk = clientPublicJwk,
-                            configManager = agentApi?.kernel?.configurationManager,
-                            soulStore = soulStore,
-                            ruleStore = ruleStore,
-                        )?.also { snapshot ->
-                            state.recordAudit(
-                                "pair-bootstrap-sync",
-                                mapOf(
-                                    "device" to result.deviceId,
-                                    "encryptedConfig" to (snapshot.encryptedConfigJwe != null).toString(),
-                                    "soulRevision" to (snapshot.soul?.revision ?: 0L).toString(),
-                                    "activeRulesCount" to snapshot.activeRules.size.toString(),
-                                ),
-                            )
-                        }
-                    } else {
-                        null
+                    val bootstrapSnapshot = result.bootstrap
+                    if (bootstrapSnapshot != null) {
+                        state.recordAudit("pair-bootstrap-sync", mapOf("device" to result.deviceId,
+                            "encryptedConfig" to (bootstrapSnapshot.encryptedConfigJwe != null).toString()))
                     }
                     val resp = buildJsonObject {
                         put("deviceId", result.deviceId)
@@ -477,13 +476,12 @@ fun Application.configureCloudGateway(
 }
 
 private fun buildPairingBootstrap(
-    device: PairedDevice?,
+    device: PairedDevice,
     clientPublicJwk: JsonObject?,
     configManager: CloudConfigurationManager?,
     soulStore: app.amber.cloud.soul.CloudSoulStore?,
     ruleStore: ProceduralRuleStore?,
 ): PairingBootstrapSnapshot? {
-    if (device == null) return null
     val isTrustedManagement = runCatching {
         CloudConfigurationManager.requireManagementDevice(device)
         true
