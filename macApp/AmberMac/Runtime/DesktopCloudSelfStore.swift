@@ -202,6 +202,7 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     /// nil until the first refresh after launch or pairing.
     private(set) var isReachable: Bool?
     private(set) var isBusy = false
+    private(set) var isRefreshing = false
     /// Remote config snapshot; nil until fetched. Never contains secret values.
     private(set) var remoteConfig: DesktopCloudRemoteConfig?
     private(set) var remoteConfigError: String?
@@ -211,10 +212,13 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     private(set) var rules: [DesktopProceduralRule] = []
     private(set) var rulesError: String?
     private(set) var ruleSoulRedirectNotice: String?
+    private(set) var isRefreshingRules = false
     private(set) var isMutatingRule = false
+    private(set) var mutatingRuleId: String?
     /// Single-scan pairing QR issued for onboarding a new phone with encrypted bootstrap sync.
     var issuedPairingTicket: DesktopIssuedPairingTicket?
     private(set) var isIssuingPairing = false
+    private(set) var pairingIssueError: String?
     /// Names of secret slots the cloud confirmed after the last upload.
     private(set) var lastConfiguredSecrets: Set<String>?
     var pendingPairing: DesktopCloudPairingPayload?
@@ -280,8 +284,12 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     private func install(_ connection: DesktopCloudConnection, token: String) {
         let client = DesktopCloudClient(addrs: connection.addrs, port: connection.port,
                                         fingerprint: connection.fingerprint, token: token)
+        isRefreshing = false
+        isRefreshingRules = false
         isMutatingRule = false
+        mutatingRuleId = nil
         isIssuingPairing = false
+        pairingIssueError = nil
         rules = []
         rulesError = nil
         issuedPairingTicket = nil
@@ -381,6 +389,12 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
         guard let client else { return }
         statusGeneration += 1
         let generation = statusGeneration
+        isRefreshing = true
+        defer {
+            if self.client === client, generation == statusGeneration {
+                isRefreshing = false
+            }
+        }
         do {
             let latest = try await client.status()
             guard self.client === client, generation == statusGeneration else { return }
@@ -438,6 +452,12 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
         guard let client, let rulesSync, !isMutatingRule else { return }
         rulesGeneration += 1
         let generation = rulesGeneration
+        isRefreshingRules = true
+        defer {
+            if self.client === client, rulesGeneration == generation {
+                isRefreshingRules = false
+            }
+        }
         do {
             let fetched = try await rulesSync.listRules()
             guard self.client === client, rulesGeneration == generation else { return }
@@ -455,7 +475,9 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     func proposeRule(title: String? = nil, instruction: String, scope: String = "global") async -> DesktopRuleProposalOutcome? {
         guard let client, let rulesSync, !isMutatingRule else { return nil }
         rulesGeneration += 1
+        isRefreshingRules = false
         isMutatingRule = true
+        mutatingRuleId = nil
         ruleSoulRedirectNotice = nil
         defer { if self.client === client { isMutatingRule = false } }
         do {
@@ -481,22 +503,29 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     }
 
     func confirmRule(id: String) async {
-        await mutateRule { try await $0.confirmRule(id: id) }
+        await mutateRule(ruleId: id) { try await $0.confirmRule(id: id) }
     }
 
     func archiveRule(id: String) async {
-        await mutateRule { try await $0.archiveRule(id: id) }
+        await mutateRule(ruleId: id) { try await $0.archiveRule(id: id) }
     }
 
     func revokeRule(id: String) async {
-        await mutateRule { try await $0.revokeRule(id: id) }
+        await mutateRule(ruleId: id) { try await $0.revokeRule(id: id) }
     }
 
-    private func mutateRule(_ action: (any DesktopCloudRulesSync) async throws -> DesktopProceduralRule) async {
+    private func mutateRule(ruleId: String, _ action: (any DesktopCloudRulesSync) async throws -> DesktopProceduralRule) async {
         guard let client, let rulesSync, !isMutatingRule else { return }
         rulesGeneration += 1
+        isRefreshingRules = false
         isMutatingRule = true
-        defer { if self.client === client { isMutatingRule = false } }
+        mutatingRuleId = ruleId
+        defer {
+            if self.client === client {
+                isMutatingRule = false
+                mutatingRuleId = nil
+            }
+        }
         do {
             ruleSoulRedirectNotice = nil
             let updated = try await action(rulesSync)
@@ -524,15 +553,18 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
     func issueSingleScanPairing() async {
         guard let client, let pairingBootstrapSync, !isIssuingPairing else { return }
         isIssuingPairing = true
+        pairingIssueError = nil
         defer { if self.client === client { isIssuingPairing = false } }
         do {
             let ticket = try await pairingBootstrapSync.issuePairingTicket()
             guard self.client === client else { return }
             issuedPairingTicket = ticket
+            pairingIssueError = nil
             notice = nil
         } catch {
             guard self.client === client else { return }
             if !forgetIfRevoked(error) {
+                pairingIssueError = error.localizedDescription
                 notice = Notice(text: "生成配对二维码失败：\(error.localizedDescription)", isError: true)
             }
         }
@@ -540,6 +572,19 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
 
     func clearIssuedPairing() {
         issuedPairingTicket = nil
+        pairingIssueError = nil
+    }
+
+    /// Formats one or more validated TLS proxy addresses with their port for UI display.
+    static func formattedEndpoints(addresses: [String], port: Int) -> String {
+        let cleaned = addresses
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !cleaned.isEmpty else { return ":\(port)" }
+        return cleaned.map { address in
+            let host = address.contains(":") && !address.hasPrefix("[") ? "[\(address)]" : address
+            return "\(host):\(port)"
+        }.joined(separator: " · ")
     }
 
     // MARK: - Remote config apply (manual update)
@@ -834,7 +879,13 @@ struct DesktopCloudImportPlan: Equatable, Sendable {
         rules = []
         rulesError = nil
         ruleSoulRedirectNotice = nil
+        isRefreshing = false
+        isRefreshingRules = false
+        isMutatingRule = false
+        mutatingRuleId = nil
         issuedPairingTicket = nil
+        isIssuingPairing = false
+        pairingIssueError = nil
         lastConfiguredSecrets = nil
         isReachable = nil
         poll?.cancel(); poll = nil

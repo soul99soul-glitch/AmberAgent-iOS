@@ -8,10 +8,14 @@ struct DesktopCloudSelfSettingsView: View {
     @State private var confirmsUnpair = false
     @State private var importPresented = false
     @State private var configEditorPresented = false
+    @State private var pairingSheetPresented = false
     @State private var showTechnical = false
     @State private var showAddRuleForm = false
+    @State private var showHistoryRules = false
     @State private var newRuleTitle = ""
     @State private var newRuleInstruction = ""
+    @State private var rulePendingRevoke: DesktopProceduralRule?
+    @State private var copiedFieldID: String?
 
     var body: some View {
         ScrollView {
@@ -34,6 +38,7 @@ struct DesktopCloudSelfSettingsView: View {
                             .padding(.top, 8)
                     }
                     .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DesktopTheme.inkSecondary)
                 }
             }
             .padding(20)
@@ -41,22 +46,50 @@ struct DesktopCloudSelfSettingsView: View {
         }
         .onAppear { store.startPolling() }
         .onDisappear { store.stopPolling() }
+        .onChange(of: store.issuedPairingTicket != nil) { _, hasTicket in
+            if hasTicket { pairingSheetPresented = true }
+        }
+        .onChange(of: store.connection == nil) { _, unpaired in
+            if unpaired {
+                pairingSheetPresented = false
+                rulePendingRevoke = nil
+            }
+        }
         .sheet(isPresented: $importPresented) {
             DesktopCloudImportSheet(store: store)
         }
         .sheet(isPresented: $configEditorPresented) {
             DesktopCloudConfigSheet(store: store)
         }
-        .sheet(item: Binding(
-            get: { store.issuedPairingTicket.map { IssuedPairingSheetID(url: $0.deepLinkUrl) } },
-            set: { if $0 == nil { store.clearIssuedPairing() } }
-        )) { _ in
+        .sheet(isPresented: $pairingSheetPresented, onDismiss: {
+            store.clearIssuedPairing()
+        }) {
             DesktopCloudSingleScanPairingSheet(store: store)
         }
         .confirmationDialog("取消与云端的配对？", isPresented: $confirmsUnpair, titleVisibility: .visible) {
             Button("取消配对", role: .destructive) { Task { await store.unpair() } }
             Button("保留", role: .cancel) {}
         } message: { Text("本机保存的配对凭据会移除；云端设备列表里的此设备同时吊销。本机 Mac Gateway 与已配对手机不受影响。") }
+        .confirmationDialog(
+            "撤销这条执行规则？",
+            isPresented: Binding(
+                get: { rulePendingRevoke != nil },
+                set: { if !$0 { rulePendingRevoke = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("撤销规则", role: .destructive) {
+                if let rule = rulePendingRevoke {
+                    rulePendingRevoke = nil
+                    Task { await store.revokeRule(id: rule.id) }
+                }
+            }
+            Button("取消", role: .cancel) { rulePendingRevoke = nil }
+        } message: {
+            if let rule = rulePendingRevoke {
+                Text("「\(rule.title)」撤销后将立即失效且不可恢复；如需再次启用，需重新提议并确认。")
+            }
+        }
     }
 
     // MARK: connection
@@ -65,66 +98,149 @@ struct DesktopCloudSelfSettingsView: View {
         card {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("云端连接").font(.system(size: 14, weight: .semibold))
-                    Text(connectionStatusText).font(.system(size: 12)).foregroundStyle(connectionStatusColor)
+                    Text("云端连接").font(.system(size: 14, weight: .semibold)).foregroundStyle(DesktopTheme.ink)
+                    HStack(spacing: 6) {
+                        connectionStatusIndicator
+                        Text(connectionStatusText)
+                            .font(.system(size: 12))
+                            .foregroundStyle(connectionStatusColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
-                Spacer()
+                Spacer(minLength: 8)
                 if store.connection != nil {
                     Button { Task { await store.refresh() } } label: {
-                        Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .semibold))
+                        Group {
+                            if store.isRefreshing {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .semibold))
+                            }
+                        }
+                        .frame(width: 28, height: 28)
                     }
-                    .buttonStyle(.borderless).accessibilityLabel("刷新云端状态")
+                    .buttonStyle(DesktopQuietButtonStyle())
+                    .disabled(store.isRefreshing || store.isBusy)
+                    .help("刷新云端状态")
+                    .accessibilityLabel("刷新云端状态")
                 }
             }
             if let connection = store.connection {
+                let endpointSummary = DesktopCloudSelfStore.formattedEndpoints(
+                    addresses: connection.addrs,
+                    port: connection.port
+                )
                 Divider()
-                HStack(spacing: 12) {
+                HStack(alignment: .center, spacing: 12) {
                     Image(systemName: "cloud").font(.system(size: 15)).foregroundStyle(DesktopTheme.accent)
                         .frame(width: 22).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(connection.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                        Text(connection.addrs.joined(separator: " · ")).font(.system(size: 12))
-                            .foregroundStyle(DesktopTheme.inkTertiary).lineLimit(1)
+                        Text(connection.name)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(DesktopTheme.ink)
+                            .lineLimit(1)
+                        Text(endpointSummary)
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .foregroundStyle(DesktopTheme.inkTertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                            .help(endpointSummary)
                     }
-                    Spacer()
-                    Button("扫码配对新手机…") { Task { await store.issueSingleScanPairing() } }
-                        .disabled(store.isIssuingPairing)
-                    Button("取消配对", role: .destructive) { confirmsUnpair = true }
+                    .frame(minWidth: 0, alignment: .leading)
+                    Spacer(minLength: 12)
+                    HStack(spacing: 8) {
+                        Button {
+                            Task {
+                                await store.issueSingleScanPairing()
+                                if store.issuedPairingTicket != nil {
+                                    pairingSheetPresented = true
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                if store.isIssuingPairing {
+                                    ProgressView().controlSize(.small)
+                                }
+                                Text(store.isIssuingPairing ? "生成配对码…" : "扫码配对新手机…")
+                            }
+                        }
+                        .disabled(store.isIssuingPairing || store.isBusy)
+                        Button("取消配对", role: .destructive) { confirmsUnpair = true }
+                            .disabled(store.isBusy)
+                    }
+                    .fixedSize()
                 }
             } else if let pending = store.pendingPairing {
                 Divider()
                 pendingPairingRows(pending)
             } else {
                 Divider()
-                HStack {
+                HStack(alignment: .center, spacing: 12) {
                     Text("在云端主机运行 amber-cli pair，把输出的 amber:// 配对链接复制到这里。")
                         .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
+                    Spacer(minLength: 8)
                     Button("粘贴配对链接") { store.pasteLinkFromClipboard() }
+                        .fixedSize()
                 }
             }
         }
     }
 
-    private func pendingPairingRows(_ payload: DesktopCloudPairingPayload) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                Image(systemName: "checkmark.shield").font(.system(size: 15)).foregroundStyle(DesktopTheme.accent)
-                    .frame(width: 22).accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(payload.name).font(.system(size: 13, weight: .medium))
-                    Text(payload.addrs.joined(separator: " · ")).font(.system(size: 12))
-                        .foregroundStyle(DesktopTheme.inkTertiary).lineLimit(2)
-                }
+    @ViewBuilder
+    private var connectionStatusIndicator: some View {
+        if store.connection != nil {
+            switch store.isReachable {
+            case true:
+                Circle().fill(DesktopTheme.success).frame(width: 6, height: 6).accessibilityHidden(true)
+            case false:
+                Circle().fill(DesktopTheme.danger).frame(width: 6, height: 6).accessibilityHidden(true)
+            case nil:
+                ProgressView().controlSize(.mini).accessibilityHidden(true)
             }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("证书指纹").font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
-                Text(payload.fp).font(.system(size: 11, design: .monospaced)).foregroundStyle(DesktopTheme.inkSecondary)
-                    .textSelection(.enabled).lineLimit(2).minimumScaleFactor(0.85)
+        }
+    }
+
+    private func pendingPairingRows(_ payload: DesktopCloudPairingPayload) -> some View {
+        let endpointSummary = DesktopCloudSelfStore.formattedEndpoints(
+            addresses: payload.addrs,
+            port: payload.port
+        )
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "checkmark.shield").font(.system(size: 15)).foregroundStyle(DesktopTheme.accent)
+                    .frame(width: 22).padding(.top, 1).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(payload.name).font(.system(size: 13, weight: .medium)).foregroundStyle(DesktopTheme.ink)
+                    Text(endpointSummary)
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(DesktopTheme.inkTertiary)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                        .help(endpointSummary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("证书指纹").font(.system(size: 11.5, weight: .medium)).foregroundStyle(DesktopTheme.inkSecondary)
+                    Spacer()
+                    copyIconButton(value: payload.fp, fieldID: "pending-fp", label: "复制证书指纹")
+                }
+                Text(payload.fp)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(DesktopTheme.ink)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Text("请核对与云端终端显示的指纹一致。").font(.system(size: 11)).foregroundStyle(DesktopTheme.inkTertiary)
             }
-            HStack {
+            .padding(10)
+            .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairline))
+            HStack(spacing: 8) {
                 if store.isBusy { ProgressView().controlSize(.small) }
                 Spacer()
                 Button("取消") { store.pendingPairing = nil }.disabled(store.isBusy)
@@ -158,7 +274,7 @@ struct DesktopCloudSelfSettingsView: View {
     private var remoteConfigCard: some View {
         card {
             HStack {
-                Text("云端配置").font(.system(size: 14, weight: .semibold))
+                Text("云端配置").font(.system(size: 14, weight: .semibold)).foregroundStyle(DesktopTheme.ink)
                 Spacer()
                 if store.canSyncConfig {
                     Button("手动更新…") { configEditorPresented = true }
@@ -212,7 +328,7 @@ struct DesktopCloudSelfSettingsView: View {
 
     private var importCard: some View {
         card {
-            Text("从本机导入").font(.system(size: 14, weight: .semibold))
+            Text("从本机导入").font(.system(size: 14, weight: .semibold)).foregroundStyle(DesktopTheme.ink)
             Text("选择要复用到云端的服务商与搜索 Key；上传前可预览每一项将替换的云端配置，Key 离开钥匙串即封装加密。")
                 .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -231,61 +347,61 @@ struct DesktopCloudSelfSettingsView: View {
     // MARK: procedural rules (Stage 3-A)
 
     private var proceduralRulesCard: some View {
-        let activeCount = store.rules.filter { $0.status == .active }.count
-        let proposedCount = store.rules.filter { $0.status == .proposed }.count
+        let proposedRules = store.rules.filter { $0.status == .proposed }
+        let activeRules = store.rules.filter { $0.status == .active }
+        let historyRules = store.rules.filter { $0.status == .archived || $0.status == .revoked }
+        let primaryRules = proposedRules + activeRules
+
         return card {
-            HStack(alignment: .center, spacing: 8) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("执行规则卡").font(.system(size: 14, weight: .semibold))
-                    Text("生效中 \(activeCount) · 待确认 \(proposedCount) · 仅确认后生效，不可放宽 L1–L3 风险表")
-                        .font(.system(size: 11.5)).foregroundStyle(DesktopTheme.inkTertiary)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .center, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("执行规则卡")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(DesktopTheme.ink)
+                        Text(rulesSummaryText(proposed: proposedRules.count, active: activeRules.count, history: historyRules.count))
+                            .font(.system(size: 11.5).monospacedDigit())
+                            .foregroundStyle(DesktopTheme.inkTertiary)
+                    }
+                    Spacer(minLength: 8)
+                    Button(showAddRuleForm ? "收起表单" : "新增提议") {
+                        showAddRuleForm.toggle()
+                    }
+                    .buttonStyle(.desktopActionPill)
+                    .disabled(store.isMutatingRule)
+                    Button { Task { await store.refreshRules() } } label: {
+                        Group {
+                            if store.isRefreshingRules {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .semibold))
+                            }
+                        }
+                        .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(DesktopQuietButtonStyle())
+                    .disabled(store.isRefreshingRules || store.isMutatingRule)
+                    .help("刷新规则卡")
+                    .accessibilityLabel("刷新规则卡")
                 }
-                Spacer()
-                Button { showAddRuleForm.toggle() } label: {
-                    Text(showAddRuleForm ? "收起" : "新增提议")
-                }
-                Button { Task { await store.refreshRules() } } label: {
-                    Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .semibold))
-                }
-                .buttonStyle(.borderless).accessibilityLabel("刷新规则卡")
+                Text("四层权威：系统风险表（L1–L3 不可绕过）> 形象人设 > 已确认规则 > 当前对话；新提议须确认后生效。")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(DesktopTheme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if showAddRuleForm {
-                VStack(alignment: .leading, spacing: 8) {
-                    TextField("规则标题（可选）", text: $newRuleTitle)
-                        .textFieldStyle(.desktop)
-                    TextField("执行规矩（如：提交代码前先跑定向单测；纯性格/语气请改用形象人设）", text: $newRuleInstruction)
-                        .textFieldStyle(.desktop)
-                    HStack {
-                        Spacer()
-                        Button("提议（待确认）") {
-                            let title = newRuleTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-                            let instruction = newRuleInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !instruction.isEmpty else { return }
-                            Task {
-                                let result = await store.proposeRule(
-                                    title: title.isEmpty ? nil : title,
-                                    instruction: instruction
-                                )
-                                if case .proposed = result {
-                                    newRuleTitle = ""
-                                    newRuleInstruction = ""
-                                    showAddRuleForm = false
-                                }
-                            }
-                        }
-                        .buttonStyle(.desktopProminent)
-                        .disabled(store.isMutatingRule || newRuleInstruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }
-                .padding(10)
-                .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 8))
+                addRuleForm
             }
 
             if let redirect = store.ruleSoulRedirectNotice {
                 Label(redirect, systemImage: "person.crop.circle.badge.exclamationmark")
                     .font(.system(size: 12))
-                    .foregroundStyle(DesktopTheme.accent)
+                    .foregroundStyle(DesktopTheme.accentInk)
+                    .padding(.horizontal, 10).padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(DesktopTheme.honeySoft, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.honeyEdge))
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let error = store.rulesError {
@@ -300,73 +416,241 @@ struct DesktopCloudSelfSettingsView: View {
                     .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                ForEach(Array(store.rules.enumerated()), id: \.element.id) { index, rule in
-                    if index > 0 { Divider() }
-                    ruleRow(rule)
+                if !primaryRules.isEmpty {
+                    Divider()
+                    ForEach(Array(primaryRules.enumerated()), id: \.element.id) { index, rule in
+                        if index > 0 { Divider() }
+                        ruleRow(rule)
+                    }
+                }
+                if !historyRules.isEmpty {
+                    if primaryRules.isEmpty {
+                        Divider()
+                        Text("已归档与已撤销（\(historyRules.count)）")
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(DesktopTheme.inkTertiary)
+                        ForEach(Array(historyRules.enumerated()), id: \.element.id) { index, rule in
+                            if index > 0 { Divider() }
+                            ruleRow(rule)
+                        }
+                    } else {
+                        Divider()
+                        DisclosureGroup("已归档与已撤销（\(historyRules.count)）", isExpanded: $showHistoryRules) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                ForEach(Array(historyRules.enumerated()), id: \.element.id) { index, rule in
+                                    if index > 0 { Divider() }
+                                    ruleRow(rule)
+                                }
+                            }
+                            .padding(.top, 8)
+                        }
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(DesktopTheme.inkSecondary)
+                    }
                 }
             }
         }
+    }
+
+    private func rulesSummaryText(proposed: Int, active: Int, history: Int) -> String {
+        var parts = ["待确认 \(proposed)", "生效中 \(active)"]
+        if history > 0 { parts.append("历史 \(history)") }
+        return parts.joined(separator: " · ")
+    }
+
+    private var addRuleForm: some View {
+        let trimmedInstruction = newRuleInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        return VStack(alignment: .leading, spacing: 8) {
+            TextField("规则标题（可选）", text: $newRuleTitle)
+                .textFieldStyle(.desktop)
+                .disabled(store.isMutatingRule)
+            TextField("执行规矩（如：提交代码前先跑定向单测）", text: $newRuleInstruction, axis: .vertical)
+                .lineLimit(2...4)
+                .textFieldStyle(.desktop)
+                .disabled(store.isMutatingRule)
+            HStack(alignment: .center, spacing: 8) {
+                Text("纯性格或语气偏好请前往形象人设（C-SOUL-V1）。")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DesktopTheme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if store.isMutatingRule && store.mutatingRuleId == nil {
+                    ProgressView().controlSize(.small)
+                }
+                Button("取消") {
+                    newRuleTitle = ""
+                    newRuleInstruction = ""
+                    showAddRuleForm = false
+                }
+                .disabled(store.isMutatingRule)
+                Button("提议（待确认）") {
+                    let title = newRuleTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmedInstruction.isEmpty else { return }
+                    Task {
+                        let result = await store.proposeRule(
+                            title: title.isEmpty ? nil : title,
+                            instruction: trimmedInstruction
+                        )
+                        if case .proposed = result {
+                            newRuleTitle = ""
+                            newRuleInstruction = ""
+                            showAddRuleForm = false
+                        }
+                    }
+                }
+                .buttonStyle(.desktopProminent)
+                .disabled(store.isMutatingRule || trimmedInstruction.isEmpty)
+            }
+        }
+        .padding(12)
+        .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairline))
     }
 
     private func ruleRow(_ rule: DesktopProceduralRule) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 8) {
-                Text(rule.title)
-                    .font(.system(size: 13, weight: .medium))
-                    .lineLimit(1)
-                Text(rule.status.displayTitle)
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(rule.status == .active ? DesktopTheme.accent : DesktopTheme.inkTertiary)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Capsule().strokeBorder(DesktopTheme.hairline, lineWidth: 1))
-                Text("命中 \(rule.hitCount) 次")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(DesktopTheme.inkTertiary)
-                Spacer()
-                if rule.status == .proposed {
-                    Button("确认生效") { Task { await store.confirmRule(id: rule.id) } }
-                        .disabled(store.isMutatingRule)
-                    Button("撤销", role: .destructive) { Task { await store.revokeRule(id: rule.id) } }
-                        .disabled(store.isMutatingRule)
-                } else if rule.status == .active {
-                    Button("归档") { Task { await store.archiveRule(id: rule.id) } }
-                        .disabled(store.isMutatingRule)
-                    Button("撤销", role: .destructive) { Task { await store.revokeRule(id: rule.id) } }
-                        .disabled(store.isMutatingRule)
+        let isHistory = rule.status == .archived || rule.status == .revoked
+        let isThisMutating = store.mutatingRuleId == rule.id
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 10) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(rule.title)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(isHistory ? DesktopTheme.inkSecondary : DesktopTheme.ink)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ruleStatusBadge(rule.status)
+                        .fixedSize()
+                        .layoutPriority(1)
+                }
+                .frame(minWidth: 0, alignment: .leading)
+                Spacer(minLength: 10)
+                if rule.status == .proposed || rule.status == .active {
+                    HStack(spacing: 8) {
+                        if isThisMutating {
+                            ProgressView().controlSize(.small)
+                        }
+                        if rule.status == .proposed {
+                            Button("确认生效") { Task { await store.confirmRule(id: rule.id) } }
+                                .buttonStyle(.desktopTintedPill)
+                                .disabled(store.isMutatingRule)
+                            Button("撤销", role: .destructive) { rulePendingRevoke = rule }
+                                .buttonStyle(RuleDestructivePillButtonStyle())
+                                .disabled(store.isMutatingRule)
+                        } else if rule.status == .active {
+                            Button("归档") { Task { await store.archiveRule(id: rule.id) } }
+                                .buttonStyle(.desktopActionPill)
+                                .disabled(store.isMutatingRule)
+                            Button("撤销", role: .destructive) { rulePendingRevoke = rule }
+                                .buttonStyle(RuleDestructivePillButtonStyle())
+                                .disabled(store.isMutatingRule)
+                        }
+                    }
+                    .fixedSize()
+                    .layoutPriority(2)
                 }
             }
             Text(rule.instruction)
-                .font(.system(size: 12))
-                .foregroundStyle(DesktopTheme.inkSecondary)
+                .font(.system(size: 12.5))
+                .foregroundStyle(isHistory ? DesktopTheme.inkTertiary : DesktopTheme.inkSecondary)
+                .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("作用域：\(rule.scope == "global" ? "全局" : rule.scope)")
-                .font(.system(size: 11))
-                .foregroundStyle(DesktopTheme.inkTertiary)
-        }
-    }
-
-    private struct IssuedPairingSheetID: Identifiable { let url: String; var id: String { url } }
-
-    private var technicalCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let connection = store.connection {
-                techRow("云端实例", connection.gatewayId)
-                techRow("设备标识", connection.deviceId)
-                techRow("证书指纹", connection.fingerprint)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                let scopeLabel = rule.scope == "global" ? "全局" : rule.scope
+                Text("作用域：\(scopeLabel)")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DesktopTheme.inkTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(rule.scope)
+                Text("·")
+                    .font(.system(size: 11))
+                    .foregroundStyle(DesktopTheme.inkTertiary)
+                Text("命中 \(rule.hitCount) 次")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(DesktopTheme.inkTertiary)
+                    .fixedSize()
             }
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 8))
+        .padding(.vertical, 2)
     }
 
-    private func techRow(_ title: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(title).font(.system(size: 11)).foregroundStyle(DesktopTheme.inkTertiary).frame(width: 56, alignment: .leading)
-            Text(value).font(.system(size: 10.5, design: .monospaced)).foregroundStyle(DesktopTheme.inkSecondary)
-                .textSelection(.enabled).lineLimit(2).minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity, alignment: .leading)
+    private func ruleStatusBadge(_ status: DesktopProceduralRuleStatus) -> some View {
+        let style = Self.badgeStyle(for: status)
+        return Text(status.displayTitle)
+            .font(.system(size: 10.5, weight: .semibold))
+            .foregroundStyle(style.foreground)
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .background(Capsule().fill(style.background))
+            .overlay(Capsule().strokeBorder(style.border, lineWidth: 0.75))
+    }
+
+    private static func badgeStyle(for status: DesktopProceduralRuleStatus) -> (foreground: Color, background: Color, border: Color) {
+        switch status {
+        case .proposed:
+            return (DesktopTheme.accentInk, DesktopTheme.honeySoft, DesktopTheme.honeyEdge)
+        case .active:
+            return (DesktopTheme.success, DesktopTheme.success.opacity(0.12), DesktopTheme.success.opacity(0.32))
+        case .archived:
+            return (DesktopTheme.inkSecondary, DesktopTheme.paperDeep, DesktopTheme.hairlineStrong)
+        case .revoked:
+            return (DesktopTheme.danger, DesktopTheme.danger.opacity(0.10), DesktopTheme.danger.opacity(0.28))
         }
+    }
+
+    private var technicalCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let connection = store.connection {
+                let endpointSummary = DesktopCloudSelfStore.formattedEndpoints(
+                    addresses: connection.addrs,
+                    port: connection.port
+                )
+                techRow("TLS 代理", endpointSummary, fieldID: "tech-endpoint")
+                techRow("云端实例", connection.gatewayId, fieldID: "tech-gateway")
+                techRow("设备标识", connection.deviceId, fieldID: "tech-device")
+                techRow("证书指纹", connection.fingerprint, fieldID: "tech-fp")
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DesktopTheme.paperDeep, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(DesktopTheme.hairline))
+    }
+
+    private func techRow(_ title: String, _ value: String, fieldID: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(title)
+                .font(.system(size: 11.5))
+                .foregroundStyle(DesktopTheme.inkTertiary)
+                .frame(width: 60, alignment: .leading)
+            Text(value)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(DesktopTheme.inkSecondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            copyIconButton(value: value, fieldID: fieldID, label: "复制\(title)")
+        }
+    }
+
+    private func copyIconButton(value: String, fieldID: String, label: String) -> some View {
+        let isCopied = copiedFieldID == fieldID
+        return Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(value, forType: .string)
+            copiedFieldID = fieldID
+            Task {
+                try? await Task.sleep(for: .seconds(1.6))
+                if copiedFieldID == fieldID { copiedFieldID = nil }
+            }
+        } label: {
+            Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(isCopied ? DesktopTheme.success : DesktopTheme.inkTertiary)
+                .frame(width: 24, height: 22)
+        }
+        .buttonStyle(DesktopQuietButtonStyle())
+        .help(isCopied ? "已复制" : label)
+        .accessibilityLabel(isCopied ? "已复制" : label)
     }
 
     private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
@@ -378,40 +662,162 @@ struct DesktopCloudSelfSettingsView: View {
     }
 }
 
+/// Destructive counterpart of `DesktopActionPillButtonStyle` sharing identical 25pt height and geometry.
+private struct RuleDestructivePillButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { Label(configuration: configuration) }
+    private struct Label: View {
+        let configuration: Configuration
+        @Environment(\.isEnabled) private var enabled
+        @State private var hovering = false
+        var body: some View {
+            configuration.label
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(DesktopTheme.danger)
+                .padding(.horizontal, 10)
+                .frame(height: 25)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(hovering && enabled ? DesktopTheme.danger.opacity(0.14) : DesktopTheme.danger.opacity(0.06))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(DesktopTheme.danger.opacity(hovering && enabled ? 0.42 : 0.24), lineWidth: 0.75)
+                )
+                .opacity(enabled ? (configuration.isPressed ? 0.75 : 1) : 0.42)
+                .scaleEffect(configuration.isPressed && enabled ? 0.97 : 1)
+                .animation(.easeOut(duration: 0.14), value: hovering)
+                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .onHover { hovering = $0 }
+        }
+    }
+}
+
 /// Single-scan onboarding QR sheet for pairing a new phone with encrypted config + C-SOUL-V1 + active rules sync.
 struct DesktopCloudSingleScanPairingSheet: View {
     @Bindable var store: DesktopCloudSelfStore
     @Environment(\.dismiss) private var dismiss
     @State private var now = Date()
+    @State private var copiedLink = false
+    @State private var copiedFingerprint = false
+
+    private static let qrDisplaySize: CGFloat = 240
+    private static let qrQuietZone: CGFloat = 20
 
     var body: some View {
+        let ticket = store.issuedPairingTicket
+        let remainingSeconds = ticket.map { max(0, Int(Date(timeIntervalSince1970: $0.expiresAt).timeIntervalSince(now))) } ?? 0
+        let isExpired = ticket != nil && remainingSeconds == 0
+
         VStack(spacing: 16) {
-            Text("单次扫码配对新手机").font(DesktopTheme.serif(size: 20, weight: .semibold))
-            if let ticket = store.issuedPairingTicket {
-                if let image = DesktopGatewayPairingSheet.qrImage(ticket.deepLinkUrl) {
-                    Image(nsImage: image).interpolation(.none).resizable().frame(width: 220, height: 220)
-                        .padding(12).background(.white, in: RoundedRectangle(cornerRadius: 10))
-                        .accessibilityLabel("单次扫码配对二维码")
-                }
+            VStack(spacing: 6) {
+                Text("单次扫码配对新手机")
+                    .font(DesktopTheme.serif(size: 20, weight: .semibold))
+                    .foregroundStyle(DesktopTheme.ink)
                 Text("手机一次扫码即可建立配对，并通过加密信道自动同步当前 Provider 配置、C-SOUL-V1 人设与生效规则卡。")
-                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkSecondary)
+                    .font(.system(size: 12))
+                    .foregroundStyle(DesktopTheme.inkSecondary)
                     .multilineTextAlignment(.center)
-                VStack(alignment: .leading, spacing: 6) {
-                    row("同步内容", syncSummary(ticket.bootstrap), mono: false)
-                    row("证书指纹", ticket.fingerprint, mono: true)
-                    row("安全说明", "二维码不含明文 API Key 或 OAuth Token", mono: false)
-                    row("有效期", remaining(Date(timeIntervalSince1970: ticket.expiresAt)), mono: false)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            HStack {
-                if let ticket = store.issuedPairingTicket {
-                    Button("复制配对链接") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(ticket.deepLinkUrl, forType: .string)
+
+            qrContainer(ticket: ticket, isExpired: isExpired)
+
+            if let issueError = store.pairingIssueError {
+                Label(issueError, systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(DesktopTheme.danger)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if let ticket {
+                let endpointSummary = DesktopCloudSelfStore.formattedEndpoints(
+                    addresses: ticket.addresses,
+                    port: ticket.port
+                )
+                VStack(alignment: .leading, spacing: 8) {
+                    infoRow("TLS 代理", value: endpointSummary, mono: true)
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text("证书指纹")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DesktopTheme.inkTertiary)
+                            .frame(width: 64, alignment: .leading)
+                        Text(ticket.fingerprint)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(DesktopTheme.ink)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(ticket.fingerprint, forType: .string)
+                            copiedFingerprint = true
+                            Task {
+                                try? await Task.sleep(for: .seconds(1.6))
+                                copiedFingerprint = false
+                            }
+                        } label: {
+                            Image(systemName: copiedFingerprint ? "checkmark" : "doc.on.doc")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(copiedFingerprint ? DesktopTheme.success : DesktopTheme.inkTertiary)
+                                .frame(width: 24, height: 22)
+                        }
+                        .buttonStyle(DesktopQuietButtonStyle())
+                        .help(copiedFingerprint ? "已复制证书指纹" : "复制证书指纹")
+                        .accessibilityLabel(copiedFingerprint ? "已复制证书指纹" : "复制证书指纹")
+                    }
+                    infoRow("同步内容", value: syncSummary(ticket.bootstrap), mono: false)
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text("有效期")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DesktopTheme.inkTertiary)
+                            .frame(width: 64, alignment: .leading)
+                        Text(remainingText(seconds: remainingSeconds))
+                            .font(.system(size: 12).monospacedDigit())
+                            .foregroundStyle(remainingSeconds <= 30 ? DesktopTheme.danger : DesktopTheme.inkSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    infoRow("安全说明", value: "二维码不含明文 API Key 或 OAuth Token", mono: false, subtle: true)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DesktopTheme.card, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(DesktopTheme.hairline))
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    guard let ticket else { return }
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(ticket.deepLinkUrl, forType: .string)
+                    copiedLink = true
+                    Task {
+                        try? await Task.sleep(for: .seconds(1.8))
+                        copiedLink = false
+                    }
+                } label: {
+                    Label(copiedLink ? "已复制链接" : "复制配对链接", systemImage: copiedLink ? "checkmark" : "doc.on.doc")
+                }
+                .disabled(ticket == nil || isExpired || store.isIssuingPairing)
+
+                Button {
+                    copiedLink = false
+                    copiedFingerprint = false
+                    Task { await store.issueSingleScanPairing() }
+                } label: {
+                    HStack(spacing: 5) {
+                        if store.isIssuingPairing {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        Text("刷新配对码")
                     }
                 }
+                .disabled(store.isIssuingPairing)
+
                 Spacer()
+
                 Button("完成") {
                     store.clearIssuedPairing()
                     dismiss()
@@ -420,20 +826,72 @@ struct DesktopCloudSingleScanPairingSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 440)
+        .frame(width: 480)
         .background(DesktopTheme.paper)
         .task {
             while !Task.isCancelled {
                 now = Date()
-                if let ticket = store.issuedPairingTicket,
-                   Date().timeIntervalSince1970 >= ticket.expiresAt {
-                    store.clearIssuedPairing()
-                    dismiss()
-                    return
-                }
                 try? await Task.sleep(for: .seconds(1))
             }
         }
+    }
+
+    @ViewBuilder
+    private func qrContainer(ticket: DesktopIssuedPairingTicket?, isExpired: Bool) -> some View {
+        let totalSize = Self.qrDisplaySize + Self.qrQuietZone * 2
+        ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(DesktopTheme.hairlineStrong, lineWidth: 1)
+                )
+
+            if let ticket, let image = DesktopGatewayPairingSheet.qrImage(ticket.deepLinkUrl) {
+                Image(nsImage: image)
+                    .interpolation(.none)
+                    .resizable()
+                    .frame(width: Self.qrDisplaySize, height: Self.qrDisplaySize)
+                    .padding(Self.qrQuietZone)
+                    .opacity(isExpired || store.isIssuingPairing ? 0.16 : 1)
+                    .accessibilityLabel("单次扫码配对二维码")
+            } else if !store.isIssuingPairing {
+                VStack(spacing: 8) {
+                    Image(systemName: "qrcode")
+                        .font(.system(size: 32))
+                        .foregroundStyle(Color.black.opacity(0.45))
+                    Text("无法渲染二维码，请刷新配对码或复制链接")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.black.opacity(0.7))
+                        .multilineTextAlignment(.center)
+                }
+                .padding(20)
+            }
+
+            if store.isIssuingPairing {
+                VStack(spacing: 8) {
+                    ProgressView().controlSize(.regular)
+                    Text("正在生成新配对码…")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.black.opacity(0.75))
+                }
+                .padding(14)
+                .background(Color.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 10))
+            } else if isExpired {
+                VStack(spacing: 10) {
+                    Text("配对码已过期")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.black.opacity(0.85))
+                    Button("刷新配对码") {
+                        Task { await store.issueSingleScanPairing() }
+                    }
+                    .buttonStyle(.desktopProminent)
+                }
+                .padding(16)
+                .background(Color.white.opacity(0.94), in: RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        .frame(width: totalSize, height: totalSize)
     }
 
     private func syncSummary(_ hint: DesktopPairingBootstrapHint) -> String {
@@ -442,21 +900,25 @@ struct DesktopCloudSingleScanPairingSheet: View {
         return "\(provider) · Soul v\(hint.soulRevision) · \(hint.activeRulesCount) 条生效规则"
     }
 
-    private func row(_ title: String, _ value: String, mono: Bool) -> some View {
+    private func infoRow(_ title: String, value: String, mono: Bool, subtle: Bool = false) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(title).font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary).frame(width: 60, alignment: .leading)
-            Text(value).font(.system(size: mono ? 11 : 12, design: mono ? .monospaced : .default))
-                .foregroundStyle(DesktopTheme.inkSecondary)
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundStyle(DesktopTheme.inkTertiary)
+                .frame(width: 64, alignment: .leading)
+            Text(value)
+                .font(.system(size: mono ? 11.5 : (subtle ? 11.5 : 12), design: mono ? .monospaced : .default))
+                .foregroundStyle(subtle ? DesktopTheme.inkTertiary : DesktopTheme.inkSecondary)
                 .textSelection(.enabled)
-                .lineLimit(mono ? 1 : nil)
-                .minimumScaleFactor(0.8)
-                .fixedSize(horizontal: false, vertical: !mono)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func remaining(_ expiry: Date) -> String {
-        let seconds = max(0, Int(expiry.timeIntervalSince(now)))
+    private func remainingText(seconds: Int) -> String {
+        if seconds <= 0 {
+            return "已过期，请刷新配对码"
+        }
         return String(format: "%d:%02d，仅可使用一次", seconds / 60, seconds % 60)
     }
 }

@@ -76,9 +76,18 @@ final class DesktopProceduralRulesAndPairingSyncTests: XCTestCase {
     }
 
     private actor FakePairingBootstrapSync: DesktopCloudPairingBootstrapSync {
-        let ticket: DesktopIssuedPairingTicket
+        var ticket: DesktopIssuedPairingTicket
+        var failNextIssue = false
         init(ticket: DesktopIssuedPairingTicket) { self.ticket = ticket }
-        func issuePairingTicket() async throws -> DesktopIssuedPairingTicket { ticket }
+        func setTicket(_ next: DesktopIssuedPairingTicket) { ticket = next }
+        func setFailNextIssue(_ shouldFail: Bool) { failNextIssue = shouldFail }
+        func issuePairingTicket() async throws -> DesktopIssuedPairingTicket {
+            if failNextIssue {
+                failNextIssue = false
+                throw DesktopCloudError.unreachable
+            }
+            return ticket
+        }
         func fetchBootstrapSnapshot(clientPublicJwk: [String: String]?) async throws -> DesktopPairingBootstrapSnapshot {
             DesktopPairingBootstrapSnapshot(version: 1, configuration: nil, encryptedConfigJwe: nil, soul: nil, activeRules: [], importKey: nil)
         }
@@ -292,7 +301,55 @@ final class DesktopProceduralRulesAndPairingSyncTests: XCTestCase {
         XCTAssertEqual(store.issuedPairingTicket?.bootstrap.soulRevision, 3)
         XCTAssertEqual(store.issuedPairingTicket?.bootstrap.activeRulesCount, 1)
         XCTAssertEqual(store.issuedPairingTicket?.bootstrap.siwcConfigured, true)
+        XCTAssertNil(store.pairingIssueError)
         store.clearIssuedPairing()
         XCTAssertNil(store.issuedPairingTicket)
+        XCTAssertNil(store.pairingIssueError)
+    }
+
+    func testRefreshPairingTicketRecordsAndClearsSheetError() async {
+        let initial = DesktopIssuedPairingTicket(
+            deepLinkUrl: "amber://gateway/pair?p=initial",
+            fingerprint: "fp-initial",
+            addresses: ["proxy.example.com"],
+            port: 443,
+            expiresAt: Date().addingTimeInterval(300).timeIntervalSince1970,
+            bootstrap: DesktopPairingBootstrapHint(provider: "openai", activeRulesCount: 1)
+        )
+        let pairingSync = FakePairingBootstrapSync(ticket: initial)
+        let store = makePairedStore(pairingSync: pairingSync)
+
+        await store.issueSingleScanPairing()
+        XCTAssertEqual(store.issuedPairingTicket?.deepLinkUrl, "amber://gateway/pair?p=initial")
+        XCTAssertNil(store.pairingIssueError)
+
+        await pairingSync.setFailNextIssue(true)
+        await store.issueSingleScanPairing()
+        XCTAssertNotNil(store.pairingIssueError)
+        XCTAssertEqual(store.issuedPairingTicket?.deepLinkUrl, "amber://gateway/pair?p=initial")
+
+        let refreshed = DesktopIssuedPairingTicket(
+            deepLinkUrl: "amber://gateway/pair?p=refreshed",
+            fingerprint: "fp-refreshed",
+            addresses: ["proxy.example.com"],
+            port: 443,
+            expiresAt: Date().addingTimeInterval(600).timeIntervalSince1970,
+            bootstrap: DesktopPairingBootstrapHint(provider: "openai", activeRulesCount: 2)
+        )
+        await pairingSync.setTicket(refreshed)
+        await store.issueSingleScanPairing()
+        XCTAssertNil(store.pairingIssueError)
+        XCTAssertEqual(store.issuedPairingTicket?.deepLinkUrl, "amber://gateway/pair?p=refreshed")
+    }
+
+    func testFormattedEndpointsHandlesIPv4HostAndIPv6WithPort() {
+        XCTAssertEqual(
+            DesktopCloudSelfStore.formattedEndpoints(addresses: ["cloud.example.com", "100.64.0.10"], port: 443),
+            "cloud.example.com:443 · 100.64.0.10:443"
+        )
+        XCTAssertEqual(
+            DesktopCloudSelfStore.formattedEndpoints(addresses: ["2001:db8::1", "[::1]"], port: 47821),
+            "[2001:db8::1]:47821 · [::1]:47821"
+        )
     }
 }
