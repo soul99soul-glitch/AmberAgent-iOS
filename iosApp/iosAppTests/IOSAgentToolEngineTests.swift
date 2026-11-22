@@ -733,4 +733,132 @@ final class IOSAgentToolEngineTests: IOSAgentToolEngineTestCase {
         XCTAssertEqual(ChatToolOutputFormatter.imageFailureReason(from: output), "图片生成服务没有返回图片。")
     }
 
+    @MainActor
+    func testRouterUnfulfilledOpeningPromiseAutoContinuesOnceAndSwitchesToWorkerReasoning() async {
+        let opening1 = "宝宝，这回俺先把控制重新拉起来，接着把那 12 题往下推…"
+        let provider1 = ParamsRecordingProvider([
+            assistantText(opening1),
+            toolCallMessage(toolCallId: "tc-resume", toolName: "echo", input: "{}"),
+            assistantText("控制已重新拉起并推进完成。")
+        ])
+        let executor = RecordingExecutor(.filled(#"{"ok":true}"#))
+        let engine1 = IOSAgentToolEngine(
+            provider: provider1,
+            executors: ["echo": executor],
+            configuration: .init(maxSteps: 6, fastFirstReasoning: true, routerReasoningName: "OFF", workerReasoningName: "HIGH")
+        )
+        let result1 = await engine1.run(
+            providerSetting: makeProviderSetting(),
+            messages: [userMessage("继续推完那 12 题")],
+            params: makeParams(tools: ["echo"]).replacingReasoningLevel(.high)
+        )
+        XCTAssertEqual(provider1.recordedParams.map(\.reasoningLevel), [.off, .high, .high],
+                       "首轮未兑现开场承诺自动续推后，次轮必须切回 workerReasoning 档位")
+        XCTAssertEqual(executor.calls.count, 1, "自动续推后模型应顺利调用工具执行")
+        XCTAssertTrue(result1.messages.contains { $0.role == .assistant && $0.toText() == opening1 },
+                      "已上屏的首轮开场白必须保留")
+        XCTAssertTrue(
+            provider1.recordedMessages[1].contains { $0.toText() == IOSAgentToolEngine.openingPromiseContinuationInstruction },
+            "次轮请求必须注入 request-only 续推指令"
+        )
+        XCTAssertFalse(
+            result1.messages.contains { $0.toText().contains("[本轮续推指令]") },
+            "request-only 续推指令不得写入持久化历史"
+        )
+
+        let opening2 = "宝宝，俺先说清楚‘为啥没权限’这件事，再试一次能不能真刷回来——不给你猜。"
+        let provider2 = ParamsRecordingProvider([
+            assistantText(opening2),
+            assistantText("原因是当前手机控制权被另一任务占用，等它释放后再刷新即可。")
+        ])
+        let engine2 = IOSAgentToolEngine(
+            provider: provider2,
+            executors: [:],
+            configuration: .init(maxSteps: 6, fastFirstReasoning: true, routerReasoningName: "OFF", workerReasoningName: "HIGH")
+        )
+        let result2 = await engine2.run(
+            providerSetting: makeProviderSetting(),
+            messages: [userMessage("为什么没权限")],
+            params: makeParams(tools: []).replacingReasoningLevel(.high)
+        )
+        XCTAssertEqual(provider2.recordedParams.map(\.reasoningLevel), [.off, .high])
+        XCTAssertEqual(result2.messages.filter { $0.role == .assistant }.count, 2)
+        XCTAssertFalse(result2.messages.contains { $0.toText().contains("[本轮续推指令]") })
+    }
+
+    @MainActor
+    func testRouterUnfulfilledOpeningPromiseAutoContinuesAtMostOnce() async {
+        let provider = ParamsRecordingProvider([
+            assistantText("宝宝，这回俺先把控制重新拉起来，接着把那 12 题往下推…"),
+            assistantText("我先再去查一下，马上给你消息。"),
+            assistantText("must-not-reach")
+        ])
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: [:],
+            configuration: .init(maxSteps: 6, fastFirstReasoning: true, routerReasoningName: "OFF", workerReasoningName: "HIGH")
+        )
+        let result = await engine.run(
+            providerSetting: makeProviderSetting(),
+            messages: [userMessage("继续")],
+            params: makeParams(tools: []).replacingReasoningLevel(.high)
+        )
+        XCTAssertEqual(provider.recordedParams.count, 2, "每轮 run 最多自动续推 1 次，绝不死循环")
+        XCTAssertEqual(provider.recordedParams.map(\.reasoningLevel), [.off, .high])
+        XCTAssertEqual(result.stepsExecuted, 2)
+        XCTAssertFalse(result.hitStepLimit)
+        XCTAssertFalse(result.messages.contains { $0.toText().contains("must-not-reach") })
+    }
+
+    @MainActor
+    func testRouterNormalShortRepliesAndChitchatNeverTriggerOpeningPromiseContinuation() async {
+        let normalReplies = [
+            "你好",
+            "好的知道了",
+            "答案是 42",
+            "建议你先重启一下手机，再试一次。",
+            "你可以先把缓存清掉，再试一次。",
+            "分数比较要先看分母再看分子。",
+            "要不要我先帮你查一下？",
+            "我先睡了，晚安！",
+            "我已经帮你查过了，今天没有安排。",
+            "The answer is 42."
+        ]
+        for reply in normalReplies {
+            XCTAssertFalse(
+                IOSAgentToolEngine.isUnfulfilledOpeningPromise(text: reply),
+                "正常短问答/闲聊/建议绝不能误判为未兑现开场承诺: \(reply)"
+            )
+        }
+        let promiseReplies = [
+            "宝宝，这回俺先把控制重新拉起来，接着把那 12 题往下推…",
+            "宝宝，俺先说清楚‘为啥没权限’这件事，再试一次能不能真刷回来——不给你猜。",
+            "好的，我先去帮你查一下今天的日程。",
+            "行，马上给你查。",
+            "Let me check your calendar first.",
+            "I'll first inspect the status and then retry."
+        ]
+        for reply in promiseReplies {
+            XCTAssertTrue(
+                IOSAgentToolEngine.isUnfulfilledOpeningPromise(text: reply),
+                "未兑现开场承诺应被命中: \(reply)"
+            )
+        }
+
+        let provider = ParamsRecordingProvider([assistantText("答案是 42")])
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: [:],
+            configuration: .init(maxSteps: 6, fastFirstReasoning: true, routerReasoningName: "OFF", workerReasoningName: "HIGH")
+        )
+        let result = await engine.run(
+            providerSetting: makeProviderSetting(),
+            messages: [userMessage("6 乘 7 等于多少")],
+            params: makeParams(tools: []).replacingReasoningLevel(.high)
+        )
+        XCTAssertEqual(provider.recordedParams.map(\.reasoningLevel), [.off])
+        XCTAssertEqual(result.stepsExecuted, 1)
+        XCTAssertEqual(result.messages.filter { $0.role == .assistant }.count, 1)
+    }
+
 }

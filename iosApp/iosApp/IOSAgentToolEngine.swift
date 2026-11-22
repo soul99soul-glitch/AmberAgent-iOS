@@ -294,7 +294,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         var working = messages
         var effectiveParams = params
         var steps = 0
-        var continuationInstructionPending = false
+        var pendingContinuationInstruction: String? = nil
+        var didAutoContinueOpeningPromise = false
         // I-5: one guard per `run()` invocation, never carried across runs.
         // The engine instance itself is long-lived/reused (SubAgent, chat
         // background handoff), so this must be a local — a guard stored on
@@ -448,11 +449,10 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                     requestMessages = prepared.messages
                     transcriptRequest = prepared
                 }
-                if continuationInstructionPending {
+                if let instruction = pendingContinuationInstruction {
                     // Request-only steering: never append this synthetic message to working/history.
-                    requestMessages.append(UIMessage.companion.user(prompt:
-                        "[本轮续答指令] 请接上文的快速回应，直接展开完整、深入的详细解答，不要重复开场白。"))
-                    continuationInstructionPending = false
+                    requestMessages.append(UIMessage.companion.user(prompt: instruction))
+                    pendingContinuationInstruction = nil
                 }
                 requestMessages = Self.ensuringToolCallReasoningForThinkingRequest(
                     in: requestMessages,
@@ -623,7 +623,19 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                        return !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                    }) {
                     steps += 1
-                    continuationInstructionPending = true
+                    pendingContinuationInstruction = Self.explicitContinuationInstruction
+                    continue
+                }
+                if isRouterRound,
+                   !requestsContinuation,
+                   !didAutoContinueOpeningPromise,
+                   emittedTools.isEmpty,
+                   steps + 1 < configuration.maxSteps,
+                   let assistantMessage,
+                   Self.isUnfulfilledOpeningPromise(assistantMessage) {
+                    didAutoContinueOpeningPromise = true
+                    steps += 1
+                    pendingContinuationInstruction = Self.openingPromiseContinuationInstruction
                     continue
                 }
                 let hasAssistantContent = assistantMessage?.parts.contains { part in
@@ -1130,6 +1142,84 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
     }
 
     // MARK: - Internals
+
+    private static let explicitContinuationInstruction =
+        "[本轮续答指令] 请接上文的快速回应，直接展开完整、深入的详细解答，不要重复开场白。"
+
+    static let openingPromiseContinuationInstruction =
+        "[本轮续推指令] 你刚才只给出了开场承诺，尚未调用工具或给出完整实质内容。请立即直接调用所需工具执行，或直接给出完整清晰的解答；不要重复开场白，不要再只给一句预告就结束。"
+
+    private static let openingPromiseMaxLength = 160
+    private static let listLineRegex = try! NSRegularExpression(
+        pattern: #"^(?:[-*•]|\d+[.、)）])\s*"#
+    )
+    private static let userAdviceOnlyRegex = try! NSRegularExpression(
+        pattern: #"(?:你可以先|建议你先|建议先|请先|你需要先|不妨先|记得先|最好先|你先把|你先去|你先查|你先看|你先试|您先|您可以先|\byou can first\b|\bplease first\b|\byou should first\b)"#,
+        options: [.caseInsensitive]
+    )
+    private static let agentSelfCommitmentRegex = try! NSRegularExpression(
+        pattern: #"(?:(?:我|俺|咱|咱们|本座|老哥|这边)(?:先|马上|立刻|这就|现在就)|(?:马上|立刻|这就|现在就)(?:帮|给|替|为|去)|(?:\blet me\b|\bi(?:'ll| will|'m going to| am going to)\b))"#,
+        options: [.caseInsensitive]
+    )
+    private static let sequentialPromiseRegex = try! NSRegularExpression(
+        pattern: #"先(?:把|去|查|看|搜|找|核|测|试|读|刷|拉|连|点|开|改|写|算|理|捋|梳|说清楚|讲清楚|说明白|确认|检查|排查|处理|整理|分析|帮|给|替|为)[^。！？\n]{0,45}(?:再|接着|然后|随后)"#
+    )
+    private static let explicitOpeningPromiseRegexes: [NSRegularExpression] = [
+        // 1. 明确动作预告（先把.../先去查.../先帮/给/替.../先查一下.../先说清楚...）
+        try! NSRegularExpression(
+            pattern: #"(?:先把.{1,30}|先去(?:查|看|搜|找|核|测|试|读|刷|拉|连|点|开|改|确认|检查|排查|处理|帮|给|替|为)|先(?:查|看|搜|找|核查|核对|确认|检查|排查|测试|试|读|刷)(?:一下|一遍|看看)|先(?:说清楚|讲清楚|说明白)|先(?:帮你|给你|替你|为你))"#
+        ),
+        // 2. 明确续作/重试/即时动作承诺短语
+        try! NSRegularExpression(
+            pattern: #"(?:再试一次|重新拉起来|接着把.{0,24}往下推|继续往下推|接着往下推|(?:马上|立刻|这就|现在就)(?:帮你|给你|替你|为你|去帮|去给|去替|去查|去看|去搜|去试|去拉|去连|去确认|去检查|去排查|去把|把)|稍等.{0,12}(?:查|看|搜|试|处理|拉|弄|核))"#
+        ),
+        // 3. 英文未兑现开场预告
+        try! NSRegularExpression(
+            pattern: #"\b(?:let me|i(?:'ll| will|'m going to| am going to))\s+(?:first\s+)?(?:check|look|inspect|search|find|fetch|read|verify|test|try|run|open|pull|re-?connect|restart|explain|clarify|handle|continue|take a look|dig into)\b|\b(?:first,\s*i(?:'ll| will)|i(?:'ll| will)\s+[^.!?\n]{1,40}\s+first)\b"#,
+            options: [.caseInsensitive]
+        ),
+    ]
+
+    private static func matches(_ regex: NSRegularExpression, in text: String) -> Bool {
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.firstMatch(in: text, range: range) != nil
+    }
+
+    static func isUnfulfilledOpeningPromise(_ message: UIMessage) -> Bool {
+        guard message.role == MessageRole.assistant,
+              !message.parts.contains(where: { $0 is UIMessagePart.Tool }) else {
+            return false
+        }
+        let text = message.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined()
+        return isUnfulfilledOpeningPromise(text: text)
+    }
+
+    static func isUnfulfilledOpeningPromise(text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.count <= openingPromiseMaxLength,
+              !trimmed.contains("```"),
+              !trimmed.hasSuffix("?"),
+              !trimmed.hasSuffix("？") else {
+            return false
+        }
+        let nonEmptyLines = trimmed
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard nonEmptyLines.count <= 2 else { return false }
+        let listLineCount = nonEmptyLines.filter { matches(listLineRegex, in: $0) }.count
+        guard listLineCount < 2 else { return false }
+
+        let hasAgentCommitment = matches(agentSelfCommitmentRegex, in: trimmed)
+        if matches(userAdviceOnlyRegex, in: trimmed), !hasAgentCommitment {
+            return false
+        }
+        if hasAgentCommitment, matches(sequentialPromiseRegex, in: trimmed) {
+            return true
+        }
+        return explicitOpeningPromiseRegexes.contains { matches($0, in: trimmed) }
+    }
 
     private func assistantMessage(from chunk: MessageChunk) -> UIMessage? {
         for choice in chunk.choices {

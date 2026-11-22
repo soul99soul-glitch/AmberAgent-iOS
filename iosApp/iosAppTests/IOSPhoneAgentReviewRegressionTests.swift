@@ -402,7 +402,107 @@ final class IOSPhoneAgentReviewRegressionTests: XCTestCase {
                 with: Set(unclaimedRequest.toolExposureBridge.fullToolDeclarations().map(\.name))
             )
         )
+        let uploadedWhileOccupied = try await unclaimedRequest.prepareUploadMessages?([IOSChatForegroundFixtures.userMessage("继续帮我点")]) ?? []
+        XCTAssertTrue(
+            uploadedWhileOccupied.contains { $0.role == .system && $0.toText().contains("另一任务正在占用控制权") },
+            "Filtering phone_* tools due to occupation must inject a request-only system explanation with the specific reason"
+        )
         await controller.stop(runID: "owner-run")
+
+        // When phone control is disabled, ChatRunRequestFactory must also explain the exact reason.
+        controller.enabled = false
+        let disabledRequest = ChatRunRequestFactory(
+            bindings: bindings,
+            maxToolResumeCount: 8,
+            executionPolicy: nil,
+            phoneAutomaticReasoning: true,
+            phoneControl: controller,
+            prepareUploadMessages: { $0 },
+            approvalDecider: { _ in nil }
+        ).make(
+            adapterProvider: IdleProvider(),
+            providerSetting: providerSetting,
+            params: staleParams,
+            runId: "disabled-phone-run",
+            startedAt: 1_700_000_000_000,
+            inputDigest: "digest-disabled",
+            conversationId: nil,
+            initialMessages: [],
+            toolExposureBridge: IosToolExposureBridge(tools: mixedTools),
+            recipeCatalogSnapshot: nil,
+            citationTracker: IOSMemoryCitationTracker(enforceCitationAllowlist: false)
+        )
+        let uploadedWhileDisabled = try await disabledRequest.prepareUploadMessages?([IOSChatForegroundFixtures.userMessage("打开微信")]) ?? []
+        XCTAssertTrue(
+            uploadedWhileDisabled.contains { $0.role == .system && $0.toText().contains("手机控制已关闭") },
+            "Filtering phone_* tools when disabled must explain that phone control is off"
+        )
+
+        // When phone_* tools remain active or the previous assistant turn used tools, routerReasoning must not be forced to OFF.
+        controller.enabled = true
+        var levelsBindings = Self.makeBindings()
+        levelsBindings.foregroundReasoningLevels = { _ in [.off, .low, .high] }
+        let activePhoneRequest = ChatRunRequestFactory(
+            bindings: levelsBindings,
+            maxToolResumeCount: 8,
+            executionPolicy: nil,
+            phoneAutomaticReasoning: true,
+            phoneControl: controller,
+            prepareUploadMessages: { $0 },
+            approvalDecider: { _ in nil }
+        ).make(
+            adapterProvider: IdleProvider(),
+            providerSetting: providerSetting,
+            params: staleParams,
+            runId: "active-phone-run",
+            startedAt: 1_700_000_000_000,
+            inputDigest: "digest-active",
+            conversationId: nil,
+            initialMessages: [],
+            toolExposureBridge: IosToolExposureBridge(tools: mixedTools),
+            recipeCatalogSnapshot: nil,
+            citationTracker: IOSMemoryCitationTracker(enforceCitationAllowlist: false)
+        )
+        XCTAssertEqual(activePhoneRequest.routerReasoningName, "LOW",
+                       "Active phone_* runs must use at least LOW instead of forcing OFF")
+
+        let priorToolAssistant = IOSChatForegroundFixtures.assistantMessage(parts: [
+            UIMessagePart.Tool(
+                toolCallId: "prior-tool-1",
+                toolName: "tools_list",
+                input: "{}",
+                output: [UIMessagePart.Text(text: #"{"ok":true}"#, metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            )
+        ])
+        let nonPhoneParams = IOSChatForegroundFixtures.makeParams(toolNames: [], tools: ToolKt.iosToolDeclarations(names: ["tools_list"]))
+        var continuationBindings = Self.makeBindings(messages: [priorToolAssistant])
+        continuationBindings.foregroundReasoningLevels = { _ in [.off, .high] }
+        let continuationRequest = ChatRunRequestFactory(
+            bindings: continuationBindings,
+            maxToolResumeCount: 8,
+            executionPolicy: nil,
+            phoneAutomaticReasoning: false,
+            phoneControl: controller,
+            prepareUploadMessages: { $0 },
+            approvalDecider: { _ in nil }
+        ).make(
+            adapterProvider: IdleProvider(),
+            providerSetting: providerSetting,
+            params: nonPhoneParams,
+            runId: "tool-continuation-run",
+            startedAt: 1_700_000_000_000,
+            inputDigest: "digest-continuation",
+            conversationId: nil,
+            initialMessages: [],
+            toolExposureBridge: IosToolExposureBridge(tools: nonPhoneParams.tools),
+            recipeCatalogSnapshot: nil,
+            citationTracker: IOSMemoryCitationTracker(enforceCitationAllowlist: false)
+        )
+        XCTAssertNil(continuationRequest.routerReasoningName,
+                     "Tool-task continuation without a .low tier must fall back to the model default rather than forcing OFF")
     }
 
     // MARK: - Item 3: Jev .phoneActions planning prompt alignment & phone_run_flow fallback guidance

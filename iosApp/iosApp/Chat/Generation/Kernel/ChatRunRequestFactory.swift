@@ -63,6 +63,7 @@ final class ChatRunRequestFactory {
         let effectiveBridge: IosToolExposureBridge
         let effectivePhoneAutomaticReasoning: Bool
         let effectiveEnsurePhoneControlClaimed: (@MainActor () -> Bool)?
+        let effectivePrepareUploadMessages: @MainActor ([UIMessage]) async throws -> [UIMessage]
         if hasPhoneSurface, phoneControl.ownerRunID != runId, phoneUnavailableForRun {
             let filteredVisible = params.tools.filter { !IOSPhoneControlToolCatalog.isPhoneTool(name: $0.name) }
             effectiveParams = params.replacingTools(filteredVisible)
@@ -76,16 +77,42 @@ final class ChatRunRequestFactory {
             effectiveBridge.exposeToolNames(names: filteredVisible.map(\.name))
             effectivePhoneAutomaticReasoning = false
             effectiveEnsurePhoneControlClaimed = nil
+            let reasonSummary = Self.phoneUnavailableReasonSummary(
+                phoneControl: phoneControl,
+                canClaimPhoneControl: canClaimPhoneControl,
+                runId: runId
+            )
+            let basePrepareUploadMessages = prepareUploadMessages
+            effectivePrepareUploadMessages = { messages in
+                let prepared = try await basePrepareUploadMessages(messages)
+                let notice = PromptTranscript.shared.sectionMessage(
+                    name: "phoneControlUnavailable",
+                    text: "[手机控制当前不可用] 本轮已移除 phone_* 手机控制工具，原因：\(reasonSummary)。请如实向用户说明当前无法操作手机及具体原因，不要承诺马上接管或继续操作手机，也不要编造手机执行进展。"
+                )
+                return [notice] + prepared
+            }
         } else {
             effectiveParams = params
             effectiveBridge = toolExposureBridge
             effectivePhoneAutomaticReasoning = phoneAutomaticReasoning
             effectiveEnsurePhoneControlClaimed = ensurePhoneControlClaimed
+            effectivePrepareUploadMessages = prepareUploadMessages
         }
         let reasoningLevels = bindings.foregroundReasoningLevels(effectiveParams.model)
         let workerReasoning = IOSSubAgentModelPool.preferredReasoning(in: reasoningLevels, fallback: effectiveParams.reasoningLevel)
-        let routerReasoning: String? = reasoningLevels.isEmpty || reasoningLevels.contains(.off)
-            ? "OFF" : (reasoningLevels.contains(.low) ? "LOW" : nil)
+        let hasActivePhoneTools = effectiveParams.tools.contains {
+            IOSPhoneControlToolCatalog.isPhoneTool(name: $0.name)
+        }
+        let lastAssistantHadTools =
+            initialMessages.last(where: { $0.role == MessageRole.assistant })?.getTools().isEmpty == false
+            || bindings.getMessages().last(where: { $0.role == MessageRole.assistant })?.getTools().isEmpty == false
+        let routerReasoning: String?
+        if hasActivePhoneTools || lastAssistantHadTools {
+            routerReasoning = reasoningLevels.contains(.low) ? "LOW" : nil
+        } else {
+            routerReasoning = reasoningLevels.isEmpty || reasoningLevels.contains(.off)
+                ? "OFF" : (reasoningLevels.contains(.low) ? "LOW" : nil)
+        }
         return ChatRunKernelAdapter.RunRequest(
             provider: adapterProvider,
             providerSetting: providerSetting,
@@ -116,10 +143,33 @@ final class ChatRunRequestFactory {
                 await bindingsBox.drainMailbox(conversationBox)
             },
             citationTracker: citationTracker,
-            prepareUploadMessages: prepareUploadMessages,
+            prepareUploadMessages: effectivePrepareUploadMessages,
             nestedToolRunner: nil,
             approvalDecider: approvalDecider
         )
+    }
+
+    private static func phoneUnavailableReasonSummary(
+        phoneControl: IOSPhoneControlController,
+        canClaimPhoneControl: Bool,
+        runId: String
+    ) -> String {
+        var reasons: [String] = []
+        if !phoneControl.enabled {
+            reasons.append("手机控制已关闭")
+        }
+        if phoneControl.isOccupied && phoneControl.ownerRunID != runId {
+            reasons.append("另一任务正在占用控制权")
+        } else if !canClaimPhoneControl {
+            reasons.append("当前任务未获得手机控制权")
+        }
+        if phoneControl.isPreparingConnection || phoneControl.isUpdatingPairing {
+            reasons.append("正在准备连接或更新配对")
+        }
+        if phoneControl.isLoadingApplications {
+            reasons.append("正在加载应用列表")
+        }
+        return reasons.isEmpty ? "手机控制暂不可用" : reasons.joined(separator: "；")
     }
 
 }
