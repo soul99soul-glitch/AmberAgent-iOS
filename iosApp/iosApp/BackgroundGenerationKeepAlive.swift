@@ -212,6 +212,19 @@ final class BackgroundGenerationKeepAlive {
 
     var activeLeaseIds: Set<String> { Set(leases.keys) }
 
+    /// 是否至少存在一条持有真实有效执行断言的租约（已接管的系统任务、活跃音频/定位腿，
+    /// 或仍存活的 UIKit 短窗）。仅排队未接管的 `.submitted` 或已失效的 `.none` 僵尸租约不计入。
+    var hasValidExecutionAssertion: Bool {
+        leases.keys.contains { leaseId in
+            switch executionAssertion(for: leaseId) {
+            case .adopted, .audio, .location, .uiOnly:
+                return true
+            case .none, .submitted:
+                return false
+            }
+        }
+    }
+
     /// 这一轮是否还有本层租约记录。这不代表系统已接管执行。
     /// 业务交接决策必须读 `executionAssertion(for:)`，不能把这个 Bool 当执行权。
     func holdsLease(_ leaseId: String) -> Bool {

@@ -351,7 +351,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             beginChatBackgroundKeepAlive(
                 requestId: requestId,
                 subtitle: handoff.params.model.displayName,
-                submitSystemFallback: true
+                submitSystemFallback: false
             )
             guard checkpointDurableResponse(handoff) else {
                 if !alreadyHeldAudio {
@@ -442,7 +442,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         beginChatBackgroundKeepAlive(
             requestId: requestId,
             subtitle: subtitle,
-            submitSystemFallback: true,
+            submitSystemFallback: false,
             allowsAudioLeg: activeJobs[requestId].map { Self.allowsAudioLeg(for: $0) } ?? true,
             onExpire: { [weak self, weak execution] in
                 guard let self, let execution,
@@ -541,7 +541,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             beginChatBackgroundKeepAlive(
                 requestId: requestId,
                 subtitle: job.params.model.displayName,
-                submitSystemFallback: true
+                submitSystemFallback: false
             )
             activeDetachedResponseTasks[requestId] = Task { @MainActor [weak self] in
                 guard let self else { return }

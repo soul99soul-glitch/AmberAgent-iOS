@@ -1230,21 +1230,11 @@ final class ChatViewModel {
         IOSChatBackgroundGenerationCoordinator.shared.onRunTerminal = {
             [weak self] conversationId, runId, finalMessages, displayBaseline in
             guard let self else { return }
-            self.refreshIntelligentUIReceipts(messages: finalMessages, conversationID: conversationId.toHexDashString())
-            let terminal = try? await self.runStore.snapshot(runId: runId)
-            if let terminal, terminal.status.isTerminal, terminal.finishedAt != nil {
-                await self.wakeScheduler.recordRunTerminal(
-                    runID: runId, status: terminal.status.wireName,
-                    result: IOSWakeTaskOutput.text(in: finalMessages, baseline: displayBaseline)
-                )
-            }
-            await self.orchestrationToolService.notifyRunTerminal(
+            await self.handleBackgroundRunTerminal(
                 conversationId: conversationId,
                 runId: runId,
                 finalMessages: finalMessages,
-                displayBaseline: displayBaseline,
-                terminalStatus: terminal?.status,
-                terminalReason: terminal?.terminalReason
+                displayBaseline: displayBaseline
             )
         }
         IOSChatBackgroundGenerationCoordinator.shared.onRunFinishedWithPendingTasks = {

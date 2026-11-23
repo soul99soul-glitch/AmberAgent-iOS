@@ -642,6 +642,7 @@ extension ChatViewModel {
             kernelRunHost.cancel()
             return
         }
+        defer { _ = reconcileOrphanSteerQueueIfIdle(state: currentRun.state) }
         guard let currentConversationId else { return }
         _ = IOSChatBackgroundGenerationCoordinator.shared.cancelActiveJob(
             conversationId: currentConversationId
@@ -667,11 +668,13 @@ extension ChatViewModel {
                     bumpMessageRevision(reason: .generationCancelled)
                 }
                 runActivityRevision &+= 1
+                _ = reconcileOrphanSteerQueueIfIdle(state: run.state)
                 return true
             }
             if let host = slot.host,
                host.cancel(runId: slot.runId) || host.cancel(runId: runId) {
                 markTaskSlotTerminal(slot, in: run)
+                _ = reconcileOrphanSteerQueueIfIdle(state: run.state)
                 return true
             }
         }

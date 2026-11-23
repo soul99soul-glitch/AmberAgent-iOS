@@ -967,4 +967,48 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
             )
         )
     }
+
+    func testHasValidExecutionAssertionExcludesSubmittedAndNoneZombieLeases() {
+        let spy = SystemSpy()
+        let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
+
+        XCTAssertFalse(keepAlive.hasValidExecutionAssertion)
+
+        // 1. 仅排队未接管的 .submitted 租约不能算有效保活断言
+        keepAlive.begin("submitted-only", title: "t", subtitle: "s", submitSystemTask: true, allowsAudioLeg: false)
+        XCTAssertEqual(keepAlive.executionAssertion(for: "submitted-only"), .submitted)
+        XCTAssertFalse(keepAlive.activeLeaseIds.isEmpty)
+        XCTAssertFalse(keepAlive.hasValidExecutionAssertion)
+        keepAlive.end("submitted-only")
+
+        // 2. .uiOnly 短窗存活期间为有效断言；短窗到期且无音频腿后失效
+        let invalidUISpy = BackgroundGenerationKeepAlive(
+            beginBackgroundTask: { _, _ in .invalid },
+            endBackgroundTask: { _ in },
+            submitTaskRequest: { _ in },
+            cancelTaskRequest: { _ in },
+            registerLaunchHandler: { _, _ in true },
+            audioKeepAlive: NoOpBackgroundAudioKeepAlive(),
+            isAudioKeepAliveEnabled: { false }
+        )
+        invalidUISpy.begin("zombie-none", title: "t", subtitle: "s", submitSystemTask: false, allowsAudioLeg: false)
+        XCTAssertEqual(invalidUISpy.executionAssertion(for: "zombie-none"), .none)
+        XCTAssertFalse(invalidUISpy.activeLeaseIds.isEmpty)
+        XCTAssertFalse(invalidUISpy.hasValidExecutionAssertion)
+
+        // 3. 正常无横幅聊天租约（submitSystemTask: false + allowsAudioLeg: true）：UIKit 短窗与音频腿均为有效断言
+        let submittedBeforeSilentChat = spy.submittedRequests.count
+        keepAlive.begin("silent-chat", title: "Amber", subtitle: "GPT", submitSystemTask: false, allowsAudioLeg: true)
+        XCTAssertEqual(spy.submittedRequests.count, submittedBeforeSilentChat)
+        XCTAssertTrue(spy.audio.isActive)
+        XCTAssertEqual(keepAlive.executionAssertion(for: "silent-chat"), .uiOnly)
+        XCTAssertTrue(keepAlive.hasValidExecutionAssertion)
+
+        spy.expirationHandlers.last?()
+        XCTAssertEqual(keepAlive.executionAssertion(for: "silent-chat"), .audio)
+        XCTAssertTrue(keepAlive.hasValidExecutionAssertion)
+
+        keepAlive.end("silent-chat")
+        XCTAssertFalse(keepAlive.hasValidExecutionAssertion)
+    }
 }

@@ -96,6 +96,10 @@ struct ChatReasoningCard: View {
         collapseHeightLimit ?? (isThinking ? 180 : 260)
     }
 
+    private var effectiveAutoExpandThinking: Bool {
+        !IOSChatRenderPreferences.shared.isSegmentedReplyDelivery && autoExpandThinking
+    }
+
     init(
         bodyText: String,
         isThinking: Bool = false,
@@ -114,7 +118,8 @@ struct ChatReasoningCard: View {
         self.autoExpandThinking = autoExpandThinking
         let hasInitialBodyText = Self.hasVisibleText(bodyText)
         self.hasBodyText = hasInitialBodyText
-        self._isExpanded = State(initialValue: hasInitialBodyText && autoExpandThinking && (isThinking || !autoCloseThinking))
+        let effectiveInitialAutoExpand = !IOSChatRenderPreferences.shared.isSegmentedReplyDelivery && autoExpandThinking
+        self._isExpanded = State(initialValue: hasInitialBodyText && effectiveInitialAutoExpand && (isThinking || !autoCloseThinking))
     }
 
     /// 推理正文是否含可见字符。
@@ -352,7 +357,7 @@ struct ChatReasoningCard: View {
             value: showsBody
         )
         .onChange(of: hasBodyText) { _, newValue in
-            guard autoExpandThinking, isThinking, !userToggled else { return }
+            guard effectiveAutoExpandThinking, isThinking, !userToggled else { return }
             if newValue {
                 setExpanded(true, duration: 0.28)
             }
@@ -362,7 +367,7 @@ struct ChatReasoningCard: View {
             if nowThinking {
                 suppressesShowsBodyAnimation = false
                 cancelPendingCollapse()
-                setExpanded(autoExpandThinking && hasBodyText, duration: 0.28)
+                setExpanded(effectiveAutoExpandThinking && hasBodyText, duration: 0.28)
             } else if autoCloseThinking {
                 if reduceMotion {
                     // Reduce Motion：跳过动画，单次 layout 直接落到最终高度。
@@ -373,7 +378,7 @@ struct ChatReasoningCard: View {
                 }
             }
         }
-        .onChange(of: autoExpandThinking) { _, enabled in
+        .onChange(of: effectiveAutoExpandThinking) { _, enabled in
             guard !userToggled else { return }
             cancelPendingCollapse()
             suppressesShowsBodyAnimation = false

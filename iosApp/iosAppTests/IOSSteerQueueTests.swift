@@ -739,4 +739,151 @@ final class IOSSteerQueueTests: XCTestCase {
         )
         XCTAssertEqual(ChatSteerQueueStrip.rowTitle(for: entry), "图片 · brief.pdf")
     }
+
+    // MARK: - 8. 后台终态清理、僵尸租约不短路与孤儿排队自动解卡
+
+    func testBackgroundRunTerminalAutoContinuesOnCompleteAndRestoresOnFailure() async throws {
+        let base = makeTempDirectory("SteerBgTerminal")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeConversationStore(directory: base)
+        await store.newConversation()
+        let conversationId = try XCTUnwrap(store.currentConversation?.id)
+        let viewModel = makeViewModel(conversationStore: store, queueDirectory: base)
+
+        // 1. 后台完成终态：清理残留未终态槽位，并自动消费下一条排队消息
+        let completedRunId = "bg-run-completed-\(UUID().uuidString)"
+        let completedSlot = ChatAsyncTaskSlot(
+            slotId: completedRunId,
+            conversationId: conversationId,
+            inputDigest: "bg-done",
+            anchorUserMessageId: nil,
+            phoneControlUserInitiated: false,
+            providerSetting: ProviderSetting.OpenAI(
+                id: KotlinUuid.companion.random(), enabled: true, name: "test", models: [],
+                balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""),
+                builtIn: false, descriptionText: nil, shortDescriptionText: nil,
+                apiKey: "k", baseUrl: "https://example.test", chatCompletionsPath: "/chat/completions",
+                useResponseApi: false, authMode: .apiKey, brand: .generic
+            ),
+            params: TextGenerationParams(
+                model: Model(
+                    modelId: "m", displayName: "m", id: KotlinUuid.companion.random(), type: .chat,
+                    customHeaders: [], customBodies: [], inputModalities: [], outputModalities: [],
+                    abilities: [], tools: Set<BuiltInTools>(), contextWindowTokens: nil, providerOverwrite: nil
+                ),
+                temperature: nil, topP: nil, maxTokens: nil, tools: [], reasoningLevel: .off,
+                customHeaders: [], customBody: []
+            ),
+            toolExposureBridge: nil,
+            recipeCatalogSnapshot: nil,
+            baselineMessages: []
+        )
+        viewModel.currentRun.registerSlot(completedSlot)
+        viewModel.generationActiveOverrideForTesting = { _ in true }
+        XCTAssertTrue(viewModel.enqueueSteerMessage(text: "后台完成后自动续发", targetRunId: completedRunId))
+        viewModel.generationActiveOverrideForTesting = nil
+
+        await viewModel.handleBackgroundRunTerminal(
+            conversationId: conversationId,
+            runId: completedRunId,
+            finalMessages: viewModel.messages,
+            displayBaseline: [],
+            terminalStatusOverride: .completed
+        )
+        await viewModel.currentRun.state.steerQueueAutoContinueTask?.value
+
+        XCTAssertTrue(completedSlot.isTerminal, "后台终态必须标记对应残留前台槽位为终态")
+        XCTAssertTrue(viewModel.steerQueue.isEmpty, "后台完成应消费队列头一条消息")
+        XCTAssertTrue(viewModel.inputText.isEmpty, "成功续发不应回填输入框")
+
+        // 2. 后台失败终态：清理残留槽位，将排队消息安全退回输入框并清除气泡 queued 提示
+        let failedRunId = "bg-run-failed-\(UUID().uuidString)"
+        let failedSlot = ChatAsyncTaskSlot(
+            slotId: failedRunId,
+            conversationId: conversationId,
+            inputDigest: "bg-fail",
+            anchorUserMessageId: nil,
+            phoneControlUserInitiated: false,
+            providerSetting: completedSlot.providerSetting,
+            params: completedSlot.params,
+            toolExposureBridge: nil,
+            recipeCatalogSnapshot: nil,
+            baselineMessages: []
+        )
+        viewModel.currentRun.registerSlot(failedSlot)
+        viewModel.generationActiveOverrideForTesting = { _ in true }
+        XCTAssertTrue(viewModel.enqueueSteerMessage(text: "后台失败后退回输入框", targetRunId: failedRunId))
+        viewModel.generationActiveOverrideForTesting = nil
+
+        await viewModel.handleBackgroundRunTerminal(
+            conversationId: conversationId,
+            runId: failedRunId,
+            finalMessages: viewModel.messages,
+            displayBaseline: [],
+            terminalStatusOverride: .failed
+        )
+
+        XCTAssertTrue(failedSlot.isTerminal)
+        XCTAssertTrue(viewModel.steerQueue.isEmpty)
+        XCTAssertEqual(viewModel.inputText, "后台失败后退回输入框")
+        let hasQueuedReceipt = viewModel.messages.contains { message in
+            message.parts.contains { part in
+                guard let textPart = part as? UIMessagePart.Text else { return false }
+                return IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: "chat_followup_state") == "queued"
+            }
+        }
+        XCTAssertFalse(hasQueuedReceipt, "失败终态后不得残留 queued 气泡提示")
+    }
+
+    func testOrphanSteerQueueAndSubmittedZombieLeaseAutoUnstickOnForegroundAndStop() async throws {
+        let base = makeTempDirectory("SteerOrphanUnstick")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeConversationStore(directory: base)
+        await store.newConversation()
+        let viewModel = makeViewModel(conversationStore: store, queueDirectory: base)
+
+        // 模拟仅排队未接管的 .submitted 僵尸租约：hasValidExecutionAssertion 必须为 false
+        let keepAlive = BackgroundGenerationKeepAlive(
+            beginBackgroundTask: { _, _ in UIBackgroundTaskIdentifier(rawValue: 9) },
+            endBackgroundTask: { _ in },
+            submitTaskRequest: { _ in },
+            cancelTaskRequest: { _ in },
+            registerLaunchHandler: { _, _ in true },
+            isApplicationForeground: { true },
+            audioKeepAlive: NoOpBackgroundAudioKeepAlive(),
+            isAudioKeepAliveEnabled: { false }
+        )
+        keepAlive.begin("zombie-submitted", title: "Amber", subtitle: "s", submitSystemTask: true, allowsAudioLeg: false)
+        XCTAssertEqual(keepAlive.executionAssertion(for: "zombie-submitted"), .submitted)
+        XCTAssertFalse(keepAlive.hasValidExecutionAssertion)
+
+        // 构造一个已无活跃生成、但滞留孤儿 targetRunId 条目与 queued 气泡的会话
+        viewModel.generationActiveOverrideForTesting = { _ in true }
+        XCTAssertTrue(viewModel.enqueueSteerMessage(text: "孤儿排队消息", targetRunId: "dead-run-id"))
+        viewModel.generationActiveOverrideForTesting = nil
+        XCTAssertFalse(viewModel.isGenerationActive)
+        XCTAssertEqual(viewModel.steerQueue.count, 1)
+
+        // 回前台对账（使用 hasValidExecutionAssertion，不再被僵尸租约短路）自动解卡
+        _ = viewModel.reconcileForegroundRunsAfterSystemSuspensionIfNeeded(
+            hasValidKeepAliveLease: keepAlive.hasValidExecutionAssertion
+        )
+
+        XCTAssertTrue(viewModel.steerQueue.isEmpty, "回前台对账后孤儿排队消息必须清空")
+        XCTAssertEqual(viewModel.inputText, "孤儿排队消息", "孤儿排队消息必须安全退回输入框")
+        let residualQueued = viewModel.messages.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Text }.contains {
+            IosToolOutputJsonBridge.shared.metadataString(part: $0, key: "chat_followup_state") == "queued"
+        }
+        XCTAssertFalse(residualQueued, "回前台解卡后气泡不得残留 queued 提示")
+
+        // 再次构造孤儿条目，验证点击停止键同样能解卡
+        viewModel.inputText = ""
+        viewModel.generationActiveOverrideForTesting = { _ in true }
+        XCTAssertTrue(viewModel.enqueueSteerMessage(text: "停止键解卡消息", targetRunId: "another-dead-run"))
+        viewModel.generationActiveOverrideForTesting = nil
+        viewModel.cancelGeneration()
+
+        XCTAssertTrue(viewModel.steerQueue.isEmpty)
+        XCTAssertEqual(viewModel.inputText, "停止键解卡消息")
+    }
 }

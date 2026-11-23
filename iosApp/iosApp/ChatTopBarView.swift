@@ -136,7 +136,7 @@ struct ChatTopBarView: View {
             }
             guard !input.isGenerating, notice.conversationId != input.conversationID else { return }
             if notice.kind == .awaitingUser {
-                UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                AmberHaptics.triggerCompletion(.warning)
             } else if notice.kind == .completed {
                 AmberHaptics.triggerCompletion(.lightImpact)
             }

@@ -730,11 +730,33 @@ final class IOSChatRenderPreferences {
     private(set) var chatFont: String
     private(set) var agentName: Bool
     private(set) var appLanguage: String
+    private(set) var autoExpandThinking: Bool
     private(set) var followGeneration: Bool
     private(set) var replyDeliveryMode: String
 
     var isSegmentedReplyDelivery: Bool {
         IOSChatReplyDeliveryMode(rawValue: replyDeliveryMode) == .segmentedBlocks
+    }
+
+    /// 分段呈现模式下强制收起思考过程，防止旧偏好缓存残留 `true`。
+    var effectiveAutoExpandThinking: Bool {
+        Self.effectiveAutoExpandThinking(
+            replyDeliveryMode: IOSChatReplyDeliveryMode(rawValue: replyDeliveryMode) ?? .default,
+            autoExpandThinking: autoExpandThinking
+        )
+    }
+
+    static func effectiveAutoExpandThinking(
+        replyDeliveryMode: IOSChatReplyDeliveryMode,
+        autoExpandThinking: Bool
+    ) -> Bool {
+        replyDeliveryMode != .segmentedBlocks && autoExpandThinking
+    }
+
+    static func effectiveAutoExpandThinking(defaults: UserDefaults = .standard) -> Bool {
+        let mode = IOSChatReplyDeliveryMode(rawValue: normalizedReplyDeliveryMode(from: defaults)) ?? .default
+        let stored = readBool(from: defaults, key: IOSDisplayPreferenceKeys.autoExpandThinking, defaultValue: true)
+        return effectiveAutoExpandThinking(replyDeliveryMode: mode, autoExpandThinking: stored)
     }
 
     @ObservationIgnored private var defaultsObserver: NSObjectProtocol?
@@ -744,6 +766,7 @@ final class IOSChatRenderPreferences {
         self.chatFont = defaults.string(forKey: IOSDisplayPreferenceKeys.chatFont) ?? IOSChatFont.default.rawValue
         self.agentName = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.agentName, defaultValue: true)
         self.appLanguage = defaults.string(forKey: IOSAppLanguagePreference.defaultsKey) ?? IOSAppLanguage.system.rawValue
+        self.autoExpandThinking = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.autoExpandThinking, defaultValue: true)
         self.followGeneration = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.followGeneration, defaultValue: true)
         self.replyDeliveryMode = Self.normalizedReplyDeliveryMode(from: defaults)
 
@@ -781,6 +804,10 @@ final class IOSChatRenderPreferences {
         let nextAppLanguage = defaults.string(forKey: IOSAppLanguagePreference.defaultsKey) ?? IOSAppLanguage.system.rawValue
         if _appLanguage != nextAppLanguage {
             appLanguage = nextAppLanguage
+        }
+        let nextAutoExpandThinking = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.autoExpandThinking, defaultValue: true)
+        if _autoExpandThinking != nextAutoExpandThinking {
+            autoExpandThinking = nextAutoExpandThinking
         }
         let nextFollowGeneration = Self.readBool(from: defaults, key: IOSDisplayPreferenceKeys.followGeneration, defaultValue: true)
         if _followGeneration != nextFollowGeneration {

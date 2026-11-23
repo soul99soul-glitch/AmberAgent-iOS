@@ -22,7 +22,7 @@ extension IOSChatBackgroundGenerationCoordinator {
         beginChatBackgroundKeepAlive(
             requestId: requestId,
             subtitle: job.params.model.displayName,
-            submitSystemFallback: true
+            submitSystemFallback: false
         )
         do {
             guard let snapshot = try await runStore.snapshot(runId: job.runId) else {

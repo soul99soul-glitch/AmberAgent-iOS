@@ -21,6 +21,28 @@ struct DisplayFontSettingsView: View {
         IOSChatReplyDeliveryMode(rawValue: replyDeliveryMode) ?? .default
     }
 
+    private var isSegmentedReplyDelivery: Bool {
+        selectedReplyDeliveryMode == .segmentedBlocks
+    }
+
+    private var effectiveAutoExpandThinking: Bool {
+        IOSChatRenderPreferences.effectiveAutoExpandThinking(
+            replyDeliveryMode: selectedReplyDeliveryMode,
+            autoExpandThinking: autoExpandThinking
+        )
+    }
+
+    static func applyReplyDeliveryModeSelection(
+        _ mode: IOSChatReplyDeliveryMode,
+        replyDeliveryMode: inout String,
+        autoExpandThinking: inout Bool
+    ) {
+        replyDeliveryMode = mode.rawValue
+        if mode == .segmentedBlocks {
+            autoExpandThinking = false
+        }
+    }
+
     private var fontScaleLabel: String {
         switch fontScale {
         case ..<0.95: "较小"
@@ -48,6 +70,11 @@ struct DisplayFontSettingsView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .onChange(of: replyDeliveryMode, initial: true) { _, _ in
+            if isSegmentedReplyDelivery && autoExpandThinking {
+                autoExpandThinking = false
+            }
+        }
     }
 
     private var header: some View {
@@ -153,7 +180,11 @@ struct DisplayFontSettingsView: View {
                 Menu {
                     ForEach(IOSChatReplyDeliveryMode.allCases) { mode in
                         Button(mode.title) {
-                            replyDeliveryMode = mode.rawValue
+                            Self.applyReplyDeliveryModeSelection(
+                                mode,
+                                replyDeliveryMode: &replyDeliveryMode,
+                                autoExpandThinking: &autoExpandThinking
+                            )
                         }
                     }
                 } label: {
@@ -168,9 +199,13 @@ struct DisplayFontSettingsView: View {
 
                 DisplayToggleRow(
                     title: "自动展开思考内容",
-                    subtitle: "关闭后默认折叠，仍可点击查看思考内容。",
-                    isOn: autoExpandThinking
+                    subtitle: isSegmentedReplyDelivery
+                        ? "分段呈现模式下思考过程默认收起，切换回流式呈现后可开启。"
+                        : "关闭后默认折叠，仍可点击查看思考内容。",
+                    isOn: effectiveAutoExpandThinking,
+                    isDisabled: isSegmentedReplyDelivery
                 ) {
+                    guard !isSegmentedReplyDelivery else { return }
                     autoExpandThinking.toggle()
                 }
 
@@ -283,6 +318,7 @@ private struct DisplayToggleRow: View {
     let title: String
     var subtitle: String?
     let isOn: Bool
+    var isDisabled: Bool = false
     let action: () -> Void
 
     var body: some View {
@@ -306,9 +342,11 @@ private struct DisplayToggleRow: View {
             .frame(minHeight: subtitle == nil ? 52 : 64)
             .padding(.horizontal, 14)
             .padding(.vertical, 4)
+            .opacity(isDisabled ? 0.5 : 1)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(isDisabled)
     }
 }
 

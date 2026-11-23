@@ -26,7 +26,53 @@ final class IOSSettingsWiringTests: XCTestCase {
         let nextSection = try XCTUnwrap(settings.range(of: "private var activitySection"))
         XCTAssertTrue(settings[section.lowerBound..<nextSection.lowerBound].contains("自动展开思考内容"))
         XCTAssertTrue(settings.contains("autoExpandThinking.toggle()"))
-        XCTAssertEqual(bubble.components(separatedBy: "autoExpandThinking: autoExpandThinking").count - 1, 2)
+        XCTAssertTrue(settings.contains("分段呈现模式下思考过程默认收起，切换回流式呈现后可开启。"))
+        XCTAssertTrue(settings.contains("isDisabled: isSegmentedReplyDelivery"))
+        XCTAssertTrue(settings.contains(".disabled(isDisabled)"))
+    }
+
+    @MainActor
+    func testSegmentedReplyDeliveryIsMutuallyExclusiveWithAutoExpandThinking() throws {
+        let suite = "SegmentedThinkingExclusion-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        // 1. 切换为分段呈现时自动将 autoExpandThinking 置为 false
+        var deliveryMode = IOSChatReplyDeliveryMode.liveStreaming.rawValue
+        var autoExpand = true
+        DisplayFontSettingsView.applyReplyDeliveryModeSelection(
+            .segmentedBlocks,
+            replyDeliveryMode: &deliveryMode,
+            autoExpandThinking: &autoExpand
+        )
+        XCTAssertEqual(deliveryMode, IOSChatReplyDeliveryMode.segmentedBlocks.rawValue)
+        XCTAssertFalse(autoExpand)
+
+        // 2. 切回实时流式后允许重新开启
+        DisplayFontSettingsView.applyReplyDeliveryModeSelection(
+            .liveStreaming,
+            replyDeliveryMode: &deliveryMode,
+            autoExpandThinking: &autoExpand
+        )
+        XCTAssertEqual(deliveryMode, IOSChatReplyDeliveryMode.liveStreaming.rawValue)
+        autoExpand = true
+        XCTAssertTrue(
+            IOSChatRenderPreferences.effectiveAutoExpandThinking(
+                replyDeliveryMode: .liveStreaming,
+                autoExpandThinking: autoExpand
+            )
+        )
+
+        // 3. 旧偏好缓存残留 true 时，读取侧有效值仍强制兜底为 false
+        defaults.set(IOSChatReplyDeliveryMode.segmentedBlocks.rawValue, forKey: IOSDisplayPreferenceKeys.replyDeliveryMode)
+        defaults.set(true, forKey: IOSDisplayPreferenceKeys.autoExpandThinking)
+        XCTAssertFalse(IOSChatRenderPreferences.effectiveAutoExpandThinking(defaults: defaults))
+
+        defaults.set(IOSChatReplyDeliveryMode.liveStreaming.rawValue, forKey: IOSDisplayPreferenceKeys.replyDeliveryMode)
+        XCTAssertTrue(IOSChatRenderPreferences.effectiveAutoExpandThinking(defaults: defaults))
+
+        defaults.set(false, forKey: IOSDisplayPreferenceKeys.autoExpandThinking)
+        XCTAssertFalse(IOSChatRenderPreferences.effectiveAutoExpandThinking(defaults: defaults))
     }
 
     @MainActor
@@ -179,8 +225,11 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(council.contains("beginBackgroundKeepAlive(for: discussionID)"))
         XCTAssertTrue(council.contains("beginMaterialsKeepAlive()"))
         XCTAssertTrue(chatHost.contains("backgroundExecution.begin("))
+        XCTAssertTrue(chatHost.contains("submitSystemTask: false"))
+        XCTAssertTrue(chatHost.contains("allowsAudioLeg: true"))
         XCTAssertTrue(chatBackground.contains("beginChatBackgroundKeepAlive("))
-        XCTAssertTrue(chatBackground.contains("submitSystemFallback: true"))
+        XCTAssertTrue(chatBackground.contains("submitSystemFallback: false"))
+        XCTAssertFalse(chatBackground.contains("submitSystemFallback: true"))
         XCTAssertTrue(chatBackground.contains("submitSystemTask: submitSystemFallback"))
         XCTAssertTrue(keepAlive.contains("handoffBridgeLeaseId"))
         XCTAssertTrue(keepAlive.contains(".handoff-bridge"))
@@ -300,7 +349,8 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertFalse(chatAux.contains("AmberHaptics.trigger(.rigidImpact)"))
         XCTAssertTrue(topBar.contains("AmberHaptics.triggerCompletion(.lightImpact)"))
         XCTAssertFalse(topBar.contains("else if notice.kind == .completed {\n                UIImpactFeedbackGenerator"))
-        XCTAssertTrue(topBar.contains("if notice.kind == .awaitingUser {\n                UINotificationFeedbackGenerator().notificationOccurred(.warning)"))
+        XCTAssertTrue(topBar.contains("if notice.kind == .awaitingUser {\n                AmberHaptics.triggerCompletion(.warning)"))
+        XCTAssertFalse(topBar.contains("if notice.kind == .awaitingUser {\n                UINotificationFeedbackGenerator"))
 
         let standard = UserDefaults.standard
         let key = IOSDisplayPreferenceKeys.completionHaptic
@@ -358,8 +408,9 @@ final class IOSSettingsWiringTests: XCTestCase {
         finish("off")
         drain("off")
         XCTAssertFalse(AmberHaptics.triggerCompletion(.lightImpact, defaults: standard))
+        XCTAssertFalse(AmberHaptics.triggerCompletion(.warning, defaults: standard))
         XCTAssertFalse(AmberHaptics.triggerCompletion(.rigidImpact, defaults: standard))
-        XCTAssertTrue(recordedEvents.isEmpty, "生成完成振动关闭时所有完成路径必须零触发")
+        XCTAssertTrue(recordedEvents.isEmpty, "生成完成振动关闭时所有完成/到达路径必须零触发")
         AmberHaptics.trigger(.selection)
         XCTAssertEqual(recordedEvents, [.selection], "按钮/选择器独立触感不得被生成完成开关误伤")
 

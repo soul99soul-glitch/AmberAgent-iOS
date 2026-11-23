@@ -304,6 +304,47 @@ final class ChatReasoningCardTests: XCTestCase {
         XCTAssertEqual(firstSubview(of: UITextView.self, in: fixture.host.view)?.text, model.text)
     }
 
+    func testSegmentedReplyDeliverySuppressesAutoExpandThinkingEvenWhenCachedTrue() {
+        let standard = UserDefaults.standard
+        let deliveryKey = IOSDisplayPreferenceKeys.replyDeliveryMode
+        let expandKey = IOSDisplayPreferenceKeys.autoExpandThinking
+        let previousDelivery = standard.object(forKey: deliveryKey)
+        let previousExpand = standard.object(forKey: expandKey)
+        defer {
+            if let previousDelivery { standard.set(previousDelivery, forKey: deliveryKey) }
+            else { standard.removeObject(forKey: deliveryKey) }
+            if let previousExpand { standard.set(previousExpand, forKey: expandKey) }
+            else { standard.removeObject(forKey: expandKey) }
+            IOSChatRenderPreferences.shared.syncFromDefaults(standard)
+        }
+
+        standard.set(IOSChatReplyDeliveryMode.segmentedBlocks.rawValue, forKey: deliveryKey)
+        standard.set(true, forKey: expandKey)
+        IOSChatRenderPreferences.shared.syncFromDefaults(standard)
+        XCTAssertTrue(IOSChatRenderPreferences.shared.isSegmentedReplyDelivery)
+        XCTAssertFalse(IOSChatRenderPreferences.shared.effectiveAutoExpandThinking)
+
+        let model = StreamingReasoningModel(text: "分段模式下的思考内容")
+        model.autoExpandThinking = true
+        let fixture = mountHarness(model: model)
+        defer { fixture.window.isHidden = true; fixture.window.rootViewController = nil }
+        pump(seconds: 0.2)
+        XCTAssertNil(
+            firstSubview(of: UITextView.self, in: fixture.host.view),
+            "分段呈现模式下即使旧缓存为 true，思考过程也必须保持默认收起"
+        )
+
+        standard.set(IOSChatReplyDeliveryMode.liveStreaming.rawValue, forKey: deliveryKey)
+        IOSChatRenderPreferences.shared.syncFromDefaults(standard)
+        XCTAssertTrue(IOSChatRenderPreferences.shared.effectiveAutoExpandThinking)
+        pump(seconds: 0.4)
+        XCTAssertEqual(
+            firstSubview(of: UITextView.self, in: fixture.host.view)?.text,
+            model.text,
+            "切回实时流式呈现后应恢复自动展开思考内容"
+        )
+    }
+
     func testMessageBubbleConsumesPersistedAutoExpandPreference() throws {
         let suite = "ReasoningExpansion-\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

@@ -504,7 +504,7 @@ struct AppShell: View {
             _ = chatViewModel.handoffGenerationToBackgroundIfNeeded(honorKeepAliveLease: true)
         case .active:
             _ = chatViewModel.reconcileForegroundRunsAfterSystemSuspensionIfNeeded(
-                hasValidKeepAliveLease: !BackgroundGenerationKeepAlive.shared.activeLeaseIds.isEmpty
+                hasValidKeepAliveLease: BackgroundGenerationKeepAlive.shared.hasValidExecutionAssertion
             )
             IOSChatBackgroundGenerationCoordinator.shared.resumeDetachedResponsesIfNeeded()
             IOSChatBackgroundGenerationCoordinator.shared.resumeRecoverableJobsIfNeeded()

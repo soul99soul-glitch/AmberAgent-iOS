@@ -797,4 +797,69 @@ final class IOSChatKernelRunHostHandoffTests: IOSChatKernelRunHostTestCase {
         await phoneControl.stop(runID: "race-owner-run")
         XCTAssertNil(phoneControl.ownerRunID)
     }
+
+    func testForegroundChatKeepAliveDefaultsToNoSystemTaskAndSubmittedDoesNotBlockHandoff() async throws {
+        var submittedCount = 0
+        final class TestAudio: BackgroundAudioKeepAliveControlling {
+            var isActive = false
+            var isStartingOrActive: Bool { isActive }
+            func start() { isActive = true }
+            func stop() { isActive = false }
+        }
+        let audio = TestAudio()
+        let keepAlive = BackgroundGenerationKeepAlive(
+            beginBackgroundTask: { _, _ in UIBackgroundTaskIdentifier(rawValue: 77) },
+            endBackgroundTask: { _ in },
+            submitTaskRequest: { _ in submittedCount += 1 },
+            cancelTaskRequest: { _ in },
+            registerLaunchHandler: { _, _ in true },
+            isApplicationForeground: { true },
+            audioKeepAlive: audio,
+            isAudioKeepAliveEnabled: { true }
+        )
+        let harness = makeHarness()
+        let provider = HostBlockingProvider()
+        let host = ChatKernelRunHost(
+            dependencies: harness.dependencies,
+            bindings: harness.bindings,
+            backgroundExecution: keepAlive,
+            toolLedger: harness.ledger,
+            textProvider: provider
+        )
+        var capturedHandoff: IOSChatBackgroundHandoff?
+        host.backgroundStartOverrideForTesting = { handoff, _ in
+            capturedHandoff = handoff
+            return true
+        }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("KernelHostSilentKeepAlive-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = IOSConversationStore(baseDirectory: directory)
+
+        start(host, harness: harness)
+        let started = await waitForCondition { provider.callCount == 1 }
+        XCTAssertTrue(started)
+        let runID = try XCTUnwrap(host.currentRunId)
+
+        // 1. 普通聊天默认 submitSystemTask == false + allowsAudioLeg == true
+        XCTAssertEqual(submittedCount, 0, "普通聊天生成默认不应提交 BGContinuedProcessingTask 大横幅")
+        XCTAssertTrue(audio.isActive, "普通聊天默认应允许静默音频保活腿")
+        XCTAssertEqual(keepAlive.executionAssertion(for: runID), .uiOnly)
+        XCTAssertFalse(
+            host.handoffCurrentGenerationToBackground(conversationStore: store, honorKeepAliveLease: true),
+            "UIKit 短窗仍存活时应留在前台继续跑"
+        )
+
+        // 2. 显式处于未接管的 .submitted 状态时，不再被误判为已保活而放弃后台交接
+        keepAlive.promoteSystemTaskIfNeeded(runID)
+        XCTAssertEqual(submittedCount, 1)
+        XCTAssertEqual(keepAlive.executionAssertion(for: runID), .submitted)
+        XCTAssertTrue(
+            host.handoffCurrentGenerationToBackground(conversationStore: store, honorKeepAliveLease: true),
+            "未被系统接管的 .submitted 不能阻断后台交接"
+        )
+        XCTAssertEqual(capturedHandoff?.runId, runID)
+        XCTAssertFalse(host.isRunning)
+    }
 }

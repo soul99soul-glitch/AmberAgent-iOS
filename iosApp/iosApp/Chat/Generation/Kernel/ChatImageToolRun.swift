@@ -65,7 +65,9 @@ final class ChatImageToolRun {
             ),
             subtitle: modelDisplayName,
             onExpire: onExpire,
-            onSystemTaskExpiration: onExpire
+            onSystemTaskExpiration: onExpire,
+            submitSystemTask: false,
+            allowsAudioLeg: true
         )
         backgroundExecution.updateProgress(
             runId,

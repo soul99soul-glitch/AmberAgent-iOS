@@ -643,52 +643,62 @@ extension ChatViewModel {
     func reconcileForegroundRunsAfterSystemSuspensionIfNeeded(
         hasValidKeepAliveLease: Bool = false
     ) -> [String] {
-        guard !hasValidKeepAliveLease else { return [] }
         var interruptedRunIds: [String] = []
-        for run in runRegistry.allRuns {
-            let convId = run.state.conversationId
-            let hasBackgroundJob = convId.map {
-                IOSChatBackgroundGenerationCoordinator.shared.hasActiveJob(conversationId: $0)
-                    || IOSChatBackgroundGenerationCoordinator.shared.isWaitingForForegroundResume(conversationId: $0)
-            } ?? false
-            if hasBackgroundJob { continue }
+        if !hasValidKeepAliveLease {
+            for run in runRegistry.allRuns {
+                let convId = run.state.conversationId
+                let hasBackgroundJob = convId.map {
+                    IOSChatBackgroundGenerationCoordinator.shared.hasActiveJob(conversationId: $0)
+                        || IOSChatBackgroundGenerationCoordinator.shared.isWaitingForForegroundResume(conversationId: $0)
+                } ?? false
+                if hasBackgroundJob { continue }
 
-            for slot in run.orderedSlots where slot.isActiveOrQueued {
-                // Approval waits retain their in-process continuation while the app is suspended.
-                // Resume the same run after a decision, including any unconsumed follow-ups.
-                if slot.host?.hasPendingToolApproval == true { continue }
-                let runId = slot.runId
-                cancelUnconsumedFollowups(for: slot, state: run.state)
-                if slot.isQueuedForConcurrencySlot {
-                    runRegistry.removePendingTask(slotId: slot.slotId)
-                    slot.isQueuedForConcurrencySlot = false
-                    if let placeholderId = slot.queuedPlaceholderMessageId {
-                        slot.queuedPlaceholderMessageId = nil
-                        run.state.messages.removeAll {
-                            ChatMessageProjector.messageId(for: $0) == placeholderId
+                for slot in run.orderedSlots where slot.isActiveOrQueued {
+                    // Approval waits retain their in-process continuation while the app is suspended.
+                    // Resume the same run after a decision, including any unconsumed follow-ups.
+                    if slot.host?.hasPendingToolApproval == true { continue }
+                    let runId = slot.runId
+                    cancelUnconsumedFollowups(for: slot, state: run.state)
+                    slot.keepaliveMonitorTask?.cancel()
+                    slot.keepaliveMonitorTask = nil
+                    slot.activeToolName = nil
+                    slot.activeToolTitle = nil
+                    slot.liveReasoningSummary = nil
+                    slot.currentRoundAssistantMessageId = nil
+                    if slot.isQueuedForConcurrencySlot {
+                        runRegistry.removePendingTask(slotId: slot.slotId)
+                        slot.isQueuedForConcurrencySlot = false
+                        if let placeholderId = slot.queuedPlaceholderMessageId {
+                            slot.queuedPlaceholderMessageId = nil
+                            run.state.messages.removeAll {
+                                ChatMessageProjector.messageId(for: $0) == placeholderId
+                            }
                         }
+                        slot.isTerminal = true
+                        interruptedRunIds.append(runId)
+                    } else if let host = slot.host, host.isRunning {
+                        host.cancel(cause: .backgroundInterruption)
+                        slot.isTerminal = true
+                        interruptedRunIds.append(runId)
                     }
-                    slot.isTerminal = true
-                    interruptedRunIds.append(runId)
-                } else if let host = slot.host, host.isRunning {
-                    host.cancel(cause: .backgroundInterruption)
-                    slot.isTerminal = true
-                    interruptedRunIds.append(runId)
                 }
-            }
-            if let legacyHost = run.host,
-               legacyHost.isRunning,
-               !legacyHost.hasPendingToolApproval,
-               !run.orderedSlots.contains(where: { $0.host === legacyHost }) {
-                if let runId = legacyHost.currentRunId {
-                    interruptedRunIds.append(runId)
+                if let legacyHost = run.host,
+                   legacyHost.isRunning,
+                   !legacyHost.hasPendingToolApproval,
+                   !run.orderedSlots.contains(where: { $0.host === legacyHost }) {
+                    if let runId = legacyHost.currentRunId {
+                        interruptedRunIds.append(runId)
+                    }
+                    legacyHost.cancel(cause: .backgroundInterruption)
                 }
-                legacyHost.cancel(cause: .backgroundInterruption)
+                refreshLiveTaskMessageIds(in: run)
             }
-            refreshLiveTaskMessageIds(in: run)
+            if !interruptedRunIds.isEmpty {
+                runActivityRevision &+= 1
+            }
         }
-        if !interruptedRunIds.isEmpty {
-            runActivityRevision &+= 1
+        for run in runRegistry.allRuns {
+            _ = reconcileOrphanSteerQueueIfIdle(state: run.state)
         }
         return interruptedRunIds
     }

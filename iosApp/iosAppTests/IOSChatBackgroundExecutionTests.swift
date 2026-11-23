@@ -319,8 +319,8 @@ final class IOSChatBackgroundExecutionTests: XCTestCase {
         start(first, on: coordinator)
         start(second, on: coordinator)
         try await waitUntil { await provider.hasStarted(second.handoff.params.model.modelId) }
-        // 音频与系统任务并存：每个子任务都提交自己的系统任务（2026-10-02）。
-        XCTAssertEqual(assertions.submissions.count, 2)
+        // 默认不提交系统 continued-processing 大横幅，只靠 UIKit 短窗 + 静默音频腿保活。
+        XCTAssertEqual(assertions.submissions.count, 0)
         assertions.expirations.forEach { $0() }
         XCTAssertEqual(coordinator.activeJobCount, 2)
         XCTAssertEqual(coordinator.activeSubAgentJobCount, 2)
@@ -352,8 +352,8 @@ final class IOSChatBackgroundExecutionTests: XCTestCase {
         }
         start(run, on: coordinator)
         try await waitUntil { await provider.hasStarted(run.handoff.params.model.modelId) }
-        XCTAssertEqual(assertions.submissions.count, 1)
-        XCTAssertTrue(assertions.submissions[0].contains(".keepalive."))
+        // 默认不提交系统大横幅，UIKit 短窗到期后转入前/后台可恢复暂停并继续完成。
+        XCTAssertTrue(assertions.submissions.isEmpty)
         assertions.expirations.first?()
         XCTAssertEqual(coordinator.activeJobCount, 1)
         await provider.release(run.handoff.params.model.modelId)

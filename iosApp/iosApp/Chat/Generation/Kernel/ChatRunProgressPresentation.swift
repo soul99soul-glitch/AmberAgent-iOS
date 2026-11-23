@@ -72,7 +72,9 @@ final class ChatRunProgressPresentation {
             title: "Amber",
             subtitle: subtitle,
             onExpire: onExpire,
-            onSystemTaskExpiration: onExpire
+            onSystemTaskExpiration: onExpire,
+            submitSystemTask: false,
+            allowsAudioLeg: true
         )
         if reportsPhoneWorkProgress {
             backgroundExecution.updateProgress(runId, completed: 0, total: -1)

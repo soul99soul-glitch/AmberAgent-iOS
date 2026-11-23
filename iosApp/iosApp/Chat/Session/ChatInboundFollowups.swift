@@ -60,6 +60,51 @@ extension ChatViewModel {
         Task { @MainActor [weak self] in _ = await self?.persistMessages(state: state) }
     }
 
+    /// 清理会话气泡中残余的 `chat_followup_state == "queued"` 标记，
+    /// 避免任务已经结束后界面仍永久展示「已收到 · 待当前步骤结束后生效」。
+    @discardableResult
+    func clearResidualQueuedReceipts(in state: ChatConversationRunState) -> Bool {
+        var didUpdate = false
+        let notAppliedValue = Kotlinx_serialization_jsonJson.companion.parseToJsonElement(string: "\"not_applied\"")
+        for msgIndex in state.messages.indices {
+            let message = state.messages[msgIndex]
+            guard message.role == MessageRole.user else { continue }
+            var replacedParts = message.parts
+            var messageChanged = false
+            for partIndex in replacedParts.indices {
+                guard let textPart = replacedParts[partIndex] as? UIMessagePart.Text,
+                      IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: "chat_followup_state") == "queued" else {
+                    continue
+                }
+                var metadata = textPart.metadata ?? [:]
+                metadata["chat_followup_state"] = notAppliedValue
+                replacedParts[partIndex] = IosToolOutputJsonBridge.shared.textPart(
+                    text: textPart.text,
+                    metadata: metadata
+                )
+                messageChanged = true
+            }
+            guard messageChanged else { continue }
+            state.messages[msgIndex] = UIMessage(
+                id: message.id, role: message.role, parts: replacedParts,
+                annotations: message.annotations, createdAt: message.createdAt,
+                finishedAt: message.finishedAt, modelId: message.modelId,
+                usage: message.usage, translation: message.translation
+            )
+            didUpdate = true
+        }
+        guard didUpdate else { return false }
+        if isCurrentConversation(state.conversationId) {
+            bumpMessageRevision(reason: .toolResultAppended)
+        }
+        if state.pendingAssistantRegeneration == nil {
+            Task { @MainActor [weak self] in
+                _ = await self?.persistMessages(state: state)
+            }
+        }
+        return true
+    }
+
     func recoverQueuedFollowups(state: ChatConversationRunState) {
         let run = runRegistry.current(for: state.conversationId)
         state.steerQueue.removeAll { entry in

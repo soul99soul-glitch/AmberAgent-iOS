@@ -819,10 +819,10 @@ final class ChatKernelRunHost {
         if detachDurableResponse(runId: runId) { return true }
         if honorKeepAliveLease {
             switch backgroundExecution.executionAssertion(for: runId) {
-            case .uiOnly, .submitted, .adopted, .audio, .location:
+            case .uiOnly, .adopted, .audio, .location:
                 pendingBackgroundConversationStore = conversationStore
                 return false
-            case .none:
+            case .none, .submitted:
                 break
             }
         }

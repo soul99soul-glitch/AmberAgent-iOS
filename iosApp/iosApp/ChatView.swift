@@ -708,6 +708,7 @@ struct ChatView: View {
         guard let currentConversationId = currentConversationIdString,
               event.conversationId == currentConversationId else { return }
         handleBackgroundContentLanded(forceReload: true)
+        _ = viewModel.reconcileOrphanSteerQueueIfIdle(state: viewModel.currentRun.state)
     }
 
     /// 后台生成/工具回填落盘后的定向上屏:三重门控,绝不打扰进行中的前台流式,

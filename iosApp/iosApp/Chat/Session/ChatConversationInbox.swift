@@ -245,9 +245,127 @@ extension ChatViewModel {
         state.steerQueue = withAttachments
         inboxIO.persistQueue(state.steerQueue, for: state.conversationId)
         guard !textOnly.isEmpty else { return }
+        if state.pendingAssistantRegeneration == nil {
+            Task { @MainActor [weak self] in
+                _ = await self?.persistMessages(state: state)
+            }
+        }
         let joined = textOnly.map(\.text).joined(separator: "\n")
         let current = state.inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         state.inputText = current.isEmpty ? joined : current + "\n" + joined
+    }
+
+    /// 后台 job 走到终态（完成/失败/取消）时同步收敛该会话的前台残留槽位、活跃态与排队消息。
+    func handleBackgroundRunTerminal(
+        conversationId: KotlinUuid,
+        runId: String,
+        finalMessages: [UIMessage],
+        displayBaseline: [UIMessage],
+        terminalStatusOverride: AgentRunStatus? = nil
+    ) async {
+        refreshIntelligentUIReceipts(messages: finalMessages, conversationID: conversationId.toHexDashString())
+        let terminal = try? await runStore.snapshot(runId: runId)
+        let resolvedStatus = terminalStatusOverride ?? terminal?.status
+        if let terminal, terminal.status.isTerminal, terminal.finishedAt != nil {
+            await wakeScheduler.recordRunTerminal(
+                runID: runId, status: terminal.status.wireName,
+                result: IOSWakeTaskOutput.text(in: finalMessages, baseline: displayBaseline)
+            )
+        }
+        if let run = runRegistry.run(for: conversationId) ?? (isCurrentConversation(conversationId) ? currentRun : nil) {
+            var matchedSlot: ChatAsyncTaskSlot?
+            for slot in run.orderedSlots where !slot.isTerminal {
+                let matchesRun = slot.runId == runId || slot.slotId == runId
+                let isDetachedZombie = !slot.isQueuedForConcurrencySlot && slot.host?.isRunning != true
+                guard matchesRun || isDetachedZombie else { continue }
+                if matchesRun { matchedSlot = slot }
+                markTaskSlotTerminal(slot, in: run)
+            }
+            if run.state.selectedFollowupRunId == runId {
+                run.state.selectedFollowupRunId = nil
+            }
+            refreshLiveTaskMessageIds(in: run)
+            runActivityRevision &+= 1
+            let autoContinue = resolvedStatus == .completed
+            ensureSteerQueueLoaded(state: run.state)
+            var didRebindTarget = false
+            for index in run.state.steerQueue.indices where run.state.steerQueue[index].status == .received {
+                if run.state.steerQueue[index].targetRunId == runId {
+                    run.state.routingEntryIds.remove(run.state.steerQueue[index].id)
+                    if !autoContinue || matchedSlot == nil {
+                        run.state.steerQueue[index].targetRunId = nil
+                        didRebindTarget = true
+                    }
+                }
+            }
+            if didRebindTarget {
+                inboxIO.persistQueue(run.state.steerQueue, for: run.state.conversationId)
+            }
+            handleSteerQueueAtRunTerminal(
+                state: run.state,
+                autoContinue: autoContinue,
+                completedSlot: autoContinue ? matchedSlot : nil
+            )
+            if !autoContinue {
+                _ = clearResidualQueuedReceipts(in: run.state)
+            }
+        }
+        await orchestrationToolService.notifyRunTerminal(
+            conversationId: conversationId,
+            runId: runId,
+            finalMessages: finalMessages,
+            displayBaseline: displayBaseline,
+            terminalStatus: resolvedStatus,
+            terminalReason: terminal?.terminalReason
+        )
+    }
+
+    /// 孤儿排队消息兜底：当会话已无任何真正在跑的前台槽位或后台 job，
+    /// 但 `steerQueue` 仍滞留 `.received` 条目或气泡仍挂着 `receipt == "queued"` 时，
+    /// 清理孤儿 `targetRunId`、将排队消息安全退回输入框并清除残余「待当前步骤结束后生效」提示。
+    @discardableResult
+    func reconcileOrphanSteerQueueIfIdle(state: ChatConversationRunState) -> Bool {
+#if DEBUG
+        if generationActiveOverrideForTesting?(state.conversationId) == true { return false }
+#endif
+        if let conversationId = state.conversationId {
+            guard !isGenerationActive(conversationId: conversationId),
+                  !IOSChatBackgroundGenerationCoordinator.shared.isWaitingForForegroundResume(conversationId: conversationId) else {
+                return false
+            }
+        } else {
+            let run = runRegistry.current(for: nil)
+            guard !run.hasActiveOrQueuedTask, run.host?.isRunning != true else {
+                return false
+            }
+        }
+        guard state.steerQueueAutoContinueTask == nil, !state.isCommittingSteerQueue else { return false }
+        ensureSteerQueueLoaded(state: state)
+
+        var didChange = false
+        let hasReceivedEntries = state.steerQueue.contains { $0.status == .received }
+        if hasReceivedEntries {
+            var didMutateQueue = false
+            for index in state.steerQueue.indices where state.steerQueue[index].status == .received {
+                if state.steerQueue[index].targetRunId != nil {
+                    state.steerQueue[index].targetRunId = nil
+                    didMutateQueue = true
+                }
+                state.routingEntryIds.remove(state.steerQueue[index].id)
+            }
+            if state.selectedFollowupRunId != nil {
+                state.selectedFollowupRunId = nil
+            }
+            if didMutateQueue {
+                inboxIO.persistQueue(state.steerQueue, for: state.conversationId)
+            }
+            restoreSteerQueueLeftoverToComposer(state: state)
+            didChange = true
+        }
+        if clearResidualQueuedReceipts(in: state) {
+            didChange = true
+        }
+        return didChange
     }
 
     // MARK: - Mailbox 消费（P1-b）
