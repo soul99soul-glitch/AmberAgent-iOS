@@ -3280,7 +3280,7 @@ extension MacGatewayStore {
 
             let promptText = Self.nonEmptyTrimmed(relatedSubmission?.text)
                 ?? Self.nonEmptyTrimmed(relatedUserEvent?.text)
-                ?? localized("已交给 Mac 执行")
+                ?? localized("已交给 \(endpointRole.displayName) 执行")
             let sources = MacGatewayCloudDialogueEvent.mergedSourceAnnotations(
                 sourceRefs: progress.displaySourceAnnotations,
                 sourcePaths: relatedResultEvent?.displaySourceAnnotations
@@ -3368,7 +3368,7 @@ extension MacGatewayStore {
             let statusLine: String
             if submission.isAbandoned {
                 badge = .trackingEnded
-                statusLine = localized("已停止跟踪回执，Mac 执行结果未确认")
+                statusLine = localized("已停止跟踪回执，\(endpointRole.displayName) 执行结果未确认")
             } else if let directReply {
                 badge = directReply.outcome == .failed ? .failed : .completed
                 statusLine = directReply.text
@@ -3377,7 +3377,7 @@ extension MacGatewayStore {
                 statusLine = localized("结果待确认")
             } else if submission.isConfirmedNotExecuted {
                 badge = .failed
-                statusLine = submission.lastError ?? localized("Mac 未接收请求（未回退本机）")
+                statusLine = submission.lastError ?? localized("\(endpointRole.displayName) 未接收请求（未回退本机）")
             } else if submission.kind == .followupInput, let followup = cloudDialogueFollowups.first(where: { $0.requestId == submission.requestId }) {
                 badge = .followup
                 statusLine = followup.deliveryStatus(isSending: isBusy)
@@ -3386,7 +3386,9 @@ extension MacGatewayStore {
                 statusLine = submission.lastError ?? localized("弱网待确认回执 · 不会静默回退本机")
             } else {
                 badge = .running
-                statusLine = submission.receipt == nil ? localized("正在派发给 Mac…") : localized("Mac 已接收，等待进展")
+                statusLine = submission.receipt == nil
+                    ? localized("正在派发给 \(endpointRole.displayName)…")
+                    : localized("\(endpointRole.displayName) 已接收，等待进展")
             }
 
             runs.append(

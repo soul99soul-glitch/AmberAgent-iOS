@@ -543,14 +543,15 @@ private struct UnifiedMacDelegationRunCard: View {
             }
         }
 
-        var message: String {
+        func message(for role: MacGatewayEndpointRole) -> String {
+            let host = role.displayName
             switch self {
             case .retryUnknown:
-                return macGatewayL("若 Mac 端此前已实际执行，重试可能触发重复操作。建议先「重查状态」确认。")
+                return macGatewayL("若 \(host) 端此前已实际执行，重试可能触发重复操作。建议先「重查状态」确认。")
             case .abandonUnknown:
-                return macGatewayL("放弃后将不再自动跟踪本次回执，但不回滚 Mac 端已发生的变更。")
+                return macGatewayL("放弃后将不再自动跟踪本次回执，但不回滚 \(host) 端已发生的变更。")
             case .cancelPending:
-                return macGatewayL("将向 Mac 发起显式取消，不会回退到本机执行。")
+                return macGatewayL("将向 \(host) 发起显式取消，不会回退到本机执行。")
             }
         }
 
@@ -732,7 +733,7 @@ private struct UnifiedMacDelegationRunCard: View {
             }
         } message: {
             if let confirmation = pendingConfirmation {
-                Text(verbatim: confirmation.message)
+                Text(verbatim: confirmation.message(for: run.endpointRole))
             }
         }
     }

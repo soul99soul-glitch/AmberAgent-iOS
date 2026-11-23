@@ -27,7 +27,6 @@ struct MacGatewaySettingsView: View {
     @Environment(RouterPath.self) private var router
     @State private var confirmsUnpair = false
     @State private var presentingCloudCompose = false
-    @State private var presentingCloudDialogue = false
     @State private var copiedFingerprint = false
     @State private var copyFingerprintResetTask: Task<Void, Never>?
     @State private var localSiwcPrompt: LocalSiwcPromptState?
@@ -94,9 +93,6 @@ struct MacGatewaySettingsView: View {
             MacGatewayCloudTaskComposeSheet(store: store) { _ in
                 router.navigate(to: .macTasks)
             }
-        }
-        .sheet(isPresented: $presentingCloudDialogue) {
-            MacGatewayCloudDialogueSheet(store: store)
         }
         .sheet(
             isPresented: Binding(
@@ -556,12 +552,6 @@ struct MacGatewaySettingsView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "云端配置")
             AmberFormGroup {
-                MacGatewayRow(icon: "icloud", title: L("打开云端常驻对话"),
-                              detail: L("进入云端独立对话流，不影响主界面的统一时间线"),
-                              action: { presentingCloudDialogue = true }) {
-                    MacGatewayChevron()
-                }
-                MacGatewayRowDivider()
                 MacGatewayRow(icon: "gearshape.2", title: L("模型与搜索"),
                               detail: L("查看云端 provider/model，或从本机导入配置与 API Key"),
                               action: { router.navigate(to: .cloudConfig) }) {

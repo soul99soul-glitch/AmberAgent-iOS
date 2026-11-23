@@ -697,6 +697,28 @@ final class WatchMultiDeviceUpgradeTests: XCTestCase {
         XCTAssertEqual(macDispatch.runId, "remote:mac:wi-w-mac")
         XCTAssertTrue(cloudDispatch.accepted)
         XCTAssertEqual(cloudDispatch.runId, "remote:cloud:wi-w-cloud")
+
+        // Reachability flip & unpair on an empty-board slot must still notify Watch observers.
+        final class AtomicCounter: @unchecked Sendable {
+            private let lock = NSLock()
+            private var count = 0
+            func increment() { lock.lock(); count += 1; lock.unlock() }
+            var value: Int { lock.lock(); defer { lock.unlock() }; return count }
+        }
+        let watchNotified = AtomicCounter()
+        let token = NotificationCenter.default.addObserver(
+            forName: .amberWatchRemoteStateDidChange,
+            object: nil,
+            queue: nil
+        ) { _ in
+            watchNotified.increment()
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+        store.isReachable = false
+        XCTAssertGreaterThan(watchNotified.value, 0)
+        let countBeforeUnpair = watchNotified.value
+        await store.unpair(role: .cloud)
+        XCTAssertGreaterThan(watchNotified.value, countBeforeUnpair)
     }
 
     // MARK: - Helpers

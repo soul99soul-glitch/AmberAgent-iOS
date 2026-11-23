@@ -133,10 +133,24 @@ final class MacGatewayStore {
         #endif
     }
 
-    private(set) var connection: MacGatewayConnection? { didSet { publishBoard() } }
+    private(set) var connection: MacGatewayConnection? {
+        didSet {
+            publishBoard()
+            if oldValue != connection {
+                notifyWatchRemoteStateChanged()
+            }
+        }
+    }
     private(set) var status: MacGatewayStatus? { didSet { publishBoard() } }
     /// nil until the first refresh after launch or pairing.
-    var isReachable: Bool? { didSet { publishBoard() } }
+    var isReachable: Bool? {
+        didSet {
+            publishBoard()
+            if oldValue != isReachable {
+                notifyWatchRemoteStateChanged()
+            }
+        }
+    }
     private(set) var isBusy = false
     private(set) var isSendingTestPush = false
     private(set) var pushError: String?

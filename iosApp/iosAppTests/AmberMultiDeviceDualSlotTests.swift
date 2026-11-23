@@ -564,6 +564,23 @@ struct AmberMultiDeviceDualSlotTests {
         #expect(store.combinedNeedsYouItems.count == 1)
         #expect(store.combinedNeedsYouItems.first?.id == "run:mac-approve")
 
+        // Verify unified task builder surfaces Mac slot schedules and board items alongside Cloud.
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("plan2-unified-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let taskStore = IOSAdvancedTaskStore(userDefaults: defaults)
+        let subAgentStore = IOSSubAgentActivityStore(tasks: taskStore, defaults: defaults, loadRuns: { [] })
+        let wakeStore = IOSWakeTaskStore(fileURL: tempDir.appendingPathComponent("wake.json"))
+        let hubStore = AmberHubStore(defaults: defaults)
+        let unifiedGroups = AmberUnifiedTaskBuilder.buildTasks(
+            gateway: store,
+            subAgentStore: subAgentStore,
+            taskStore: taskStore,
+            wakeStore: wakeStore,
+            hubStore: hubStore
+        )
+        #expect(unifiedGroups.needsAttention.contains(where: { $0.id == "mac-board:run:mac-approve" }))
+        #expect(unifiedGroups.scheduled.contains(where: { $0.id == "mac-schedule:sched-mac-1" }))
+
         // Trigger HTTP 403 on Mac approval -> only Mac slot marks `call-mac-403` as local-only.
         let stubBiometric = AlwaysPassBiometric()
         let macOnlyStore = MacGatewayStore(

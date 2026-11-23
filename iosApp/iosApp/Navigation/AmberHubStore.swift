@@ -926,143 +926,149 @@ enum AmberUnifiedTaskBuilder {
             )
         }
 
-        // 1b. Cloud main dialogue delegated WorkItems (/v2/dialogue/* background work).
-        let gatewayScope = gateway.connection?.gatewayId ?? "unpaired"
-        for key in gateway.cloudDialogueProgressByWorkItem.keys.sorted() {
-            guard let progress = gateway.cloudDialogueProgressByWorkItem[key] else { continue }
-            let workItemId = progress.workItemId.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !key.hasPrefix("topic:"), !workItemId.isEmpty, !workItemId.hasPrefix("topic:") else { continue }
-            guard seenIdentities.insert("cloud-work:\(gatewayScope):\(workItemId)").inserted else { continue }
+        // 1b. Cloud & Mac dialogue delegated WorkItems (/v2/dialogue/* background work).
+        let remoteSlots: [MacGatewayStore] = [gateway] + (gateway.macSlot?.connection != nil ? [gateway.macSlot!] : [])
+        for slot in remoteSlots {
+            let isMacSlot = slot !== gateway && slot.endpointRole == .mac
+            let slotOriginLabel = isMacSlot ? "Mac 对话" : "云端对话"
+            let idPrefix = isMacSlot ? "mac-dialogue" : "cloud-dialogue"
+            let gatewayScope = slot.connection?.gatewayId ?? (isMacSlot ? "mac-unpaired" : "unpaired")
+            for key in slot.cloudDialogueProgressByWorkItem.keys.sorted() {
+                guard let progress = slot.cloudDialogueProgressByWorkItem[key] else { continue }
+                let workItemId = progress.workItemId.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !key.hasPrefix("topic:"), !workItemId.isEmpty, !workItemId.hasPrefix("topic:") else { continue }
+                guard seenIdentities.insert("\(idPrefix)-work:\(gatewayScope):\(workItemId)").inserted else { continue }
 
-            let directEvents = gateway.cloudDialogueEvents.filter { $0.workItemId == workItemId }
-            let topicUserEvents = progress.topicId.isEmpty
-                ? []
-                : gateway.cloudDialogueEvents.filter { $0.topicId == progress.topicId && $0.kind == .userMessage }
-            let rawTitleSource = directEvents.first(where: { $0.kind == .userMessage })?.text
-                ?? topicUserEvents.first?.text
-            let cleanUserLine = rawTitleSource
-                .map { IOSContextCompactionFidelity.redactCredentials($0) }?
-                .components(separatedBy: .newlines)
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .first(where: { !$0.isEmpty })
-            let dialogueTitle: String
-            if let cleanUserLine, !cleanUserLine.isEmpty {
-                dialogueTitle = cleanUserLine.count > 36 ? String(cleanUserLine.prefix(36)) + "…" : cleanUserLine
-            } else {
-                dialogueTitle = "云端对话任务"
-            }
+                let directEvents = slot.cloudDialogueEvents.filter { $0.workItemId == workItemId }
+                let topicUserEvents = progress.topicId.isEmpty
+                    ? []
+                    : slot.cloudDialogueEvents.filter { $0.topicId == progress.topicId && $0.kind == .userMessage }
+                let rawTitleSource = directEvents.first(where: { $0.kind == .userMessage })?.text
+                    ?? topicUserEvents.first?.text
+                let cleanUserLine = rawTitleSource
+                    .map { IOSContextCompactionFidelity.redactCredentials($0) }?
+                    .components(separatedBy: .newlines)
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .first(where: { !$0.isEmpty })
+                let dialogueTitle: String
+                if let cleanUserLine, !cleanUserLine.isEmpty {
+                    dialogueTitle = cleanUserLine.count > 36 ? String(cleanUserLine.prefix(36)) + "…" : cleanUserLine
+                } else {
+                    dialogueTitle = "\(slotOriginLabel)任务"
+                }
 
-            let latestResultEvent = directEvents
-                .last(where: { $0.kind == .taskResult || ($0.kind == .assistantReply && !$0.isUpfrontAcknowledgement) })
-            let latestResultText = latestResultEvent.map { gateway.cloudDialogueDisplayText(for: $0) }
-            let sanitizedResult = latestResultText.map {
-                IOSContextCompactionFidelity.redactCredentials(
-                    IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope($0)
+                let latestResultEvent = directEvents
+                    .last(where: { $0.kind == .taskResult || ($0.kind == .assistantReply && !$0.isUpfrontAcknowledgement) })
+                let latestResultText = latestResultEvent.map { slot.cloudDialogueDisplayText(for: $0) }
+                let sanitizedResult = latestResultText.map {
+                    IOSContextCompactionFidelity.redactCredentials(
+                        IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope($0)
+                    )
+                }
+                let sanitizedStatus = IOSContextCompactionFidelity.redactCredentials(
+                    IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope(progress.statusLine)
+                ).trimmingCharacters(in: .whitespacesAndNewlines)
+                let rawMarkdown = Self.userFacingResultMarkdown(from: sanitizedResult)
+                let summary = Self.extractDeliverableSummary(
+                    from: sanitizedResult ?? (sanitizedStatus.isEmpty ? nil : sanitizedStatus)
                 )
-            }
-            let sanitizedStatus = IOSContextCompactionFidelity.redactCredentials(
-                IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope(progress.statusLine)
-            ).trimmingCharacters(in: .whitespacesAndNewlines)
-            let rawMarkdown = Self.userFacingResultMarkdown(from: sanitizedResult)
-            let summary = Self.extractDeliverableSummary(
-                from: sanitizedResult ?? (sanitizedStatus.isEmpty ? nil : sanitizedStatus)
-            )
 
-            let phase: AmberUnifiedTaskPhase
-            let statusText: String
-            let subtitle: String
-            var actionTitle: String? = nil
-            var decisionPrompt: String? = nil
-            var quickActions: [AmberTaskQuickDecision] = []
+                let phase: AmberUnifiedTaskPhase
+                let statusText: String
+                let subtitle: String
+                var actionTitle: String? = nil
+                var decisionPrompt: String? = nil
+                var quickActions: [AmberTaskQuickDecision] = []
 
-            switch progress.outcome {
-            case .completed:
-                if summary.needsDecision {
+                switch progress.outcome {
+                case .completed:
+                    if summary.needsDecision {
+                        phase = .needsAttention
+                        statusText = "等我拍板"
+                        decisionPrompt = summary.decisionPrompt ?? summary.headline ?? "前序阶段已完成，等待拍板"
+                        subtitle = "\(summary.headline ?? "前序阶段已就绪") · \(slotOriginLabel)"
+                        actionTitle = "拍板继续"
+                        quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
+                    } else {
+                        phase = .completed
+                        statusText = "已完成"
+                        subtitle = summary.headline ?? (sanitizedStatus.isEmpty ? "\(slotOriginLabel) · 已完成" : sanitizedStatus)
+                    }
+                case .blocked:
                     phase = .needsAttention
                     statusText = "等我拍板"
-                    decisionPrompt = summary.decisionPrompt ?? summary.headline ?? "前序阶段已完成，等待拍板"
-                    subtitle = "\(summary.headline ?? "前序阶段已就绪") · 云端对话"
+                    decisionPrompt = summary.decisionPrompt
+                        ?? summary.headline
+                        ?? (sanitizedStatus.isEmpty ? nil : sanitizedStatus)
+                        ?? "\(slot.endpointRole.displayName)执行受阻，等待补充指示"
+                    subtitle = "\(summary.headline ?? (sanitizedStatus.isEmpty ? "等待补充指示" : Self.compactReason(sanitizedStatus))) · \(slotOriginLabel)"
                     actionTitle = "拍板继续"
                     quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
-                } else {
-                    phase = .completed
-                    statusText = "已完成"
-                    subtitle = summary.headline ?? (sanitizedStatus.isEmpty ? "云端对话 · 已完成" : sanitizedStatus)
-                }
-            case .blocked:
-                phase = .needsAttention
-                statusText = "等我拍板"
-                decisionPrompt = summary.decisionPrompt
-                    ?? summary.headline
-                    ?? (sanitizedStatus.isEmpty ? nil : sanitizedStatus)
-                    ?? "云端执行受阻，等待补充指示"
-                subtitle = "\(summary.headline ?? (sanitizedStatus.isEmpty ? "等待补充指示" : Self.compactReason(sanitizedStatus))) · 云端对话"
-                actionTitle = "拍板继续"
-                quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
-            case .failed:
-                phase = .needsAttention
-                statusText = "执行失败"
-                let reason = Self.compactReason(sanitizedStatus.isEmpty ? (sanitizedResult ?? "云端执行异常") : sanitizedStatus)
-                subtitle = "\(reason) · 云端对话"
-                let suggested = Self.suggestedActionButtonTitle(for: dialogueTitle, reason: reason)
-                actionTitle = suggested
-                quickActions = Self.failureQuickActions(primaryTitle: suggested)
-            case .cancelled:
-                phase = .cancelled
-                statusText = "已取消"
-                subtitle = "云端对话 · 已停止"
-            case .unknown, nil:
-                if progress.isStopRequested {
-                    phase = .running
-                    statusText = "停止请求中"
-                    subtitle = "云端对话 · 已请求停止"
-                } else if summary.needsDecision {
+                case .failed:
                     phase = .needsAttention
-                    statusText = "等我拍板"
-                    decisionPrompt = summary.decisionPrompt ?? summary.headline ?? "前序阶段已完成，等待拍板"
-                    subtitle = "\(summary.headline ?? "前序阶段已就绪") · 云端对话"
-                    actionTitle = "拍板继续"
-                    quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
-                } else {
-                    phase = .running
-                    statusText = "运行中"
-                    subtitle = sanitizedStatus.isEmpty ? "云端对话 · 执行中" : "云端对话 · \(sanitizedStatus)"
+                    statusText = "执行失败"
+                    let reason = Self.compactReason(sanitizedStatus.isEmpty ? (sanitizedResult ?? "\(slot.endpointRole.displayName)执行异常") : sanitizedStatus)
+                    subtitle = "\(reason) · \(slotOriginLabel)"
+                    let suggested = Self.suggestedActionButtonTitle(for: dialogueTitle, reason: reason)
+                    actionTitle = suggested
+                    quickActions = Self.failureQuickActions(primaryTitle: suggested)
+                case .cancelled:
+                    phase = .cancelled
+                    statusText = "已取消"
+                    subtitle = "\(slotOriginLabel) · 已停止"
+                case .unknown, nil:
+                    if progress.isStopRequested {
+                        phase = .running
+                        statusText = "停止请求中"
+                        subtitle = "\(slotOriginLabel) · 已请求停止"
+                    } else if summary.needsDecision {
+                        phase = .needsAttention
+                        statusText = "等我拍板"
+                        decisionPrompt = summary.decisionPrompt ?? summary.headline ?? "前序阶段已完成，等待拍板"
+                        subtitle = "\(summary.headline ?? "前序阶段已就绪") · \(slotOriginLabel)"
+                        actionTitle = "拍板继续"
+                        quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
+                    } else {
+                        phase = .running
+                        statusText = "运行中"
+                        subtitle = sanitizedStatus.isEmpty ? "\(slotOriginLabel) · 执行中" : "\(slotOriginLabel) · \(sanitizedStatus)"
+                    }
                 }
-            }
 
-            if progress.outcome != nil, phase == .needsAttention {
-                let title = progress.outcome == .failed ? "填写重试说明" : "填写后续说明"
-                actionTitle = title
-                quickActions = [AmberTaskQuickDecision(title: title, kind: .adjustDirection)]
-            }
+                if progress.outcome != nil, phase == .needsAttention {
+                    let title = progress.outcome == .failed ? "填写重试说明" : "填写后续说明"
+                    actionTitle = title
+                    quickActions = [AmberTaskQuickDecision(title: title, kind: .adjustDirection)]
+                }
 
-            let updatedAt = directEvents
-                .compactMap { gateway.cloudDialogueFirstSeenAtByEventId[$0.id] }
-                .max()
-                ?? Date(timeIntervalSince1970: TimeInterval(max(0, progress.lastEventSeq)))
-            let matchedHubId = hubStore.resolvedHubId(
-                taskIds: [workItemId, "cloud-dialogue:\(workItemId)"]
-            )
-            all.append(
-                AmberUnifiedTaskItem(
-                    id: "cloud-dialogue:\(workItemId)",
-                    title: dialogueTitle,
-                    subtitle: subtitle,
-                    statusText: statusText,
-                    actionButtonTitle: actionTitle,
-                    phase: phase,
-                    ownership: .delegated,
-                    hubId: matchedHubId,
-                    updatedAt: updatedAt,
-                    resultText: summary.headline ?? Self.resultPreview(from: rawMarkdown),
-                    decisionPrompt: decisionPrompt,
-                    quickActions: quickActions,
-                    deliverableBullets: summary.bullets,
-                    rawResultMarkdown: rawMarkdown,
-                    destination: .cloudDialogueWorkItem(workItemId: workItemId),
-                    source: .cloudDialogueWorkItem(workItemId)
+                let updatedAt = directEvents
+                    .compactMap { slot.cloudDialogueFirstSeenAtByEventId[$0.id] }
+                    .max()
+                    ?? Date(timeIntervalSince1970: TimeInterval(max(0, progress.lastEventSeq)))
+                let matchedHubId = hubStore.resolvedHubId(
+                    taskIds: [workItemId, "\(idPrefix):\(workItemId)"]
                 )
-            )
+                all.append(
+                    AmberUnifiedTaskItem(
+                        id: "\(idPrefix):\(workItemId)",
+                        title: dialogueTitle,
+                        subtitle: subtitle,
+                        statusText: statusText,
+                        actionButtonTitle: actionTitle,
+                        phase: phase,
+                        ownership: .delegated,
+                        hubId: matchedHubId,
+                        updatedAt: updatedAt,
+                        resultText: summary.headline ?? Self.resultPreview(from: rawMarkdown),
+                        decisionPrompt: decisionPrompt,
+                        quickActions: quickActions,
+                        deliverableBullets: summary.bullets,
+                        rawResultMarkdown: rawMarkdown,
+                        destination: isMacSlot ? .macBoard : .cloudDialogueWorkItem(workItemId: workItemId),
+                        source: isMacSlot ? .gatewayBoardItem(workItemId) : .cloudDialogueWorkItem(workItemId)
+                    )
+                )
+            }
         }
 
         // 2. Local background orchestration runs: durable thread edges and agent
@@ -1449,108 +1455,115 @@ enum AmberUnifiedTaskBuilder {
             )
         }
 
-        // 5. Mac-owned schedules. `schedules` is authoritative and also covers
-        // the disabled ones the board omits. Board rows merge only by schedule ID.
-        for schedule in gateway.schedules ?? [] {
-            let phase: AmberUnifiedTaskPhase = schedule.running ? .running
-                : (schedule.enabled ? .scheduled : .cancelled)
-            let summary = Self.extractDeliverableSummary(from: schedule.lastStatus)
-            guard seenIdentities.insert("schedule:\(schedule.id)").inserted else { continue }
-            let scheduleHubId = hubStore.resolvedHubId(
-                taskIds: [schedule.id, "schedule:\(schedule.id)"]
-            )
-            all.append(
-                AmberUnifiedTaskItem(
-                    id: "schedule:\(schedule.id)",
-                    title: schedule.name,
-                    subtitle: schedule.enabled
-                        ? "\(schedule.rule) · Mac" : "\(schedule.rule) · 已停用",
-                    statusText: schedule.running ? "运行中" : (schedule.enabled ? "已排定" : "已停用"),
-                    phase: phase,
-                    ownership: .scheduledMonitor,
-                    hubId: scheduleHubId,
-                    updatedAt: schedule.lastRunAt ?? schedule.nextRunAt ?? Date(timeIntervalSince1970: 0),
-                    resultText: summary.headline ?? schedule.lastStatus,
-                    deliverableBullets: summary.bullets,
-                    rawResultMarkdown: Self.userFacingResultMarkdown(from: schedule.lastStatus),
-                    nextRunAt: schedule.enabled ? schedule.nextRunAt : nil,
-                    destination: .macBoard,
-                    source: .gatewaySchedule(schedule.id)
-                )
-            )
-        }
+        // 5 & 6. Gateway-owned schedules, board runs, and agent sessions across paired Cloud + Mac slots.
+        for slot in remoteSlots {
+            let isMacSlot = slot !== gateway && slot.endpointRole == .mac
+            let schedulePrefix = isMacSlot ? "mac-schedule" : "schedule"
+            let boardPrefix = isMacSlot ? "mac-board" : "board"
+            let slotLabel = isMacSlot ? "Mac" : (gateway.hasMacConnection ? "云端" : "Mac")
 
-        // 6. Mac board runs and agent sessions.
-        let knownScheduleIds = Set((gateway.schedules ?? []).map(\.id))
-        for boardItem in gateway.boardItems {
-            if boardItem.kind == .schedule {
-                let scheduleId = boardItem.scheduleId
-                    ?? (boardItem.id.hasPrefix("schedule:") ? String(boardItem.id.dropFirst("schedule:".count)) : nil)
-                if let scheduleId, knownScheduleIds.contains(scheduleId) { continue }
-            }
-            guard seenIdentities.insert("board:\(boardItem.id)").inserted else { continue }
-            let summary = Self.extractDeliverableSummary(from: boardItem.detail)
-            let phase: AmberUnifiedTaskPhase
-            switch boardItem.column {
-            case .needsYou: phase = .needsAttention
-            case .running: phase = summary.needsDecision ? .needsAttention : .running
-            case .scheduled: phase = .scheduled
-            case .done:
-                if boardItem.failed {
-                    phase = .timedOutOrFailedTerminal
-                } else if summary.needsDecision {
-                    phase = .needsAttention
-                } else {
-                    phase = .completed
-                }
-            }
-            let statusText: String
-            var decisionPrompt: String? = nil
-            var quickActions: [AmberTaskQuickDecision] = []
-            var actionTitle: String? = nil
-
-            switch phase {
-            case .needsAttention:
-                if boardItem.approval != nil {
-                    statusText = "待你确认"
-                    actionTitle = "去确认"
-                    quickActions = Self.approvalQuickActions()
-                } else {
-                    statusText = "等我拍板"
-                    actionTitle = "拍板继续"
-                    decisionPrompt = summary.decisionPrompt ?? summary.headline ?? (boardItem.detail.isEmpty ? nil : boardItem.detail)
-                    quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
-                }
-            case .running: statusText = "运行中"
-            case .scheduled: statusText = "已排定"
-            case .completed: statusText = "已完成"
-            case .timedOutOrFailedTerminal: statusText = "执行失败"
-            case .cancelled: statusText = "已取消"
-            }
-            let boardHubId = hubStore.resolvedHubId(
-                taskIds: [boardItem.id, "board:\(boardItem.id)"]
-            )
-            all.append(
-                AmberUnifiedTaskItem(
-                    id: "board:\(boardItem.id)",
-                    title: boardItem.title,
-                    subtitle: boardItem.detail.isEmpty ? "Mac" : "\(boardItem.detail) · Mac",
-                    statusText: statusText,
-                    actionButtonTitle: actionTitle,
-                    phase: phase,
-                    ownership: boardItem.kind == .schedule ? .scheduledMonitor : .backgroundRun,
-                    hubId: boardHubId,
-                    updatedAt: boardItem.updatedAt,
-                    resultText: phase == .completed ? summary.headline : nil,
-                    decisionPrompt: decisionPrompt,
-                    quickActions: quickActions,
-                    deliverableBullets: summary.bullets,
-                    rawResultMarkdown: Self.userFacingResultMarkdown(from: boardItem.detail.isEmpty ? nil : boardItem.detail),
-                    nextRunAt: boardItem.nextRunAt,
-                    destination: .macBoard,
-                    source: .gatewayBoardItem(boardItem.id)
+            for schedule in slot.schedules ?? [] {
+                let phase: AmberUnifiedTaskPhase = schedule.running ? .running
+                    : (schedule.enabled ? .scheduled : .cancelled)
+                let summary = Self.extractDeliverableSummary(from: schedule.lastStatus)
+                let scheduleItemId = "\(schedulePrefix):\(schedule.id)"
+                guard seenIdentities.insert(scheduleItemId).inserted else { continue }
+                let scheduleHubId = hubStore.resolvedHubId(
+                    taskIds: [schedule.id, scheduleItemId]
                 )
-            )
+                all.append(
+                    AmberUnifiedTaskItem(
+                        id: scheduleItemId,
+                        title: schedule.name,
+                        subtitle: schedule.enabled
+                            ? "\(schedule.rule) · \(slotLabel)" : "\(schedule.rule) · 已停用",
+                        statusText: schedule.running ? "运行中" : (schedule.enabled ? "已排定" : "已停用"),
+                        phase: phase,
+                        ownership: .scheduledMonitor,
+                        hubId: scheduleHubId,
+                        updatedAt: schedule.lastRunAt ?? schedule.nextRunAt ?? Date(timeIntervalSince1970: 0),
+                        resultText: summary.headline ?? schedule.lastStatus,
+                        deliverableBullets: summary.bullets,
+                        rawResultMarkdown: Self.userFacingResultMarkdown(from: schedule.lastStatus),
+                        nextRunAt: schedule.enabled ? schedule.nextRunAt : nil,
+                        destination: .macBoard,
+                        source: .gatewaySchedule(schedule.id)
+                    )
+                )
+            }
+
+            let knownScheduleIds = Set((slot.schedules ?? []).map(\.id))
+            for boardItem in slot.boardItems {
+                if boardItem.kind == .schedule {
+                    let scheduleId = boardItem.scheduleId
+                        ?? (boardItem.id.hasPrefix("schedule:") ? String(boardItem.id.dropFirst("schedule:".count)) : nil)
+                    if let scheduleId, knownScheduleIds.contains(scheduleId) { continue }
+                }
+                let boardItemId = "\(boardPrefix):\(boardItem.id)"
+                guard seenIdentities.insert(boardItemId).inserted else { continue }
+                let summary = Self.extractDeliverableSummary(from: boardItem.detail)
+                let phase: AmberUnifiedTaskPhase
+                switch boardItem.column {
+                case .needsYou: phase = .needsAttention
+                case .running: phase = summary.needsDecision ? .needsAttention : .running
+                case .scheduled: phase = .scheduled
+                case .done:
+                    if boardItem.failed {
+                        phase = .timedOutOrFailedTerminal
+                    } else if summary.needsDecision {
+                        phase = .needsAttention
+                    } else {
+                        phase = .completed
+                    }
+                }
+                let statusText: String
+                var decisionPrompt: String? = nil
+                var quickActions: [AmberTaskQuickDecision] = []
+                var actionTitle: String? = nil
+
+                switch phase {
+                case .needsAttention:
+                    if boardItem.approval != nil {
+                        statusText = "待你确认"
+                        actionTitle = "去确认"
+                        quickActions = Self.approvalQuickActions()
+                    } else {
+                        statusText = "等我拍板"
+                        actionTitle = "拍板继续"
+                        decisionPrompt = summary.decisionPrompt ?? summary.headline ?? (boardItem.detail.isEmpty ? nil : boardItem.detail)
+                        quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
+                    }
+                case .running: statusText = "运行中"
+                case .scheduled: statusText = "已排定"
+                case .completed: statusText = "已完成"
+                case .timedOutOrFailedTerminal: statusText = "执行失败"
+                case .cancelled: statusText = "已取消"
+                }
+                let boardHubId = hubStore.resolvedHubId(
+                    taskIds: [boardItem.id, boardItemId]
+                )
+                all.append(
+                    AmberUnifiedTaskItem(
+                        id: boardItemId,
+                        title: boardItem.title,
+                        subtitle: boardItem.detail.isEmpty ? slotLabel : "\(boardItem.detail) · \(slotLabel)",
+                        statusText: statusText,
+                        actionButtonTitle: actionTitle,
+                        phase: phase,
+                        ownership: boardItem.kind == .schedule ? .scheduledMonitor : .backgroundRun,
+                        hubId: boardHubId,
+                        updatedAt: boardItem.updatedAt,
+                        resultText: phase == .completed ? summary.headline : nil,
+                        decisionPrompt: decisionPrompt,
+                        quickActions: quickActions,
+                        deliverableBullets: summary.bullets,
+                        rawResultMarkdown: Self.userFacingResultMarkdown(from: boardItem.detail.isEmpty ? nil : boardItem.detail),
+                        nextRunAt: boardItem.nextRunAt,
+                        destination: .macBoard,
+                        source: .gatewayBoardItem(boardItem.id)
+                    )
+                )
+            }
         }
 
         let filtered = filterHubId == nil

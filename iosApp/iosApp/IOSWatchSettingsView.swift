@@ -604,6 +604,14 @@ struct IOSWatchSettingsView: View {
                             .buttonStyle(.plain)
                             .disabled(isHandingOffNoteToRemote)
                         }
+
+                        if let noteError, !noteError.isEmpty {
+                            Text(verbatim: noteError)
+                                .font(.footnote)
+                                .foregroundStyle(MacDelegationSemanticInk.warning)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                 }
                 .padding(20)

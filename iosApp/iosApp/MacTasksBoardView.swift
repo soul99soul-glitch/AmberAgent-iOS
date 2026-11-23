@@ -9,6 +9,7 @@ struct MacTasksBoardView: View {
     @State private var creatingSchedule = false
     @State private var showsDone = false
     @State private var deepLinkedCloudTask: DeepLinkedCloudTask?
+    @State private var selectedRole: MacGatewayEndpointRole
 
     private struct DeepLinkedCloudTask: Identifiable, Equatable {
         let id: String
@@ -19,16 +20,47 @@ struct MacTasksBoardView: View {
 
     init(store: MacGatewayStore = .shared) {
         self.store = store
+        let defaultRole: MacGatewayEndpointRole =
+            (store.endpointRole == .cloud && !store.hasCloudConnection && store.hasMacConnection)
+            ? .mac
+            : store.endpointRole
+        self._selectedRole = State(initialValue: defaultRole)
+    }
+
+    private var showsSlotPicker: Bool {
+        store.endpointRole == .cloud && store.hasCloudConnection && store.hasMacConnection
+    }
+
+    private var activeStore: MacGatewayStore {
+        guard store.endpointRole == .cloud else { return store }
+        if !store.hasCloudConnection && store.hasMacConnection {
+            return store.mac
+        }
+        if store.hasCloudConnection && store.hasMacConnection {
+            return store.slot(for: selectedRole)
+        }
+        return store
     }
 
     var body: some View {
+        let currentStore = activeStore
         ZStack {
             AmberTheme.background.ignoresSafeArea()
             VStack(spacing: 0) {
                 header
+                if showsSlotPicker {
+                    Picker(L("终端"), selection: $selectedRole) {
+                        Text(verbatim: MacGatewayEndpointRole.cloud.displayName).tag(MacGatewayEndpointRole.cloud)
+                        Text(verbatim: MacGatewayEndpointRole.mac.displayName).tag(MacGatewayEndpointRole.mac)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+                    .accessibilityIdentifier("macTasks.slotPicker")
+                }
                 ScrollView {
                     VStack(spacing: 0) {
-                        if store.connection == nil {
+                        if currentStore.connection == nil {
                             unpairedSection
                         } else {
                             boardSections
@@ -37,20 +69,20 @@ struct MacTasksBoardView: View {
                     .padding(.bottom, 36)
                 }
                 .scrollIndicators(.hidden)
-                .refreshable { await store.refresh() }
+                .refreshable { await currentStore.refresh() }
             }
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .tint(AmberTheme.accent)
-        .task(id: store.connection?.gatewayId) {
-            guard store.connection != nil else { return }
+        .task(id: "\(currentStore.endpointRole.rawValue):\(currentStore.connection?.gatewayId ?? "")") {
+            guard currentStore.connection != nil else { return }
             while !Task.isCancelled {
-                await store.refresh()
+                await currentStore.refresh()
                 try? await Task.sleep(for: Self.refreshInterval)
             }
         }
-        .sheet(isPresented: $creatingSchedule) { MacGatewayScheduleSheet(store: store) }
+        .sheet(isPresented: $creatingSchedule) { MacGatewayScheduleSheet(store: currentStore) }
         .sheet(item: $deepLinkedCloudTask) { target in
             MacGatewayCloudTaskDetailSheet(store: store, requestId: target.id, workItemId: target.id)
         }
@@ -63,6 +95,7 @@ struct MacTasksBoardView: View {
     private func consumePendingCloudTaskDeepLink() {
         guard let workItemId = store.pendingCloudTaskWorkItemId, !workItemId.isEmpty else { return }
         store.pendingCloudTaskWorkItemId = nil
+        selectedRole = .cloud
         deepLinkedCloudTask = DeepLinkedCloudTask(id: workItemId)
     }
 
@@ -78,7 +111,7 @@ struct MacTasksBoardView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
-            if store.board != nil {
+            if activeStore.board != nil {
                 AmberGlassCircleButton(systemImage: "plus", accessibilityLabel: "新建定时任务", size: 44, symbolSize: 17) {
                     creatingSchedule = true
                 }
@@ -88,23 +121,23 @@ struct MacTasksBoardView: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
-        .padding(.bottom, 18)
+        .padding(.bottom, showsSlotPicker ? 10 : 18)
     }
 
     // MARK: - Sections
 
     private var unpairedSection: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: "Amber · 云端")
+            AmberSectionLabel(text: "Amber 多终端")
             AmberFormGroup {
-                MacGatewayRow(icon: "desktopcomputer", title: L("尚未配对 Amber · 云端"),
-                              detail: L("在 设置 › Amber · 云端 中扫码配对后，Mac 上的定时任务和 Claude Code / Codex 会话会出现在这里"),
+                MacGatewayRow(icon: "desktopcomputer", title: L("尚未配对远端终端"),
+                              detail: L("在 设置 › Amber 多终端 中扫码配对云端或 Mac 后，定时任务和 Claude Code / Codex 会话会出现在这里"),
                               action: { router.navigate(to: .macGateway) }) {
                     MacGatewayChevron()
                 }
             }
             // e.g. the Mac revoked this device while the board was open.
-            if let notice = store.notice, notice.isError {
+            if let notice = activeStore.notice, notice.isError {
                 MacGatewaySectionFooter(text: notice.text, color: .orange)
             }
         }
@@ -112,17 +145,19 @@ struct MacTasksBoardView: View {
 
     @ViewBuilder
     private var boardSections: some View {
-        let items = store.boardItems
-        let groups = MacTasksBoardLayout.groups(items: items, schedules: store.board == nil ? nil : store.schedules)
-        if store.isReachable == false {
-            statusNote(icon: "wifi.slash", title: L("无法连接 Mac"),
-                       detail: L("Mac 睡眠、合盖或断网时无法查看任务，下面是上次读取的内容。"))
-        } else if store.board == nil, let reason = store.boardError, store.cloudAgents.isEmpty, store.cloudTasks.isEmpty {
+        let currentStore = activeStore
+        let items = currentStore.boardItems
+        let groups = MacTasksBoardLayout.groups(items: items, schedules: currentStore.board == nil ? nil : currentStore.schedules)
+        if currentStore.isReachable == false {
+            let host = currentStore.endpointRole.displayName
+            statusNote(icon: "wifi.slash", title: L("无法连接 \(host)"),
+                       detail: L("\(host) 离线或断网时无法查看实时任务，下面是上次读取的内容。"))
+        } else if currentStore.board == nil, let reason = currentStore.boardError, currentStore.cloudAgents.isEmpty, currentStore.cloudTasks.isEmpty {
             // The gateway's own reason, e.g. "Amber 未运行：在 Mac 上打开 Amber 后重试" (503) or an older gateway's 404.
             statusNote(icon: "exclamationmark.circle", title: L("只能看到 Claude Code / Codex 会话"), detail: reason)
         }
-        MacGatewayCloudTasksSection(store: store)
-        if store.board == nil, store.boardError == nil, store.isReachable != false {
+        MacGatewayCloudTasksSection(store: currentStore)
+        if currentStore.board == nil, currentStore.boardError == nil, currentStore.isReachable != false {
             // First load: the fallback would briefly show a board without schedules or approvals.
             VStack(spacing: 0) {
                 AmberSectionLabel(text: "任务")
@@ -130,23 +165,23 @@ struct MacTasksBoardView: View {
                     MacGatewayRow(icon: "arrow.triangle.2.circlepath", title: L("正在读取…"), detail: "") { EmptyView() }
                 }
             }
-        } else if groups.isEmpty, store.cloudTasks.isEmpty {
+        } else if groups.isEmpty, currentStore.cloudTasks.isEmpty {
             VStack(spacing: 0) {
                 AmberSectionLabel(text: "任务")
                 AmberFormGroup {
                     MacGatewayRow(icon: "tray", title: L("暂无任务"),
-                                  detail: L("Mac 上的定时任务和 Claude Code / Codex 会话会出现在这里")) {
+                                  detail: L("\(currentStore.endpointRole.displayName) 上的定时任务和 Claude Code / Codex 会话会出现在这里")) {
                         EmptyView()
                     }
                 }
             }
         }
-        if store.board != nil || store.boardError != nil || store.isReachable == false {
+        if currentStore.board != nil || currentStore.boardError != nil || currentStore.isReachable == false {
             ForEach(groups) { group in
                 section(group)
             }
         }
-        if let notice = store.notice {
+        if let notice = currentStore.notice {
             MacGatewaySectionFooter(text: notice.text, color: notice.isError ? .orange : AmberTheme.muted)
                 .padding(.top, 8)
         }
@@ -180,7 +215,7 @@ struct MacTasksBoardView: View {
                     }
                 } else {
                     if group.column == .needsYou, group.rows.contains(where: { $0.item?.kind == .agentSession }),
-                       let url = store.status?.synaraURL.flatMap(URL.init(string:)) {
+                       let url = activeStore.status?.synaraURL.flatMap(URL.init(string:)) {
                         MacGatewayRow(icon: "bubble.left.and.text.bubble.right", title: L("在 Synara 中回复或确认"),
                                       detail: L("在浏览器中打开 Synara，处理其中的任务"), action: { openURL(url) }) {
                             MacGatewayChevron()
@@ -191,7 +226,7 @@ struct MacTasksBoardView: View {
                         if index > 0 { MacGatewayRowDivider() }
                         rowView(row)
                     }
-                    if group.column == .scheduled, store.board != nil {
+                    if group.column == .scheduled, activeStore.board != nil {
                         MacGatewayRowDivider()
                         MacGatewayRow(icon: "plus", title: L("新建定时任务"), detail: L("在 Mac 上按时运行提示词"),
                                       action: { creatingSchedule = true }) {
@@ -200,7 +235,7 @@ struct MacTasksBoardView: View {
                     }
                 }
             }
-            if group.column == .scheduled, store.board != nil {
+            if group.column == .scheduled, activeStore.board != nil {
                 MacGatewaySectionFooter(text: L("在手机上新建的任务不会自动批准任何工具；审批规则只能在 Mac 上修改。"))
             }
         }
@@ -208,14 +243,15 @@ struct MacTasksBoardView: View {
 
     @ViewBuilder
     private func rowView(_ row: MacTasksBoardLayout.Row) -> some View {
-        let schedule = row.scheduleId.flatMap { id in store.schedules?.first { $0.id == id } }
+        let currentStore = activeStore
+        let schedule = row.scheduleId.flatMap { id in currentStore.schedules?.first { $0.id == id } }
         MacGatewayRow(icon: row.icon, title: row.title, detail: rowDetail(row)) {
             if row.showsScheduleControls, let schedule {
-                scheduleControls(schedule)
+                scheduleControls(schedule, in: currentStore)
             }
         }
         if let approval = row.item?.approval {
-            MacGatewayApprovalRow(approval: approval, store: store)
+            MacGatewayApprovalRow(approval: approval, store: currentStore)
         } else if row.item?.kind == .run, row.item?.column == .needsYou {
             // The Mac drops approvals it can't route through the gateway; they can only be answered there.
             MacGatewaySectionFooter(text: L("请在 Mac 上处理"))
@@ -225,12 +261,12 @@ struct MacTasksBoardView: View {
         }
     }
 
-    private func scheduleControls(_ schedule: MacGatewaySchedule) -> some View {
+    private func scheduleControls(_ schedule: MacGatewaySchedule, in targetStore: MacGatewayStore) -> some View {
         HStack(spacing: 6) {
-            if store.busySchedules.contains(schedule.id) || schedule.running {
+            if targetStore.busySchedules.contains(schedule.id) || schedule.running {
                 ProgressView().frame(width: 44, height: 44)
             } else {
-                Button { Task { await store.runSchedule(schedule) } } label: {
+                Button { Task { await targetStore.runSchedule(schedule) } } label: {
                     Image(systemName: "play.fill")
                         .font(.system(size: 15, weight: .semibold))
                         .frame(width: 44, height: 44)
@@ -241,11 +277,11 @@ struct MacTasksBoardView: View {
             }
             Toggle("", isOn: Binding(
                 get: { schedule.enabled },
-                set: { value in Task { await store.setScheduleEnabled(schedule, value) } }
+                set: { value in Task { await targetStore.setScheduleEnabled(schedule, value) } }
             ))
             .labelsHidden()
             .tint(AmberTheme.accent)
-            .disabled(store.busySchedules.contains(schedule.id))
+            .disabled(targetStore.busySchedules.contains(schedule.id))
             .accessibilityLabel(Text(verbatim: L("启用") + " " + schedule.name))
         }
     }
