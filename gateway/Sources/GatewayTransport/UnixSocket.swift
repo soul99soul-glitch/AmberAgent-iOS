@@ -64,9 +64,10 @@ public enum UnixSocketClient {
         shutdown(fd, SHUT_WR)
 
         var response = Data()
-        var buffer = [UInt8](repeating: 0, count: min(4096, maxResponse))
+        var buffer = [UInt8](repeating: 0, count: min(65_536, maxResponse))
         while response.count < maxResponse {
-            let n = read(fd, &buffer, buffer.count)
+            let chunk = min(buffer.count, maxResponse - response.count)
+            let n = read(fd, &buffer, chunk)
             if n > 0 {
                 response.append(contentsOf: buffer[0..<n])
             } else if n < 0 && errno == EAGAIN {
@@ -97,7 +98,7 @@ public enum UnixSocketClient {
 /// handler accepts it. Runs entirely on `queue`. With `respond`, the handler's reply is written instead of the
 /// ack (request/response channel, e.g. the Amber app's control socket).
 public final class UnixSocketServer {
-    public static let maxMessageSize = 64 * 1024
+    public static let maxMessageSize = 4 * 1024 * 1024
 
     private let path: String
     private let queue: DispatchQueue
@@ -178,7 +179,7 @@ public final class UnixSocketServer {
         setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
         var message = Data()
-        var buffer = [UInt8](repeating: 0, count: 4096)
+        var buffer = [UInt8](repeating: 0, count: 65_536)
         while message.count <= Self.maxMessageSize {
             let n = read(client, &buffer, buffer.count)
             if n > 0 {

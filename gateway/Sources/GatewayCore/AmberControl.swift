@@ -7,6 +7,7 @@ public enum AmberControl {
 
     public enum Action: String, Codable, Sendable {
         case decide, listSchedules, createSchedule, setScheduleEnabled, runSchedule, board, getSoul, putSoul
+        case dialogueMessage, dialogueFollowup, dialogueStop, dialogueReceipt, dialogueEvents
     }
 
     public struct SoulSnapshot: Codable, Sendable, Equatable, Identifiable {
@@ -68,15 +69,28 @@ public enum AmberControl {
         public var draft: ScheduleDraft?
         /// Paired device that sent it, for the app's own records.
         public var deviceName: String?
+        /// Paired device ID (for `/v2/dialogue/*` idempotency & ownership).
+        public var deviceId: String?
         /// `putSoul`: C-SOUL-V1 persona payload.
         public var soulPut: SoulPutRequest?
+        /// `/v2/dialogue/*` & `/v2/work-items/{id}/*` pass-through fields.
+        public var dialogueVersion: String?
+        public var workItemId: String?
+        public var requestId: String?
+        public var rawBody: String?
+        public var after: Int64?
+        public var limit: Int?
 
         public init(action: Action, sessionKey: String? = nil, toolCallId: String? = nil, allow: Bool? = nil,
                     scheduleId: String? = nil, enabled: Bool? = nil, draft: ScheduleDraft? = nil,
-                    deviceName: String? = nil, soulPut: SoulPutRequest? = nil) {
+                    deviceName: String? = nil, deviceId: String? = nil, soulPut: SoulPutRequest? = nil,
+                    dialogueVersion: String? = nil, workItemId: String? = nil, requestId: String? = nil,
+                    rawBody: String? = nil, after: Int64? = nil, limit: Int? = nil) {
             self.action = action; self.sessionKey = sessionKey; self.toolCallId = toolCallId; self.allow = allow
             self.scheduleId = scheduleId; self.enabled = enabled; self.draft = draft
-            self.deviceName = deviceName; self.soulPut = soulPut
+            self.deviceName = deviceName; self.deviceId = deviceId; self.soulPut = soulPut
+            self.dialogueVersion = dialogueVersion; self.workItemId = workItemId; self.requestId = requestId
+            self.rawBody = rawBody; self.after = after; self.limit = limit
         }
     }
 
@@ -190,14 +204,17 @@ public enum AmberControl {
         public var targetSummary: String?
         public var diffPreview: String?
         public var requiresLocalApproval: Bool?
+        /// Raw JSON payload for contract-exact pass-through responses (e.g. `/v2/dialogue/*`).
+        public var rawJSON: String?
 
         public init(status: Int, error: String? = nil, schedules: [ScheduleSummary]? = nil, schedule: ScheduleSummary? = nil,
                     board: [BoardItem]? = nil, soul: SoulState? = nil, riskLevel: String? = nil,
                     targetDevice: String? = nil, targetSummary: String? = nil, diffPreview: String? = nil,
-                    requiresLocalApproval: Bool? = nil) {
+                    requiresLocalApproval: Bool? = nil, rawJSON: String? = nil) {
             self.status = status; self.error = error; self.schedules = schedules; self.schedule = schedule
             self.board = board; self.soul = soul; self.riskLevel = riskLevel; self.targetDevice = targetDevice
             self.targetSummary = targetSummary; self.diffPreview = diffPreview; self.requiresLocalApproval = requiresLocalApproval
+            self.rawJSON = rawJSON
         }
 
         public static func failure(_ status: Int, _ message: String, riskLevel: String? = nil, targetDevice: String? = nil,

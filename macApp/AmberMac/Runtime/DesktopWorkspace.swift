@@ -106,6 +106,7 @@ final class DesktopWorkspace {
     var gateway: DesktopGateway?
     var gatewayReporter: DesktopGatewayReporter?
     var gatewayControl: DesktopGatewayControl?
+    var macDialogue: DesktopMacDialogueCoordinator?
     var boardWriter: DesktopBoardWriter?
     /// Outbound pairing to a cloud amberd; a different slot from the local `gateway` server above.
     var cloudSelf: DesktopCloudSelfStore?
@@ -258,6 +259,12 @@ final class DesktopWorkspace {
     /// Scheduled runs in flight: task id → the conversation it writes into (task board).
     var scheduledRunTaskConversations: [UUID: UUID] = [:]
     @ObservationIgnored var scheduledGenerations: [UUID: DesktopGeneration] = [:]
+    /// Conversations a remote Mac dialogue work item is writing into right now.
+    var dialogueRunConversationIDs: Set<UUID> = []
+    @ObservationIgnored var dialogueGenerations: [String: (run: DesktopGeneration, conversationID: UUID, startedAt: Date)] = [:]
+    @ObservationIgnored var dialogueRunTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored var dialogueConversationByRemoteKey: [String: UUID] = [:]
+    @ObservationIgnored var dialogueWorkItemByConversation: [UUID: String] = [:]
 
     @ObservationIgnored var conversationLoads: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored var searchTask: Task<Void, Never>?

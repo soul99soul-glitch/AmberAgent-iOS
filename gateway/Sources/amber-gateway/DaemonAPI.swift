@@ -51,6 +51,7 @@ extension Daemon {
     }
 
     static let statusSessionLimit = 50
+    static let maxDialogueBodyBytes = 100_000
 
     func handleAPI(_ request: HTTPRequest, respond: @escaping (HTTPResponse) -> Void) {
         let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
@@ -126,6 +127,90 @@ extension Daemon {
             }
             audit.record("amber-soul-put", ["device": device.id, "source": soulPut.source ?? "remote"])
             forwardSoulToAmber(.init(action: .putSoul, deviceName: device.name, soulPut: soulPut), respond: respond)
+        case ("POST", "/v2/dialogue/messages"):
+            guard request.body.count <= Self.maxDialogueBodyBytes,
+                  let rawBody = String(data: request.body, encoding: .utf8) else {
+                return respond(.error(400, "invalid_request"))
+            }
+            let dialogueVersion = request.headers["x-amber-dialogue-version"]
+            audit.record("amber-dialogue-message", Self.dialogueAuditFields(device: device, body: body, version: dialogueVersion))
+            forwardDialogueToAmber(
+                .init(action: .dialogueMessage, deviceName: device.name, deviceId: device.id,
+                      dialogueVersion: dialogueVersion, rawBody: rawBody),
+                respond: respond
+            )
+        case ("POST", let path) where path.hasPrefix("/v2/work-items/"):
+            let suffix = String(path.dropFirst("/v2/work-items/".count))
+            let parts = suffix.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count == 2, !parts[0].isEmpty,
+                  let workItemId = parts[0].removingPercentEncoding, !workItemId.isEmpty else {
+                return respond(.error(404, "not found"))
+            }
+            let dialogueVersion = request.headers["x-amber-dialogue-version"]
+            switch parts[1] {
+            case "inputs":
+                guard request.body.count <= Self.maxDialogueBodyBytes,
+                      let rawBody = String(data: request.body, encoding: .utf8) else {
+                    return respond(.error(400, "invalid_request"))
+                }
+                audit.record("amber-dialogue-followup", Self.dialogueAuditFields(device: device, body: body, workItemId: workItemId, version: dialogueVersion))
+                forwardDialogueToAmber(
+                    .init(action: .dialogueFollowup, deviceName: device.name, deviceId: device.id,
+                          dialogueVersion: dialogueVersion, workItemId: workItemId, rawBody: rawBody),
+                    respond: respond
+                )
+            case "stop":
+                guard request.body.count <= Self.maxDialogueBodyBytes,
+                      let rawBody = String(data: request.body, encoding: .utf8) else {
+                    return respond(.error(400, "invalid_request"))
+                }
+                audit.record("amber-dialogue-stop", Self.dialogueAuditFields(device: device, body: body, workItemId: workItemId, version: dialogueVersion))
+                forwardDialogueToAmber(
+                    .init(action: .dialogueStop, deviceName: device.name, deviceId: device.id,
+                          dialogueVersion: dialogueVersion, workItemId: workItemId, rawBody: rawBody),
+                    respond: respond
+                )
+            default:
+                respond(.error(404, "not found"))
+            }
+        case ("GET", let path) where path.hasPrefix("/v2/dialogue/receipts/"):
+            let rawSegment = String(path.dropFirst("/v2/dialogue/receipts/".count))
+            guard !rawSegment.isEmpty, !rawSegment.contains("/"),
+                  let requestId = rawSegment.removingPercentEncoding, !requestId.isEmpty else {
+                return respond(.error(404, "not found"))
+            }
+            let dialogueVersion = request.headers["x-amber-dialogue-version"]
+            forwardDialogueToAmber(
+                .init(action: .dialogueReceipt, deviceName: device.name, deviceId: device.id,
+                      dialogueVersion: dialogueVersion, requestId: requestId),
+                respond: respond
+            )
+        case ("GET", "/v2/dialogue/events"), ("GET", "/v2/dialogue/timeline"):
+            let params = request.queryParameters
+            let after: Int64
+            if let rawAfter = params["after"] {
+                guard let parsed = Int64(rawAfter), parsed >= 0 else {
+                    return respond(.error(400, "invalid_cursor"))
+                }
+                after = parsed
+            } else {
+                after = 0
+            }
+            let limit: Int
+            if let rawLimit = params["limit"] {
+                guard let parsed = Int(rawLimit), (1...100).contains(parsed) else {
+                    return respond(.error(400, "invalid_cursor"))
+                }
+                limit = parsed
+            } else {
+                limit = 100
+            }
+            let dialogueVersion = request.headers["x-amber-dialogue-version"]
+            forwardDialogueToAmber(
+                .init(action: .dialogueEvents, deviceName: device.name, deviceId: device.id,
+                      dialogueVersion: dialogueVersion, after: after, limit: limit),
+                respond: respond
+            )
         case ("GET", "/v1/amber/schedules"):
             forwardToAmber(.init(action: .listSchedules, deviceName: device.name), respond: respond)
         case ("POST", "/v1/amber/schedules"):
@@ -214,6 +299,38 @@ extension Daemon {
     private static func readSoulRevision(paths: GatewayPaths) -> Int64 {
         guard let text = try? String(contentsOf: paths.soulRevision, encoding: .utf8) else { return 0 }
         return Int64(text.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+    }
+
+    private static func dialogueAuditFields(device: PairedDevice, body: [String: Any], workItemId: String? = nil, version: String?) -> [String: String] {
+        var fields: [String: String] = [
+            "device": device.id,
+            "version": version ?? "legacy"
+        ]
+        if let workItemId, !workItemId.isEmpty { fields["workItemId"] = workItemId }
+        if let requestId = body["requestId"] as? String, !requestId.isEmpty { fields["requestId"] = String(requestId.prefix(128)) }
+        if let conversationId = body["conversationId"] as? String, !conversationId.isEmpty { fields["conversationId"] = String(conversationId.prefix(128)) }
+        return fields
+    }
+
+    private func forwardDialogueToAmber(_ request: AmberControl.Request, respond: @escaping (HTTPResponse) -> Void) {
+        let socket = paths.amberSocket.path
+        let queue = queue
+        DispatchQueue.global(qos: .userInitiated).async {
+            let reply = (try? GatewayJSON.encoder().encode(request))
+                .flatMap { UnixSocketClient.request($0, to: socket, timeout: AmberControl.timeout) }
+            queue.async {
+                guard let reply, let decoded = try? GatewayJSON.decoder().decode(AmberControl.Response.self, from: reply) else {
+                    return respond(.error(503, "Amber 未运行：在 Mac 上打开 Amber 后重试"))
+                }
+                if let rawJSON = decoded.rawJSON {
+                    return respond(HTTPResponse(status: decoded.status, body: Data(rawJSON.utf8)))
+                }
+                guard decoded.status < 300 else {
+                    return respond(.error(decoded.status, decoded.error ?? "internal_error"))
+                }
+                respond(.error(500, "empty_response"))
+            }
+        }
     }
 
     private func forwardSoulToAmber(_ request: AmberControl.Request, respond: @escaping (HTTPResponse) -> Void) {

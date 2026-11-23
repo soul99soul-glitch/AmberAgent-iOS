@@ -5,12 +5,36 @@ import Security
 public struct HTTPRequest: Sendable {
     public var method: String
     public var path: String
+    public var query: String?
     public var headers: [String: String]
     public var body: Data
 
+    public init(method: String, path: String, query: String? = nil, headers: [String: String], body: Data) {
+        self.method = method
+        self.path = path
+        self.query = query
+        self.headers = headers
+        self.body = body
+    }
+
     public var bearerToken: String? {
-        guard let value = headers["authorization"], value.hasPrefix("Bearer ") else { return nil }
+        guard let value = headers["authorization"], value.count > 7,
+              value.prefix(7).lowercased() == "bearer " else { return nil }
         return String(value.dropFirst(7))
+    }
+
+    public var queryParameters: [String: String] {
+        guard let query, !query.isEmpty else { return [:] }
+        var result: [String: String] = [:]
+        for pair in query.split(separator: "&", omittingEmptySubsequences: true) {
+            let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            let rawKey = String(parts[0]).replacingOccurrences(of: "+", with: " ")
+            let key = rawKey.removingPercentEncoding ?? rawKey
+            let rawValue = parts.count > 1 ? String(parts[1]).replacingOccurrences(of: "+", with: " ") : ""
+            let value = rawValue.removingPercentEncoding ?? rawValue
+            result[key] = value
+        }
+        return result
     }
 }
 
@@ -32,12 +56,12 @@ public struct HTTPResponse: Sendable {
     }
 }
 
-/// One request per connection (`Connection: close`), JSON bodies up to 64KB. That is all the gateway
+/// One request per connection (`Connection: close`), JSON bodies up to 100KB (+ headers). That is all the gateway
 /// API and the tests' push-service mocks need.
 public final class HTTPServer {
     public typealias Handler = (HTTPRequest, @escaping (HTTPResponse) -> Void) -> Void
 
-    static let maxRequest = 64 * 1024
+    static let maxRequest = 128 * 1024
     /// Clients read for 25 s, so a slow handler still answers before they give up and retry another address.
     static let connectionTimeout: TimeInterval = 20
     /// Reachable from the internet through the VPS tunnel: cap open sockets so idle connections can't exhaust
@@ -126,8 +150,13 @@ public final class HTTPServer {
     }
 
     private func respond(_ connection: NWConnection, _ response: HTTPResponse) {
-        let reason = [200: "OK", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found",
-                      409: "Conflict", 413: "Payload Too Large", 500: "Internal Server Error", 502: "Bad Gateway"][response.status] ?? "Status"
+        let reason = [
+            200: "OK", 202: "Accepted",
+            400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found",
+            409: "Conflict", 413: "Payload Too Large",
+            500: "Internal Server Error", 502: "Bad Gateway",
+            503: "Service Unavailable", 504: "Gateway Timeout"
+        ][response.status] ?? "Status"
         var head = "HTTP/1.1 \(response.status) \(reason)\r\nContent-Type: application/json\r\n"
         head += "Content-Length: \(response.body.count)\r\nConnection: close\r\n\r\n"
         connection.send(content: Data(head.utf8) + response.body, completion: .contentProcessed { _ in connection.cancel() })
@@ -145,6 +174,16 @@ public final class HTTPServer {
         var lines = head.components(separatedBy: "\r\n")
         let requestLine = lines.removeFirst().split(separator: " ")
         guard requestLine.count == 3 else { return .invalid }
+        let rawTarget = String(requestLine[1])
+        let path: String
+        let query: String?
+        if let qIndex = rawTarget.firstIndex(of: "?") {
+            path = String(rawTarget[..<qIndex])
+            query = String(rawTarget[rawTarget.index(after: qIndex)...])
+        } else {
+            path = rawTarget
+            query = nil
+        }
         var headers: [String: String] = [:]
         for line in lines {
             guard let colon = line.firstIndex(of: ":") else { return .invalid }
@@ -154,6 +193,6 @@ public final class HTTPServer {
         guard length >= 0 else { return .invalid }
         let body = buffer[end.upperBound...]
         guard body.count >= length else { return .incomplete }
-        return .complete(HTTPRequest(method: String(requestLine[0]), path: String(requestLine[1]), headers: headers, body: Data(body.prefix(length))))
+        return .complete(HTTPRequest(method: String(requestLine[0]), path: path, query: query, headers: headers, body: Data(body.prefix(length))))
     }
 }

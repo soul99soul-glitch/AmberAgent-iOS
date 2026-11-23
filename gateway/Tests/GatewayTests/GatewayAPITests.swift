@@ -22,10 +22,11 @@ final class PinnedClient: NSObject, URLSessionDelegate, @unchecked Sendable {
         completionHandler(.useCredential, URLCredential(trust: trust))
     }
 
-    func call(_ method: String, _ url: URL, token: String? = nil, body: [String: Any]? = nil) async throws -> (Int, [String: Any]) {
+    func call(_ method: String, _ url: URL, token: String? = nil, headers: [String: String] = [:], body: [String: Any]? = nil) async throws -> (Int, [String: Any]) {
         var request = URLRequest(url: url)
         request.httpMethod = method
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
         if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body) }
         let (data, response) = try await session.data(for: request)
         let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
@@ -430,5 +431,170 @@ final class GatewayAPITests {
         let (reconnectedCode, reconnectedStatus) = try await client2.call("GET", base.appendingPathComponent("v1/status"), token: token2)
         #expect(reconnectedCode == 200)
         #expect((reconnectedStatus["device"] as? [String: Any])?["name"] as? String == "Mate 60")
+    }
+
+    @Test func dialogueRoutesForwardAuthQueryStatusCodesAndLargePages() async throws {
+        try startDaemon()
+        let payload = try pairingPayload()
+        let client = PinnedClient(fingerprint: payload.fp)
+        let base = URL(string: "https://127.0.0.1:\(payload.port)")!
+        let (_, paired) = try await client.call("POST", base.appendingPathComponent("v1/pair"),
+                                                body: ["secret": payload.s, "platform": "ios", "deviceName": "测试 iPhone"])
+        let token = try #require(paired["token"] as? String)
+        let deviceId = try #require(paired["deviceId"] as? String)
+        let v1Headers = ["X-Amber-Dialogue-Version": "1"]
+
+        // 1. Auth required & 503 when Amber.app is not running
+        #expect(try await client.call("POST", base.appendingPathComponent("v2/dialogue/messages"),
+                                      body: ["requestId": "req-1", "text": "hi"]).0 == 401)
+        let (offlineCode, offlineJSON) = try await client.call("POST", base.appendingPathComponent("v2/dialogue/messages"),
+                                                               token: token, headers: v1Headers,
+                                                               body: ["requestId": "req-1", "text": "secret-body-text"])
+        #expect(offlineCode == 503)
+        #expect((offlineJSON["error"] as? String)?.contains("Amber 未运行") == true)
+
+        // 2. Invalid cursor query validation (400 invalid_cursor)
+        for badQuery in ["after=-1", "after=abc", "limit=0", "limit=101", "limit=nan"] {
+            let url = URL(string: "https://127.0.0.1:\(payload.port)/v2/dialogue/events?\(badQuery)")!
+            let (code, json) = try await client.call("GET", url, token: token, headers: v1Headers)
+            #expect(code == 400)
+            #expect(json["error"] as? String == "invalid_cursor")
+        }
+
+        // 3. Stand-in Amber.app socket verifies forwarding, status codes, unwrapped JSON & >100KB event page
+        let received = Locked<[AmberControl.Request]>([])
+        let largePayloadText = String(repeating: "A", count: 120_000)
+        let app = UnixSocketServer(path: paths.amberSocket.path, queue: DispatchQueue(label: "fake-amber-dialogue")) { data in
+            guard let req = try? GatewayJSON.decoder().decode(AmberControl.Request.self, from: data) else { return nil }
+            received.mutate { $0.append(req) }
+            let resp: AmberControl.Response
+            switch req.action {
+            case .dialogueMessage:
+                resp = AmberControl.Response(
+                    status: 202,
+                    rawJSON: #"{"eventId":"evt-1","requestId":"req-1","topicId":"topic-1","workItemIds":["work:mac-1"],"state":"received","replayed":false,"executorKind":"mac","schemaVersion":1}"#
+                )
+            case .dialogueFollowup:
+                if req.workItemId == "work:mac-conflict" {
+                    resp = .failure(409, "request_id_conflict")
+                } else {
+                    resp = AmberControl.Response(
+                        status: 202,
+                        rawJSON: #"{"eventId":"evt-2","requestId":"req-2","topicId":"topic-1","workItemIds":["work:mac-1"],"state":"received","replayed":false,"executorKind":"mac","schemaVersion":1}"#
+                    )
+                }
+            case .dialogueStop:
+                if req.workItemId == "work:missing" {
+                    resp = .failure(404, "task_not_found")
+                } else {
+                    resp = AmberControl.Response(
+                        status: 200,
+                        rawJSON: #"{"eventId":"evt-3","requestId":"req-3","topicId":"topic-1","workItemIds":["work:mac-1"],"state":"consumed","replayed":false,"executorKind":"mac","schemaVersion":1}"#
+                    )
+                }
+            case .dialogueReceipt:
+                if req.requestId == "req-missing" {
+                    resp = .failure(404, "receipt_not_found")
+                } else {
+                    resp = AmberControl.Response(
+                        status: 200,
+                        rawJSON: #"{"eventId":"evt-1","requestId":"req-1","topicId":"topic-1","workItemIds":["work:mac-1"],"state":"consumed","replayed":true,"executorKind":"mac","schemaVersion":1}"#
+                    )
+                }
+            case .dialogueEvents:
+                let pageObj: [String: Any] = [
+                    "items": [[
+                        "seq": 7, "id": "evt-big", "kind": "task_result", "role": "assistant",
+                        "text": largePayloadText, "topicId": "topic-1", "workItemId": "work:mac-1",
+                        "outcome": "completed", "executorKind": "mac", "schemaVersion": 1
+                    ]],
+                    "nextCursor": 7,
+                    "soulRevision": 4,
+                    "schemaVersion": 1
+                ]
+                let pageData = (try? JSONSerialization.data(withJSONObject: pageObj, options: [.sortedKeys])) ?? Data()
+                resp = AmberControl.Response(status: 200, rawJSON: String(decoding: pageData, as: UTF8.self))
+            default:
+                resp = .failure(400, "invalid_request")
+            }
+            return try? GatewayJSON.encoder().encode(resp)
+        }
+        try app.start()
+        defer { app.stop() }
+
+        // POST /v2/dialogue/messages -> 202 unwrapped receipt
+        let (msgCode, msgJSON) = try await client.call("POST", base.appendingPathComponent("v2/dialogue/messages"),
+                                                       token: token, headers: v1Headers,
+                                                       body: ["requestId": "req-1", "text": "secret-plaintext-must-not-be-logged", "conversationId": "conv-1"])
+        #expect(msgCode == 202)
+        #expect(msgJSON["eventId"] as? String == "evt-1")
+        #expect(msgJSON["status"] == nil, "must not wrap in AmberControl.Response")
+        #expect(msgJSON["executorKind"] as? String == "mac")
+
+        // POST /v2/work-items/{id}/inputs (encoded colon) -> 202 and 409 pass-through
+        let followupURL = URL(string: "https://127.0.0.1:\(payload.port)/v2/work-items/work%3Amac-1/inputs")!
+        let (fCode, fJSON) = try await client.call("POST", followupURL, token: token, headers: v1Headers,
+                                                   body: ["requestId": "req-2", "text": "补充一下"])
+        #expect(fCode == 202)
+        #expect(fJSON["eventId"] as? String == "evt-2")
+
+        let conflictURL = URL(string: "https://127.0.0.1:\(payload.port)/v2/work-items/work:mac-conflict/inputs")!
+        let (cCode, cJSON) = try await client.call("POST", conflictURL, token: token, headers: v1Headers,
+                                                   body: ["requestId": "req-2", "text": "tampered"])
+        #expect(cCode == 409)
+        #expect(cJSON["error"] as? String == "request_id_conflict")
+
+        // POST /v2/work-items/{id}/stop -> 200 and 404 pass-through
+        let stopURL = URL(string: "https://127.0.0.1:\(payload.port)/v2/work-items/work:mac-1/stop")!
+        let (sCode, sJSON) = try await client.call("POST", stopURL, token: token, headers: v1Headers,
+                                                   body: ["requestId": "req-3"])
+        #expect(sCode == 200)
+        #expect(sJSON["state"] as? String == "consumed")
+
+        let missingStopURL = URL(string: "https://127.0.0.1:\(payload.port)/v2/work-items/work:missing/stop")!
+        let (msCode, msJSON) = try await client.call("POST", missingStopURL, token: token, headers: v1Headers,
+                                                     body: ["requestId": "req-4"])
+        #expect(msCode == 404)
+        #expect(msJSON["error"] as? String == "task_not_found")
+
+        // GET /v2/dialogue/receipts/{requestId} -> 200 and 404
+        let (rCode, rJSON) = try await client.call("GET", base.appendingPathComponent("v2/dialogue/receipts/req-1"),
+                                                   token: token, headers: v1Headers)
+        #expect(rCode == 200)
+        #expect(rJSON["replayed"] as? Bool == true)
+        let (mrCode, mrJSON) = try await client.call("GET", base.appendingPathComponent("v2/dialogue/receipts/req-missing"),
+                                                     token: token, headers: v1Headers)
+        #expect(mrCode == 404)
+        #expect(mrJSON["error"] as? String == "receipt_not_found")
+
+        // GET /v2/dialogue/events?after=5&limit=25 and alias /v2/dialogue/timeline (large >100KB body not truncated)
+        let eventsURL = URL(string: "https://127.0.0.1:\(payload.port)/v2/dialogue/events?after=5&limit=25")!
+        let (eCode, eJSON) = try await client.call("GET", eventsURL, token: token, headers: v1Headers)
+        #expect(eCode == 200)
+        #expect(eJSON["nextCursor"] as? Int == 7)
+        #expect(eJSON["soulRevision"] as? Int == 4)
+        let items = try #require(eJSON["items"] as? [[String: Any]])
+        #expect((items.first?["text"] as? String)?.count == 120_000)
+
+        let timelineURL = URL(string: "https://127.0.0.1:\(payload.port)/v2/dialogue/timeline?after=0&limit=100")!
+        let (tCode, _) = try await client.call("GET", timelineURL, token: token, headers: v1Headers)
+        #expect(tCode == 200)
+
+        // Verify forwarded fields & privacy-safe audit log
+        let forwarded = received.value
+        #expect(forwarded.count == 9)
+        #expect(forwarded[0].action == .dialogueMessage)
+        #expect(forwarded[0].deviceId == deviceId)
+        #expect(forwarded[0].deviceName == "测试 iPhone")
+        #expect(forwarded[0].dialogueVersion == "1")
+        #expect(forwarded[1].workItemId == "work:mac-1")
+        #expect(forwarded[7].action == .dialogueEvents && forwarded[7].after == 5 && forwarded[7].limit == 25)
+        #expect(forwarded[8].action == .dialogueEvents && forwarded[8].after == 0 && forwarded[8].limit == 100)
+
+        let auditText = try String(contentsOf: paths.audit, encoding: .utf8)
+        #expect(auditText.contains("amber-dialogue-message"))
+        #expect(auditText.contains("amber-dialogue-followup"))
+        #expect(auditText.contains("amber-dialogue-stop"))
+        #expect(!auditText.contains("secret-plaintext-must-not-be-logged"), "audit log must never persist message plaintext")
     }
 }

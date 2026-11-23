@@ -15,6 +15,7 @@ import Foundation
     /// The task board as the phone sees it; set by the live app (it knows the scheduled runs in flight).
     var board: (@MainActor () -> [AmberControl.BoardItem])?
     var soulStore: DesktopAgentSoulStore?
+    var dialogue: DesktopMacDialogueCoordinator?
 
     init(paths: GatewayPaths = .resolve(), tasks: DesktopAgentTasks, reporter: DesktopGatewayReporter, scheduler: DesktopScheduler?) {
         self.paths = paths; self.tasks = tasks; self.reporter = reporter; self.scheduler = scheduler
@@ -95,6 +96,9 @@ import Foundation
             } catch {
                 return .failure(400, error.localizedDescription)
             }
+        case .dialogueMessage, .dialogueFollowup, .dialogueStop, .dialogueReceipt, .dialogueEvents:
+            guard let dialogue else { return .failure(503, "本地对话执行器不可用") }
+            return dialogue.handleControl(request)
         }
     }
 
@@ -122,7 +126,8 @@ import Foundation
             }
             if let error = scheduler.runNow(id) { return .failure(409, error) }
             return AmberControl.Response(status: 200, schedule: scheduler.tasks.first { $0.id == id }.map { Self.summary($0, scheduler) })
-        case .decide, .board, .getSoul, .putSoul:
+        case .decide, .board, .getSoul, .putSoul,
+             .dialogueMessage, .dialogueFollowup, .dialogueStop, .dialogueReceipt, .dialogueEvents:
             return .failure(400, "无法识别的请求")
         }
     }

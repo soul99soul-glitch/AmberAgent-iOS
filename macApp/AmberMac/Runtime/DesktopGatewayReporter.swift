@@ -79,6 +79,11 @@ import Foundation
         runs[conversationID] = run
     }
 
+    func sources(forConversation conversationID: UUID) -> (refs: [String], paths: [String]) {
+        guard let run = runs[conversationID] else { return ([], []) }
+        return (run.sourceRefs, run.sourcePaths)
+    }
+
     /// `quiet`: completed with nothing new, so the gateway records it without pushing (failures push regardless).
     func runFinished(
         conversationID: UUID?,
