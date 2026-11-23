@@ -456,9 +456,7 @@ struct UnifiedMacDelegationTimelineSection: View {
         .task(id: "\(conversationId ?? "")|\(locale.identifier)") {
             let updates = Observations { @MainActor in
                 let approvals = store.allActiveApprovalCardItems(for: conversationId)
-                let dismissed = store.dismissedUnifiedMacRunIds
                 let runs = store.allUnifiedDelegatedRuns(for: conversationId, approvals: approvals)
-                    .filter { !dismissed.contains($0.id) }
                 let attached = Set(runs.compactMap { $0.pendingApproval?.id })
                 return Projection(runs: runs, standalone: approvals.filter { !attached.contains($0.id) })
             }
@@ -512,7 +510,7 @@ struct UnifiedMacDelegationTimelineSection: View {
                         if let approval = run.pendingApproval { onOpenApproval(approval) }
                     },
                     onDismissCard: {
-                        store.dismissedUnifiedMacRunIds.insert(run.id)
+                        store.dismissUnifiedDelegatedRun(run)
                     }
                 )
             }
@@ -579,15 +577,7 @@ private struct UnifiedMacDelegationRunCard: View {
     @State private var pendingConfirmation: PendingConfirmation? = nil
 
     private var canDismissCard: Bool {
-        guard !run.isBusy, !run.isReceiptUnconfirmed, !run.isOutcomeUnknown, run.pendingApproval == nil else {
-            return false
-        }
-        switch run.badge {
-        case .failed, .completed, .cancelled, .retried, .trackingEnded:
-            return true
-        case .running, .followup, .awaitingMacApproval, .outcomeUnknown:
-            return false
-        }
+        run.canDismissCard
     }
 
     private var badgeTint: Color {

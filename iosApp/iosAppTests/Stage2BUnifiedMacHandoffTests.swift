@@ -846,4 +846,329 @@ struct Stage2BUnifiedMacHandoffTests {
         #expect(recorded[1].requestId == reqId)
         #expect(recorded[1].conversationId == nil)
     }
+
+    // MARK: - 7. Dismissed Terminal Cloud/Mac Cards Persist & Survive Polling / ID Transitions
+
+    @Test @MainActor func dismissedFailedCloudCardStaysHiddenAcrossPollingIdTransitionsAndColdReload() async throws {
+        actor PollState {
+            var pollCount = 0
+            func nextPoll() -> Int {
+                pollCount += 1
+                return pollCount
+            }
+        }
+        let pollState = PollState()
+        let convId = "conv-dismiss-persist"
+        let reqFailSub = "550e8400-e29b-41d4-a716-446655440901"
+        let reqFresh = "550e8400-e29b-41d4-a716-446655440903"
+
+        let transport: MacGatewayClient.Transport = { request, _ in
+            let url = request.url!
+            let path = url.path
+            if request.httpMethod == "POST", path == "/v2/dialogue/messages" {
+                let body = (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data()) as? [String: Any]) ?? [:]
+                let reqId = body["requestId"] as? String ?? ""
+                if reqId == reqFailSub {
+                    return Self.jsonResponse(
+                        url: url,
+                        status: 202,
+                        json: """
+                        {
+                          "eventId": "evt-fail-sub",
+                          "requestId": "\(reqFailSub)",
+                          "topicId": "topic-fail-sub",
+                          "workItemIds": [],
+                          "state": "received",
+                          "replayed": false,
+                          "conversationId": "\(convId)"
+                        }
+                        """
+                    )
+                }
+                if reqId == reqFresh {
+                    return Self.jsonResponse(
+                        url: url,
+                        status: 202,
+                        json: """
+                        {
+                          "eventId": "evt-fresh-sub",
+                          "requestId": "\(reqFresh)",
+                          "topicId": "topic-fresh",
+                          "workItemIds": ["work:fresh-1"],
+                          "state": "received",
+                          "replayed": false,
+                          "conversationId": "\(convId)"
+                        }
+                        """
+                    )
+                }
+            }
+            if request.httpMethod == "GET", path == "/v2/dialogue/events" {
+                let step = await pollState.nextPoll()
+                if step == 1 {
+                    // Upgrades reqFailSub from `cloud-sub:<reqFailSub>` (directReply failure) to `cloud-work:work:fail-sub-1`
+                    // AND upgrades `cloud-work:topic:topic-fail-provisional` to `cloud-work:work:fail-provisional-1`.
+                    return Self.jsonResponse(
+                        url: url,
+                        status: 200,
+                        json: """
+                        {
+                          "items": [
+                            {
+                              "seq": 10,
+                              "id": "evt-fail-sub-upgrade",
+                              "kind": "task_result",
+                              "role": "assistant",
+                              "text": "云端执行失败：上游超时",
+                              "topicId": "topic-fail-sub",
+                              "workItemId": "work:fail-sub-1",
+                              "outcome": "failed",
+                              "causedByRequestId": "\(reqFailSub)",
+                              "conversationId": "\(convId)"
+                            },
+                            {
+                              "seq": 11,
+                              "id": "evt-fail-topic-upgrade",
+                              "kind": "task_result",
+                              "role": "assistant",
+                              "text": "云端执行失败：节点断开",
+                              "topicId": "topic-fail-provisional",
+                              "workItemId": "work:fail-provisional-1",
+                              "outcome": "failed",
+                              "conversationId": "\(convId)"
+                            }
+                          ],
+                          "nextCursor": 11,
+                          "conversationId": "\(convId)"
+                        }
+                        """
+                    )
+                }
+                return Self.jsonResponse(url: url, status: 200, json: #"{"items":[],"nextCursor":11}"#)
+            }
+            return Self.jsonResponse(url: url, status: 404, json: #"{"error":"not_found"}"#)
+        }
+
+        let (store, defaults, suiteName) = try makeTestStore(suiteSuffix: "DismissFailedPersist", transport: transport)
+        defer {
+            store.stopCloudDialoguePolling()
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        // 1. Send a delegation whose receipt initially has no workItemIds, then receives a failed directReply
+        //    so it renders as `cloud-sub:<reqFailSub>` with badge `.failed`.
+        _ = try await store.delegateInUnifiedTimeline(
+            to: .cloud,
+            text: "帮我在云端跑构建",
+            conversationId: convId,
+            requestId: reqFailSub
+        ).get()
+        store.stopCloudDialoguePolling()
+
+        let initialEventsJSON = """
+        {
+          "items": [
+            {
+              "seq": 1,
+              "id": "evt-direct-fail",
+              "kind": "assistant_reply",
+              "role": "assistant",
+              "text": "云端执行失败：上游超时",
+              "topicId": "topic-fail-sub",
+              "outcome": "failed",
+              "causedByRequestId": "\(reqFailSub)",
+              "conversationId": "\(convId)"
+            },
+            {
+              "seq": 2,
+              "id": "evt-provisional-fail",
+              "kind": "task_result",
+              "role": "assistant",
+              "text": "云端执行失败：节点断开",
+              "topicId": "topic-fail-provisional",
+              "outcome": "failed",
+              "conversationId": "\(convId)"
+            },
+            {
+              "seq": 3,
+              "id": "evt-still-running",
+              "kind": "process_event",
+              "role": "system",
+              "text": "正在执行中…",
+              "topicId": "topic-running",
+              "workItemId": "work:active-1",
+              "conversationId": "\(convId)"
+            }
+          ],
+          "nextCursor": 3,
+          "conversationId": "\(convId)"
+        }
+        """
+        store.ingestCloudDialogueEventsPage(
+            try JSONDecoder().decode(MacGatewayCloudDialogueEventsPage.self, from: Data(initialEventsJSON.utf8)),
+            requestedAfter: 0
+        )
+        store.persistCloudDialogueState(immediately: true)
+
+        let beforeDismiss = store.allUnifiedDelegatedRuns(for: convId)
+        let subFailedRun = try #require(beforeDismiss.first(where: { $0.id == "cloud-sub:\(reqFailSub)" }))
+        let topicFailedRun = try #require(beforeDismiss.first(where: { $0.id == "cloud-work:topic:topic-fail-provisional" }))
+        let runningRun = try #require(beforeDismiss.first(where: { $0.workItemId == "work:active-1" }))
+
+        #expect(subFailedRun.badge == .failed && subFailedRun.canDismissCard)
+        #expect(topicFailedRun.badge == .failed && topicFailedRun.canDismissCard)
+        #expect(runningRun.badge == .running && !runningRun.canDismissCard)
+
+        // Active / non-terminal cards MUST reject dismissal.
+        #expect(store.dismissUnifiedDelegatedRun(runningRun) == false)
+
+        // Dismiss both terminal failed cards.
+        #expect(store.dismissUnifiedDelegatedRun(subFailedRun) == true)
+        #expect(store.dismissUnifiedDelegatedRun(topicFailedRun) == true)
+
+        let afterDismiss = store.allUnifiedDelegatedRuns(for: convId)
+        #expect(afterDismiss.map(\.workItemId) == ["work:active-1"])
+
+        // 2. Poll receives upgraded task_result events (`sub:` -> `work:fail-sub-1`, and `topic:` -> `work:fail-provisional-1`).
+        //    Neither dismissed card may resurrect.
+        _ = try await store.pollCloudDialogueEvents(reconcileSubmissions: false).get()
+        let afterPoll = store.allUnifiedDelegatedRuns(for: convId)
+        #expect(afterPoll.map(\.workItemId) == ["work:active-1"])
+        #expect(!afterPoll.contains(where: { $0.requestId == reqFailSub || $0.workItemId == "work:fail-sub-1" }))
+        #expect(!afterPoll.contains(where: { $0.workItemId == "work:fail-provisional-1" }))
+
+        // 3. Cold reload: fresh MacGatewayStore backed by the same UserDefaults restores dismissed state.
+        let reloadedStore = MacGatewayStore(
+            defaults: defaults,
+            biometricAuthenticator: AlwaysPassBiometricAuth(),
+            isApplicationForeground: { true }
+        )
+        let reloadedConnection = try #require(store.connection)
+        let reloadedClient = MacGatewayClient(
+            addrs: reloadedConnection.addrs,
+            port: reloadedConnection.port,
+            fingerprint: reloadedConnection.fingerprint,
+            token: "tok-stage2b",
+            transport: transport
+        )
+        reloadedStore.configureForTesting(connection: reloadedConnection, client: reloadedClient)
+        defer { reloadedStore.stopCloudDialoguePolling() }
+
+        let afterReload = reloadedStore.allUnifiedDelegatedRuns(for: convId)
+        #expect(afterReload.map(\.workItemId) == ["work:active-1"])
+        #expect(!afterReload.contains(where: { $0.requestId == reqFailSub || $0.workItemId == "work:fail-sub-1" }))
+        #expect(!afterReload.contains(where: { $0.workItemId == "work:fail-provisional-1" }))
+
+        // 4. A brand-new delegation in the same conversation still appears normally.
+        _ = try await reloadedStore.delegateInUnifiedTimeline(
+            to: .cloud,
+            text: "重新发起一个新任务",
+            conversationId: convId,
+            requestId: reqFresh
+        ).get()
+        reloadedStore.stopCloudDialoguePolling()
+
+        let withFreshRun = reloadedStore.allUnifiedDelegatedRuns(for: convId)
+        #expect(withFreshRun.contains(where: { $0.requestId == reqFresh && $0.workItemId == "work:fresh-1" }))
+        #expect(!withFreshRun.contains(where: { $0.requestId == reqFailSub || $0.workItemId == "work:fail-sub-1" }))
+        #expect(!withFreshRun.contains(where: { $0.workItemId == "work:fail-provisional-1" }))
+    }
+
+    @Test @MainActor func dismissedMacSlotCardPersistsPerSlotAndBoundedPruningPreservesReferencedKeys() async throws {
+        let convId = "conv-dismiss-mac-slot"
+        let transport: MacGatewayClient.Transport = { request, _ in
+            let url = request.url!
+            if request.httpMethod == "GET", url.path == "/v2/dialogue/events" {
+                return Self.jsonResponse(url: url, status: 200, json: #"{"items":[],"nextCursor":1}"#)
+            }
+            return Self.jsonResponse(url: url, status: 404, json: #"{"error":"not_found"}"#)
+        }
+        let (store, defaults, suiteName) = try makeTestStore(suiteSuffix: "DismissMacSlot", transport: transport)
+        defer {
+            store.stopCloudDialoguePolling()
+            store.macSlot?.stopCloudDialoguePolling()
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let macConnection = MacGatewayConnection(
+            gatewayId: "gw-mac-slot",
+            name: "Office Mac Studio",
+            addrs: ["127.0.0.1"],
+            port: 9444,
+            fingerprint: "fp-mac-slot",
+            deviceId: "ios-mac-slot",
+            role: .mac
+        )
+        let macClient = MacGatewayClient(
+            addrs: macConnection.addrs,
+            port: macConnection.port,
+            fingerprint: macConnection.fingerprint,
+            token: "tok-mac-slot",
+            transport: transport
+        )
+        store.configureForTesting(role: .mac, connection: macConnection, client: macClient)
+
+        let macFailedJSON = """
+        {
+          "items": [
+            {
+              "seq": 1,
+              "id": "evt-mac-fail-1",
+              "kind": "task_result",
+              "role": "assistant",
+              "text": "Mac 执行失败：命令退出码 1",
+              "topicId": "topic-mac-1",
+              "workItemId": "work:mac-fail-1",
+              "outcome": "failed",
+              "conversationId": "\(convId)"
+            }
+          ],
+          "nextCursor": 1,
+          "conversationId": "\(convId)"
+        }
+        """
+        let macSlot = store.slot(for: .mac)
+        macSlot.ingestCloudDialogueEventsPage(
+            try JSONDecoder().decode(MacGatewayCloudDialogueEventsPage.self, from: Data(macFailedJSON.utf8)),
+            requestedAfter: 0
+        )
+        macSlot.persistCloudDialogueState(immediately: true)
+
+        let macRun = try #require(store.allUnifiedDelegatedRuns(for: convId).first(where: { $0.endpointRole == .mac }))
+        #expect(macRun.id == "mac-work:work:mac-fail-1" && macRun.canDismissCard)
+
+        // Dismiss via the root store; dismissal must route to & persist on macSlot.
+        #expect(store.dismissUnifiedDelegatedRun(macRun) == true)
+        #expect(store.allUnifiedDelegatedRuns(for: convId).isEmpty)
+
+        let reloadedStore = MacGatewayStore(
+            defaults: defaults,
+            biometricAuthenticator: AlwaysPassBiometricAuth(),
+            isApplicationForeground: { true }
+        )
+        reloadedStore.configureForTesting(role: .mac, connection: macConnection, client: macClient)
+        defer { reloadedStore.macSlot?.stopCloudDialoguePolling() }
+        #expect(reloadedStore.allUnifiedDelegatedRuns(for: convId).isEmpty)
+
+        // Verify bounded cleanup keeps active-reference dismissed keys while trimming stale unreferenced keys.
+        let referencedProgress = MacGatewayCloudDialogueWorkItemProgress(
+            workItemId: "work:still-present",
+            topicId: "topic-present",
+            statusLine: "失败",
+            processEventCount: 1,
+            lastEventSeq: 1,
+            outcome: .failed
+        )
+        let staleKeys = (0..<300).map { "cloud-work:work:stale-\($0)" }
+        let bounded = MacGatewayStore.boundedDismissedUnifiedRunIds(
+            ["cloud-work:work:still-present"] + staleKeys,
+            submissions: [],
+            progressByWorkItem: ["work:still-present": referencedProgress],
+            events: [],
+            maxCount: 32
+        )
+        #expect(bounded.count == 32)
+        #expect(bounded.contains("cloud-work:work:still-present"))
+        #expect(bounded.last == "cloud-work:work:stale-299")
+    }
 }
