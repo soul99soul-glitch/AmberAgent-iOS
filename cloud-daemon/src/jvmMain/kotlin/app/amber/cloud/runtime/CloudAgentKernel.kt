@@ -42,14 +42,20 @@ import app.amber.cloud.supertags.ConversationTagger
 import app.amber.cloud.supertags.HubService
 import app.amber.cloud.supertags.SupertagMaintenance
 import app.amber.cloud.supertags.SupertagStore
+import app.amber.cloud.proactive.CloudProactiveL2Judge
+import app.amber.cloud.proactive.DeviceContextPrepTriggerSource
 import app.amber.cloud.proactive.InterruptionBudgetConfig
-import app.amber.cloud.proactive.L2NoteworthyScore
-import app.amber.cloud.proactive.NoteworthyJudgeProvider
+import app.amber.cloud.proactive.L1DeterministicFilter
 import app.amber.cloud.proactive.ProactiveEngine
-import app.amber.cloud.proactive.ProactiveRunResult
+import app.amber.cloud.proactive.ProactiveFilePersistence
+import app.amber.cloud.proactive.ProactiveMonitorStore
 import app.amber.cloud.proactive.ProactiveRestraintGate
+import app.amber.cloud.proactive.ProactiveRunHistoryStore
+import app.amber.cloud.proactive.ProactiveRunResult
 import app.amber.cloud.proactive.ProactiveTriggerSignal
+import app.amber.cloud.proactive.ProactiveWebhookStore
 import app.amber.cloud.proactive.QuietHoursConfig
+import app.amber.cloud.proactive.WatchtowerMonitorTriggerSource
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.security.EnvelopeCredentialVault
 import app.amber.cloud.security.PlaceholderCredentialException
@@ -137,21 +143,20 @@ class CloudAgentKernel(
         persistenceFile = File(dataDir, "owner-bindings.json"),
     ),
     val proactiveEngine: ProactiveEngine = ProactiveEngine(
-        l2Judge = NoteworthyJudgeProvider { req ->
-            L2NoteworthyScore(
-                noteworthy = true,
-                urgency = 4,
-                importance = 4,
-                summary = req.deltaSummary.lines().firstOrNull()?.take(80) ?: req.topicKey,
-            )
-        },
+        l1Filter = L1DeterministicFilter(
+            persistenceFile = File(File(dataDir, "proactive"), "l1-filter.json"),
+        ),
+        l2Judge = CloudProactiveL2Judge(modelClient),
         restraintGate = ProactiveRestraintGate(
             quietHours = QuietHoursConfig(),
             budgetConfig = InterruptionBudgetConfig(),
+            persistenceFile = File(File(dataDir, "proactive"), "restraint-gate.json"),
         ),
     ),
     val workerApprovals: Boolean = false,
     val workerApprovalTtlMs: Long = 30 * 60_000L,
+    proactiveHttpClient: io.ktor.client.HttpClient? = null,
+    proactiveDnsResolver: (String) -> List<java.net.InetAddress> = { java.net.InetAddress.getAllByName(it).toList() },
 ) : ChannelIngress {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -160,13 +165,18 @@ class CloudAgentKernel(
     val memoryDir = File(dataDir, "memory").also { it.mkdirs() }
     val checkpointsDir = File(dataDir, "checkpoints").also { it.mkdirs() }
     val workspaceDir = File(dataDir, "workspace").also { it.mkdirs() }
+    val proactiveDir = File(dataDir, "proactive").also { ProactiveFilePersistence.ensureOwnerOnlyDir(it) }
 
     val conversationStorage = JsonConversationStorage(ConversationFile(conversationsDir.absolutePath))
     val vault = vaultOverride ?: EnvelopeCredentialVault(
         vaultFile = File(dataDir, "secrets.enc.json"),
         masterSecretOverride = masterSecretOverride,
     )
+    val proactiveMonitorStore = ProactiveMonitorStore(proactiveDir)
+    val proactiveWebhookStore = ProactiveWebhookStore(proactiveDir, vault)
+    val proactiveRunHistoryStore = ProactiveRunHistoryStore(proactiveDir)
     val memoryStore = CloudMemoryStore(memoryDir)
+    val proceduralRuleStore = app.amber.cloud.rules.ProceduralRuleStore(dataDir)
     val soulStore = app.amber.cloud.soul.CloudSoulStore(dataDir = dataDir, memoryDir = memoryDir, workspaceDir = workspaceDir).also { s ->
         memoryStore.onSoulPromptSaved = { md ->
             s.put(app.amber.cloud.soul.SoulPutRequestDto(soulMarkdown = md, isDefault = md.isBlank(), source = "memory_store"))
@@ -223,6 +233,7 @@ class CloudAgentKernel(
         memoryStore = memoryStore,
         modelClients = modelClients,
         soulStore = soulStore,
+        proceduralRuleStore = proceduralRuleStore,
         contextManager = contextManager,
         contextWindowTokens = contextWindowTokens,
     )
@@ -232,6 +243,18 @@ class CloudAgentKernel(
         routerIngress.recordReply(PRIMARY_CONVERSATION_ID.toString(),text,Uuid.parse(java.util.UUID.nameUUIDFromBytes(id.toByteArray()).toString()))
     } }
     val scheduleRunner by lazy { app.amber.cloud.gateway.CloudScheduleRunner(this) }
+    val watchtowerTriggerSource = WatchtowerMonitorTriggerSource(
+        monitorStore = proactiveMonitorStore,
+        l1Filter = proactiveEngine.l1Filter,
+        httpClient = proactiveHttpClient,
+        dnsResolver = proactiveDnsResolver,
+    )
+    val deviceContextPrepTriggerSource: DeviceContextPrepTriggerSource = DeviceContextPrepTriggerSource(
+        deviceContextStore = gatewayState.deviceContextStore,
+        memoryStore = memoryStore,
+        pairedDevicesProvider = gatewayState::loadDevicesStrict,
+        zoneIdProvider = { proactiveEngine.restraintGate.budgetConfig.zoneId },
+    )
 
     private val connectors = ConcurrentHashMap<ChannelKind, ChannelConnector>()
     private val pendingRunsBySessionKey = ConcurrentHashMap<String, PendingRunRecord>()
@@ -250,6 +273,8 @@ class CloudAgentKernel(
 
     init {
         registerBuiltinTools()
+        proactiveEngine.registerTriggerSource(watchtowerTriggerSource)
+        proactiveEngine.registerTriggerSource(deviceContextPrepTriggerSource)
         app.amber.cloud.tasks.TaskExecutionTools(taskWorkspace, taskProcesses).register(toolRegistry)
         app.amber.cloud.tasks.TaskNetworkTools(publicHttp, taskWorkspace).register(toolRegistry)
         search.register(toolRegistry) {
@@ -487,8 +512,13 @@ class CloudAgentKernel(
                 )
             }
         }
-        val rawResults = proactiveEngine.pollAllSources(targetChatId = "", channel = null)
+        val rawResults = proactiveEngine.pollAllSources(
+            targetChatId = "",
+            channel = null,
+            nowOverrideMs = nowMs,
+        )
         return rawResults.map { res ->
+            proactiveRunHistoryStore.recordFromResult(res, timestampEpochMs = nowMs)
             if (res is ProactiveRunResult.PushedAtL3) {
                 deliverProactiveCardToOwner(res)
             } else {
@@ -500,18 +530,20 @@ class CloudAgentKernel(
     /**
      * Evaluates a single [ProactiveTriggerSignal] in the kernel (enforcing L1, L2, quiet hours,
      * and interruption budget) and delivers any produced L3 card to the owner's private chats
-     * across registered outbound [ChannelConnector]s while recording it on [PRIMARY_CONVERSATION_ID].
+     * across registered outbound [ChannelConnector]s and paired APNs devices while recording it on [PRIMARY_CONVERSATION_ID].
      */
     suspend fun triggerProactiveSignal(
         signal: ProactiveTriggerSignal,
         nowOverrideMs: Long? = null,
     ): ProactiveRunResult {
+        val evalNowMs = nowOverrideMs ?: signal.timestampEpochMs
         val res = proactiveEngine.processSignal(
             signal = signal,
             targetChatId = "",
             channel = null,
             nowOverrideMs = nowOverrideMs,
         )
+        proactiveRunHistoryStore.recordFromResult(res, fallbackSignal = signal, timestampEpochMs = evalNowMs)
         return if (res is ProactiveRunResult.PushedAtL3) {
             deliverProactiveCardToOwner(res)
         } else {
@@ -524,21 +556,10 @@ class CloudAgentKernel(
         var firstReceipt: OutboundReceipt? = pushed.receipt
 
         // Record the proactive card in the primary timeline so context is continuous across restarts
-        val existing = conversationStorage.loadConversation(PRIMARY_CONVERSATION_ID)
-            ?: Conversation(
-                id = PRIMARY_CONVERSATION_ID,
-                assistantId = DEFAULT_ASSISTANT_ID,
-                title = "主时间线",
-                messageNodes = emptyList(),
-            )
-        val proactiveMsg = sanitizeAssistantMessage(
-            UIMessage.assistant("【主动提醒 · ${card.title}】\n${card.markdownBody}")
-        )
-        conversationStorage.saveConversation(
-            existing.copy(
-                messageNodes = existing.messageNodes + proactiveMsg.toMessageNode(),
-                updateAt = Clock.System.now(),
-            )
+        routerIngress.recordReply(
+            PRIMARY_CONVERSATION_ID.toString(),
+            CredentialRedactor.redact("【主动提醒 · ${card.title}】\n${card.markdownBody}"),
+            createPrimaryIfMissing = true,
         )
 
         // Dispatch outbound card to all registered connectors where the owner has a bound private chat
@@ -553,11 +574,38 @@ class CloudAgentKernel(
                 card = card,
                 idempotencyKey = "proactive:${pushed.l1Delta.signalId}:${kind.wireName}",
             )
-            val receipt = connector.sendWithReceipt(outbound)
+            val receipt = try {
+                connector.sendWithReceipt(outbound)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                OutboundReceipt(false, kind.wireName, outbound.idempotencyKey.orEmpty(), note = "proactive_delivery_failed")
+            }
             if (firstReceipt == null) {
                 firstReceipt = receipt
             }
         }
+
+        // Dispatch APNs push to paired owner iOS/Watch devices with push tokens, honoring silentDelivery
+        val pairedDevices = runCatching { gatewayState.loadDevicesStrict() }.getOrDefault(emptyList())
+        for (paired in pairedDevices) {
+            // Pairings and tokens may change while the preceding device's send is suspended.
+            val device = gatewayState.findDeviceById(paired.id) ?: continue
+            val pushPayload = gatewayState.buildProactivePushPayload(
+                device = device,
+                card = card,
+                signalId = pushed.l1Delta.signalId,
+                silentDelivery = pushed.restraintVerdict.silentDelivery,
+            ) ?: continue
+            try {
+                gatewayState.pushSender.send(pushPayload).getOrThrow()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                gatewayState.recordAudit("proactive-push-failed", mapOf("device" to device.id))
+            }
+        }
+
         return pushed.copy(receipt = firstReceipt)
     }
 
@@ -595,10 +643,21 @@ class CloudAgentKernel(
         } else null
         val memoryAgentId = profile?.id?.takeUnless { it == MAIN_AGENT_ID } ?: GLOBAL_MEMORY_AGENT_ID
 
-        // Auto-extract explicit memory directive in direct owner chat
+        val ruleConversationId = orchestrationStore.dialogue.ruleConversationId(message.channel.wireName, message.messageId, convId.toString())
+        // Auto-extract explicit memory directive & proposed procedural rules in direct owner chat
         if (message.scope == ConversationScope.DIRECT && message.senderRole == SenderRole.OWNER) {
             ownerBinding.bindOwnerDirectly(message.channel.wireName, message.senderId, message.chatId)
-            if (existing.memoryMode == ConversationMemoryMode.ENABLED) extractExplicitMemoryIfPresent(message.text, convId.toString(), memoryAgentId)
+            if (existing.memoryMode == ConversationMemoryMode.ENABLED) {
+                extractExplicitMemoryIfPresent(message.text, convId.toString(), memoryAgentId)
+                // Always creates a `proposed` rule card only; never auto-activates on a single correction.
+                runCatching {
+                    proceduralRuleStore.proposeFromCorrection(
+                        userText = message.text,
+                        scope = "conversation:$ruleConversationId",
+                        sourceEventId = message.messageId,
+                    )
+                }
+            }
         }
 
         val redactedUserText = CredentialRedactor.redact(message.text)
@@ -627,11 +686,21 @@ class CloudAgentKernel(
             memoryStore.recallForPrompt(message.text).filter { it.scope != MemoryScope.CORE }
         }
 
+        val activeRules = if ((profile?.memoryPolicy ?: AgentMemoryPolicy.SHARED_WITH_GLOBAL) == AgentMemoryPolicy.HUB_ISOLATED) {
+            emptyList()
+        } else {
+            proceduralRuleStore.selectActiveForInjection(
+                conversationId = ruleConversationId,
+                recordHit = true,
+            )
+        }
+
         // Defect #7: Prepare request messages with pinned SYSTEM message and dynamic memory on tail
         val preparedMessages = contextManager.prepareRequestMessages(
             systemPrompt = soulStore.renderDirectSystemPrompt(
                 memoryPolicy = profile?.memoryPolicy ?: AgentMemoryPolicy.SHARED_WITH_GLOBAL,
                 extraInstructions = profile?.instructions.orEmpty(),
+                activeRules = activeRules,
             ),
             memories = recalledMemories,
             conversationId = convId.toString(),
@@ -713,6 +782,7 @@ class CloudAgentKernel(
                 highRisk = highRisk,
                 status = AgentRunStatus.AWAITING_PERMISSION,
             )
+            val approvalPreview = toolRegistry.approvalPreview(toolCall.toolName, parsedArgs, targetDevice = "cloud-daemon", cloudExecution = true)
             approvalHelper.upsertPendingApprovalSession(
                 sessionKey = sessionKey,
                 agent = "amber",
@@ -725,6 +795,11 @@ class CloudAgentKernel(
                 redactedArgsJson = redactedArgsJson,
                 highRisk = highRisk,
                 nowSec = nowSec,
+                riskLevel = approvalPreview.riskLevel,
+                targetDevice = approvalPreview.targetDevice,
+                targetSummary = approvalPreview.targetSummary,
+                diffPreview = approvalPreview.diffPreview,
+                requiresLocalApproval = approvalPreview.requiresLocalApproval,
             )
             val card = ChannelApprovalCard(
                 sessionKey = sessionKey,
@@ -733,6 +808,11 @@ class CloudAgentKernel(
                 redactedDetail = redactedArgsJson,
                 highRisk = highRisk,
                 allowApproveInChannel = false,
+                riskLevel = approvalPreview.riskLevel,
+                targetDevice = approvalPreview.targetDevice,
+                targetSummary = approvalPreview.targetSummary,
+                diffPreview = approvalPreview.diffPreview,
+                requiresLocalApproval = approvalPreview.requiresLocalApproval,
             )
             val notice = if (highRisk) {
                 "正在等待你在已配对且已解锁的原生 App 前台核对批准高风险工具 `${toolCall.toolName}`（当前通道仅可点拒绝）。"
@@ -953,6 +1033,8 @@ class CloudAgentKernel(
             workspaceDir = workspaceDir,
             deviceContextStore = gatewayState.deviceContextStore,
             pairedIosDevicesProvider = { gatewayState.loadDevicesStrict() },
+            proactiveMonitorStore = proactiveMonitorStore,
+            proactiveWebhookStore = proactiveWebhookStore,
         )
     }
 }

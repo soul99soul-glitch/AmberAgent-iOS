@@ -125,12 +125,12 @@ internal class OpenAISseLineParser {
 internal enum class OpenAIStreamKind {
     CHAT_COMPLETIONS,
     RESPONSES,
+    RESPONSES_SIWC,
 }
 
 /** Per-collection protocol completion check. It deliberately has no global state. */
 internal class OpenAIStreamTerminalState(
     private val kind: OpenAIStreamKind,
-    private val strictResponsesCompletedOnly: Boolean = false,
 ) {
     private companion object {
         val json = Json { ignoreUnknownKeys = true }
@@ -144,7 +144,7 @@ internal class OpenAIStreamTerminalState(
             .filter { it.isNotBlank() }
             .forEach { payload ->
                 if (payload == "[DONE]") {
-                    if (!(kind == OpenAIStreamKind.RESPONSES && strictResponsesCompletedOnly)) {
+                    if (kind != OpenAIStreamKind.RESPONSES_SIWC) {
                         completed = true
                     }
                     return@forEach
@@ -161,14 +161,15 @@ internal class OpenAIStreamTerminalState(
                     // `response.incomplete` 同样是协议终态(输出写满上限 / 内容过滤),
                     // 只是内容未写完。把它排除在终态之外,会让一次正常的上限截断在
                     // 连接关闭时再被误报成"流在终态前断开"。
-                    // CHATGPT_SIWC 模式遵循官方规范：仅 `response.completed` 视为成功。
                     OpenAIStreamKind.RESPONSES -> {
                         val eventType = (objectPayload["type"] as? JsonPrimitive)?.contentOrNull
-                        if (strictResponsesCompletedOnly) {
-                            eventType == "response.completed"
-                        } else {
-                            eventType == "response.completed" || eventType == "response.incomplete"
-                        }
+                        eventType == "response.completed" || eventType == "response.incomplete"
+                    }
+
+                    // OpenAI SIWC Preview: only `response.completed` counts as stream success.
+                    OpenAIStreamKind.RESPONSES_SIWC -> {
+                        val eventType = (objectPayload["type"] as? JsonPrimitive)?.contentOrNull
+                        eventType == "response.completed"
                     }
                 }
             }
@@ -176,6 +177,9 @@ internal class OpenAIStreamTerminalState(
 
     fun requireCompleted() {
         if (!completed) {
+            if (kind == OpenAIStreamKind.RESPONSES_SIWC) {
+                throw IllegalStateException("OpenAI SIWC responses stream ended before response.completed")
+            }
             throw IllegalStateException("OpenAI ${kind.name.lowercase()} stream ended before a terminal event")
         }
     }

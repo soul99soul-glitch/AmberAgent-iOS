@@ -17,6 +17,7 @@ struct DesktopSettingsView: View {
     private let plugins: DesktopPluginStore?
     @State private var speechPreviewID = UUID()
     @State private var login: DesktopCodexLogin
+    @State private var siwcLogin: DesktopSIWCLogin
     @State private var catalogRequest = DesktopCatalogRequest()
     @State private var tab = 0
     @State private var previousTab = 0
@@ -38,6 +39,7 @@ struct DesktopSettingsView: View {
     @State private var didLoad = false
     @State private var deleting = false
     @State private var grokSignedIn = false
+    @State private var siwcLoggingOut = false
     @State private var presetPickerPresented = false
     @State private var advancedConnection = false
     @State private var pendingPreset: (DesktopProviderPreset, Bool)?
@@ -61,6 +63,7 @@ struct DesktopSettingsView: View {
     }
 
     init(settings: DesktopSettings, catalog: any DesktopModelCatalog, oauth: any DesktopCodexAuthorizer,
+        siwc: (any DesktopSIWCAuthorizer)? = nil,
         onOpenBackup: (() -> Void)? = nil, mcp: DesktopMCPManager? = nil, syncWorkspace: DesktopWorkspace? = nil,
         notifications: DesktopNotifications? = nil, onOpenStorage: (() -> Void)? = nil, speech: DesktopSpeechPlayer? = nil,
         backgroundMode: DesktopBackgroundMode? = nil, gateway: DesktopGateway? = nil,
@@ -80,6 +83,7 @@ struct DesktopSettingsView: View {
         _tab = State(initialValue: initialTab)
         _previousTab = State(initialValue: initialTab)
         _login = State(initialValue: DesktopCodexLogin(authorizer: oauth))
+        _siwcLogin = State(initialValue: DesktopSIWCLogin(authorizer: siwc ?? DesktopMacSIWCAuthorizer()))
     }
     /// Changes whenever a new preset draft becomes fetchable (key typed, or keyless local server).
     private var autoFetchKey: String? {
@@ -108,7 +112,7 @@ struct DesktopSettingsView: View {
             apply(.provider(settings.selectedProviderID ?? settings.providers.first?.id))
         }
         .onDisappear {
-            catalogRequest.cancel(); login.cancel()
+            catalogRequest.cancel(); login.cancel(); siwcLogin.cancel()
             if speech?.currentMessageID == speechPreviewID { speech?.stop() }
         }
         .confirmationDialog("有尚未保存的配置", isPresented: $confirmsSwitch, titleVisibility: .visible) {
@@ -129,6 +133,9 @@ struct DesktopSettingsView: View {
             // Fresh provider: pre-tick everything so「添加所选模型」is one click.
             if editingID == nil, draft.models.isEmpty { selectedCatalogIDs = Set(models.map(\.id)) }
         }
+        .onChange(of: catalogRequest.failed) { _, failed in
+            if failed && draft.authMode == .chatgptSiwc { siwcLogin.reloadAccount() }
+        }
         .sheet(isPresented: $presetPickerPresented) {
             DesktopProviderPresetPicker { preset, usePlan in
                 presetPickerPresented = false
@@ -138,6 +145,16 @@ struct DesktopSettingsView: View {
         .confirmationDialog("移除这个服务商？", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("移除服务商", role: .destructive) { deleteProvider() }
         } message: { Text("API Key 和登录凭证也会从钥匙串移除。已有会话会保留。") }
+        .onChange(of: siwcLogin.isBusy) { _, busy in
+            if !busy { siwcLoggingOut = false }
+        }
+        .sheet(isPresented: $siwcLogin.showFirstTimePlanConfirmation, onDismiss: {
+            siwcLogin.acknowledgePlanConfirmation()
+        }) {
+            DesktopSIWCWelcomeSheet(appearance: settings.appearance) {
+                siwcLogin.acknowledgePlanConfirmation()
+            }
+        }
     }
 
     private var observedTabs: some View {
@@ -155,8 +172,17 @@ struct DesktopSettingsView: View {
         .onChange(of: draft.kind) { old, value in
             if draft.baseURL == old.defaultBaseURL { draft.baseURL = value.defaultBaseURL }
             if draft.authMode == .codexOAuth && value != .responses { draft.authMode = .apiKey }
+            if draft.authMode == .chatgptSiwc && value != .responses { draft.authMode = .apiKey }
             if draft.authMode == .antigravityOAuth && value != .gemini { draft.authMode = .apiKey }
             if draft.authMode == .grokOAuth && value != .openAI { draft.authMode = .apiKey }
+        }
+        .onChange(of: draft.authMode) { old, value in
+            if value == .chatgptSiwc {
+                draft.kind = .responses
+                draft.baseURL = DesktopChatGPTSIWCConstants.apiBaseURL
+            } else if old == .chatgptSiwc {
+                siwcLogin.cancel()
+            }
         }
     }
 
@@ -261,6 +287,7 @@ struct DesktopSettingsView: View {
             VStack(spacing: 0) {
                 Form {
                     providerConfiguration
+                    if draft.authMode == .chatgptSiwc { siwcAuthentication }
                     if draft.authMode == .codexOAuth { codexAuthentication }
                     #if !AMBER_MAC_PREVIEW
                     if draft.authMode == .grokOAuth {
@@ -281,6 +308,22 @@ struct DesktopSettingsView: View {
         let preset = DesktopProviderPreset.matching(draft)
         return Section(editingID == nil ? "添加服务商" : "服务商配置") {
             TextField("名称", text: $draft.name, prompt: Text("例如：OpenAI / 本地模型")).accessibilityIdentifier("provider-name")
+            if preset?.id == "openai" && (draft.authMode == .apiKey || draft.authMode == .chatgptSiwc) {
+                LabeledContent("登录方式") {
+                    DesktopSegmented(options: [(false, "API Key"), (true, "ChatGPT 套餐")], selection: Binding(
+                        get: { draft.authMode == .chatgptSiwc },
+                        set: { useSiwc in
+                            draft.kind = .responses
+                            draft.authMode = useSiwc ? .chatgptSiwc : .apiKey
+                            draft.baseURL = DesktopChatGPTSIWCConstants.apiBaseURL
+                        }))
+                }
+                Text(draft.authMode == .chatgptSiwc
+                     ? "通过官方 Sign in with ChatGPT 使用你的 ChatGPT 订阅额度（公开 Responses API）。"
+                     : "按调用量计费的 OpenAI API Key。")
+                    .font(.system(size: 12)).foregroundStyle(DesktopTheme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let preset, let plan = preset.plan {
                 LabeledContent("计费方式") {
                     DesktopSegmented(options: [(false, "按量 API"), (true, preset.planTitle)], selection: Binding(
@@ -308,9 +351,10 @@ struct DesktopSettingsView: View {
                     ForEach(DesktopProviderKind.allCases) { Text($0.title).tag($0) }
                 }
                 TextField("API 地址", text: $draft.baseURL).accessibilityIdentifier("provider-base-url")
-                    .disabled(draft.authMode.isPlan)
+                    .disabled(draft.authMode.isPlan || draft.authMode == .chatgptSiwc)
                 Picker("认证方式", selection: $draft.authMode) {
                     Text("API Key").tag(DesktopProviderAuthMode.apiKey)
+                    if draft.kind == .responses { Text("ChatGPT 套餐登录（SIWC）").tag(DesktopProviderAuthMode.chatgptSiwc) }
                     if draft.kind == .responses { Text("ChatGPT / Codex 登录").tag(DesktopProviderAuthMode.codexOAuth) }
                     if draft.kind == .openAI { Text("Grok / xAI 登录").tag(DesktopProviderAuthMode.grokOAuth) }
                     if draft.authMode == .antigravityOAuth { Text("已有 Antigravity 登录").tag(DesktopProviderAuthMode.antigravityOAuth) }
@@ -334,9 +378,171 @@ struct DesktopSettingsView: View {
                     ProgressView().controlSize(.small)
                     Button("取消") { catalogRequest.cancel() }.buttonStyle(.borderless)
                 }
-            }.disabled(credentialLoadFailed || (draft.authMode == .codexOAuth && (editingID == nil || login.account == nil))
+            }.disabled(credentialLoadFailed
+                || (draft.authMode == .codexOAuth && (editingID == nil || login.account == nil))
+                || (draft.authMode == .chatgptSiwc && (editingID == nil || siwcLogin.account == nil || siwcLogin.account?.planAvailable == false))
                 || (draft.authMode == .grokOAuth && (editingID == nil || !grokSignedIn)))
-            if let message = catalogRequest.status { statusText(message, failed: catalogRequest.failed) }
+            if let message = catalogRequest.status {
+                statusText(message, failed: catalogRequest.failed)
+                if draft.authMode == .chatgptSiwc, catalogRequest.failed,
+                   let planError = DesktopSIWCError.planError(in: message),
+                   planError == .usageLimitExceeded || planError == .usageUnavailable {
+                    siwcManageUsageLink
+                }
+            }
+        }
+    }
+
+    private var siwcManageUsageLink: some View {
+        Link(destination: DesktopChatGPTSIWCConstants.usageSettingsURL) {
+            HStack(alignment: .center, spacing: 3) {
+                Text("Manage usage")
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 9.5, weight: .semibold))
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(DesktopTheme.accent)
+        }
+        .fixedSize()
+    }
+
+    private var siwcAuthentication: some View {
+        Section("Sign in with ChatGPT") {
+            if let account = siwcLogin.account {
+                let summary = [account.displayName, account.plan]
+                    .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " · ")
+                HStack(alignment: .center, spacing: 8) {
+                    Text("已登录")
+                        .foregroundStyle(DesktopTheme.ink)
+                        .fixedSize()
+                    Spacer(minLength: 12)
+                    Text(summary)
+                        .font(.system(size: 13))
+                        .foregroundStyle(DesktopTheme.ink)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(summary)
+                    if account.planAvailable {
+                        Text("Using ChatGPT plan")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(DesktopTheme.accentInk)
+                            .lineLimit(1)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(DesktopTheme.honeySoft, in: Capsule())
+                            .overlay(Capsule().strokeBorder(DesktopTheme.honeyEdge, lineWidth: 0.5))
+                            .fixedSize(horizontal: true, vertical: true)
+                    } else {
+                        Text("套餐不可用")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(DesktopTheme.danger)
+                            .lineLimit(1)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(DesktopTheme.danger.opacity(0.1), in: Capsule())
+                            .overlay(Capsule().strokeBorder(DesktopTheme.danger.opacity(0.28), lineWidth: 0.5))
+                            .fixedSize(horizontal: true, vertical: true)
+                    }
+                }
+                if account.planAvailable {
+                    HStack(alignment: .center, spacing: 8) {
+                        siwcManageUsageLink
+                        Spacer(minLength: 12)
+                        if siwcLogin.isBusy {
+                            ProgressView().controlSize(.small)
+                            if siwcLoggingOut {
+                                Text("正在退出…")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(DesktopTheme.inkSecondary)
+                            }
+                        } else {
+                            Button("刷新模型列表") { fetchModels(testOnly: false) }
+                                .disabled(editingID == nil || catalogRequest.isLoading)
+                            Button("退出登录", action: logoutSIWC)
+                                .disabled(editingID == nil)
+                        }
+                    }
+                    .frame(minHeight: 28)
+                } else {
+                    Text("当前授权缺少 chatgpt.tokens.use.direct 权限，暂不可使用 ChatGPT 套餐额度。请重新授权或切换为 OpenAI API Key。")
+                        .font(.system(size: 12))
+                        .foregroundStyle(DesktopTheme.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .center, spacing: 8) {
+                        if siwcLogin.isBusy {
+                            ProgressView().controlSize(.small)
+                            Text(siwcLoggingOut ? "正在退出…" : "等待浏览器回调…")
+                                .font(.system(size: 12))
+                                .foregroundStyle(DesktopTheme.inkSecondary)
+                            if !siwcLoggingOut {
+                                Spacer(minLength: 8)
+                                Button("取消登录") { siwcLogin.cancel() }
+                            }
+                        } else {
+                            Button("Continue with ChatGPT") { startSIWCLogin() }
+                                .buttonStyle(.desktopProminent)
+                                .disabled(!canSave)
+                            Button("切换为 API Key") {
+                                draft.authMode = .apiKey
+                                draft.baseURL = DesktopChatGPTSIWCConstants.apiBaseURL
+                            }
+                            Button("退出登录", action: logoutSIWC)
+                                .disabled(editingID == nil)
+                        }
+                    }
+                    .frame(minHeight: 28)
+                }
+            } else {
+                Text("在系统浏览器完成官方 ChatGPT 登录，成功后将自动拉取可用模型。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(DesktopTheme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .center, spacing: 8) {
+                    if siwcLogin.isBusy {
+                        ProgressView().controlSize(.small)
+                        Text("等待浏览器回调…")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DesktopTheme.inkSecondary)
+                        Spacer(minLength: 8)
+                        Button("取消登录") { siwcLogin.cancel() }
+                    } else {
+                        Button("Continue with ChatGPT") { startSIWCLogin() }
+                            .buttonStyle(.desktopProminent)
+                            .disabled(!canSave)
+                    }
+                }
+                .frame(minHeight: 28)
+            }
+            if let message = siwcLogin.status,
+               !(siwcLogin.account?.planAvailable == false && message == DesktopSIWCError.planScopeUnavailable.localizedDescription) {
+                statusText(message, failed: siwcLogin.failed)
+            }
+        }
+    }
+
+    private func logoutSIWC() {
+        guard let id = editingID else { return }
+        catalogRequest.cancel()
+        selectedCatalogIDs = []
+        siwcLoggingOut = true
+        siwcLogin.logout(id)
+    }
+
+    private func startSIWCLogin() {
+        let targetID: UUID
+        if let existing = editingID, !hasUnsavedChanges {
+            targetID = existing
+        } else {
+            guard save(), let savedID = editingID else { return }
+            targetID = savedID
+        }
+        siwcLoggingOut = false
+        siwcLogin.login(targetID) { account in
+            if account.planAvailable && editingID == targetID && draft.authMode == .chatgptSiwc {
+                fetchModels(testOnly: false)
+            }
         }
     }
 
@@ -386,8 +592,11 @@ struct DesktopSettingsView: View {
     private var models: some View {
         Section("模型") {
             if draft.models.isEmpty {
-                Text("填好地址和 API Key 后，点「获取模型列表」勾选要用的模型；服务商不提供列表时再手动添加。")
+                Text(draft.authMode == .chatgptSiwc
+                     ? "完成 ChatGPT 登录后将自动拉取可用模型，也可点击上方「获取模型列表」或手动添加。"
+                     : "填好地址和 API Key 后，点「获取模型列表」勾选要用的模型；服务商不提供列表时再手动添加。")
                     .font(.system(size: 13)).foregroundStyle(DesktopTheme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 ForEach(draft.models) { model in
                     HStack(spacing: 10) {
@@ -779,6 +988,8 @@ struct DesktopSettingsView: View {
         modelBeingEdited = draft.selectedModel?.id ?? draft.models.first?.id
         savedDraft = draft; savedKey = apiKey; savedParameters = parameters
         login.selectProvider(id)
+        siwcLoggingOut = false
+        siwcLogin.selectProvider(id)
         #if !AMBER_MAC_PREVIEW
         grokSignedIn = id.map { IOSGrokOAuthAuthStore.load(providerId: $0.uuidString.lowercased()) != nil } ?? false
         #endif
@@ -812,13 +1023,77 @@ struct DesktopSettingsView: View {
             defer { deleting = false }
             do {
                 try await login.removeCredentials(id)
+                var revocationWarning: String?
+                do { try await siwcLogin.removeCredentials(id) }
+                catch DesktopSIWCError.revocationUnconfirmed { revocationWarning = DesktopSIWCError.revocationUnconfirmed.localizedDescription }
                 try settings.deleteProvider(id)
                 load(settings.providers.first?.id)
+                if let revocationWarning { status = revocationWarning; failed = true }
             } catch { status = "移除服务商失败，请解锁钥匙串后重试。"; failed = true }
         }
     }
     private static func emptyProvider() -> DesktopProviderConfiguration {
         DesktopProviderConfiguration(name: "", kind: .openAI, baseURL: DesktopProviderKind.openAI.defaultBaseURL, models: [])
+    }
+}
+
+private struct DesktopSIWCWelcomeSheet: View {
+    let appearance: String
+    let onAcknowledge: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Using ChatGPT plan")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(DesktopTheme.accentInk)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(DesktopTheme.honeySoft, in: Capsule())
+            .overlay(Capsule().strokeBorder(DesktopTheme.honeyEdge, lineWidth: 0.5))
+
+            Text("You're using your ChatGPT plan")
+                .font(DesktopTheme.serif(size: 20, weight: .semibold))
+                .foregroundStyle(DesktopTheme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("Amber will send OpenAI Responses requests using your ChatGPT subscription plan. You can check or manage your usage anytime at chatgpt.com/settings/usage.")
+                .font(.system(size: 13))
+                .foregroundStyle(DesktopTheme.inkSecondary)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Rectangle()
+                .fill(DesktopTheme.hairline)
+                .frame(height: 1)
+                .padding(.top, 4)
+
+            HStack(alignment: .center, spacing: 12) {
+                Link(destination: DesktopChatGPTSIWCConstants.usageSettingsURL) {
+                    HStack(alignment: .center, spacing: 3) {
+                        Text("Manage usage")
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 9.5, weight: .semibold))
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(DesktopTheme.accent)
+                }
+                .fixedSize()
+                Spacer()
+                Button("Got it", action: onAcknowledge)
+                    .buttonStyle(.desktopProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 420)
+        .background(DesktopTheme.paper)
+        .tint(DesktopTheme.accent)
+        .preferredColorScheme(DesktopTheme.colorScheme(for: appearance))
+        .onExitCommand(perform: onAcknowledge)
     }
 }
 

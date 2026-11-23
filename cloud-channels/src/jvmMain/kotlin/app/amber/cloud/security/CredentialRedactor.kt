@@ -60,6 +60,8 @@ object CredentialRedactor {
         Regex("""\b\d{6,12}:[A-Za-z0-9_\-]{15,}\b"""),
         // Feishu tenant_access_token / user_access_token (t-xxx / u-xxx)
         Regex("""\b[tu]-[A-Za-z0-9._\-]{12,}\b"""),
+        // Amber's one-time inbound webhook credential, including in unstructured text.
+        Regex("""whsec_[0-9a-f]{64}"""),
         // Anthropic / OpenAI-style keys, including sk-ant-api03-…
         Regex("""\bsk-[A-Za-z0-9_\-]{12,}"""),
         // Bearer / Basic tokens in header dumps

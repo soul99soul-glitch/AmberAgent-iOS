@@ -50,6 +50,9 @@ import XCTest
         XCTAssertEqual(DesktopAgentProvider.stopReason(result(steps: 8, hitStepLimit: true), rounds: 2048), .roundLimit(2048))
         XCTAssertEqual(DesktopAgentProvider.stopReason(result(steps: 4, guardStopped: true), rounds: 2048), .loopGuard)
         XCTAssertEqual(DesktopAgentProvider.stopReason(result(steps: 2, providerFailure: "网络错误"), rounds: 2048), .providerFailure)
+        let unavailable = result(steps: 2, providerFailure: "subscription_sharing_usage_unavailable")
+        XCTAssertEqual(DesktopAgentProvider.stopReason(unavailable, rounds: 2048, authMode: .chatgptSiwc), .chatGPTPlan(.usageUnavailable))
+        XCTAssertEqual(DesktopAgentProvider.stopReason(unavailable, rounds: 2048, authMode: .codexOAuth), .providerFailure)
         // 输出上限同时带着 providerFailureMessage，必须先判它。
         XCTAssertEqual(DesktopAgentProvider.stopReason(
             result(steps: 2, providerFailure: "模型回复达到输出上限", hitOutputLimit: true), rounds: 2048), .outputLimit)

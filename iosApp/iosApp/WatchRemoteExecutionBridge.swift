@@ -75,20 +75,23 @@ protocol WatchRemoteExecutionRouting: AnyObject {
     func submitQuestion(
         text: String,
         requestId: String,
-        preferredOrigin: WatchExecutionOrigin?
+        origin: WatchExecutionOrigin
     ) async -> WatchRemoteDispatchOutcome
     func resolveApproval(
+        origin: WatchExecutionOrigin,
         sessionKey: String,
         toolCallId: String,
         allow: Bool
     ) async -> (accepted: Bool, message: String)
     func submitAskUserReply(
+        origin: WatchExecutionOrigin,
         workItemId: String?,
         conversationId: String?,
         text: String,
         requestId: String
     ) async -> (accepted: Bool, message: String)
     func cancelRemoteTask(
+        origin: WatchExecutionOrigin,
         workItemId: String?,
         requestId: String?
     ) async -> (accepted: Bool, message: String)
@@ -119,7 +122,7 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
         }
 
         var isOnline: Bool {
-            slot.isReachable != false
+            slot.isReachable == true
         }
     }
 
@@ -144,22 +147,28 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
             return .unpaired
         }
         let onlineSlots = slots.filter(\.isOnline)
-        let isOnline = !onlineSlots.isEmpty
         let primaryTask = selectPrimaryTask(from: onlineSlots)
         let activities = buildRecentActivities(from: slots)
 
-        let preferredSlot = primaryTask.flatMap { task in slots.first(where: { $0.origin == task.origin }) }
+        let selectedTarget: WatchExecutionOrigin = if store.isCloudMainDialogueSelected && store.hasCloudConnection {
+            .cloud
+        } else {
+            switch store.effectiveComposerTarget {
+            case .cloud: .cloud
+            case .mac: .mac
+            case .local: .local
+            }
+        }
+        let preferredSlot = pairedSlot(for: selectedTarget)
+            ?? primaryTask.flatMap { pairedSlot(for: $0.origin) }
             ?? onlineSlots.first
-            ?? slots.first!
-        let selectedTarget: WatchExecutionOrigin = (store.isCloudMainDialogueSelected && store.hasCloudConnection)
-            ? .cloud
-            : .local
+            ?? slots[0]
 
         return WatchRemoteExecutionProjection(
             isPaired: true,
-            isOnline: isOnline,
-            remoteOrigin: primaryTask?.origin ?? preferredSlot.origin,
-            remoteHostName: primaryTask?.hostName ?? preferredSlot.hostName,
+            isOnline: preferredSlot.isOnline,
+            remoteOrigin: preferredSlot.origin,
+            remoteHostName: preferredSlot.hostName,
             selectedExecutionTarget: selectedTarget,
             primaryTask: primaryTask,
             recentActivities: activities
@@ -169,35 +178,16 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
     func submitQuestion(
         text: String,
         requestId: String,
-        preferredOrigin: WatchExecutionOrigin?
+        origin: WatchExecutionOrigin
     ) async -> WatchRemoteDispatchOutcome {
-        let slots = pairedSlots
-        guard !slots.isEmpty else {
+        guard let targetSlot = pairedSlot(for: origin)?.slot else {
             return WatchRemoteDispatchOutcome(
                 accepted: false,
-                message: "尚未配对云端或 Mac",
+                message: "所属终端未配对，请在 iPhone 多终端设置中核对",
                 runId: nil,
                 conversationId: nil
             )
         }
-        let chosenSlot: PairedSlot
-        if let preferredOrigin, preferredOrigin != .local {
-            guard let exact = pairedSlot(for: preferredOrigin) else {
-                let expectedName = preferredOrigin == .mac ? "Mac" : "云端"
-                return WatchRemoteDispatchOutcome(
-                    accepted: false,
-                    message: "当前未配对\(expectedName)，请在 iPhone 多终端设置中配对",
-                    runId: nil,
-                    conversationId: nil
-                )
-            }
-            chosenSlot = exact
-        } else {
-            chosenSlot = slots.first(where: \.isOnline) ?? slots[0]
-        }
-
-        let targetSlot = chosenSlot.slot
-        let origin = chosenSlot.origin
         let normalizedRequestId = requestId.lowercased()
         let result = await targetSlot.sendCloudDialogueMessage(
             text: text,
@@ -227,20 +217,15 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
     }
 
     func resolveApproval(
+        origin: WatchExecutionOrigin,
         sessionKey: String,
         toolCallId: String,
         allow: Bool
     ) async -> (accepted: Bool, message: String) {
-        var matched: (card: MacGatewayApprovalCardItem, slot: MacGatewayStore)?
-        for entry in pairedSlots {
-            if let card = entry.slot.activeMacApprovalCardItems().first(where: {
-                $0.sessionKey == sessionKey && $0.toolCallId == toolCallId
-            }) {
-                matched = (card, entry.slot)
-                break
-            }
-        }
-        guard let (card, targetSlot) = matched else {
+        guard let targetSlot = pairedSlot(for: origin)?.slot,
+              let card = targetSlot.activeMacApprovalCardItems().first(where: {
+                  $0.sessionKey == sessionKey && $0.toolCallId == toolCallId
+              }) else {
             return (false, "这个确认步骤已失效")
         }
 
@@ -263,7 +248,8 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
             sessionKey: sessionKey,
             toolCallId: toolCallId,
             allow: allow,
-            source: .notification
+            source: .notification,
+            role: targetSlot.endpointRole
         )
         if ok {
             return (true, allow ? "已允许" : "已拒绝")
@@ -272,6 +258,7 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
     }
 
     func submitAskUserReply(
+        origin: WatchExecutionOrigin,
         workItemId: String?,
         conversationId: String?,
         text: String,
@@ -281,7 +268,7 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
         guard !trimmed.isEmpty else {
             return (false, "回答不能为空")
         }
-        let targetSlot = owningSlot(workItemId: workItemId, requestId: nil, conversationId: conversationId) ?? store
+        guard let targetSlot = pairedSlot(for: origin)?.slot else { return (false, "所属终端已取消配对") }
         let normalizedRequestId = requestId.lowercased()
         let result: Result<MacGatewayCloudDialogueReceipt, Error>
         if let workItemId, !workItemId.isEmpty {
@@ -307,39 +294,26 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
     }
 
     func cancelRemoteTask(
+        origin: WatchExecutionOrigin,
         workItemId: String?,
         requestId: String?
     ) async -> (accepted: Bool, message: String) {
-        let slots = pairedSlots.map(\.slot)
-        let candidateSlots = slots.isEmpty ? [store] : slots
-
+        guard let targetSlot = pairedSlot(for: origin)?.slot else { return (false, "所属终端已取消配对") }
         if let workItemId, !workItemId.isEmpty {
-            for targetSlot in candidateSlots {
-                if targetSlot.cloudDialogueProgressByWorkItem[workItemId] != nil {
-                    let stopResult = await targetSlot.stopCloudWorkItem(workItemId: workItemId)
-                    switch stopResult {
-                    case .success:
-                        return (true, "已请求停止")
-                    case .failure(let error):
-                        return (false, targetSlot.cloudDialogueFriendlyErrorMessage(for: error))
-                    }
+            if targetSlot.cloudDialogueProgressByWorkItem[workItemId] != nil {
+                switch await targetSlot.stopCloudWorkItem(workItemId: workItemId) {
+                case .success: return (true, "已请求停止")
+                case .failure(let error): return (false, targetSlot.cloudDialogueFriendlyErrorMessage(for: error))
                 }
-                if targetSlot.cloudTasks.contains(where: { $0.workItemId == workItemId && $0.canCancel }) {
-                    await targetSlot.cancelCloudTask(workItemId: workItemId)
-                    return (true, "已取消")
-                }
+            }
+            if targetSlot.cloudTasks.contains(where: { $0.workItemId == workItemId && $0.canCancel }) {
+                let cancelled = await targetSlot.cancelCloudTask(workItemId: workItemId)
+                return cancelled ? (true, "已取消") : (false, "取消未获确认，请在 iPhone 查看")
             }
         }
         if let requestId, !requestId.isEmpty {
-            for targetSlot in candidateSlots {
-                if targetSlot.cloudDialogueSubmissions.contains(where: { $0.requestId == requestId }) {
-                    let cancelled = await targetSlot.cancelPendingMacSubmission(
-                        requestId: requestId,
-                        workItemId: workItemId
-                    )
-                    return cancelled ? (true, "已取消") : (false, "当前任务无法从手表取消")
-                }
-            }
+            let cancelled = await targetSlot.cancelPendingMacSubmission(requestId: requestId, workItemId: workItemId)
+            return cancelled ? (true, "已取消") : (false, "当前任务无法从手表取消")
         }
         return (false, "当前任务不支持从手表取消")
     }
@@ -351,42 +325,10 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
         if let workItemId, !workItemId.isEmpty, origin == .cloud {
             return .cloudTask(workItemId: workItemId)
         }
-        return .macTasks
+        return .gatewayTasks(origin == .mac ? .mac : .cloud)
     }
 
     // MARK: - Projection builders
-
-    private func owningSlot(
-        workItemId: String?,
-        requestId: String?,
-        conversationId: String?
-    ) -> MacGatewayStore? {
-        let slots = pairedSlots
-        if let workItemId, !workItemId.isEmpty {
-            if let match = slots.first(where: {
-                $0.slot.cloudDialogueProgressByWorkItem[workItemId] != nil
-                    || $0.slot.cloudTasks.contains(where: { $0.workItemId == workItemId })
-            }) {
-                return match.slot
-            }
-        }
-        if let requestId, !requestId.isEmpty {
-            if let match = slots.first(where: {
-                $0.slot.cloudDialogueSubmissions.contains(where: { $0.requestId == requestId })
-            }) {
-                return match.slot
-            }
-        }
-        if let conversationId, !conversationId.isEmpty {
-            if let match = slots.first(where: {
-                $0.slot.cloudDialogueConversationId == conversationId
-                    || $0.slot.needsYouItems.contains(where: { $0.conversationId == conversationId })
-            }) {
-                return match.slot
-            }
-        }
-        return slots.first(where: \.isOnline)?.slot ?? slots.first?.slot
-    }
 
     private func selectPrimaryTask(from onlineSlots: [PairedSlot]) -> WatchRemoteTaskProjection? {
         guard !onlineSlots.isEmpty else { return nil }
@@ -396,6 +338,7 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
             let approvals = entry.slot.activeMacApprovalCardItems()
             if let card = approvals.first {
                 let isL3 = card.riskTier == .l3 || card.requiresLocalApproval || card.highRisk
+                    || entry.slot.isKnownHighRiskApproval(sessionKey: card.sessionKey, toolCallId: card.toolCallId)
                 let watchRisk: WatchRiskLevel = switch card.riskTier {
                 case .l1: card.highRisk ? .high : .low
                 case .l2: card.highRisk ? .high : .medium

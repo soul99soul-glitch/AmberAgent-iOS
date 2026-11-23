@@ -30,7 +30,7 @@ private final class WatchUpgradeTestTransport: WatchConnectivityTransporting {
 @MainActor
 private final class FakeWatchRemoteGateway: WatchRemoteExecutionRouting {
     var projection = WatchRemoteExecutionProjection.unpaired
-    var submittedQuestions: [(text: String, requestId: String, preferredOrigin: WatchExecutionOrigin?)] = []
+    var submittedQuestions: [(text: String, requestId: String, origin: WatchExecutionOrigin)] = []
     var resolvedApprovals: [(sessionKey: String, toolCallId: String, allow: Bool)] = []
     var askUserReplies: [(workItemId: String?, conversationId: String?, text: String, requestId: String)] = []
     var cancelledTasks: [(workItemId: String?, requestId: String?)] = []
@@ -53,13 +53,14 @@ private final class FakeWatchRemoteGateway: WatchRemoteExecutionRouting {
     func submitQuestion(
         text: String,
         requestId: String,
-        preferredOrigin: WatchExecutionOrigin?
+        origin: WatchExecutionOrigin
     ) async -> WatchRemoteDispatchOutcome {
-        submittedQuestions.append((text, requestId, preferredOrigin))
+        submittedQuestions.append((text, requestId, origin))
         return nextDispatchOutcome
     }
 
     func resolveApproval(
+        origin: WatchExecutionOrigin,
         sessionKey: String,
         toolCallId: String,
         allow: Bool
@@ -69,6 +70,7 @@ private final class FakeWatchRemoteGateway: WatchRemoteExecutionRouting {
     }
 
     func submitAskUserReply(
+        origin: WatchExecutionOrigin,
         workItemId: String?,
         conversationId: String?,
         text: String,
@@ -79,6 +81,7 @@ private final class FakeWatchRemoteGateway: WatchRemoteExecutionRouting {
     }
 
     func cancelRemoteTask(
+        origin: WatchExecutionOrigin,
         workItemId: String?,
         requestId: String?
     ) async -> (accepted: Bool, message: String) {
@@ -413,6 +416,7 @@ final class WatchMultiDeviceUpgradeTests: XCTestCase {
         XCTAssertTrue(result.accepted)
         XCTAssertEqual(result.runId, "remote:cloud:wi-1")
         XCTAssertEqual(remote.submittedQuestions.count, 1)
+        XCTAssertEqual(remote.submittedQuestions.first?.origin, .cloud)
 
         // Weak-network failure returns deliveryUnknown=true and preserves draft rather than silently dropping.
         remote.nextDispatchOutcome = WatchRemoteDispatchOutcome(
@@ -671,24 +675,49 @@ final class WatchMultiDeviceUpgradeTests: XCTestCase {
         XCTAssertEqual(projection.primaryTask?.decision?.localApprovalOnly, true)
         XCTAssertTrue(projection.recentActivities.contains(where: { $0.origin == .mac && $0.title == "同步仓库完成" }))
 
+        store.composerExecutionTarget = .mac
+        XCTAssertEqual(adapter.currentProjection().selectedExecutionTarget, .mac)
+        store.composerExecutionTarget = .cloud
+        store.isReachable = false
+        let offlineCloud = adapter.currentProjection()
+        XCTAssertEqual(offlineCloud.remoteOrigin, .cloud)
+        XCTAssertFalse(offlineCloud.isOnline)
+        XCTAssertEqual(offlineCloud.primaryTask?.origin, .mac)
+        store.isReachable = true
+
         // L3 approval on Mac slot must fail closed from Watch.
         let blocked = await adapter.resolveApproval(
+            origin: .mac,
             sessionKey: "amber:mac-watch-l3",
             toolCallId: "call-watch-l3",
             allow: true
         )
         XCTAssertFalse(blocked.accepted)
 
+        let wrongSlot = await adapter.resolveApproval(origin: .cloud, sessionKey: "amber:mac-watch-l3",
+                                                       toolCallId: "call-watch-l3", allow: false)
+        XCTAssertFalse(wrongSlot.accepted)
+        let boardLink = adapter.openRemoteDeepLink(workItemId: nil, origin: .mac)
+        XCTAssertEqual(IOSAppDeepLink.parse(try XCTUnwrap(IOSAppDeepLink.url(for: boardLink))), .gatewayTasks(.mac))
+
+        let workId = "cancel-fixture"
+        store.cloudTasks = [.init(gatewayId: "gw-c", deviceId: "d-c",
+                                  request: .init(requestId: "req-cancel", text: "fixture", title: "fixture"),
+                                  workItemId: workId, workItem: .init(id: workId, agentId: "agent", title: "fixture", state: .working, updatedAtMs: 1),
+                                  createdAt: Date(), updatedAt: Date())]
+        let failedCancel = await adapter.cancelRemoteTask(origin: .cloud, workItemId: workId, requestId: nil)
+        XCTAssertFalse(failedCancel.accepted)
+
         // Preferred origin routes cleanly to each independent slot.
         let macDispatch = await adapter.submitQuestion(
             text: "在 Mac 跑构建",
             requestId: "req-w-mac",
-            preferredOrigin: .mac
+            origin: .mac
         )
         let cloudDispatch = await adapter.submitQuestion(
             text: "在云端查日程",
             requestId: "req-w-cloud",
-            preferredOrigin: .cloud
+            origin: .cloud
         )
         store.stopCloudDialoguePolling()
         store.mac.stopCloudDialoguePolling()

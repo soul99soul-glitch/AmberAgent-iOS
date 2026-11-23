@@ -1,5 +1,8 @@
 package app.amber.cloud.gateway
 
+import app.amber.cloud.channel.OutboundCard
+import app.amber.cloud.config.ConfigurationApiException
+import app.amber.cloud.config.PairingBootstrapSnapshot
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.security.EnvelopeCredentialVault
 import app.amber.core.native.AmberNativeBridge
@@ -12,6 +15,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.io.File
+import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
@@ -60,7 +64,20 @@ data class PendingApprovalDto(
     val tool: String,
     val detail: String? = null,
     val highRisk: Boolean,
-)
+    val riskLevel: String? = null,
+    val targetDevice: String? = null,
+    val targetSummary: String? = null,
+    val diffPreview: String? = null,
+    val requiresLocalApproval: Boolean? = null,
+) {
+    // Stage 2-B reads these display keys in the status and board cards.
+    val summary = targetSummary
+    val targetDeviceName = targetDevice
+}
+
+private val PendingApprovalDto.needsLocalDecision: Boolean
+    get() = requiresLocalApproval == true ||
+        (targetDevice != null && targetDevice != "cloud-daemon" && (riskLevel == "L3" || (riskLevel == null && highRisk)))
 
 @Serializable
 data class SessionDto(
@@ -117,7 +134,16 @@ data class BoardApprovalDto(
     val tool: String,
     val detail: String? = null,
     val highRisk: Boolean,
-)
+    val riskLevel: String? = null,
+    val targetDevice: String? = null,
+    val targetSummary: String? = null,
+    val diffPreview: String? = null,
+    val requiresLocalApproval: Boolean? = null,
+) {
+    // Stage 2-B reads these display keys in the status and board cards.
+    val summary = targetSummary
+    val targetDeviceName = targetDevice
+}
 
 @Serializable
 data class BoardItemDto(
@@ -179,6 +205,7 @@ data class PushMessagePayload(
     val highRisk: Boolean = false,
     val deepLink: String? = null,
     val workItemId: String? = null,
+    val silent: Boolean = false,
 )
 
 fun interface PushSender {
@@ -200,7 +227,7 @@ class CloudGatewayState(
     gatewayNameOverride: String? = null,
     var pushSender: PushSender = PushSender { Result.success(Unit) },
     var soulRevisionProvider: () -> Long = { 0L },
-    private val clockEpochSeconds: () -> Double = { nowEpochSeconds() },
+    internal val clockEpochSeconds: () -> Double = { nowEpochSeconds() },
 ) {
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
     private val compactJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -250,8 +277,16 @@ class CloudGatewayState(
         return created
     }
 
+    // The CLI and the HTTP gateway can issue a ticket in different processes.
+    private inline fun <T> withTicketLock(action: () -> T): T {
+        val path = File(dataDir, "pairing.lock").toPath()
+        return FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.WRITE).use { channel ->
+            channel.lock().use { action() }
+        }
+    }
+
     @Synchronized
-    fun issuePairingTicket(nowSeconds: Double = clockEpochSeconds(), ttlSeconds: Double = 300.0): String {
+    fun issuePairingTicket(nowSeconds: Double = clockEpochSeconds(), ttlSeconds: Double = 300.0): String = withTicketLock {
         val secretBytes = ByteArray(16).also { secureRandom.nextBytes(it) }
         val secret = Base64.getUrlEncoder().withoutPadding().encodeToString(secretBytes)
         val ticket = PairingTicket(
@@ -260,12 +295,12 @@ class CloudGatewayState(
         )
         atomicWrite(pairingFile, json.encodeToString(ticket))
         recordAudit("pair-code")
-        return secret
+        secret
     }
 
     /**
      * Validates a one-time pairing secret and registers the device in `devices.json`.
-     * Burns `pairing.json` immediately on first valid match.
+     * Consumes the ticket once registration parameters and any bootstrap response are ready.
      */
     @Synchronized
     fun pairDevice(
@@ -276,24 +311,25 @@ class CloudGatewayState(
         nodeRole: String = "hybrid",
         trustedApprovalSurface: Boolean? = null,
         nowSeconds: Double = clockEpochSeconds(),
-    ): PairResult {
+        prepareBootstrap: ((PairedDevice) -> PairingBootstrapSnapshot?)? = null,
+    ): PairResult = withTicketLock {
         val normalizedPlatform = platform.trim().lowercase()
         if (secret.isBlank() || normalizedPlatform !in VALID_PLATFORMS) {
-            return PairResult.BadRequest("需要 secret 与 platform（ios / android / harmony / macos / linux）")
+            return@withTicketLock PairResult.BadRequest("需要 secret 与 platform（ios / android / harmony / macos / linux）")
+        }
+        if (protocolVersion !in 1..2 || nodeRole !in setOf("viewer", "executor", "hybrid")) {
+            return@withTicketLock PairResult.BadRequest("invalid_pair_request")
         }
         if (!pairingFile.exists()) {
-            return PairResult.Forbidden("配对码无效或已过期，请重新运行 amber-cli pair")
+            return@withTicketLock PairResult.Forbidden("配对码无效或已过期，请重新运行 amber-cli pair")
         }
         val ticket = runCatching {
             json.decodeFromString<PairingTicket>(pairingFile.readText())
-        }.getOrNull() ?: return PairResult.Forbidden("配对码无效或已过期，请重新运行 amber-cli pair")
+        }.getOrNull() ?: return@withTicketLock PairResult.Forbidden("配对码无效或已过期，请重新运行 amber-cli pair")
 
         if (ticket.expiresAt <= nowSeconds || ticket.secretHash != sha256Hex(secret)) {
-            return PairResult.Forbidden("配对码无效或已过期，请重新运行 amber-cli pair")
+            return@withTicketLock PairResult.Forbidden("配对码无效或已过期，请重新运行 amber-cli pair")
         }
-
-        // Single-use invariant: burn ticket before issuing token
-        pairingFile.delete()
 
         val displayName = (deviceName?.takeIf { it.isNotBlank() } ?: normalizedPlatform).take(64)
         val tokenBytes = ByteArray(32).also { secureRandom.nextBytes(it) }
@@ -309,15 +345,17 @@ class CloudGatewayState(
             nodeRole = nodeRole,
             trustedApprovalSurface = trustedApprovalSurface ?: (normalizedPlatform in NATIVE_PLATFORMS),
         )
-        return try {
+        try {
             val current = loadDevicesStrict().toMutableList()
+            val bootstrap = prepareBootstrap?.invoke(device)
+            // Validation and encryption are complete. Consume before publishing a device token.
+            Files.delete(pairingFile.toPath())
             current.add(device)
             saveDevicesStrict(current)
             recordAudit(
                 "pair",
                 mapOf(
                     "device" to device.id,
-                    "name" to device.name,
                     "platform" to device.platform,
                 ),
             )
@@ -326,9 +364,12 @@ class CloudGatewayState(
                 token = token,
                 gatewayId = identity.id,
                 gatewayName = identity.name,
+                bootstrap = bootstrap,
             )
-        } catch (e: Exception) {
-            PairResult.ServerError("无法保存设备: ${e.message}")
+        } catch (e: ConfigurationApiException) {
+            if (e.status == 400) PairResult.BadRequest(e.code) else PairResult.ServerError(e.code)
+        } catch (_: Exception) {
+            PairResult.ServerError("pairing_unavailable")
         }
     }
 
@@ -338,6 +379,7 @@ class CloudGatewayState(
             val token: String,
             val gatewayId: String,
             val gatewayName: String,
+            val bootstrap: PairingBootstrapSnapshot? = null,
         ) : PairResult
 
         data class BadRequest(val error: String) : PairResult
@@ -398,6 +440,38 @@ class CloudGatewayState(
     fun findDeviceById(deviceId: String): PairedDevice? =
         runCatching { loadDevicesStrict().firstOrNull { it.id == deviceId } }.getOrNull()
 
+    fun buildProactivePushPayload(
+        device: PairedDevice,
+        card: OutboundCard,
+        signalId: String,
+        silentDelivery: Boolean,
+    ): PushMessagePayload? {
+        if (device.platform.lowercase() !in setOf("ios", "watchos", "watch")) return null
+        val pushToken = device.pushToken?.takeIf(::validPushToken) ?: return null
+        if (device.platform.equals("ios", ignoreCase = true) && device.pushEnvironment !in setOf("sandbox", "production")) return null
+        val safeTitle = CredentialRedactor.redact(card.title).trim().ifBlank { "Amber 主动提醒" }.take(100)
+        val firstLine = card.markdownBody
+            .lineSequence()
+            .map { it.trim().removePrefix("**摘要**：").removePrefix("**摘要**:").trim() }
+            .firstOrNull { it.isNotEmpty() }
+            ?: safeTitle
+        val safeBody = CredentialRedactor.redact(firstLine).take(180)
+        return PushMessagePayload(
+            deviceId = device.id,
+            platform = device.platform,
+            pushToken = pushToken,
+            title = safeTitle,
+            body = safeBody,
+            sessionKey = null,
+            toolCallId = null,
+            category = "amber.proactive.card",
+            highRisk = false,
+            deepLink = "amber://proactive/$signalId",
+            workItemId = null,
+            silent = silentDelivery,
+        )
+    }
+
     /**
      * Privacy-preserving push payload for scheduled Cloud tasks (X2).
      * Never exposes schedule prompt, execution output, error details, or tool names.
@@ -429,13 +503,12 @@ class CloudGatewayState(
         )
     }
 
+    private fun validPushToken(token: String): Boolean = token.isNotEmpty() && token.length <= 4096 &&
+        token.all { it.code < 128 && (it.isLetterOrDigit() || it in ":_-.+/=") }
+
     @Synchronized
     fun registerPushToken(device: PairedDevice, token: String?, environment: String?): Pair<Int, String?> {
-        if (
-            token.isNullOrEmpty() ||
-            token.length > 4096 ||
-            !token.all { it.code < 128 && (it.isLetterOrDigit() || it in ":_-.+/=") }
-        ) {
+        if (token == null || !validPushToken(token)) {
             return 400 to "token 非法"
         }
         if (device.platform == "ios" && environment !in setOf("sandbox", "production")) {
@@ -520,7 +593,12 @@ class CloudGatewayState(
     @Synchronized
     fun upsertSession(session: SessionDto) {
         val safeApproval = session.pendingApproval?.let {
-            it.copy(detail = it.detail?.let(CredentialRedactor::redact))
+            it.copy(
+                detail = it.detail?.let(CredentialRedactor::redact),
+                targetDevice = it.targetDevice?.let(CredentialRedactor::redact),
+                targetSummary = it.targetSummary?.let(CredentialRedactor::redact),
+                diffPreview = it.diffPreview?.let(CredentialRedactor::redact),
+            )
         }
         sessions[session.key] = session.copy(
             subject = CredentialRedactor.redact(session.subject),
@@ -600,6 +678,11 @@ class CloudGatewayState(
                     tool = it.tool,
                     detail = it.detail?.let(CredentialRedactor::redact),
                     highRisk = it.highRisk,
+                    riskLevel = it.riskLevel ?: if (it.highRisk) "L3" else "L2",
+                    targetDevice = it.targetDevice,
+                    targetSummary = it.targetSummary?.let(CredentialRedactor::redact),
+                    diffPreview = it.diffPreview?.let(CredentialRedactor::redact),
+                    requiresLocalApproval = it.needsLocalDecision,
                 )
             }
             val detail = when {
@@ -655,13 +738,8 @@ class CloudGatewayState(
     }
 
     /**
-     * Processes a tool approval decision according to C3 v1 & C3 v2 rules:
-     * - When `approval.highRisk == true` and `allow == true`:
-     *   ONLY requests from a paired, trusted native App in the unlocked foreground
-     *   (`trustedForeground == true`) are allowed (`200`).
-     *   All untrusted or non-foreground sources (mobile remote without foreground proof,
-     *   lock screen, notifications, IM channels, cloud self) receive `HTTP 403` and
-     *   `outcome = "rejected_high_risk"`.
+     * Mac-local approval stays on the target. A paired, biometrically verified foreground
+     * client may approve ordinary or cloud operations. Remote denial is always available.
      */
     suspend fun processDecision(
         sessionKey: String?,
@@ -707,28 +785,35 @@ class CloudGatewayState(
             return DecisionHttpResult(409, "这次审批已经结束", outcome = "stale")
         }
 
-        // C3 v2 + Defect #1: High-risk or IM `allow=true` from any non-trusted or non-foreground source -> 403!
-        if (allow && (pending.highRisk || !trustedForegroundSource)) {
-            if (!trustedForegroundSource) {
-                recordAudit(
-                    "amber-decision-result",
-                    mapOf(
-                        "task" to sessionKey,
-                        "run" to runId,
-                        "tool" to pending.tool,
-                        "toolCallId" to toolCallId,
-                        "allow" to "true",
-                        "decision" to "allow",
-                        "outcome" to "rejected_high_risk",
-                        "device" to actorDevice,
-                    ),
-                )
-                return DecisionHttpResult(
-                    status = 403,
-                    error = "操作只能在已配对、解锁且经过生物识别的原生 App 前台核对后批准（IM 仅可拒绝）",
-                    outcome = "rejected_high_risk",
-                )
-            }
+        val requiresLocal = pending.needsLocalDecision
+        if (allow && (requiresLocal || !trustedForegroundSource)) {
+            val resolvedRiskLevel = pending.riskLevel ?: if (pending.highRisk) "L3" else "L2"
+            recordAudit(
+                "amber-decision-result",
+                mapOf(
+                    "task" to sessionKey,
+                    "run" to runId,
+                    "tool" to pending.tool,
+                    "toolCallId" to toolCallId,
+                    "allow" to "true",
+                    "decision" to "allow",
+                    "riskLevel" to resolvedRiskLevel,
+                    "requiresLocalApproval" to requiresLocal.toString(),
+                    "outcome" to "rejected_high_risk",
+                    "device" to actorDevice,
+                ),
+            )
+            return DecisionHttpResult(
+                status = 403,
+                error = if (requiresLocal) "操作（$resolvedRiskLevel）只能在目标设备本机核对后批准"
+                    else "操作（$resolvedRiskLevel）需要已配对、解锁且经过生物识别的原生 App 前台核对批准",
+                outcome = "rejected_high_risk",
+                riskLevel = resolvedRiskLevel,
+                targetDevice = pending.targetDevice,
+                targetSummary = pending.targetSummary,
+                diffPreview = pending.diffPreview,
+                requiresLocalApproval = requiresLocal,
+            )
         }
 
         val listeners = synchronized(this) { decisionListeners.toList() }
@@ -780,6 +865,11 @@ class CloudGatewayState(
         val status: Int,
         val error: String? = null,
         val outcome: String = "",
+        val riskLevel: String? = null,
+        val targetDevice: String? = null,
+        val targetSummary: String? = null,
+        val diffPreview: String? = null,
+        val requiresLocalApproval: Boolean? = null,
     )
 
     @Synchronized

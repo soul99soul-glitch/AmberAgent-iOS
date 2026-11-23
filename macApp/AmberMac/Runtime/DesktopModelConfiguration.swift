@@ -70,7 +70,7 @@ enum DesktopThinkingPolicy {
             return [.off, .auto, .low, .medium, .high, .xhigh]
         }
 
-        if isKimiK3(id) { return [.off, .low, .high, .max] }
+        if isKimiK3(id) { return [.low, .high, .max] }
         if isKimiK27Code(id) { return [] }
         if id.contains("kimi") || id.contains("moonshot") || routingKey == "kimi" {
             return [.off, .auto]
@@ -101,13 +101,16 @@ enum DesktopThinkingPolicy {
             return geminiLevels(id)
         }
 
-        if isGrok46(id) || (routingKey == "xai" && id.contains("4.6")) {
-            return [.off, .low, .medium, .high, .xhigh]
+        if isGrok46(id) || isGrok47(id) || (routingKey == "xai" && (id.contains("4.6") || id.contains("4.7"))) {
+            return [.low, .medium, .high, .xhigh]
         }
         if isGrok45(id) || id.contains("grok-4") || id.contains("grok-3-mini") || (routingKey == "xai" && id.contains("grok")) {
             return [.off, .low, .medium, .high]
         }
 
+        if isOpenAIGpt6(id) {
+            return [.low, .medium, .high, .xhigh, .max]
+        }
         if isOpenAIReasoningModel(id) {
             return [.off, .low, .medium, .high, .xhigh, .max]
         }
@@ -200,7 +203,7 @@ enum DesktopThinkingPolicy {
             case .mimoCodingPlan: return "mimo"
             case .minimaxTokenPlan: return "minimax"
             case .grokOAuth: return "xai"
-            case .codexOAuth: return "openai"
+            case .codexOAuth, .chatgptSiwc: return "openai"
             case .apiKey, .antigravityOAuth: break
             }
             let endpoint = "\(baseURL) \(name)".lowercased()
@@ -239,7 +242,8 @@ enum DesktopThinkingPolicy {
     }
 
     private static func isKimiK3(_ id: String) -> Bool {
-        id.contains("kimi-k3") || id.hasSuffix("/k3") || id.contains("kimi/k3")
+        let leaf = id.split(separator: "/").last.map(String.init) ?? id
+        return id.contains("kimi-k3") || leaf.range(of: #"^k3($|[-.])"#, options: .regularExpression) != nil
     }
 
     private static func isKimiK27Code(_ id: String) -> Bool {
@@ -311,13 +315,21 @@ enum DesktopThinkingPolicy {
         id.contains("grok-4.6") || id.contains("grok-4-6")
     }
 
+    private static func isGrok47(_ id: String) -> Bool {
+        id.contains("grok-4.7") || id.contains("grok-4-7")
+    }
+
     private static func isGrok45(_ id: String) -> Bool {
         id.contains("grok-4.5") || id.contains("grok-4-5")
     }
 
+    private static func isOpenAIGpt6(_ id: String) -> Bool {
+        id.range(of: #"(^|[^a-z0-9])gpt-6($|[-.])"#, options: .regularExpression) != nil
+    }
+
     private static func isOpenAIReasoningModel(_ id: String) -> Bool {
         if id.contains("gpt-5-chat") || id.contains("gpt-5.3") || id.contains("gpt-5-3") { return false }
-        if id.contains("gpt-5") || id.contains("gpt-6") || id.contains("codex") || id.contains("gpt-oss") {
+        if id.contains("gpt-5") || isOpenAIGpt6(id) || id.contains("codex") || id.contains("gpt-oss") {
             return true
         }
         return id.range(of: #"(?:^|[-/])o\d+(?:$|[-.])"#, options: .regularExpression) != nil

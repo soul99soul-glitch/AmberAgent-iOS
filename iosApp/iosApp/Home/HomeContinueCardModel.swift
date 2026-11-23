@@ -35,19 +35,22 @@ struct HomeCouncilTaskRef: Equatable {
 }
 
 struct HomeMacTaskRef: Equatable {
+    let role: MacGatewayEndpointRole
     let id: String
     let title: String
     let waitingForReply: Bool
     let updatedAt: Date
 
-    init(id: String, title: String, waitingForReply: Bool, updatedAt: Date) {
+    init(id: String, title: String, waitingForReply: Bool, updatedAt: Date, role: MacGatewayEndpointRole = .mac) {
+        self.role = role
         self.id = id
         self.title = title
         self.waitingForReply = waitingForReply
         self.updatedAt = updatedAt
     }
 
-    init(_ item: MacGatewayBoardItem) {
+    init(_ item: MacGatewayBoardItem, role: MacGatewayEndpointRole) {
+        self.role = role
         id = item.id
         title = item.title
         waitingForReply = item.waitingForReply
@@ -123,7 +126,7 @@ struct HomeContinueCardModel: Equatable {
         case openCouncil
         case miniAppRunner(String)
         case generatedImage(ChatMessageAnchor)
-        case macTasks
+        case gatewayTasks(MacGatewayEndpointRole)
     }
 
     private enum Priority: Int {
@@ -229,7 +232,7 @@ struct HomeContinueCardModel: Equatable {
         // Mac 上等你处理的任务（等批准 / 等回复）：标题作首行，状态放副信息。
         candidates.append(contentsOf: macTasks.map { task in
             Candidate(
-                stableID: "mac-task:\(task.id)",
+                stableID: "\(task.role.rawValue)-task:\(task.id)",
                 priority: .actionRequired,
                 updatedAt: task.updatedAt,
                 model: .init(
@@ -237,10 +240,10 @@ struct HomeContinueCardModel: Equatable {
                     title: task.title,
                     meta: formatted(
                         "%@ · %@",
-                        arguments: ["Mac", localized(task.waitingForReply ? "等你回复" : "等你确认")]
+                        arguments: [task.role.displayName, localized(task.waitingForReply ? "等你回复" : "等你确认")]
                     ),
                     ctaTitle: localized("处理"),
-                    destination: .macTasks
+                    destination: .gatewayTasks(task.role)
                 )
             )
         })

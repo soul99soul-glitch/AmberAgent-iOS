@@ -223,14 +223,17 @@ class OpenAIKmpProviderSiwcTest {
             }
         )
 
-        val remaining = sanitized.getValue("tools").jsonArray
+        assertFalse("tools" in sanitized)
+        val declarations = sanitized.getValue("input").jsonArray
+        val remaining = declarations.first().jsonObject.getValue("tools").jsonArray
         assertEquals(1, remaining.size)
         assertEquals("function", remaining.single().jsonObject.getValue("type").jsonPrimitive.content)
         assertEquals("get_weather", remaining.single().jsonObject.getValue("name").jsonPrimitive.content)
         assertFalse("tool_choice" in sanitized)
-        val inline = sanitized.getValue("input").jsonArray.single().jsonObject
+        assertEquals(2, declarations.size)
+        val inline = declarations.last().jsonObject
         assertEquals(remaining, inline["tools"])
-        assertEquals("user", inline.getValue("role").jsonPrimitive.content)
+        assertEquals("developer", inline.getValue("role").jsonPrimitive.content)
     }
 
     @Test
@@ -244,12 +247,12 @@ class OpenAIKmpProviderSiwcTest {
         }
 
         // Strict terminal state rejects [DONE] and response.incomplete without response.completed.
-        val incompleteState = OpenAIStreamTerminalState(OpenAIStreamKind.RESPONSES, strictResponsesCompletedOnly = true)
+        val incompleteState = OpenAIStreamTerminalState(OpenAIStreamKind.RESPONSES_SIWC)
         incompleteState.observe("""data: {"type":"response.output_text.delta","delta":"hi"}""")
         incompleteState.observe("""data: [DONE]""")
         assertFailsWith<IllegalStateException> { incompleteState.requireCompleted() }
 
-        val completedState = OpenAIStreamTerminalState(OpenAIStreamKind.RESPONSES, strictResponsesCompletedOnly = true)
+        val completedState = OpenAIStreamTerminalState(OpenAIStreamKind.RESPONSES_SIWC)
         completedState.observe("""data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}""")
         completedState.requireCompleted()
     }

@@ -357,9 +357,9 @@ final class WatchTaskViewModel: ObservableObject {
             setStatus(localized("无法连接 iPhone，问题已保留为草稿"))
             return
         }
-        let remoteOverrideReady = draft.targetOrigin != nil
-            && draft.targetOrigin != .local
-            && library?.remoteTargetOnline == true
+        let target = effectiveTargetOrigin(for: draft)
+        let remoteOverrideReady = draft.quickActionId == nil && target != .local
+            && library?.remoteTargetOrigin == target && library?.remoteTargetOnline == true
         guard library?.isConfigured == true || remoteOverrideReady || draft.pendingRequest != nil else {
             setStatus(localized(library?.configurationMessage ?? "请先在 iPhone 完成模型配置"))
             return
@@ -368,7 +368,7 @@ final class WatchTaskViewModel: ObservableObject {
             requestId: draft.requestId, runId: "", conversationId: draft.conversationId,
             decisionId: nil, action: draft.quickActionId == nil ? .ask : .runQuickAction,
             optionId: draft.quickActionId, text: draft.text, createdAt: Date(),
-            targetOrigin: draft.targetOrigin
+            targetOrigin: draft.quickActionId == nil ? target : draft.targetOrigin
         )
         guard store.beginSending(key: key, request: request) else {
             setStatus(localized(store.storageError ?? "手表本地缓存保存失败，请稍后重试"))

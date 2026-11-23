@@ -68,6 +68,10 @@ import CryptoKit
             })
             onSteps(Self.steps(result.messages))
             if result.wasCancelled || Task.isCancelled { generation.yield(.cancelled); return }
+            if configuration.authMode == .chatgptSiwc, let failure = result.providerFailureMessage,
+               let planError = DesktopSIWCError.planError(in: failure) {
+                generation.yield(.failed(planError.localizedDescription)); return
+            }
             guard result.providerFailureMessage == nil, result.durabilityFailureMessage == nil, result.toolOutcomeUnknown == nil,
                   result.pendingApproval == nil, !result.guardStopped, !result.hitStepLimit else {
                 generation.yield(.failed("子代理未能完成。")); return
@@ -184,7 +188,7 @@ import CryptoKit
                     // nothing to do. Name the cause and the two ways out.
                     await tasks.finish(id, status: .failed, error: "上下文超出模型窗口。")
                     generation.yield(.failed(Self.overflowMessageForToolRun))
-                } else if let reason = Self.stopReason(result, rounds: toolRounds) {
+                } else if let reason = Self.stopReason(result, rounds: toolRounds, authMode: configuration.authMode) {
                     await tasks.finish(id, status: .failed, error: reason.record)
                     generation.yield(.failed(reason.banner))
                 } else {
@@ -205,8 +209,10 @@ import CryptoKit
     }
 
     /// 四种引擎终态各自对应一条可读原因：先判输出上限（它也带 providerFailureMessage），再判轮数。
-    nonisolated static func stopReason(_ result: IOSAgentToolEngineResult, rounds: Int) -> DesktopAgentStopReason? {
+    nonisolated static func stopReason(_ result: IOSAgentToolEngineResult, rounds: Int, authMode: DesktopProviderAuthMode = .apiKey) -> DesktopAgentStopReason? {
         if result.hitOutputLimit { return .outputLimit }
+        if authMode == .chatgptSiwc, let failure = result.providerFailureMessage,
+           let error = DesktopSIWCError.planError(in: failure) { return .chatGPTPlan(error) }
         if result.hitStepLimit { return .roundLimit(rounds) }
         if result.guardStopped { return .loopGuard }
         if result.providerFailureMessage != nil { return .providerFailure }
@@ -385,8 +391,27 @@ struct DesktopEngineTransport: IOSAgentTextProvider, IOSAgentStreamingProvider {
     var promptCaching = false
 
     func prepareRequest(providerSetting: ProviderSetting, params: TextGenerationParams) async throws -> (ProviderSetting, TextGenerationParams) {
-        // Same identity rewrite chain as iOS ChatKernelRunHost: Codex, then Grok OAuth (token refresh + CLI proxy).
+        // Same identity rewrite chain as iOS ChatKernelRunHost: Codex, ChatGPT SIWC, then Grok OAuth.
         var resolved = try await IOSGrokWebProviderResolver.resolved(try await IOSCodexProviderResolver.resolved(providerSetting))
+        if let openAI = resolved as? ProviderSetting.OpenAI, openAI.authMode == OpenAIAuthMode.chatgptSiwc {
+            let token = try await DesktopChatGPTSIWCClient(providerId: openAI.id.description().lowercased()).getValidAccessToken()
+            resolved = ProviderSetting.OpenAI(
+                id: openAI.id,
+                enabled: openAI.enabled,
+                name: openAI.name,
+                models: openAI.models,
+                balanceOption: openAI.balanceOption,
+                builtIn: openAI.builtIn,
+                descriptionText: openAI.descriptionText,
+                shortDescriptionText: openAI.shortDescriptionText,
+                apiKey: token,
+                baseUrl: DesktopChatGPTSIWCConstants.apiBaseURL,
+                chatCompletionsPath: openAI.chatCompletionsPath,
+                useResponseApi: true,
+                authMode: OpenAIAuthMode.chatgptSiwc,
+                brand: openAI.brand
+            )
+        }
         if promptCaching, let claude = resolved as? ProviderSetting.Claude {
             claude.promptCaching = true
             resolved = claude
@@ -613,6 +638,7 @@ private final class DesktopAgentExecutor: IOSToolExecutor, @unchecked Sendable {
             case "workspace_file_read":
                 let path = try Self.string("path", args)
                 let result = try await files.readUTF8Prefix(conversationID: owner, path: path, maxCharacters: 48_000)
+                await tasks.onWorkspaceRead?(owner, path, result.text)
                 output = try Self.json(["ok": true, "path": path, "content": result.text, "truncated": result.truncated])
             case "workspace_file_write":
                 let path = try Self.string("path", args), text = try Self.string("content", args, allowEmpty: true)

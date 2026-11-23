@@ -17,7 +17,18 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class PublicAgent(val id: String, val name: String, val memoryPolicy: AgentMemoryPolicy, val tags: List<String>, val revision: Int)
 @Serializable
-data class PublicWorkItem(val id: String, val agentId: String, val title: String, val state: WorkItemState, val progress: String?, val updatedAtMs: Long)
+data class PublicWorkItem(
+    val id: String,
+    val agentId: String,
+    val title: String,
+    val state: WorkItemState,
+    val progress: String? = null,
+    val updatedAtMs: Long,
+    val conversationId: String? = null,
+    val parentRunId: String? = null,
+    val sourceRefs: List<String> = emptyList(),
+    val sourcePaths: List<String> = emptyList(),
+)
 @Serializable
 data class AgentActivity(val agentId: String, val activities: List<ActivityStatus>, val workItems: List<PublicWorkItem>)
 @Serializable
@@ -25,7 +36,18 @@ data class TimelineEntry(val id: String, val role: String, val agentId: String =
 @Serializable
 data class TimelinePage(val items: List<TimelineEntry>, val nextCursor: String? = null, val soulRevision: Long = 0L)
 @Serializable
-data class PublicWorkDetail(val workItem: PublicWorkItem, val brief: String, val failure: String?, val sessionArchived: Boolean, val resultMarkdown: String? = null, val outcome: String? = null)
+data class PublicWorkDetail(
+    val workItem: PublicWorkItem,
+    val brief: String,
+    val failure: String? = null,
+    val sessionArchived: Boolean,
+    val resultMarkdown: String? = null,
+    val outcome: String? = null,
+    val conversationId: String? = null,
+    val parentRunId: String? = null,
+    val sourceRefs: List<String> = emptyList(),
+    val sourcePaths: List<String> = emptyList(),
+)
 
 /** Explicit public projections: raw profiles, tool parts, reasoning and session identities never serialize here. */
 class AgentCentricApi(val kernel: CloudAgentKernel) {
@@ -34,7 +56,18 @@ class AgentCentricApi(val kernel: CloudAgentKernel) {
 
     fun publicAgent(profile: AgentProfile) = PublicAgent(profile.id, safe(profile.name), profile.memoryPolicy, profile.tags.map(::safe).filter { it.isNotEmpty() }, profile.revision)
     fun agents() = kernel.agentRegistry.list().map(::publicAgent)
-    internal fun publicWork(item: CloudWorkItemRecord) = PublicWorkItem(item.workItemId, item.agentId, safe(item.title), item.state, item.latestProgressNote?.let(::safe), item.updatedAtMs)
+    internal fun publicWork(item: CloudWorkItemRecord) = PublicWorkItem(
+        id = item.workItemId,
+        agentId = item.agentId,
+        title = safe(item.title),
+        state = item.state,
+        progress = item.latestProgressNote?.let(::safe),
+        updatedAtMs = item.updatedAtMs,
+        conversationId = item.conversationId,
+        parentRunId = item.parentRunId,
+        sourceRefs = item.sourceRefs,
+        sourcePaths = item.sourcePaths,
+    )
 
     fun activity(id: String): AgentActivity? {
         if (kernel.agentRegistry.get(id) == null) return null
@@ -54,7 +87,18 @@ class AgentCentricApi(val kernel: CloudAgentKernel) {
     fun workItem(id: String): PublicWorkDetail? = kernel.orchestrationStore.getWorkItem(id)?.let {
         // Final output may intentionally contain code/JSON. Activity sanitization would destroy that result.
         val result = if (it.state.isTerminal) it.settlementReportPath?.let(kernel.orchestrationStore::readArchivedDocumentText) else null
-        PublicWorkDetail(publicWork(it), safe(it.brief), it.failureReason?.let(::safe), it.state.isTerminal, result, it.settlementOutcome)
+        PublicWorkDetail(
+            workItem = publicWork(it),
+            brief = safe(it.brief),
+            failure = it.failureReason?.let(::safe),
+            sessionArchived = it.state.isTerminal,
+            resultMarkdown = result,
+            outcome = it.settlementOutcome,
+            conversationId = it.conversationId,
+            parentRunId = it.parentRunId,
+            sourceRefs = it.sourceRefs,
+            sourcePaths = it.sourcePaths,
+        )
     }
 
     suspend fun timeline(before: String? = null, limit: Int = 50): TimelinePage {

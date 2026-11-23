@@ -103,6 +103,7 @@ enum Route: Hashable {
     case macGateway
     /// Task board of the paired Mac (scheduled tasks, their runs, Claude Code / Codex sessions).
     case macTasks
+    case gatewayTasks(MacGatewayEndpointRole)
     /// Cloud configuration of the paired Mac (provider/model/search, local import).
     case cloudConfig
     /// Procedural rule cards (Stage 3-D): local + paired gateway `/v2/rules`.

@@ -300,6 +300,17 @@ import XCTest
         XCTAssertNil(request.status)
         XCTAssertFalse(request.isLoading)
     }
+
+    func testCatalogShowsSIWCUsageRecovery() async {
+        let catalog = Catalog(), request = DesktopCatalogRequest()
+        var provider = config("SIWC")
+        provider.authMode = .chatgptSiwc
+        request.fetch(configuration: provider, apiKey: "", catalog: catalog)
+        while catalog.continuations.isEmpty { await Task.yield() }
+        catalog.continuations[0].resume(throwing: DesktopSIWCError.usageLimitExceeded)
+        await request.waitUntilIdle()
+        XCTAssertEqual(request.status, DesktopSIWCError.usageLimitExceeded.localizedDescription)
+    }
 }
 
 @MainActor final class DesktopOAuthTests: XCTestCase {

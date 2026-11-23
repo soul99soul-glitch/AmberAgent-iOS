@@ -1975,7 +1975,7 @@ extension MacGatewayStore {
             }
             let soulStore = boundSoulStore ?? .shared
             var pulledAuthoritativeSoul = false
-            if let rev = page.soulRevision {
+            if endpointRole == .cloud, let rev = page.soulRevision {
                 pulledAuthoritativeSoul = await syncCloudSoulIfNeeded(
                     observedRevision: rev,
                     soulStore: soulStore
@@ -2545,6 +2545,7 @@ extension MacGatewayStore {
         for event: MacGatewayCloudDialogueEvent,
         allowHeuristicFallback: Bool = true
     ) {
+        guard endpointRole == .cloud else { return }
         let soulStore = boundSoulStore ?? .shared
         if let rev = event.soulRevision, client != nil {
             Task { @MainActor in

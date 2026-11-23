@@ -626,7 +626,8 @@ struct ConversationsView: View {
         }
 
         // Empty while unpaired or unreachable, so stale board items never surface.
-        let macTasks = macGateway.combinedNeedsYouItems.map(HomeMacTaskRef.init)
+        let macTasks = macGateway.needsYouItems.map { HomeMacTaskRef($0, role: .cloud) }
+            + (macGateway.macSlot?.needsYouItems ?? []).map { HomeMacTaskRef($0, role: .mac) }
 
         return HomeContinueCardModel.resolve(
             councilTask: councilTask,
@@ -647,7 +648,7 @@ struct ConversationsView: View {
                         case .miniAppRunner(let id): router.navigate(to: .miniAppRunner(appId: id))
                         case .generatedImage(let anchor):
                             openGeneratedImage(anchor)
-                        case .macTasks: router.navigate(to: .macTasks)
+                        case .gatewayTasks(let role): router.navigate(to: .gatewayTasks(role))
                         }
                     }
                     Rectangle().fill(AmberTheme.separator).frame(height: 1 / displayScale).padding(.horizontal, 16)

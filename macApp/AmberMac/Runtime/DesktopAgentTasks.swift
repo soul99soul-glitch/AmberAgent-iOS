@@ -205,6 +205,7 @@ final class DesktopAgentTasks {
     /// (task-named result) and push approval prompts with action buttons instead of the generic notice.
     @ObservationIgnored var unattendedConversations: [UUID: String] = [:]
     /// Approval lifecycle of unattended runs, for reporting to the Mac Gateway: (conversation, approval or nil when answered).
+    @ObservationIgnored var onWorkspaceRead: (@MainActor (UUID, String, String) -> Void)?
     @ObservationIgnored var onUnattendedApproval: (@MainActor (UUID, DesktopToolApproval?) -> Void)?
 
     init(directory: URL? = nil, defaults: UserDefaults = .standard, notifications: DesktopNotifications? = nil) {

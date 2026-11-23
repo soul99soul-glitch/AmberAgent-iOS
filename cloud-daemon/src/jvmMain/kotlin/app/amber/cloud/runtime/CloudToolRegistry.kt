@@ -108,14 +108,19 @@ class CloudToolRegistry(
     fun registeredToolNames(): Set<String> = tools.keys.toSet()
 
     @Synchronized
-    fun isHighRisk(toolName: String): Boolean {
-        val registered = tools[toolName]
-        if (registered != null) {
-            return registered.highRisk ||
-                (toolName.startsWith("plugin__") && registered.effect == ToolEffect.SIDE_EFFECT)
-        }
-        return toolName in BUILTIN_HIGH_RISK_NAMES || toolName.startsWith("plugin__")
-    }
+    fun isHighRisk(toolName: String): Boolean = riskLevel(toolName) == ToolRiskLevel.L3
+
+    @Synchronized
+    fun riskLevel(toolName: String, args: JsonObject = JsonObject(emptyMap())): ToolRiskLevel =
+        ToolRiskPolicy.classify(toolName, tools[toolName], args)
+
+    @Synchronized
+    fun approvalPreview(
+        toolName: String,
+        args: JsonObject = JsonObject(emptyMap()),
+        targetDevice: String? = null,
+        cloudExecution: Boolean = false,
+    ): ToolApprovalPreview = ToolRiskPolicy.buildPreview(toolName, tools[toolName], args, targetDevice, cloudExecution)
 
     @Synchronized
     fun isWorkerApprovalTool(toolName: String): Boolean {

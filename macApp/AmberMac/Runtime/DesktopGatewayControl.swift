@@ -179,7 +179,8 @@ import Foundation
             ])
             return .failure(409, "这次审批已经结束")
         }
-        if allow, DesktopToolRegistry.isHighRisk(approval.name) {
+        let meta = DesktopToolRegistry.approvalMetadata(for: approval.name, arguments: approval.arguments)
+        if allow && meta.requiresLocalApproval {
             audit.record("amber-decision-result", [
                 "task": key,
                 "run": run.id.uuidString.lowercased(),
@@ -187,10 +188,20 @@ import Foundation
                 "toolCallId": call,
                 "allow": "true",
                 "decision": "allow",
+                "riskLevel": meta.riskLevel.rawValue,
+                "requiresLocalApproval": "true",
                 "outcome": "rejected_high_risk",
                 "device": request.deviceName ?? ""
             ])
-            return .failure(403, "高风险操作只能在 Mac 上核对后批准")
+            return .failure(
+                403,
+                "高风险操作（\(meta.riskLevel.rawValue)）只能在 Mac 本机核对后批准",
+                riskLevel: meta.riskLevel.rawValue,
+                targetDevice: meta.targetDevice,
+                targetSummary: meta.targetSummary,
+                diffPreview: meta.diffPreview,
+                requiresLocalApproval: true
+            )
         }
         guard await tasks.decideFromNotification(runID: run.id, toolID: call, allow: allow) else {
             audit.record("amber-decision-result", [

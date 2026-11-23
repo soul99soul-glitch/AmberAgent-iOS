@@ -37,14 +37,13 @@ struct ChatComposerLocalState {
     var cloudDialogueSubmitGeneration = 0
 
     // Plan 2: Unified Main-Timeline 3-Way Execution Target (本机 / 云端 / Mac) & Targeted Follow-up
-    var executionTarget: AmberComposerExecutionTarget = .local
     var unifiedMacFollowupWorkItemId: String? = nil
     var unifiedFollowupTargetRole: MacGatewayEndpointRole? = nil
     var sharePrefillNotice: String? = nil
 
     /// Consumes an explicit card follow-up target (if armed) while keeping the user's selected
     /// bottom-bar execution target intact for subsequent sends.
-    mutating func takeUnifiedRemoteTarget() -> (workItemId: String?, role: MacGatewayEndpointRole?) {
+    mutating func takeUnifiedRemoteTarget(executionTarget: AmberComposerExecutionTarget = .local) -> (workItemId: String?, role: MacGatewayEndpointRole?) {
         let targetWorkItemId = unifiedMacFollowupWorkItemId
         let targetRole = unifiedFollowupTargetRole ?? executionTarget.endpointRole
         unifiedMacFollowupWorkItemId = nil

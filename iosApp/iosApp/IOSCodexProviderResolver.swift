@@ -30,6 +30,7 @@ enum IOSCodexProviderResolver {
         return openAI.authMode == OpenAIAuthMode.chatgptSiwc
     }
 
+    #if os(iOS)
     static func isSignedIn(_ provider: ProviderSetting) -> Bool {
         guard let openAI = provider as? ProviderSetting.OpenAI else { return false }
         if openAI.authMode == OpenAIAuthMode.chatgptSiwc {
@@ -37,6 +38,8 @@ enum IOSCodexProviderResolver {
         }
         return IOSCodexAuthStore.load(providerId: providerKey(openAI)) != nil
     }
+
+    #endif
 
     /// Returns a request-ready provider. Throws if a Codex or Sign in with ChatGPT
     /// provider isn't signed in or the token can't be refreshed.
@@ -48,6 +51,8 @@ enum IOSCodexProviderResolver {
         guard let openAI = provider as? ProviderSetting.OpenAI else {
             return provider
         }
+        // DesktopEngineTransport resolves SIWC using the Mac credential store.
+        #if os(iOS)
         if openAI.authMode == OpenAIAuthMode.chatgptSiwc {
             let key = providerKey(openAI)
             let token = try await IOSChatGptSiwcOAuthClient(providerId: key).getValidAccessToken()
@@ -68,6 +73,7 @@ enum IOSCodexProviderResolver {
                 brand: openAI.brand
             )
         }
+        #endif
         guard isCodexConfiguration(openAI) else {
             return provider
         }

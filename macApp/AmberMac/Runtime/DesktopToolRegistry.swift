@@ -18,6 +18,24 @@ enum DesktopToolEffect: String, Sendable {
     static let readOnly: DesktopToolEffect = .pure
 }
 
+/// Static L1/L2/L3 risk tier (never auto-learned):
+/// - L1: read-only probes, auto-allowed
+/// - L2: reversible local writes, notify with undo/artifact summary
+/// - L3: irreversible or external side-effect writes, requires explicit confirmation (local Mac approval for high-risk host actions)
+enum DesktopToolRiskLevel: String, Codable, Sendable, Equatable {
+    case l1 = "L1"
+    case l2 = "L2"
+    case l3 = "L3"
+}
+
+struct DesktopToolApprovalMetadata: Equatable, Sendable {
+    let riskLevel: DesktopToolRiskLevel
+    let targetDevice: String
+    let targetSummary: String?
+    let diffPreview: String?
+    let requiresLocalApproval: Bool
+}
+
 struct DesktopToolDeclaration: Codable, Equatable, Sendable {
     let name: String
     let description: String
@@ -116,6 +134,97 @@ enum DesktopToolRegistry {
         }
         return name == "terminal_exec" || name == "workspace_artifact_delete" || name == "mcp_call_tool"
             || name == "interrupt_agent" || name == "plugin_install"
+    }
+
+    static let diffPreviewLimit = 400
+    static let targetSummaryLimit = 140
+
+    private static let l2ReversibleWriteTools: Set<String> = [
+        "workspace_file_write",
+        "workspace_file_edit",
+        "agent_soul_update",
+        "memory_tool",
+        "memory_write",
+    ]
+
+    /// Static L1/L2/L3 risk table. Unknown tools fail closed to L3.
+    static func riskLevel(for name: String, arguments: String = "{}", pluginEffect: ((String) -> DesktopToolEffect)? = nil) -> DesktopToolRiskLevel {
+        if isHighRisk(name) || alwaysAsks(name) {
+            return .l3
+        }
+        let resolvedEffect = effect(for: name, arguments: arguments, pluginEffect: pluginEffect)
+        if resolvedEffect == .pure || resolvedEffect == .networkRead {
+            return .l1
+        }
+        if l2ReversibleWriteTools.contains(name) {
+            return .l2
+        }
+        return .l3
+    }
+
+    static func approvalMetadata(
+        for name: String,
+        arguments: String,
+        targetDevice: String? = nil,
+        pluginEffect: ((String) -> DesktopToolEffect)? = nil
+    ) -> DesktopToolApprovalMetadata {
+        let level = riskLevel(for: name, arguments: arguments, pluginEffect: pluginEffect)
+        let device = (targetDevice?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+            ?? Host.current().localizedName
+            ?? "Mac"
+        let requiresLocal = level == .l3
+        let redactedJSON = IOSCredentialRedactor.redact(arguments)
+        let argsObj = (redactedJSON.data(using: .utf8)
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) ?? [:]
+        let targetSummary = buildTargetSummary(name: name, args: argsObj)
+        let diffPreview = buildDiffPreview(name: name, args: argsObj, fallbackJSON: redactedJSON)
+        return DesktopToolApprovalMetadata(
+            riskLevel: level,
+            targetDevice: device,
+            targetSummary: targetSummary,
+            diffPreview: diffPreview,
+            requiresLocalApproval: requiresLocal
+        )
+    }
+
+    private static func sanitizeAndTruncate(_ raw: String, limit: Int) -> String? {
+        let safe = DesktopHistoryRedaction.redact(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !safe.isEmpty else { return nil }
+        return safe.count > limit ? String(safe.prefix(limit - 1)) + "…" : safe
+    }
+
+    private static func buildTargetSummary(name: String, args: [String: Any]) -> String? {
+        let raw: String
+        if let path = args["path"] as? String, !path.isEmpty {
+            raw = "\(name): \(path)"
+        } else if let command = args["command"] as? String, !command.isEmpty {
+            raw = "\(name): \(command.split(whereSeparator: \.isWhitespace).joined(separator: " "))"
+        } else if let tool = args["tool"] as? String, !tool.isEmpty {
+            raw = "\(name): \(tool)"
+        } else if let action = args["action"] as? String, !action.isEmpty {
+            raw = "\(name): \(action)"
+        } else {
+            raw = name
+        }
+        return sanitizeAndTruncate(raw, limit: targetSummaryLimit)
+    }
+
+    private static func buildDiffPreview(name: String, args: [String: Any], fallbackJSON: String) -> String? {
+        let raw: String?
+        if let old = args["old"] as? String, let replacement = args["replacement"] as? String {
+            raw = "- \(old)\n+ \(replacement)"
+        } else if let content = args["content"] as? String, !content.isEmpty {
+            let path = (args["path"] as? String).map { "+++ \($0)\n" } ?? ""
+            raw = path + content
+        } else if let command = args["command"] as? String, !command.isEmpty {
+            raw = "$ \(command)"
+        } else if let path = args["path"] as? String, !path.isEmpty {
+            raw = "\(name) \(path)"
+        } else {
+            let trimmed = fallbackJSON.trimmingCharacters(in: .whitespacesAndNewlines)
+            raw = (trimmed.isEmpty || trimmed == "{}") ? nil : trimmed
+        }
+        return raw.flatMap { sanitizeAndTruncate($0, limit: diffPreviewLimit) }
     }
 
     static func effect(for name: String, arguments: String, pluginEffect: ((String) -> DesktopToolEffect)? = nil) -> DesktopToolEffect {

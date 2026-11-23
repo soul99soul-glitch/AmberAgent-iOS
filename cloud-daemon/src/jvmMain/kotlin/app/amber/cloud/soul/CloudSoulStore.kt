@@ -1,6 +1,8 @@
 package app.amber.cloud.soul
 
 import app.amber.cloud.agents.AgentMemoryPolicy
+import app.amber.cloud.rules.AuthorityPromptAssembler
+import app.amber.cloud.rules.ProceduralRuleRecord
 import app.amber.cloud.runtime.CloudMemoryStore
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.security.PlaceholderCredentialException
@@ -72,7 +74,7 @@ class CloudSoulStore(
         ignoreUnknownKeys = true
         encodeDefaults = true
     }
-    private val stateFile = File(dataDir, "agent_soul.json")
+    private val stateFile = File(dataDir, STATE_FILENAME)
     private val memorySoulFile = File(memoryDir, "SOUL.md")
     private val workspaceSoulFile = workspaceDir?.let { File(it, "SOUL.md") }
 
@@ -207,28 +209,26 @@ class CloudSoulStore(
         }
     }
 
-    fun renderRouterSystemPrompt(routerInstructions: String): String = buildString {
-        append(IMMUTABLE_HOST_DISCIPLINE_PROMPT.trim())
-        append("\n\n")
-        append(renderRolePersonaBlock(AgentMemoryPolicy.SHARED_WITH_GLOBAL).trim())
-        append("\n\n")
-        append(ROUTER_SOUL_TOOL_GUIDANCE.trim())
-        append("\n\n")
-        append(routerInstructions.trim())
-    }
+    fun renderRouterSystemPrompt(
+        routerInstructions: String,
+        activeRules: List<ProceduralRuleRecord> = emptyList(),
+    ): String = AuthorityPromptAssembler.assembleSystemPrompt(
+        hostDisciplinePrompt = IMMUTABLE_HOST_DISCIPLINE_PROMPT,
+        activeRules = activeRules,
+        soulBlock = renderRolePersonaBlock(AgentMemoryPolicy.SHARED_WITH_GLOBAL),
+        extraBlocks = listOf(ROUTER_SOUL_TOOL_GUIDANCE, routerInstructions),
+    )
 
     fun renderDirectSystemPrompt(
         memoryPolicy: AgentMemoryPolicy = AgentMemoryPolicy.SHARED_WITH_GLOBAL,
         extraInstructions: String = "",
-    ): String = buildString {
-        append(IMMUTABLE_HOST_DISCIPLINE_PROMPT.trim())
-        append("\n\n")
-        append(renderRolePersonaBlock(memoryPolicy).trim())
-        if (extraInstructions.isNotBlank()) {
-            append("\n\n")
-            append(extraInstructions.trim())
-        }
-    }
+        activeRules: List<ProceduralRuleRecord> = emptyList(),
+    ): String = AuthorityPromptAssembler.assembleSystemPrompt(
+        hostDisciplinePrompt = IMMUTABLE_HOST_DISCIPLINE_PROMPT,
+        activeRules = if (memoryPolicy == AgentMemoryPolicy.HUB_ISOLATED) emptyList() else activeRules,
+        soulBlock = renderRolePersonaBlock(memoryPolicy),
+        extraBlocks = listOfNotNull(extraInstructions.takeIf { it.isNotBlank() }),
+    )
 
     fun renderRolePersonaBlock(memoryPolicy: AgentMemoryPolicy = AgentMemoryPolicy.SHARED_WITH_GLOBAL): String {
         if (memoryPolicy == AgentMemoryPolicy.HUB_ISOLATED) {
@@ -352,6 +352,15 @@ class CloudSoulStore(
     }
 
     companion object {
+        private const val STATE_FILENAME = "agent_soul.json"
+
+        // Reading a pairing hint from the CLI must not migrate or rewrite the running daemon's SOUL files.
+        fun persistedRevision(dataDir: File): Long {
+            val state = File(dataDir, STATE_FILENAME)
+            if (!state.exists()) return 0L
+            return Json { ignoreUnknownKeys = true }.decodeFromString<SoulStateDto>(state.readText()).revision
+        }
+
         const val DEFAULT_DISPLAY_NAME = "Amber"
         const val MAX_HISTORY = 8
         const val MAX_DISPLAY_NAME_CHARS = 64

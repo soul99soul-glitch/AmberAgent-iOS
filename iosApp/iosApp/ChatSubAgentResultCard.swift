@@ -570,7 +570,7 @@ struct AmberTaskDeliverablePreviewContent: View {
             return IOSAppLocalization.string("查看执行记录", defaultValue: "查看执行记录")
         case .cloudTaskDetail:
             return IOSAppLocalization.string("查看云端任务详情", defaultValue: "查看云端任务详情")
-        case .macBoard:
+        case .gatewayBoard:
             return IOSAppLocalization.string("打开完整任务看板", defaultValue: "打开完整任务看板")
         case .none:
             return IOSAppLocalization.string("查看详情", defaultValue: "查看详情")

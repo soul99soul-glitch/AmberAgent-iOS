@@ -208,7 +208,7 @@ enum AmberTaskDestination: Equatable, Sendable {
     case subAgentConversation(conversationId: String)
     case executionRecord(recordId: String)
     case wakeConversation(conversationId: String)
-    case macBoard
+    case gatewayBoard(MacGatewayEndpointRole)
     case none
 }
 
@@ -937,7 +937,7 @@ enum AmberUnifiedTaskBuilder {
                 guard let progress = slot.cloudDialogueProgressByWorkItem[key] else { continue }
                 let workItemId = progress.workItemId.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !key.hasPrefix("topic:"), !workItemId.isEmpty, !workItemId.hasPrefix("topic:") else { continue }
-                guard seenIdentities.insert("\(idPrefix)-work:\(gatewayScope):\(workItemId)").inserted else { continue }
+                guard seenIdentities.insert("\(slot.endpointRole.rawValue)-work:\(gatewayScope):\(workItemId)").inserted else { continue }
 
                 let directEvents = slot.cloudDialogueEvents.filter { $0.workItemId == workItemId }
                 let topicUserEvents = progress.topicId.isEmpty
@@ -1064,7 +1064,7 @@ enum AmberUnifiedTaskBuilder {
                         quickActions: quickActions,
                         deliverableBullets: summary.bullets,
                         rawResultMarkdown: rawMarkdown,
-                        destination: isMacSlot ? .macBoard : .cloudDialogueWorkItem(workItemId: workItemId),
+                        destination: isMacSlot ? .gatewayBoard(.mac) : .cloudDialogueWorkItem(workItemId: workItemId),
                         source: isMacSlot ? .gatewayBoardItem(workItemId) : .cloudDialogueWorkItem(workItemId)
                     )
                 )
@@ -1460,7 +1460,7 @@ enum AmberUnifiedTaskBuilder {
             let isMacSlot = slot !== gateway && slot.endpointRole == .mac
             let schedulePrefix = isMacSlot ? "mac-schedule" : "schedule"
             let boardPrefix = isMacSlot ? "mac-board" : "board"
-            let slotLabel = isMacSlot ? "Mac" : (gateway.hasMacConnection ? "云端" : "Mac")
+            let slotLabel = slot.endpointRole.displayName
 
             for schedule in slot.schedules ?? [] {
                 let phase: AmberUnifiedTaskPhase = schedule.running ? .running
@@ -1486,7 +1486,7 @@ enum AmberUnifiedTaskBuilder {
                         deliverableBullets: summary.bullets,
                         rawResultMarkdown: Self.userFacingResultMarkdown(from: schedule.lastStatus),
                         nextRunAt: schedule.enabled ? schedule.nextRunAt : nil,
-                        destination: .macBoard,
+                        destination: .gatewayBoard(slot.endpointRole),
                         source: .gatewaySchedule(schedule.id)
                     )
                 )
@@ -1559,7 +1559,7 @@ enum AmberUnifiedTaskBuilder {
                         deliverableBullets: summary.bullets,
                         rawResultMarkdown: Self.userFacingResultMarkdown(from: boardItem.detail.isEmpty ? nil : boardItem.detail),
                         nextRunAt: boardItem.nextRunAt,
-                        destination: .macBoard,
+                        destination: .gatewayBoard(slot.endpointRole),
                         source: .gatewayBoardItem(boardItem.id)
                     )
                 )

@@ -1716,7 +1716,7 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             onFollowupTask: { followups.append($0) }
         )
 
-        // 1. 待审批项点「去确认」（confirmApproval）必须打开真实审批所有者（如 .macBoard），绝不能塞入本地聊天框伪造审批
+        // 1. 待审批项点「去确认」（confirmApproval）必须打开真实审批所有者（如 .gatewayBoard(.mac)），绝不能塞入本地聊天框伪造审批
         let approvalItem = AmberUnifiedTaskItem(
             id: "board:approval-high-risk-1",
             title: "生产库迁移脚本执行",
@@ -1726,12 +1726,12 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             phase: .needsAttention,
             ownership: .backgroundRun,
             quickActions: AmberUnifiedTaskBuilder.approvalQuickActions(),
-            destination: .macBoard,
+            destination: .gatewayBoard(.mac),
             source: .gatewayBoardItem("approval-high-risk-1")
         )
         await panel.handleQuickDecision(approvalItem.quickActions[0], for: approvalItem)
         XCTAssertTrue(followups.isEmpty, "confirmApproval 绝不能写入聊天输入框伪造授权")
-        XCTAssertEqual(openedTasks.map(\.destination), [.macBoard])
+        XCTAssertEqual(openedTasks.map(\.destination), [.gatewayBoard(.mac)])
 
         // 2. 云端 WAITING 任务点「拍板继续」（approveAndContinue）应直投真实 POST /v2/work-items/{id}/inputs
         openedTasks.removeAll()
@@ -1897,6 +1897,15 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             allGroups.running.contains { $0.id.contains("work-dlg-42") },
             "云主对话派生的后台 WorkItem 必须纳入统一任务面板 running 组"
         )
+
+        let sharedWorkId = "work-dlg-42"
+        gateway.cloudTasks = [.init(gatewayId: try XCTUnwrap(gateway.connection?.gatewayId), deviceId: "device",
+                                    request: .init(requestId: "same-work", text: "巡检", title: "巡检"),
+                                    workItemId: sharedWorkId, createdAt: Date(), updatedAt: Date())]
+        let merged = AmberUnifiedTaskBuilder.buildTasks(gateway: gateway, subAgentStore: subAgentStore,
+                                                        taskStore: tasksStore, wakeStore: wakeStore, hubStore: hubStore)
+        XCTAssertFalse((merged.running + merged.needsAttention).contains { $0.source == .cloudDialogueWorkItem(sharedWorkId) })
+        XCTAssertTrue((merged.running + merged.needsAttention).contains { $0.source == .cloudTask("same-work") })
 
         // 4. 按「京都旅行」筛选时，即使当前 activeHubId 是小说中心，也必须命中绑定 convKyoto 的唤醒任务
         let kyotoGroups = AmberUnifiedTaskBuilder.buildTasks(

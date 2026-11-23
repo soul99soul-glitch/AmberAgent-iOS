@@ -20,6 +20,11 @@ data class NativeTaskRequest(
     val text: String,
     val agentId: String = MAIN_AGENT_ID,
     val title: String = "云端任务",
+    val conversationId: String? = null,
+    val parentRunId: String? = null,
+    val executorKind: String? = null,
+    val executorId: String? = null,
+    val targetDeviceId: String? = null,
 )
 
 @Serializable
@@ -44,7 +49,11 @@ class NativeTaskApi(private val api: AgentCentricApi) {
         val sourceText = json.encodeToString(request)
         val fingerprint = OrchestrationHash.sha256Hex(sourceText)
         val source = store.getSourceMessage(operationId)
-        if (source != null && source.rawTextHash != fingerprint) throw NativeTaskConflict()
+        if (source != null && source.rawTextHash != fingerprint) {
+            // Before Stage 2 these optional routing fields did not exist in the stored JSON.
+            val legacyText = Json(json) { explicitNulls = false }.encodeToString(request)
+            if (source.rawTextHash != OrchestrationHash.sha256Hex(legacyText)) throw NativeTaskConflict()
+        }
         store.getOperationResult(operationId)?.let { previous ->
             val item = store.getWorkItem(previous.items.single().workItemId) ?: error("任务记录不可用")
             return@withLock NativeTaskReceipt(api.publicWork(item), replayed = true)
@@ -55,11 +64,18 @@ class NativeTaskApi(private val api: AgentCentricApi) {
             sessionId = PRIMARY_CONVERSATION_ID.toString(), messageId = operationId,
             senderId = device.id, channelId = "c3", rawTextHash = fingerprint, createdAtEpochMs = now,
         ), sourceText)
+        val targetNode = request.targetDeviceId?.trim()?.takeIf { it.isNotEmpty() }
+            ?.let { ExecutionTargetNode.PairedMacNode(deviceId = it) }
+            ?: ExecutionTargetNode.CloudSubagent(rolePrompt = "")
         val result = kernel.orchestrationKernel.submitWorkBatch(
             principal = CloudPrincipal.OwnerUser(device.id, "c3"), requestId = operationId,
             contextMessageIds = listOf(operationId), items = listOf(WorkItemSubmissionSpec(
                 taskKey = operationId, title = CredentialRedactor.redact(request.title), brief = request.text,
-                targetNode = ExecutionTargetNode.CloudSubagent(rolePrompt = ""), agentId = request.agentId,
+                targetNode = targetNode, agentId = request.agentId,
+                conversationId = request.conversationId,
+                parentRunId = request.parentRunId,
+                executorKind = request.executorKind,
+                executorId = request.executorId,
             )), nowEpochMs = now,
         )
         val item = result.items.single()

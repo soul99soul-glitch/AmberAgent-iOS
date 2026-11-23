@@ -167,7 +167,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
     func handleRemoteStateChanged() {
         remoteRefreshTask?.cancel()
         remoteRefreshTask = Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, !Task.isCancelled else { return }
             self.republish()
             if self.isAttached {
                 await self.refreshWatchSnapshot()
@@ -1140,6 +1140,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
                request.runId == remote.runId,
                let remoteGateway {
                 let outcome = await remoteGateway.cancelRemoteTask(
+                    origin: remote.origin,
                     workItemId: remote.workItemId,
                     requestId: nil
                 )
@@ -1326,6 +1327,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
                 return rejected(request, "高危操作请在 iPhone 或 Mac 上核对批准")
             }
             let outcome = await remoteGateway.resolveApproval(
+                origin: remote.origin,
                 sessionKey: sessionKey,
                 toolCallId: toolCallId,
                 allow: allow
@@ -1421,6 +1423,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
                 return rejected(request, "远端提问不支持跳过，请直接回答或在 iPhone 查看")
             }
             let outcome = await remoteGateway.submitAskUserReply(
+                origin: remote.origin,
                 workItemId: remoteDecision.workItemId ?? remote.workItemId,
                 conversationId: remoteDecision.conversationId ?? remote.conversationId,
                 text: answer,
@@ -1517,7 +1520,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         let outcome = await remoteGateway.submitQuestion(
             text: composed,
             requestId: request.requestId,
-            preferredOrigin: explicitOrigin
+            origin: desiredOrigin
         )
         if outcome.accepted {
             republish()

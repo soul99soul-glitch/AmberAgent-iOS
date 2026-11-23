@@ -14,6 +14,8 @@ import app.amber.ai.provider.CustomBody
 import app.amber.ai.provider.CustomHeader
 import app.amber.ai.provider.ImageGenerationParams
 import app.amber.ai.provider.Model
+import app.amber.ai.provider.Modality
+import app.amber.ai.provider.isOpenAiGpt6
 import app.amber.ai.provider.ModelAbility
 import app.amber.ai.provider.ModelType
 import app.amber.ai.provider.OpenAIBrand
@@ -94,7 +96,8 @@ private const val RESPONSES_OUTPUT_CAP_REASON = "max_output_tokens"
  * Do not flip the whole provider to Responses: sibling models on the same
  * OpenCode entry (DeepSeek, MiMo) stay on Completions.
  */
-internal const val CHATGPT_SIWC_RESPONSES_URL = "https://api.openai.com/v1/responses"
+private const val CHATGPT_SIWC_API_BASE_URL = "https://api.openai.com/v1"
+internal const val CHATGPT_SIWC_RESPONSES_URL = "$CHATGPT_SIWC_API_BASE_URL/responses"
 internal const val CHATGPT_SIWC_USAGE_SETTINGS_URL = "https://chatgpt.com/settings/usage"
 private val CHATGPT_SIWC_RESERVED_HEADERS = setOf(
     "authorization", "api-key", "x-api-key", "chatgpt-account-id", "originator", "openai-beta",
@@ -177,15 +180,27 @@ class OpenAIKmpProvider internal constructor(
         providerSetting: ProviderSetting.OpenAI,
         extraHeaders: List<CustomHeader>,
     ): List<Model> {
-        val url = "${providerSetting.baseUrl}/models"
+        val isSiwc = providerSetting.authMode == OpenAIAuthMode.CHATGPT_SIWC
+        val url = if (isSiwc) {
+            "$CHATGPT_SIWC_API_BASE_URL/models"
+        } else {
+            "${providerSetting.baseUrl}/models"
+        }
         val response = httpClient.get(url) {
             configureAuth(providerSetting, extraHeaders)
         }
         val body = response.bodyAsText()
         if (!response.status.isSuccess()) {
+            if (isSiwc) {
+                siwcFriendlyErrorMessageFromText(body)
+                    ?.let { throw IllegalStateException(it) }
+            }
             throw Exception("OpenAI model listing failed: ${response.status.value} ${body.take(1200)}")
         }
         val bodyJson = json.parseToJsonElement(body).jsonObject
+        if (isSiwc) {
+            return parseSiwcModelsResponse(bodyJson)
+        }
         val data = bodyJson["data"]?.arr()
             ?: throw Exception("OpenAI model listing response is missing data")
         return data.mapNotNull { modelJson ->
@@ -197,6 +212,37 @@ class OpenAIKmpProvider internal constructor(
                 type = if (isOpenAIImageModelId(id)) ModelType.IMAGE else ModelType.CHAT,
                 inputModalities = ModelRegistry.MODEL_INPUT_MODALITIES.getData(id),
                 abilities = ModelRegistry.MODEL_ABILITIES.getData(id),
+            )
+        }
+    }
+
+    internal fun parseSiwcModelsResponse(bodyJson: JsonObject): List<Model> {
+        val models = bodyJson["models"]?.arr()
+            ?: throw Exception("OpenAI SIWC model listing response is missing models")
+        return models.mapNotNull { entry ->
+            val modelObj = entry.obj() ?: return@mapNotNull null
+            if (modelObj.str("visibility") != "list") return@mapNotNull null
+            val slug = modelObj.str("slug")?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            val displayName = modelObj.str("display_name")?.trim()?.takeIf { it.isNotEmpty() } ?: slug
+            val declaredModalities = modelObj["input_modalities"]?.arr()
+                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.lowercase() }
+                .orEmpty()
+            val inputModalities = if (declaredModalities.isNotEmpty()) {
+                buildList {
+                    if ("text" in declaredModalities) add(Modality.TEXT)
+                    if ("image" in declaredModalities) add(Modality.IMAGE)
+                }.ifEmpty { ModelRegistry.MODEL_INPUT_MODALITIES.getData(slug) }
+            } else {
+                ModelRegistry.MODEL_INPUT_MODALITIES.getData(slug)
+            }
+            Model(
+                modelId = slug,
+                displayName = displayName,
+                type = if (isOpenAIImageModelId(slug)) ModelType.IMAGE else ModelType.CHAT,
+                inputModalities = inputModalities,
+                abilities = ModelRegistry.MODEL_ABILITIES.getData(slug),
+                contextWindowTokens = modelObj.int("context_window")
+                    ?: ModelRegistry.MODEL_CONTEXT_WINDOW.getData(slug),
             )
         }
     }
@@ -366,8 +412,10 @@ class OpenAIKmpProvider internal constructor(
             ),
         )
 
-        if (params.temperature != null) put("temperature", params.temperature)
-        if (params.topP != null) put("top_p", params.topP)
+        if (!params.model.modelId.isOpenAiGpt6()) {
+            if (params.temperature != null) put("temperature", params.temperature)
+            if (params.topP != null) put("top_p", params.topP)
+        }
         if (params.maxTokens != null) put(if (isMiMo) "max_completion_tokens" else "max_tokens", params.maxTokens)
 
         put("stream", stream)
@@ -912,8 +960,7 @@ class OpenAIKmpProvider internal constructor(
         }
         return flow {
             val terminal = OpenAIStreamTerminalState(
-                kind = OpenAIStreamKind.RESPONSES,
-                strictResponsesCompletedOnly = isChatGptSiwc,
+                if (isChatGptSiwc) OpenAIStreamKind.RESPONSES_SIWC else OpenAIStreamKind.RESPONSES,
             )
             events.collect { event ->
                 when (event) {
@@ -1140,10 +1187,8 @@ class OpenAIKmpProvider internal constructor(
                         params.model.modelId,
                         params.reasoningLevel,
                     ).reasoningEffort
-                } else if (isGpt6NoNoneReasoningModel(params.model.modelId) && params.reasoningLevel == ReasoningLevel.OFF) {
-                    "low"
                 } else {
-                    openAIResponsesReasoningEffort(params.reasoningLevel)
+                    openAIResponsesReasoningEffort(params.reasoningLevel, params.model.modelId)
                 }
                 if (effort != null || params.reasoningLevel == ReasoningLevel.AUTO) {
                     put("reasoning", buildJsonObject {
@@ -1189,60 +1234,63 @@ class OpenAIKmpProvider internal constructor(
     }
 
     internal fun sanitizeChatGptSiwcResponsesBody(body: JsonObject): JsonObject {
-        val cleaned = body.toMutableMap()
-        cleaned["store"] = JsonPrimitive(false)
-        cleaned["stream"] = JsonPrimitive(true)
-        CHATGPT_SIWC_UNSUPPORTED_FIELDS.forEach { cleaned.remove(it) }
+        val sanitized = body.toMutableMap()
+        sanitized["store"] = JsonPrimitive(false)
+        sanitized["stream"] = JsonPrimitive(true)
+        CHATGPT_SIWC_UNSUPPORTED_FIELDS.forEach { sanitized.remove(it) }
 
-        val inputArray = cleaned["input"] as? JsonArray
-        if (inputArray != null) {
-            cleaned["input"] = JsonArray(
-                inputArray.mapNotNull { item ->
-                    val obj = item as? JsonObject ?: return@mapNotNull item
-                    val message = if (obj.str("role").equals("system", ignoreCase = true)) {
-                        JsonObject(obj + ("role" to JsonPrimitive("developer")))
-                    } else obj
-                    val inlineTools = obj["tools"] as? JsonArray
-                    if (obj.str("type") == "additional_tools" && inlineTools != null) {
-                        val kept = inlineTools.filterNot(::isUnsupportedSiwcTool)
-                        if (kept.isEmpty()) return@mapNotNull null
-                        return@mapNotNull JsonObject(message + ("tools" to JsonArray(kept)))
-                    }
-                    message
-                }
-            )
+        val input = when (val value = sanitized["input"]) {
+            is JsonArray -> value
+            is JsonPrimitive -> {
+                require(value.isString) { "SIWC input must be a message array or text" }
+                JsonArray(listOf(buildJsonObject { put("role", "user"); put("content", value) }))
+            }
+            else -> error("SIWC input must be a message array or text")
         }
-
-        val toolsArray = cleaned["tools"] as? JsonArray
-        if (toolsArray != null) {
-            val filteredTools = toolsArray.filterNot(::isUnsupportedSiwcTool)
-            if (filteredTools.isEmpty()) {
-                cleaned.remove("tools")
-                val hasInlineTools = (cleaned["input"] as? JsonArray).orEmpty().any { it.obj()?.str("type") == "additional_tools" }
-                if (cleaned["tool_choice"] == JsonPrimitive("required") && toolsArray.isNotEmpty() && !hasInlineTools) {
-                    cleaned.remove("tool_choice")
+        val supportedTools = (sanitized["tools"] as? JsonArray).orEmpty().mapNotNull(::filterSiwcTool)
+        val (localTools, topLevelTools) = supportedTools.partition {
+            val type = (it as? JsonObject)?.str("type")
+            type == "function" || type == "custom"
+        }
+        val cleanInput = buildJsonArray {
+            // additional_tools keeps local tool names stable across calls and result replay.
+            if (localTools.isNotEmpty()) add(buildJsonObject {
+                put("type", "additional_tools")
+                put("role", "developer")
+                put("tools", JsonArray(localTools))
+            })
+            for (item in input) {
+                val obj = item as? JsonObject
+                when (obj?.str("type")) {
+                    "tool_search_call", "tool_search_output" -> continue
+                    "additional_tools" -> filterSiwcTool(JsonObject(obj + ("role" to JsonPrimitive("developer"))))?.let(::add)
+                    else -> if (obj != null && obj.str("role").equals("system", ignoreCase = true)) {
+                        add(JsonObject(obj + ("role" to JsonPrimitive("developer"))))
+                    } else add(item)
                 }
-            } else {
-                cleaned["tools"] = JsonArray(filteredTools)
             }
         }
-        val choice = cleaned["tool_choice"] as? JsonObject
-        if (isUnsupportedSiwcTool(choice)) {
-            cleaned.remove("tool_choice")
-        } else if (choice?.str("type") == "allowed_tools") {
-            val allowed = choice["tools"] as? JsonArray
-            if (allowed != null && allowed.any(::isUnsupportedSiwcTool)) {
-                val kept = allowed.filterNot(::isUnsupportedSiwcTool)
-                if (kept.isEmpty()) cleaned.remove("tool_choice")
-                else cleaned["tool_choice"] = JsonObject(choice + ("tools" to JsonArray(kept)))
-            }
+        sanitized["input"] = cleanInput
+
+        if (topLevelTools.isEmpty()) sanitized.remove("tools") else sanitized["tools"] = JsonArray(topLevelTools)
+        if (topLevelTools.isEmpty() && cleanInput.none { (it as? JsonObject)?.str("type") == "additional_tools" }) {
+            sanitized.remove("parallel_tool_calls")
+            sanitized.remove("tool_choice")
+        } else {
+            sanitized.remove("tool_choice")?.let(::filterSiwcTool)?.let { sanitized["tool_choice"] = it }
         }
 
-        return JsonObject(cleaned)
+        return JsonObject(sanitized)
     }
 
-    private fun isUnsupportedSiwcTool(element: JsonElement?): Boolean =
-        element.obj()?.str("type")?.trim()?.lowercase() in CHATGPT_SIWC_UNSUPPORTED_HOSTED_TOOL_TYPES
+    private fun filterSiwcTool(tool: JsonElement): JsonElement? {
+        val obj = tool as? JsonObject ?: return tool
+        if (obj.str("type")?.trim()?.lowercase() in CHATGPT_SIWC_UNSUPPORTED_HOSTED_TOOL_TYPES) return null
+        val nested = obj["tools"] as? JsonArray ?: return tool
+        val supported = nested.mapNotNull(::filterSiwcTool)
+        if (supported.isEmpty()) return null
+        return JsonObject(obj + ("tools" to JsonArray(supported)))
+    }
 
     private fun buildResponsesMessages(
         messages: List<UIMessage>,
@@ -1837,16 +1885,11 @@ class OpenAIKmpProvider internal constructor(
 
     private fun responsesIsModelAllowTemperature(model: Model): Boolean {
         val modelId = model.modelId.lowercase()
-        return !isGpt6NoNoneReasoningModel(model.modelId) &&
+        return !model.modelId.isOpenAiGpt6() &&
             !ModelRegistry.OPENAI_O_MODELS.match(model.modelId) &&
             !ModelRegistry.GPT_5.match(model.modelId) &&
             !modelId.startsWith("gpt-5") &&
             !modelId.contains("codex")
-    }
-
-    private fun isGpt6NoNoneReasoningModel(modelId: String): Boolean {
-        val base = modelId.substringAfterLast('/').lowercase()
-        return base == "gpt-6" || base.startsWith("gpt-6-") || base.startsWith("gpt-6.")
     }
 
     /** 仅 MiMo 且本次声明了工具时启用正文 XML 工具调用兜底，见 [MiMoTextToolCallRecovery]。 */

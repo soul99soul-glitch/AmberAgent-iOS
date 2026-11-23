@@ -11,14 +11,16 @@ import kotlinx.serialization.json.jsonPrimitive
 class ReasoningWireTest {
     @Test
     fun kimiK3SendsReasoningEffortAndOmitsThinking() {
-        val fields = plan(
-            host = "api.moonshot.cn",
-            brand = OpenAIBrand.KIMI,
-            modelId = "kimi-k3",
-            level = ReasoningLevel.HIGH,
-        )
-        assertNull(fields.thinkingType)
-        assertEquals("high", fields.reasoningEffort)
+        for (id in listOf("kimi-k3", "k3", "k3.1", "k3.1-pro")) {
+            val fields = plan(
+                host = "api.moonshot.cn",
+                brand = OpenAIBrand.KIMI,
+                modelId = id,
+                level = ReasoningLevel.HIGH,
+            )
+            assertNull(fields.thinkingType, id)
+            assertEquals("high", fields.reasoningEffort, id)
+        }
     }
 
     @Test
@@ -146,7 +148,8 @@ class ReasoningWireTest {
 
     @Test
     fun openAiGpt6MapsOffToLowAndGrok47UsesGrokEffort() {
-        for (id in listOf("gpt-6.2-sol", "gpt-6.2-astra", "gpt-6-sol", "gpt-6-luna")) {
+        for (id in listOf("gpt-6", "gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-mini", "gpt-6-sol", "gpt-6-luna")) {
+            assertEquals("low", openAIResponsesReasoningEffort(ReasoningLevel.OFF, id), id)
             assertEquals("low", plan("api.openai.com", OpenAIBrand.OPENAI, id, ReasoningLevel.OFF).reasoningEffort, id)
             assertEquals("high", plan("api.openai.com", OpenAIBrand.OPENAI, id, ReasoningLevel.HIGH).reasoningEffort, id)
         }

@@ -16,13 +16,17 @@ class WorkerEventInbox(private val kernel:DefaultCloudOrchestrationKernel) {
         signals.computeIfAbsent(id){Channel(Channel.CONFLATED)}.trySend(Unit)
         wakeListeners[id]?.forEach { runCatching { it() } }
     }
-    fun requestStop(id:String){stopping.add(id);signal(id)}
+    fun requestStop(id: String) {
+        kernel.store.dialogue.markStopping(id)
+        stopping.add(id)
+        signal(id)
+    }
     fun watchEvents(id: String, onWake: () -> Unit): () -> Unit {
         val list = wakeListeners.computeIfAbsent(id) { CopyOnWriteArrayList() }
         list.add(onWake)
         return { list.remove(onWake) }
     }
-    fun isStopping(id:String)=id in stopping || kernel.store.dialogue.pending("stop",id).isNotEmpty()
+    fun isStopping(id:String)=id in stopping || kernel.store.dialogue.isStopping(id)
     fun pending(id:String)=kernel.store.dialogue.pending(workItemId=id).filter {it.kind=="followup"||it.kind=="process"}
     suspend fun prepare(item:CloudWorkItemRecord):List<DialogueInput> {
         val inputs=pending(item.workItemId)

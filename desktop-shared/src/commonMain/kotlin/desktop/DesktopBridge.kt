@@ -514,11 +514,12 @@ object DesktopProviderBridge {
     suspend fun listModelsOrThrow(kind: String, id: String, name: String, baseUrl: String, apiKey: String,
         authMode: String = "apiKey"): String = withContext(Dispatchers.Default) {
         val provider = desktopAuthenticatedConfiguration(kind, id, name, baseUrl, apiKey, authMode)
-        desktopCatalogJSON(when (provider) {
+        val models = when (provider) {
             is ProviderSetting.OpenAI -> catalogOpenAI.listModelsOrThrow(provider)
             is ProviderSetting.Claude -> catalogClaude.listModelsOrThrow(provider)
             else -> error("Gemini model listing uses the native Gemini client")
-        })
+        }
+        desktopCatalogJSON(models, authMode = (provider as? ProviderSetting.OpenAI)?.authMode)
     }
 
     private val catalogOpenAI by lazy { OpenAIKmpProvider() }

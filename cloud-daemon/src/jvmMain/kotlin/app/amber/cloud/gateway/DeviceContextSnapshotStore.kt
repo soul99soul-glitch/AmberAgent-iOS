@@ -221,6 +221,32 @@ class DeviceContextSnapshotStore(
         return file.exists() && file.delete()
     }
 
+    /**
+     * 读取所有未过期的设备上下文快照（自动清理已过期或损坏文件）。
+     */
+    @Synchronized
+    fun listActiveSnapshots(
+        nowEpochMs: Long = System.currentTimeMillis(),
+        allowedDeviceIds: Set<String>? = null,
+    ): List<StoredDeviceContextSnapshot> {
+        val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".json") } ?: return emptyList()
+        val active = mutableListOf<StoredDeviceContextSnapshot>()
+        for (file in files) {
+            val snapshot = runCatching {
+                strictJson.decodeFromString<StoredDeviceContextSnapshot>(file.readText())
+            }.getOrNull()
+            if (snapshot == null || nowEpochMs >= snapshot.expiresAtEpochMs) {
+                file.delete()
+                continue
+            }
+            if (allowedDeviceIds != null && snapshot.deviceId !in allowedDeviceIds) {
+                continue
+            }
+            active.add(snapshot)
+        }
+        return active.sortedByDescending { it.capturedAtEpochMs }
+    }
+
     @Synchronized
     fun purgeExpired(nowEpochMs: Long = System.currentTimeMillis()): Int {
         val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".json") } ?: return 0

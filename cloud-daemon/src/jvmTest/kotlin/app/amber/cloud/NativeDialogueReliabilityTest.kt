@@ -272,6 +272,30 @@ class NativeDialogueReliabilityTest {
         }
     }
 
+    @Test fun native_rule_is_scoped_to_the_originating_conversation_on_the_shared_timeline() = runBlocking {
+        fixture { k, device ->
+            val prompts = CopyOnWriteArrayList<String>()
+            val ingress = CloudRouterIngress(k)
+            k.router.brain = RouterBrain { input ->
+                prompts += ingress.contextMessages(input).first().toText()
+                RouterDecision(reply = "收到")
+            }
+            suspend fun turn(id: String, text: String, conversation: String) {
+                k.nativeDialogue.submit(device, id, text, conversationId = conversation)
+                withTimeout(2_000) { while (k.nativeDialogue.receipt(device, id)?.state != "consumed") delay(10) }
+                k.router.awaitIdle()
+            }
+            turn("proposal", "以后提交前列出变更清单", "client-A")
+            val rule = k.proceduralRuleStore.list().single()
+            k.proceduralRuleStore.confirm(rule.id)
+            turn("elsewhere", "汇报进度", "client-B")
+            assertFalse(prompts.last().contains(rule.instruction))
+            turn("origin", "汇报进度", "client-A")
+            assertContains(prompts.last(), rule.instruction)
+            assertEquals(1, k.proceduralRuleStore.get(rule.id)?.hitCount)
+        }
+    }
+
     @Test fun settlement_is_readable_in_next_main_turn_without_a_model_rollup_or_redispatch() = runBlocking {
         fixture { k, device ->
             val contexts = CopyOnWriteArrayList<List<UIMessage>>()
@@ -281,7 +305,7 @@ class NativeDialogueReliabilityTest {
                 if (input.batchPrompt == "派活") RouterDecision(dispatch = listOf(WorkItemSubmissionSpec("probe", "检查", "检查", ExecutionTargetNode.CloudSubagent(rolePrompt = "worker"))))
                 else RouterDecision(reply = "已看到结果")
             }
-            k.nativeDialogue.submit(device, "probe", "派活")
+            k.nativeDialogue.submit(device, "probe", "派活", conversationId = "shared-conversation")
             k.router.awaitIdle()
             // Ingress runs in its own scope; wait for the persisted operation, not just the Router's current queue.
             withTimeout(2_000) { while (k.orchestrationStore.listWorkItems().isEmpty()) delay(10) }
@@ -292,6 +316,7 @@ class NativeDialogueReliabilityTest {
             k.router.awaitIdle()
             assertEquals(1, contexts.size, "原生任务已有结果事件，不应再让模型猜结果或重派")
             val event = k.orchestrationStore.dialogue.page(0, 100).items.single { it.kind == "task_result" }
+            assertEquals("shared-conversation", event.conversationId)
             assertEquals("failed", event.outcome)
             assertContains(event.text, "自动重试 1 次")
             val history = k.conversationStorage.loadConversation(PRIMARY_CONVERSATION_ID)!!.messageNodes

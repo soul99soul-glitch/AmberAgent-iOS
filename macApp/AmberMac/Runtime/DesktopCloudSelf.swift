@@ -14,6 +14,8 @@ struct DesktopCloudPairingPayload: Codable, Equatable, Sendable {
     /// base64 SHA-256 of the cloud certificate's SubjectPublicKeyInfo.
     var fp: String
     var s: String
+    /// Optional non-secret single-scan bootstrap metadata (never contains keys or OAuth tokens).
+    var bootstrap: DesktopPairingBootstrapHint? = nil
 
     static let maximumLinkLength = 4_096
 
@@ -156,10 +158,74 @@ actor DesktopCloudClient {
         var token: String
         var gatewayId: String
         var gatewayName: String
+        var bootstrap: DesktopPairingBootstrapSnapshot?
     }
 
-    func pair(secret: String, deviceName: String) async throws -> PairResponse {
-        try decode(await send("POST", "/v1/pair", body: ["secret": secret, "platform": "macos", "deviceName": deviceName]))
+    func pair(
+        secret: String,
+        deviceName: String,
+        requestBootstrapSync: Bool = false,
+        clientPublicJwk: [String: String]? = nil
+    ) async throws -> PairResponse {
+        var body: [String: Any] = ["secret": secret, "platform": "macos", "deviceName": deviceName]
+        if requestBootstrapSync { body["requestBootstrapSync"] = true }
+        if let clientPublicJwk { body["clientPublicJwk"] = clientPublicJwk }
+        return try decode(await send("POST", "/v1/pair", body: body))
+    }
+
+    func issuePairingTicket() async throws -> DesktopIssuedPairingTicket {
+        try decode(await send("POST", "/v2/pairing/issue", body: [:]))
+    }
+
+    func fetchBootstrapSnapshot(clientPublicJwk: [String: String]? = nil) async throws -> DesktopPairingBootstrapSnapshot {
+        var body: [String: Any] = [:]
+        if let clientPublicJwk { body["clientPublicJwk"] = clientPublicJwk }
+        return try decode(await send("POST", "/v2/pairing/bootstrap-sync", body: body))
+    }
+
+    func fetchRules() async throws -> [DesktopProceduralRule] {
+        let response: DesktopProceduralRuleListResponse = try decode(await send("GET", "/v2/rules"))
+        return response.rules
+    }
+
+    func proposeRule(title: String?, instruction: String, scope: String) async throws -> DesktopRuleProposalOutcome {
+        var body: [String: Any] = ["instruction": instruction, "scope": scope]
+        if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            body["title"] = title
+        }
+        let (status, data) = try await sendRaw("POST", "/v2/rules/propose", body: body)
+        if status == 422 {
+            if let redirect = try? JSONDecoder().decode(DesktopProceduralRuleRedirectResponse.self, from: data) {
+                if redirect.redirectToSoul == true {
+                    return .redirectToSoul(
+                        target: redirect.target ?? "C-SOUL-V1",
+                        message: redirect.message ?? "该内容属于形象人设，请前往 C-SOUL-V1 编辑器调整。"
+                    )
+                }
+                return .rejected(
+                    code: redirect.error ?? "rejected",
+                    message: redirect.message ?? "规则提议被拒绝"
+                )
+            }
+        }
+        if let mapped = Self.responseError(status: status, data: data) { throw mapped }
+        let response: DesktopProceduralRuleResponse = try decode(data)
+        return .proposed(response.rule, deduplicated: response.deduplicated ?? false)
+    }
+
+    func confirmRule(id: String) async throws -> DesktopProceduralRule {
+        let response: DesktopProceduralRuleResponse = try decode(await send("POST", "/v2/rules/\(id)/confirm"))
+        return response.rule
+    }
+
+    func archiveRule(id: String) async throws -> DesktopProceduralRule {
+        let response: DesktopProceduralRuleResponse = try decode(await send("POST", "/v2/rules/\(id)/archive"))
+        return response.rule
+    }
+
+    func revokeRule(id: String) async throws -> DesktopProceduralRule {
+        let response: DesktopProceduralRuleResponse = try decode(await send("POST", "/v2/rules/\(id)/revoke"))
+        return response.rule
     }
 
     func status() async throws -> DesktopCloudStatus {
@@ -197,6 +263,18 @@ actor DesktopCloudClient {
         rawBody: Data? = nil,
         slow: Bool = false
     ) async throws -> Data {
+        let (status, data) = try await sendRaw(method, path, body: body, rawBody: rawBody, slow: slow)
+        if let mapped = Self.responseError(status: status, data: data) { throw mapped }
+        return data
+    }
+
+    func sendRaw(
+        _ method: String,
+        _ path: String,
+        body: [String: Any]? = nil,
+        rawBody: Data? = nil,
+        slow: Bool = false
+    ) async throws -> (status: Int, data: Data) {
         let bodyData = try rawBody ?? body.map { try JSONSerialization.data(withJSONObject: $0) }
         let ordered = preferredAddress.map { [$0] + addrs.filter { $0 != preferredAddress } } ?? addrs
         var sawPinMismatch = false
@@ -219,8 +297,7 @@ actor DesktopCloudClient {
             }
             preferredAddress = address
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            if let mapped = Self.responseError(status: status, data: data) { throw mapped }
-            return data
+            return (status, data)
         }
         throw sawPinMismatch ? DesktopCloudError.certificateMismatch : DesktopCloudError.unreachable
     }

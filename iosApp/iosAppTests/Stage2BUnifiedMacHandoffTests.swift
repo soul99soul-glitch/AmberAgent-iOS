@@ -259,8 +259,8 @@ struct Stage2BUnifiedMacHandoffTests {
 
         // Select Mac execution target in composer, submit Mac task A, and keep unified timeline active for local B.
         var composerState = ChatComposerLocalState()
-        composerState.executionTarget = .mac
-        let takenA = composerState.takeUnifiedRemoteTarget()
+        store.composerExecutionTarget = .mac
+        let takenA = composerState.takeUnifiedRemoteTarget(executionTarget: store.composerExecutionTarget)
         #expect(takenA.role == .mac && !composerState.isSubmittingCloudDialogue)
         let receiptA = try await store.delegateToMacInUnifiedTimeline(
             text: "分析本地仓库日志",
@@ -271,7 +271,7 @@ struct Stage2BUnifiedMacHandoffTests {
         store.stopCloudDialoguePolling()
 
         #expect(receiptA.workItemIds == ["work:mac-a"])
-        #expect(composerState.executionTarget == .mac, "Direction 1 keeps remote target selected until user switches back to local")
+        #expect(store.composerExecutionTarget == .mac, "Direction 1 keeps remote target selected until user switches back to local")
         #expect(composerState.unifiedMacFollowupWorkItemId == nil, "Follow-up workItemId should remain clear after dispatching A")
         #expect(store.isCloudMainDialogueSelected == false, "Unified timeline delegation must not force parallel cloud host mode")
 

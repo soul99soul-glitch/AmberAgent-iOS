@@ -11,17 +11,22 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.*
 
 class CloudModelRequestsTest {
-    private suspend fun server(delays: List<Long>, block: suspend (String, AtomicInteger) -> Unit) {
+    private suspend fun server(
+        delays: List<Long>,
+        path: String = "/chat/completions",
+        response: String = """{"id":"stub","choices":[{"index":0,"message":{"role":"assistant","content":"完成"},"finish_reason":"stop"}]}""",
+        block: suspend (String, AtomicInteger) -> Unit,
+    ) {
         val count = AtomicInteger()
         val executor = Executors.newCachedThreadPool { r -> Thread(r, "model-timeout-stub").apply { isDaemon = true } }
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.executor = executor
-        server.createContext("/chat/completions") { exchange ->
+        server.createContext(path) { exchange ->
             val call = count.incrementAndGet()
             exchange.requestBody.use { it.readBytes() }
             try {
                 Thread.sleep(delays.getOrElse(call - 1) { delays.last() })
-                val body = """{"id":"stub","choices":[{"index":0,"message":{"role":"assistant","content":"完成"},"finish_reason":"stop"}]}""".toByteArray()
+                val body = response.toByteArray()
                 exchange.responseHeaders.add("Content-Type", "application/json")
                 exchange.sendResponseHeaders(200, body.size.toLong())
                 exchange.responseBody.use { it.write(body) }
@@ -32,6 +37,22 @@ class CloudModelRequestsTest {
         server.start()
         try { block("http://127.0.0.1:${server.address.port}", count) }
         finally { server.stop(0); executor.shutdownNow() }
+    }
+
+    @Test fun non_streaming_claude_reply_retains_cache_usage() = runBlocking {
+        val response = """{"id":"stub","model":"stub","content":[{"type":"text","text":"完成"}],"stop_reason":"end_turn",
+            "usage":{"input_tokens":120,"cache_read_input_tokens":300,"cache_creation_input_tokens":1000,"output_tokens":45}}"""
+        server(listOf(0), "/messages", response) { url, _ ->
+            cloudModelHttpClient().use { http ->
+                val model = KmpProviderModelClient(ProviderSetting.Claude(apiKey = "stub", baseUrl = url), "stub", http)
+                val reply = model.generateReply(listOf(UIMessage.user("检查")), emptyList())
+                assertEquals("完成", reply.toText())
+                val usage = assertNotNull(reply.usage)
+                assertEquals(1_000, usage.cacheCreationTokens)
+                assertEquals(1_420, usage.promptTokens)
+                assertEquals(120, usage.uncachedInputTokens)
+            }
+        }
     }
 
     @Test fun cloud_default_waits_beyond_the_old_engine_socket_timeout() = runBlocking {

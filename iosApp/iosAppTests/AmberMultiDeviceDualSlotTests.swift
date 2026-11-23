@@ -219,6 +219,27 @@ struct AmberMultiDeviceDualSlotTests {
     }
 
     @Test @MainActor
+    func revokingFallbackPairingClearsLegacyCredentialsWhenMigrationWriteFailed() throws {
+        let suite = "plan2.migration-revocation." + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let vault = InMemoryTokenVault()
+        let connection = MacGatewayConnection(gatewayId: "gw", name: "Mac mini", addrs: ["localhost"], port: 443, fingerprint: "fp", deviceId: "device")
+        defaults.set(try JSONEncoder().encode(connection), forKey: MacGatewayStore.legacyConnectionKey)
+        _ = vault.save(MacGatewayStore.legacyTokenKey, "legacy-token")
+        func load() -> MacGatewayStore {
+            MacGatewayStore(defaults: defaults, loadToken: { vault.load($0) },
+                            saveToken: { _, _ in false }, deleteToken: { vault.delete($0) })
+        }
+
+        let store = load()
+        #expect(store.hasMacConnection)
+        #expect(store.mac.forgetIfRevoked(MacGatewayError.unauthorized))
+        #expect(!load().hasMacConnection)
+        #expect(vault.load(MacGatewayStore.legacyTokenKey) == nil)
+    }
+
+    @Test @MainActor
     func legacyV1MacBookLanPairingMigratesToMacSlotAndPreservesDialogueState() throws {
         let suite = "plan2.migrate.mac.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -458,7 +479,7 @@ struct AmberMultiDeviceDualSlotTests {
                         json: #"{"gateway":{"id":"gw-cloud","name":"Amber Cloud"},"device":{"id":"dev-c","name":"iPhone","pushRegistered":true},"serverTime":1800000000,"sessions":[]}"#
                     )
                 case "/v1/amber/board":
-                    return Self.httpResponse(url: url, status: 200, json: #"{"board":[]}"#)
+                    return Self.httpResponse(url: url, status: 200, json: #"{"board":[{"id":"run:mac-approve","kind":"run","column":"needsYou","title":"Cloud","detail":"Reply","updatedAt":1800000000,"waitingForReply":true,"failed":false}]}"#)
                 case "/v1/amber/schedules":
                     return Self.httpResponse(url: url, status: 200, json: #"{"schedules":[]}"#)
                 case "/v2/dialogue/events":
@@ -530,7 +551,7 @@ struct AmberMultiDeviceDualSlotTests {
                 case "/v1/amber/decision":
                     return Self.httpResponse(url: url, status: 403, json: #"{"error":"local_approval_only"}"#)
                 case "/v2/dialogue/events":
-                    return Self.httpResponse(url: url, status: 200, json: #"{"items":[],"nextCursor":0}"#)
+                    return Self.httpResponse(url: url, status: 200, json: #"{"items":[],"nextCursor":0,"soulRevision":1}"#)
                 default:
                     return Self.httpResponse(url: url, status: 404, json: #"{"error":"not_found"}"#)
                 }
@@ -560,9 +581,10 @@ struct AmberMultiDeviceDualSlotTests {
         #expect(store.mac.status?.gateway.name == "Studio Mac")
         #expect(store.mac.status?.sessions.count == 1)
         #expect(store.mac.schedules?.first?.name == "每日备份")
+        #expect(store.mac.boundSoulStore == nil)
         #expect(store.schedules?.isEmpty == true)
-        #expect(store.combinedNeedsYouItems.count == 1)
-        #expect(store.combinedNeedsYouItems.first?.id == "run:mac-approve")
+        #expect(store.needsYouCount == 2)
+        #expect(store.mac.needsYouItems.first?.id == store.needsYouItems.first?.id)
 
         // Verify unified task builder surfaces Mac slot schedules and board items alongside Cloud.
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("plan2-unified-\(UUID().uuidString)")
@@ -579,7 +601,15 @@ struct AmberMultiDeviceDualSlotTests {
             hubStore: hubStore
         )
         #expect(unifiedGroups.needsAttention.contains(where: { $0.id == "mac-board:run:mac-approve" }))
-        #expect(unifiedGroups.scheduled.contains(where: { $0.id == "mac-schedule:sched-mac-1" }))
+        #expect(unifiedGroups.scheduled.contains(where: { $0.id == "mac-schedule:sched-mac-1" && $0.destination == .gatewayBoard(.mac) }))
+
+        let boardApproval = try #require(store.mac.needsYouItems.first?.approval)
+        let row = MacGatewayApprovalRow(approval: boardApproval, store: store.mac)
+        #expect(row.approvalCardItem.endpointRole == .mac)
+        let wrongRole = await store.mac.decide(sessionKey: boardApproval.sessionKey, toolCallId: boardApproval.toolCallId, allow: false, role: .cloud)
+        #expect(!wrongRole)
+        let unowned = await store.decide(sessionKey: "amber:unknown", toolCallId: "missing", allow: false, source: .notification)
+        #expect(!unowned)
 
         // Trigger HTTP 403 on Mac approval -> only Mac slot marks `call-mac-403` as local-only.
         let stubBiometric = AlwaysPassBiometric()

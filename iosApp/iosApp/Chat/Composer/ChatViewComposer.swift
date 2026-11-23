@@ -521,7 +521,7 @@ extension ChatView {
                                             if composerState.activeDuetTab != .chat {
                                                 selectDuetTab(.chat)
                                             }
-                                            composerState.executionTarget = target
+                                            MacGatewayStore.shared.composerExecutionTarget = target
                                             composerState.unifiedMacFollowupWorkItemId = nil
                                             composerState.unifiedFollowupTargetRole = nil
                                             composerState.cloudDialogueErrorMessage = nil
@@ -706,8 +706,8 @@ extension ChatView {
             router.navigate(to: .chat)
         case .executionRecord(let recordId):
             router.navigate(to: .executionTask(id: recordId))
-        case .macBoard:
-            router.navigate(to: .macTasks)
+        case .gatewayBoard(let role):
+            router.navigate(to: .gatewayTasks(role))
         case .cloudTaskDetail(let requestId):
             let resolvedId = MacGatewayStore.shared.cloudTasks.first(where: { $0.requestId == requestId })?.workItemId ?? requestId
             MacGatewayStore.shared.pendingCloudTaskWorkItemId = resolvedId
@@ -722,11 +722,7 @@ extension ChatView {
     }
 
     var effectiveExecutionTarget: AmberComposerExecutionTarget {
-        AmberHostSwitcherPillPolicy.normalizedTarget(
-            composerState.executionTarget,
-            cloudPaired: MacGatewayStore.shared.hasCloudConnection,
-            macPaired: MacGatewayStore.shared.hasMacConnection
-        )
+        MacGatewayStore.shared.effectiveComposerTarget
     }
 
     var activeUnifiedDelegationRole: MacGatewayEndpointRole? {
@@ -793,7 +789,7 @@ extension ChatView {
             return
         }
 
-        let taken = composerState.takeUnifiedRemoteTarget()
+        let taken = composerState.takeUnifiedRemoteTarget(executionTarget: effectiveExecutionTarget)
         viewModel.inputText = ""
         dismissKeyboard()
         // Start on the current actor so the validated pairing and draft are still the ones selected at tap.

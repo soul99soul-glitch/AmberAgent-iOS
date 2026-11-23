@@ -3,6 +3,39 @@ import Foundation
 import GatewayCore
 import SystemConfiguration
 
+/// Non-secret metadata carried inside a single-scan pairing QR payload.
+/// Plaintext API keys and OAuth tokens are strictly forbidden here.
+public struct PairingBootstrapHint: Codable, Sendable, Equatable {
+    public var syncSupported: Bool
+    public var configRevision: Int
+    public var provider: String
+    public var authMode: String
+    public var siwcConfigured: Bool
+    public var hasEncryptedCredentials: Bool
+    public var soulRevision: Int64
+    public var activeRulesCount: Int
+
+    public init(
+        syncSupported: Bool = true,
+        configRevision: Int = 0,
+        provider: String = "",
+        authMode: String = "apiKey",
+        siwcConfigured: Bool = false,
+        hasEncryptedCredentials: Bool = false,
+        soulRevision: Int64 = 0,
+        activeRulesCount: Int = 0
+    ) {
+        self.syncSupported = syncSupported
+        self.configRevision = configRevision
+        self.provider = provider
+        self.authMode = authMode
+        self.siwcConfigured = siwcConfigured
+        self.hasEncryptedCredentials = hasEncryptedCredentials
+        self.soulRevision = soulRevision
+        self.activeRulesCount = activeRulesCount
+    }
+}
+
 /// Everything a phone needs to reach and trust this gateway, carried in the QR code / deep link.
 public struct PairingPayload: Codable, Sendable, Equatable {
     public var v: Int
@@ -14,8 +47,18 @@ public struct PairingPayload: Codable, Sendable, Equatable {
     public var fp: String
     /// One-time pairing secret.
     public var s: String
+    /// Optional non-secret single-scan bootstrap sync metadata.
+    public var bootstrap: PairingBootstrapHint?
 
-    public init(id: String, name: String, addrs: [String], port: UInt16, fp: String, s: String) {
+    public init(
+        id: String,
+        name: String,
+        addrs: [String],
+        port: UInt16,
+        fp: String,
+        s: String,
+        bootstrap: PairingBootstrapHint? = nil
+    ) {
         self.v = 1
         self.id = id
         self.name = name
@@ -23,6 +66,7 @@ public struct PairingPayload: Codable, Sendable, Equatable {
         self.port = port
         self.fp = fp
         self.s = s
+        self.bootstrap = bootstrap
     }
 
     public var url: String {

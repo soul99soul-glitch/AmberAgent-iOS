@@ -117,6 +117,7 @@ class CloudMemoryStore(
     fun recallForPrompt(
         query: String, limit: Int = 8, agentId: String = GLOBAL_MEMORY_AGENT_ID,
         memoryPolicy: AgentMemoryPolicy = AgentMemoryPolicy.SHARED_WITH_GLOBAL,
+        requireMatch: Boolean = false,
     ): List<MemoryRecord> {
         val local = listMemories(agentId = agentId)
         val global = if (agentId != GLOBAL_MEMORY_AGENT_ID && memoryPolicy == AgentMemoryPolicy.SHARED_WITH_GLOBAL) {
@@ -126,7 +127,10 @@ class CloudMemoryStore(
         val localIds = local.map { it.id }.toSet()
         if (active.isEmpty()) return emptyList()
         val terms = query.lowercase().split(Regex("""\s+""")).filter { it.length >= 2 }
-        return active.sortedWith(
+        val candidates = if (requireMatch) active.filter { record ->
+            terms.any { term -> record.content.contains(term, ignoreCase = true) }
+        } else active
+        return candidates.sortedWith(
             compareByDescending<MemoryRecord> { it.id in localIds }
                 .thenByDescending { it.scope == MemoryScope.CORE || it.pinned }
                 .thenByDescending { record ->

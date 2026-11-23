@@ -63,7 +63,7 @@ class CloudConfigurationTest {
             assertEquals(200,keyResponse.status.value)
             val key=json.decodeFromString<ConfigurationImportKey>(keyResponse.bodyAsText())
             assertFalse(key.publicJwk.keys.any {it in setOf("d","p","q","dp","dq","qi")})
-            val request=payload(key,"native-1",0,ConfigurationPatch(model=ManagedModelSettings("openai","imported-model","https://api.example.com/v1")),
+            val request=payload(key,"native-1",0,ConfigurationPatch(model=ModelSettingsPatch("openai","imported-model","https://api.example.com/v1")),
                 CredentialPatch(modelApiKey=CredentialMutation("replace","fake-model-import-12345"),exaApiKey=CredentialMutation("replace","fake-exa-import-12345")))
             val sealed=if(System.getProperty("os.name").contains("Mac"))nativeSeal(key,request)else seal(key,request)
             suspend fun post(envelope:String)=client.post("/v2/configuration"){bearerAuth(pair.token);setBody(json.encodeToString(ConfigurationImportRequest(envelope)))}
@@ -74,7 +74,7 @@ class CloudConfigurationTest {
             assertFalse(client.get("/v2/configuration"){bearerAuth(pair.token)}.bodyAsText().contains("fake-"))
             val replay=post(seal(key,request.copy(issuedAt=key.serverTime-1000,expiresAt=key.serverTime-900)))
             assertEquals(200,replay.status.value);assertTrue(json.decodeFromString<ConfigurationReceipt>(replay.bodyAsText()).replayed)
-            assertEquals(409,post(seal(key,request.copy(configuration=ConfigurationPatch(model=ManagedModelSettings("claude","different"))))).status.value)
+            assertEquals(409,post(seal(key,request.copy(configuration=ConfigurationPatch(model=ModelSettingsPatch("claude","different"))))).status.value)
             assertEquals(400,post(sealed.dropLast(2)+if(sealed.endsWith("A"))"BB"else"AA").status.value)
             assertEquals(400,post(seal(key,request.copy(deviceId="other",requestId="bound"))).status.value)
             assertEquals(400,post(seal(key,request.copy(gatewayId="other",requestId="bound"))).status.value)
@@ -82,14 +82,14 @@ class CloudConfigurationTest {
             val conflict=post(seal(key,request.copy(requestId="stale")))
             assertEquals(409,conflict.status.value);assertContains(conflict.bodyAsText(),"currentRevision")
             val oldHash=hash(File(dir,"secrets.enc.json"))
-            val invalid=request.copy(requestId="invalid",expectedRevision=1,configuration=ConfigurationPatch(model=ManagedModelSettings("openai","bad","http://api.example.com")))
+            val invalid=request.copy(requestId="invalid",expectedRevision=1,configuration=ConfigurationPatch(model=ModelSettingsPatch("openai","bad","http://api.example.com")))
             assertEquals(422,post(seal(key,invalid)).status.value);assertEquals(oldHash,hash(File(dir,"secrets.enc.json")))
             val destinationChange=request.copy(requestId="destination",expectedRevision=1,
-                configuration=ConfigurationPatch(model=ManagedModelSettings("claude","new-model","https://api.anthropic.com/v1")),credentials=null)
+                configuration=ConfigurationPatch(model=ModelSettingsPatch("claude","new-model","https://api.anthropic.com/v1")),credentials=null)
             val destinationDenied=post(seal(key,destinationChange))
             assertEquals(422,destinationDenied.status.value);assertContains(destinationDenied.bodyAsText(),"credential_action_required")
             assertEquals(oldHash,hash(File(dir,"secrets.enc.json")))
-            val reflected=invalid.copy(requestId="reflection",configuration=ConfigurationPatch(model=ManagedModelSettings("openai","fake-model-import-12345")))
+            val reflected=invalid.copy(requestId="reflection",configuration=ConfigurationPatch(model=ModelSettingsPatch("openai","fake-model-import-12345")))
             assertEquals(422,post(seal(key,reflected)).status.value)
             val placeholder=invalid.copy(requestId="placeholder",configuration=null,credentials=CredentialPatch(exaApiKey=CredentialMutation("replace","<redacted>")))
             assertEquals(422,post(seal(key,placeholder)).status.value)
@@ -146,7 +146,7 @@ class CloudConfigurationTest {
             val first=api.tasks.submit(device,NativeTaskRequest("first","task"))
             withTimeout(5000){entered.await()}
             val before=manager.snapshot();val pub=manager.importKey(device)
-            val switch=payload(pub,"switch",0,ConfigurationPatch(ManagedModelSettings("claude","new-model"),ManagedSearchSettings(listOf("brave"),"fallback")),CredentialPatch(modelApiKey=CredentialMutation("replace","fake-new-provider-key")))
+            val switch=payload(pub,"switch",0,ConfigurationPatch(ModelSettingsPatch("claude","new-model"),ManagedSearchSettings(listOf("brave"),"fallback")),CredentialPatch(modelApiKey=CredentialMutation("replace","fake-new-provider-key")))
             val competing=(0..1).map { index -> async(Dispatchers.Default) {
                 runCatching {manager.update(device,seal(pub,switch.copy(requestId="switch-$index")))}
             } }.awaitAll()

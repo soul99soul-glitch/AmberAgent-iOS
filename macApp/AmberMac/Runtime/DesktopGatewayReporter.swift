@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 @preconcurrency import GatewayCore
 @preconcurrency import GatewayTransport
@@ -11,8 +12,16 @@ import Foundation
     private let isEnabled: @MainActor () -> Bool
     private let process: ProcessIdentity?
     private let queue = DispatchQueue(label: "amber.gateway.reporter")
-    /// Runs in flight: conversation → (session id, task name), so approval callbacks can find their run.
-    private var runs: [UUID: (session: String, name: String)] = [:]
+    /// Runs in flight: conversation → run metadata, so approval callbacks can find their run without blocking local Q&A.
+    private struct RunMetadata {
+        var session: String
+        var name: String
+        var parentRunId: String?
+        var workItemId: String?
+        var sourceRefs: [String] = []
+        var sourcePaths: [String] = []
+    }
+    private var runs: [UUID: RunMetadata] = [:]
     /// `toolDone` must name the call it answers: the last one asked per conversation.
     private var pendingCall: [UUID: (tool: String, id: String)] = [:]
 
@@ -35,31 +44,53 @@ import Foundation
 
     /// Whether a run is reported is decided once, here: a run the gateway saw start always gets its end,
     /// even if the gateway is switched off meanwhile, so no session is left open on the phone.
-    func runStarted(runID: UUID, conversationID: UUID, taskName: String) {
+    func runStarted(runID: UUID, conversationID: UUID, taskName: String, parentRunId: String? = nil, workItemId: String? = nil) {
         guard isEnabled() else { return }
-        runs[conversationID] = (runID.uuidString.lowercased(), taskName)
+        runs[conversationID] = RunMetadata(session: runID.uuidString.lowercased(), name: taskName, parentRunId: parentRunId, workItemId: workItemId)
         send(.runStart, conversationID: conversationID)
     }
 
     func approval(conversationID: UUID, _ approval: DesktopToolApproval?) {
         if let approval {
+            let meta = DesktopToolRegistry.approvalMetadata(for: approval.name, arguments: approval.arguments)
             send(.permissionRequest, conversationID: conversationID) {
                 $0.tool = approval.name
                 $0.toolCallId = approval.id
                 $0.detail = Self.excerpt(approval.arguments)
-                $0.highRisk = DesktopToolRegistry.isHighRisk(approval.name)
+                $0.highRisk = meta.riskLevel == .l3
+                $0.riskLevel = meta.riskLevel.rawValue
+                $0.targetDevice = meta.targetDevice
+                $0.targetSummary = meta.targetSummary
+                $0.diffPreview = meta.diffPreview
+                $0.requiresLocalApproval = meta.requiresLocalApproval
             }
         } else {
             send(.toolDone, conversationID: conversationID) { _ in }
         }
     }
 
+    func recordRead(conversationID: UUID, path: String, text: String) {
+        guard var run = runs[conversationID] else { return }
+        let safePath = DesktopHistoryRedaction.redact(path)
+        let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+        let reference = "\(safePath) · sha256:\(digest)"
+        if !run.sourcePaths.contains(safePath) { run.sourcePaths.append(safePath) }
+        if !run.sourceRefs.contains(reference) { run.sourceRefs.append(reference) }
+        runs[conversationID] = run
+    }
+
     /// `quiet`: completed with nothing new, so the gateway records it without pushing (failures push regardless).
-    func runFinished(conversationID: UUID?, succeeded: Bool, quiet: Bool = false) {
-        guard let conversationID else { return }
+    func runFinished(
+        conversationID: UUID?,
+        succeeded: Bool,
+        quiet: Bool = false
+    ) {
+        guard let conversationID, let run = runs[conversationID] else { return }
         send(.runExit, conversationID: conversationID) {
             $0.exitCode = succeeded ? 0 : 1
             if quiet { $0.quiet = true }
+            if !run.sourceRefs.isEmpty { $0.sourceRefs = run.sourceRefs }
+            if !run.sourcePaths.isEmpty { $0.sourcePaths = run.sourcePaths }
         }
         runs[conversationID] = nil
         pendingCall[conversationID] = nil
@@ -68,6 +99,9 @@ import Foundation
     private func send(_ kind: EventKind, conversationID: UUID, _ fill: (inout GatewayEvent) -> Void = { _ in }) {
         guard let run = runs[conversationID] else { return }
         var event = GatewayEvent(agent: .amber, kind: kind, sessionId: run.session, process: process, origin: .headless, title: run.name)
+        event.conversationId = conversationID.uuidString.lowercased()
+        event.parentRunId = run.parentRunId
+        event.workItemId = run.workItemId
         fill(&event)
         if kind == .permissionRequest, let tool = event.tool, let id = event.toolCallId { pendingCall[conversationID] = (tool, id) }
         if kind == .toolDone, let call = pendingCall.removeValue(forKey: conversationID) {
@@ -75,12 +109,16 @@ import Foundation
             event.toolCallId = call.id
         }
         let paths = paths
-        queue.async { EventDelivery.deliver(event, paths: paths) }
+        let delivered = event
+        queue.async { EventDelivery.deliver(delivered, paths: paths) }
     }
 
     /// Whitespace-collapsed argument excerpt. Over TLS only (`/v1/status`), never in a push body.
     static func excerpt(_ arguments: String) -> String? {
-        let collapsed = arguments.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        var maskedCredential = false
+        let redacted = IOSCredentialRedactor.redact(arguments) { _, _ in maskedCredential = true }
+        let safe = DesktopHistoryRedaction.redact(maskedCredential ? redacted : arguments)
+        let collapsed = safe.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !collapsed.isEmpty, collapsed != "{}" else { return nil }
         return collapsed.count > detailLimit ? String(collapsed.prefix(detailLimit - 1)) + "…" : collapsed
     }

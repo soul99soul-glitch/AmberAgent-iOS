@@ -138,11 +138,12 @@ struct MacGatewayApprovalRow: View {
             || store.requiresLocalApprovalOnly(sessionKey: approval.sessionKey, toolCallId: approval.toolCallId)
     }
 
-    private var approvalCardItem: MacGatewayApprovalCardItem {
+    var approvalCardItem: MacGatewayApprovalCardItem {
         var card = MacGatewayApprovalCardItem(
             approval: approval,
             title: itemTitle,
-            fallbackDeviceName: store.connection?.name ?? macGatewayL("Mac")
+            fallbackDeviceName: store.connection?.name ?? store.endpointRole.displayName,
+            endpointRole: store.endpointRole
         )
         if isLocalOnly {
             card.requiresLocalApproval = true
@@ -231,7 +232,8 @@ struct MacGatewayApprovalRow: View {
                 sessionKey: approval.sessionKey,
                 toolCallId: approval.toolCallId,
                 allow: allow,
-                source: .foregroundApp
+                source: .foregroundApp,
+                role: store.endpointRole
             )
         }
     }

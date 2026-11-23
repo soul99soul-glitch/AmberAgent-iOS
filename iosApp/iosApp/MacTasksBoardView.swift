@@ -18,13 +18,13 @@ struct MacTasksBoardView: View {
     let store: MacGatewayStore
     private static let refreshInterval: Duration = .seconds(10)
 
-    init(store: MacGatewayStore = .shared) {
+    init(store: MacGatewayStore = .shared, initialRole: MacGatewayEndpointRole? = nil) {
         self.store = store
         let defaultRole: MacGatewayEndpointRole =
             (store.endpointRole == .cloud && !store.hasCloudConnection && store.hasMacConnection)
             ? .mac
             : store.endpointRole
-        self._selectedRole = State(initialValue: defaultRole)
+        self._selectedRole = State(initialValue: initialRole ?? defaultRole)
     }
 
     private var showsSlotPicker: Bool {

@@ -1,6 +1,9 @@
 package app.amber.cloud.gateway
 
-import app.amber.core.native.AmberNativeBridge
+import app.amber.cloud.config.PairingBootstrapHint
+import app.amber.cloud.security.CredentialRedactor
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -24,16 +27,39 @@ data class PairingPayload(
     val port: Int,
     val fp: String,
     val s: String,
+    val bootstrap: PairingBootstrapHint? = null,
 ) {
     val deepLinkUrl: String
         get() {
-            val jsonBytes = compactJson.encodeToString(this).encodeToByteArray()
+            val rawJson = compactJson.encodeToString(this)
+            require(!containsSecretPattern(rawJson)) { "配对二维码载荷严禁包含明文 API Key 或 OAuth Token" }
+            val sanitizedBootstrap = bootstrap?.copy(
+                provider = CredentialRedactor.redact(bootstrap.provider).take(32),
+                authMode = CredentialRedactor.redact(bootstrap.authMode).take(32),
+            )
+            val safePayload = copy(
+                name = CredentialRedactor.redact(name).take(64),
+                bootstrap = sanitizedBootstrap,
+            )
+            val jsonText = compactJson.encodeToString(safePayload)
+            require(!containsSecretPattern(jsonText)) { "配对二维码载荷严禁包含明文 API Key 或 OAuth Token" }
+            val jsonBytes = jsonText.encodeToByteArray()
             val encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(jsonBytes)
             return "amber://gateway/pair?p=$encoded"
         }
 
     companion object {
-        private val compactJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+        private val compactJson = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
+        private val FORBIDDEN_QR_SECRET_PATTERNS = listOf(
+            Regex("""sk-[A-Za-z0-9_-]{12,}"""),
+            Regex("""AIza[0-9A-Za-z_-]{20,}"""),
+            Regex("""ghp_[A-Za-z0-9]{20,}"""),
+            Regex("""eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"""),
+            Regex("""(?i)(api[_-]?key|oauth[_-]?token|refresh[_-]?token|access[_-]?token)\s*[:=]"""),
+        )
+
+        fun containsSecretPattern(raw: String): Boolean =
+            FORBIDDEN_QR_SECRET_PATTERNS.any { it.containsMatchIn(raw) }
 
         fun parse(urlOrParam: String): PairingPayload? {
             val trimmed = urlOrParam.trim()
@@ -104,23 +130,14 @@ object CandidateAddressResolver {
 object TerminalQrGenerator {
 
     fun renderAnsi(text: String): String {
-        val matrix = buildFinderMatrix(text)
-        val size = matrix.size
-        val quiet = 2
-        val total = size + quiet * 2
-        fun dark(x: Int, y: Int): Boolean {
-            val mx = x - quiet
-            val my = y - quiet
-            if (mx !in 0 until size || my !in 0 until size) return false
-            return matrix[my][mx]
-        }
+        val matrix = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, 0, 0)
         return buildString {
             var y = 0
-            while (y < total) {
+            while (y < matrix.height) {
                 append("\u001B[30;47m")
-                for (x in 0 until total) {
-                    val top = dark(x, y)
-                    val bottom = dark(x, y + 1)
+                for (x in 0 until matrix.width) {
+                    val top = matrix[x, y]
+                    val bottom = y + 1 < matrix.height && matrix[x, y + 1]
                     append(
                         when {
                             top && bottom -> "█"
@@ -134,53 +151,5 @@ object TerminalQrGenerator {
                 y += 2
             }
         }
-    }
-
-    private fun buildFinderMatrix(text: String): Array<BooleanArray> {
-        val size = 29
-        val grid = Array(size) { BooleanArray(size) }
-        val reserved = Array(size) { BooleanArray(size) }
-
-        fun placeFinder(ox: Int, oy: Int) {
-            for (dy in -1..7) {
-                for (dx in -1..7) {
-                    val x = ox + dx
-                    val y = oy + dy
-                    if (x in 0 until size && y in 0 until size) {
-                        reserved[y][x] = true
-                        val inOuter = dx in 0..6 && dy in 0..6 && (dx == 0 || dx == 6 || dy == 0 || dy == 6)
-                        val inInner = dx in 2..4 && dy in 2..4
-                        grid[y][x] = inOuter || inInner
-                    }
-                }
-            }
-        }
-
-        placeFinder(0, 0)
-        placeFinder(size - 7, 0)
-        placeFinder(0, size - 7)
-
-        for (i in 8 until size - 8) {
-            reserved[6][i] = true
-            reserved[i][6] = true
-            grid[6][i] = i % 2 == 0
-            grid[i][6] = i % 2 == 0
-        }
-
-        val payloadBytes = text.encodeToByteArray()
-        val digest = AmberNativeBridge.sha256(payloadBytes) ?: ByteArray(32)
-        val stream = payloadBytes + digest
-        var bitIdx = 0
-        for (y in 0 until size) {
-            for (x in 0 until size) {
-                if (!reserved[y][x]) {
-                    val byteVal = stream[(bitIdx / 8) % stream.size].toInt() and 0xff
-                    val bit = (byteVal ushr (7 - (bitIdx % 8))) and 1
-                    grid[y][x] = (bit == 1) xor ((x + y) % 2 == 0)
-                    bitIdx++
-                }
-            }
-        }
-        return grid
     }
 }

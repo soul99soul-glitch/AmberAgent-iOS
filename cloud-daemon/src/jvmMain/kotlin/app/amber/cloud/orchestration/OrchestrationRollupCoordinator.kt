@@ -130,6 +130,8 @@ internal class OrchestrationRollupCoordinator(
             else -> WorkItemState.FAILED
         }
 
+        val mergedSourceRefs = (existing.sourceRefs + report.sourceRefs).map { CredentialRedactor.redact(it.trim()) }.filter { it.isNotEmpty() }.distinct()
+        val mergedSourcePaths = (existing.sourcePaths + report.sourcePaths).map { CredentialRedactor.redact(it.trim()) }.filter { it.isNotEmpty() }.distinct()
         val settled = existing.copy(
             state = targetState,
             slotHeld = false,
@@ -142,6 +144,8 @@ internal class OrchestrationRollupCoordinator(
             failureReason = if (targetState == WorkItemState.FAILED) CredentialRedactor.redact(report.summary) else null,
             lastActivityAtMs = nowEpochMs,
             updatedAtMs = nowEpochMs,
+            sourceRefs = mergedSourceRefs,
+            sourcePaths = mergedSourcePaths,
         )
         synchronized(kernel.store) {
             // Acceptance and terminal admission share the store monitor: an ACKed input cannot slip past settlement.
@@ -246,6 +250,14 @@ internal class OrchestrationRollupCoordinator(
         if (report.artifacts.isNotEmpty()) {
             append("\n## Artifacts\n")
             report.artifacts.forEach { append("- ").append(CredentialRedactor.redact(it)).append('\n') }
+        }
+        val sources = (item.sourceRefs + report.sourceRefs + item.sourcePaths + report.sourcePaths)
+            .map { CredentialRedactor.redact(it.trim()) }
+            .filter { it.isNotEmpty() }
+            .distinct()
+        if (sources.isNotEmpty()) {
+            append("\n## Sources\n")
+            sources.forEach { append("- ").append(it).append('\n') }
         }
     }
 }

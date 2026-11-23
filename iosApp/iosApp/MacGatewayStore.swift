@@ -93,6 +93,16 @@ final class MacGatewayStore {
     /// Independent local Mac slot owned by the root `.cloud` store so Cloud (`amberd`)
     /// and Mac (`amber-gateway`) stay paired and online simultaneously.
     @ObservationIgnored private(set) var macSlot: MacGatewayStore?
+    var composerExecutionTarget: AmberComposerExecutionTarget = .local {
+        didSet {
+            if oldValue != composerExecutionTarget { notifyWatchRemoteStateChanged() }
+        }
+    }
+
+    var effectiveComposerTarget: AmberComposerExecutionTarget {
+        AmberHostSwitcherPillPolicy.normalizedTarget(composerExecutionTarget, cloudPaired: hasCloudConnection, macPaired: hasMacConnection)
+    }
+
     /// Preferred tab when opening the unified "Amber 多终端" settings page (e.g. after scanning a QR link).
     var preferredMultiDeviceTab: AmberMultiDeviceTab = .cloud
 
@@ -801,7 +811,11 @@ final class MacGatewayStore {
         role: MacGatewayEndpointRole? = nil
     ) async -> Bool {
         if let role, role != endpointRole {
-            return await slot(for: role).decide(
+            guard role == .mac, let macSlot else {
+                notice = Notice(text: localized("审批所属终端已变化，请重新打开任务"), isError: true)
+                return false
+            }
+            return await macSlot.decide(
                 sessionKey: sessionKey,
                 toolCallId: toolCallId,
                 allow: allow,
@@ -820,14 +834,20 @@ final class MacGatewayStore {
             } || (status?.sessions.contains {
                 $0.key == sessionKey && $0.pendingApproval?.toolCallId == toolCallId
             } ?? false)
+            if client != nil, macSlot.client != nil, macOwnsApproval == cloudOwnsApproval {
+                notice = Notice(text: localized("无法确定审批所属终端，请在任务看板中核对"), isError: true)
+                return false
+            }
             if (macOwnsApproval && !cloudOwnsApproval) || (client == nil && macSlot.client != nil) {
-                return await macSlot.decide(
+                let delivered = await macSlot.decide(
                     sessionKey: sessionKey,
                     toolCallId: toolCallId,
                     allow: allow,
                     source: source,
                     role: .mac
                 )
+                notice = macSlot.notice
+                return delivered
             }
         }
         if allow, requiresLocalApprovalOnly(sessionKey: sessionKey, toolCallId: toolCallId) {
@@ -916,38 +936,20 @@ final class MacGatewayStore {
     }
 
     func isKnownHighRiskApproval(sessionKey: String, toolCallId: String) -> Bool {
-        if let boardApproval = boardItems.compactMap(\.approval).first(where: {
-            $0.sessionKey == sessionKey && $0.toolCallId == toolCallId
-        }) {
-            return boardApproval.highRisk
-        }
+        if boardItems.contains(where: {
+            guard let approval = $0.approval, approval.sessionKey == sessionKey, approval.toolCallId == toolCallId else { return false }
+            return approval.highRisk || MacApprovalRiskTier.resolve(rawLevel: approval.riskLevel, highRisk: approval.highRisk, requiresLocalApproval: approval.requiresLocalApproval) == .l3
+        }) { return true }
         if let session = status?.sessions.first(where: { $0.key == sessionKey }),
-           let pending = session.pendingApproval,
-           pending.toolCallId == toolCallId {
-            return pending.highRisk
+           let pending = session.pendingApproval, pending.toolCallId == toolCallId {
+            return pending.highRisk || MacApprovalRiskTier.resolve(rawLevel: pending.riskLevel, highRisk: pending.highRisk, requiresLocalApproval: pending.requiresLocalApproval) == .l3
         }
         return false
     }
 
     // MARK: - Task board
 
-    var needsYouCount: Int { combinedNeedsYouItems.count }
-
-    /// Needs-you items across both online paired slots (equals `needsYouItems` when Mac slot is unpaired).
-    var combinedNeedsYouItems: [MacGatewayBoardItem] {
-        guard let macSlot, macSlot.connection != nil, macSlot.isReachable == true else {
-            return needsYouItems
-        }
-        let macItems = macSlot.needsYouItems
-        if needsYouItems.isEmpty { return macItems }
-        if macItems.isEmpty { return needsYouItems }
-        var seen = Set(needsYouItems.map(\.id))
-        var merged = needsYouItems
-        for item in macItems where seen.insert(item.id).inserted {
-            merged.append(item)
-        }
-        return merged
-    }
+    var needsYouCount: Int { needsYouItems.count + (macSlot?.needsYouItems.count ?? 0) }
 
     private func publishBoard() {
         let items = board ?? Self.fallbackBoard(sessions: status?.sessions ?? [])
@@ -1151,6 +1153,12 @@ final class MacGatewayStore {
         let targetConnectionKey = connectionStorageKey
         let targetTasksKey = tasksStorageKey
         let targetDialogueKey = dialogueStorageKey
+        if let data = defaults.data(forKey: Self.legacyConnectionKey),
+           let legacy = try? JSONDecoder().decode(MacGatewayConnection.self, from: data),
+           MacGatewayEndpointRole.inferMigrationRole(for: legacy) == endpointRole {
+            defaults.removeObject(forKey: Self.legacyConnectionKey)
+            deleteToken(Self.legacyTokenKey)
+        }
         deleteToken(targetTokenKey)
         let targetDefaults = defaults
         targetDefaults.removeObject(forKey: targetConnectionKey)

@@ -42,7 +42,8 @@ import XCTest
         XCTAssertEqual(ask.tool, "terminal_exec")
         XCTAssertEqual(ask.toolCallId, "call-1")
         XCTAssertEqual(ask.highRisk, true)
-        XCTAssertEqual(ask.detail, "{ \"command\": \"ls -la\" }")
+        let detail = try JSONDecoder().decode([String: String].self, from: Data(XCTUnwrap(ask.detail).utf8))
+        XCTAssertEqual(detail["command"], "ls -la")
         XCTAssertEqual(events[2].toolCallId, "call-1", "the answer names the call it resolves")
         XCTAssertEqual(events[2].tool, "terminal_exec")
         XCTAssertEqual(events[3].exitCode, 1)
@@ -93,9 +94,55 @@ import XCTest
 
     func testExcerptIsCollapsedAndCapped() {
         XCTAssertNil(DesktopGatewayReporter.excerpt("{}"))
+        XCTAssertFalse(DesktopGatewayReporter.excerpt(#"{"password":"private-fixture"}"#)?.contains("private-fixture") == true)
         XCTAssertNil(DesktopGatewayReporter.excerpt("  "))
         let long = DesktopGatewayReporter.excerpt(String(repeating: "长", count: 300))
         XCTAssertEqual(long?.count, DesktopGatewayReporter.detailLimit)
         XCTAssertEqual(long?.last, "…")
+    }
+
+    func testStructuredApprovalAndSourceProvenanceEvents() async throws {
+        let (reporter, spool) = try make()
+        let conversation = UUID(), run = UUID()
+        reporter.runStarted(
+            runID: run,
+            conversationID: conversation,
+            taskName: "周报整理",
+            parentRunId: "ios-run-7",
+            workItemId: "work:abc123"
+        )
+        reporter.approval(
+            conversationID: conversation,
+            DesktopToolApproval(
+                id: "call-edit",
+                name: "workspace_file_write",
+                arguments: #"{"path":"notes/weekly.md","content":"第二条：已完成接口迁移"}"#,
+                reason: "写入"
+            )
+        )
+        reporter.approval(conversationID: conversation, nil)
+        reporter.recordRead(conversationID: conversation, path: "notes/weekly.md", text: "第二条：已完成接口迁移")
+        reporter.recordRead(conversationID: conversation, path: "notes/weekly.md", text: "第二条：已完成接口迁移")
+        reporter.runFinished(conversationID: conversation, succeeded: true)
+
+        let events = await drained(spool, count: 4)
+        XCTAssertEqual(events.map(\.kind), [.runStart, .permissionRequest, .toolDone, .runExit])
+        XCTAssertEqual(events[0].conversationId, conversation.uuidString.lowercased())
+        XCTAssertEqual(events[0].parentRunId, "ios-run-7")
+        XCTAssertEqual(events[0].workItemId, "work:abc123")
+
+        let ask = events[1]
+        XCTAssertEqual(ask.riskLevel, "L2")
+        XCTAssertEqual(ask.requiresLocalApproval, false)
+        XCTAssertEqual(ask.targetSummary, "workspace_file_write: notes/weekly.md")
+        XCTAssertTrue(ask.diffPreview?.contains("notes/weekly.md") == true)
+        XCTAssertNotNil(ask.targetDevice)
+
+        let exit = events[3]
+        XCTAssertEqual(exit.sourcePaths, ["notes/weekly.md"])
+        XCTAssertEqual(exit.sourceRefs?.count, 1)
+        XCTAssertTrue(exit.sourceRefs?.first?.hasPrefix("notes/weekly.md · sha256:") == true)
+        XCTAssertEqual(exit.parentRunId, "ios-run-7")
+        XCTAssertEqual(exit.workItemId, "work:abc123")
     }
 }

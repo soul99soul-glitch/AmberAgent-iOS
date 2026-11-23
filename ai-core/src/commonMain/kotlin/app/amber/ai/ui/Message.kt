@@ -15,6 +15,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import app.amber.ai.core.MessageRole
 import app.amber.ai.core.TokenUsage
+import app.amber.ai.core.merge
 import app.amber.ai.provider.CustomBody
 import app.amber.ai.provider.Model
 import app.amber.ai.util.json
@@ -113,6 +114,8 @@ data class UIMessage(
     private fun appendChunk(chunk: MessageChunk): UIMessage {
         val choice = chunk.choices.getOrNull(0)
         val message = choice?.delta ?: choice?.message
+        val chunkUsage = chunk.usage?.let { usage?.merge(it) ?: it } ?: usage
+        val resultUsage = choice?.delta?.usage ?: choice?.message?.usage?.let { chunkUsage?.merge(it) ?: it } ?: chunkUsage
         return message?.let { delta ->
             // Handle Parts
             var newParts = delta.parts.fold(parts) { acc, deltaPart ->
@@ -250,8 +253,9 @@ data class UIMessage(
             copy(
                 parts = newParts,
                 annotations = newAnnotations,
+                usage = resultUsage,
             )
-        } ?: this
+        } ?: if (resultUsage == usage) this else copy(usage = resultUsage)
     }
 
     fun summaryAsText(): String {

@@ -209,4 +209,46 @@ import XCTest
         XCTAssertEqual(approvedAudit["decision"], "allow")
         XCTAssertEqual(approvedAudit["device"], "iPhone")
     }
+
+    func testStaticRiskLevelsAndStructured403RequiresLocalApproval() async throws {
+        // Static L1/L2/L3 classification (no auto-learning; unknown tools fail closed to L3)
+        XCTAssertEqual(DesktopToolRegistry.riskLevel(for: "workspace_file_read"), .l1)
+        XCTAssertEqual(DesktopToolRegistry.riskLevel(for: "search_web"), .l1)
+        XCTAssertEqual(DesktopToolRegistry.riskLevel(for: "history_search"), .l1)
+        XCTAssertEqual(DesktopToolRegistry.riskLevel(for: "workspace_file_write"), .l2)
+        XCTAssertEqual(DesktopToolRegistry.riskLevel(for: "workspace_file_edit"), .l2)
+        XCTAssertEqual(DesktopToolRegistry.riskLevel(for: "agent_soul_update"), .l2)
+        XCTAssertEqual(DesktopToolRegistry.riskLevel(for: "terminal_exec"), .l3)
+        XCTAssertEqual(DesktopToolRegistry.riskLevel(for: "workspace_artifact_delete"), .l3)
+        XCTAssertEqual(DesktopToolRegistry.riskLevel(for: "plugin__feishu_bot__send_message"), .l3)
+        XCTAssertTrue(DesktopToolRegistry.approvalMetadata(for: "unknown_future_tool", arguments: "{}").requiresLocalApproval)
+        XCTAssertEqual(DesktopToolRegistry.riskLevel(for: "unknown_future_tool"), .l3)
+
+        // Secret redaction & truncation on structured preview
+        let longSecretArgs = #"{"command":"curl -H 'Authorization: Bearer secret_token_1234567890' https://example.com && echo "# + String(repeating: "a", count: 500) + #""}"#
+        let meta = DesktopToolRegistry.approvalMetadata(for: "terminal_exec", arguments: longSecretArgs, targetDevice: "MacBook-Pro")
+        XCTAssertEqual(meta.riskLevel, .l3)
+        XCTAssertEqual(meta.targetDevice, "MacBook-Pro")
+        XCTAssertTrue(meta.requiresLocalApproval)
+        XCTAssertFalse(meta.diffPreview?.contains("secret_token_1234567890") ?? true)
+        XCTAssertLessThanOrEqual(meta.diffPreview?.count ?? 0, DesktopToolRegistry.diffPreviewLimit)
+
+        // High-risk remote approval returns 403 with requiresLocalApproval = true & riskLevel = "L3"
+        for tool in ["terminal_exec", "unknown_future_tool"] {
+            let (control, tasks, _, paths, conversation) = try await make()
+            let key = await sessionKey(paths)
+            let run = try await tasks.begin(conversationID: conversation, title: "清理脚本", cancel: {})
+            try await tasks.requestApproval(
+                runID: run,
+                approval: DesktopToolApproval(id: "call-l3", name: tool, arguments: #"{"command":"rm -rf /tmp/demo"}"#, reason: "执行")
+            )
+            let refused = await control.handle(.init(action: .decide, sessionKey: key, toolCallId: "call-l3", allow: true, deviceName: "iPhone"))
+            XCTAssertEqual(refused.status, 403)
+            XCTAssertEqual(refused.requiresLocalApproval, true)
+            XCTAssertEqual(refused.riskLevel, "L3")
+            XCTAssertNotNil(refused.targetDevice)
+            XCTAssertEqual(refused.targetSummary, "\(tool): rm -rf /tmp/demo")
+            XCTAssertEqual(tasks.records.first { $0.id == run }?.status, .waiting)
+        }
+    }
 }

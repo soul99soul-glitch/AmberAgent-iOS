@@ -3,14 +3,21 @@ package app.amber.cloud.runtime
 import app.amber.cloud.channel.PRIMARY_CONVERSATION_ID
 import app.amber.cloud.gateway.DeviceContextSnapshotStore
 import app.amber.cloud.gateway.PairedDevice
+import app.amber.cloud.proactive.ProactiveMonitorRecord
+import app.amber.cloud.proactive.ProactiveMonitorStore
+import app.amber.cloud.proactive.ProactiveWebhookRecord
+import app.amber.cloud.proactive.ProactiveWebhookStore
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.security.EnvelopeCredentialVault
 import app.amber.cloud.security.PlaceholderCredentialException
 import app.amber.core.storage.conversation.JsonConversationStorage
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -22,6 +29,8 @@ import kotlin.uuid.Uuid
  */
 internal object CloudBuiltinTools {
 
+    private val toolJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
     fun registerAll(
         toolRegistry: CloudToolRegistry,
         conversationStorage: JsonConversationStorage,
@@ -31,6 +40,8 @@ internal object CloudBuiltinTools {
         workspaceDir: File,
         deviceContextStore: DeviceContextSnapshotStore? = null,
         pairedIosDevicesProvider: () -> List<PairedDevice> = { emptyList() },
+        proactiveMonitorStore: ProactiveMonitorStore? = null,
+        proactiveWebhookStore: ProactiveWebhookStore? = null,
     ) {
         toolRegistry.register(
             CloudToolDefinition(
@@ -233,6 +244,215 @@ internal object CloudBuiltinTools {
                         domainFilter = domain,
                         requestedDeviceId = deviceId,
                     )
+                }
+            )
+        }
+
+        if (proactiveMonitorStore != null) {
+            toolRegistry.register(
+                CloudToolDefinition(
+                    name = "proactive_monitor_create",
+                    description = "创建一条 Watchtower 静默网页巡检规则（仅允许公开 http/https URL，有变化才提醒）",
+                    parameters = app.amber.cloud.tasks.schema(
+                        "{\"title\":{\"type\":\"string\"},\"url\":{\"type\":\"string\"},\"conditionPrompt\":{\"type\":\"string\"},\"intervalMinutes\":{\"type\":\"integer\"},\"enabled\":{\"type\":\"boolean\"}}",
+                        "url",
+                    ),
+                    highRisk = false,
+                    effect = ToolEffect.SIDE_EFFECT,
+                    ownerOnly = true,
+                ) { args ->
+                    val url = args["url"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+                    val title = args["title"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+                    val condition = args["conditionPrompt"]?.jsonPrimitive?.contentOrNull
+                        ?: args["condition_prompt"]?.jsonPrimitive?.contentOrNull
+                        ?: ""
+                    val interval = args["intervalMinutes"]?.jsonPrimitive?.intOrNull
+                        ?: args["interval_minutes"]?.jsonPrimitive?.intOrNull
+                        ?: 15
+                    val enabled = args["enabled"]?.jsonPrimitive?.booleanOrNull ?: true
+                    runCatching {
+                        val created = proactiveMonitorStore.create(
+                            title = title,
+                            url = url,
+                            conditionPrompt = condition,
+                            intervalMinutes = interval,
+                            enabled = enabled,
+                        )
+                        buildJsonObject {
+                            put("ok", true)
+                            put("monitor", toolJson.encodeToJsonElement(ProactiveMonitorRecord.serializer(), created))
+                        }
+                    }.getOrElse { err ->
+                        buildJsonObject {
+                            put("ok", false)
+                            put("error", err.message ?: "创建巡检规则失败")
+                        }
+                    }
+                }
+            )
+
+            toolRegistry.register(
+                CloudToolDefinition(
+                    name = "proactive_monitor_list",
+                    description = "列出当前所有 Watchtower 静默巡检规则及最近检查状态",
+                    parameters = app.amber.cloud.tasks.schema("{\"includeDisabled\":{\"type\":\"boolean\"}}"),
+                    highRisk = false,
+                    effect = ToolEffect.PURE,
+                    ownerOnly = true,
+                ) { args ->
+                    val includeDisabled = args["includeDisabled"]?.jsonPrimitive?.booleanOrNull ?: true
+                    val list = proactiveMonitorStore.list(includeDisabled = includeDisabled)
+                    buildJsonObject {
+                        put("ok", true)
+                        put(
+                            "monitors",
+                            buildJsonArray {
+                                list.forEach { add(toolJson.encodeToJsonElement(ProactiveMonitorRecord.serializer(), it)) }
+                            }
+                        )
+                    }
+                }
+            )
+
+            toolRegistry.register(
+                CloudToolDefinition(
+                    name = "proactive_monitor_update",
+                    description = "更新指定 Watchtower 巡检规则（启停、调整轮询频率、修改关注条件或标题/URL）",
+                    parameters = app.amber.cloud.tasks.schema(
+                        "{\"id\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"},\"url\":{\"type\":\"string\"},\"conditionPrompt\":{\"type\":\"string\"},\"intervalMinutes\":{\"type\":\"integer\"},\"enabled\":{\"type\":\"boolean\"}}",
+                        "id",
+                    ),
+                    highRisk = false,
+                    effect = ToolEffect.SIDE_EFFECT,
+                    ownerOnly = true,
+                ) { args ->
+                    val id = args["id"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+                    runCatching {
+                        val updated = proactiveMonitorStore.update(
+                            id = id,
+                            title = args["title"]?.jsonPrimitive?.contentOrNull,
+                            url = args["url"]?.jsonPrimitive?.contentOrNull,
+                            conditionPrompt = args["conditionPrompt"]?.jsonPrimitive?.contentOrNull
+                                ?: args["condition_prompt"]?.jsonPrimitive?.contentOrNull,
+                            intervalMinutes = args["intervalMinutes"]?.jsonPrimitive?.intOrNull
+                                ?: args["interval_minutes"]?.jsonPrimitive?.intOrNull,
+                            enabled = args["enabled"]?.jsonPrimitive?.booleanOrNull,
+                        )
+                        if (updated == null) {
+                            buildJsonObject {
+                                put("ok", false)
+                                put("error", "未找到巡检规则: $id")
+                            }
+                        } else {
+                            buildJsonObject {
+                                put("ok", true)
+                                put("monitor", toolJson.encodeToJsonElement(ProactiveMonitorRecord.serializer(), updated))
+                            }
+                        }
+                    }.getOrElse { err ->
+                        buildJsonObject {
+                            put("ok", false)
+                            put("error", err.message ?: "更新巡检规则失败")
+                        }
+                    }
+                }
+            )
+
+            toolRegistry.register(
+                CloudToolDefinition(
+                    name = "proactive_monitor_delete",
+                    description = "删除指定 Watchtower 静默巡检规则",
+                    parameters = app.amber.cloud.tasks.schema("{\"id\":{\"type\":\"string\"}}", "id"),
+                    highRisk = false,
+                    effect = ToolEffect.SIDE_EFFECT,
+                    ownerOnly = true,
+                ) { args ->
+                    val id = args["id"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+                    val deleted = proactiveMonitorStore.delete(id)
+                    buildJsonObject {
+                        put("ok", deleted)
+                        put("id", id)
+                        if (!deleted) put("error", "未找到巡检规则: $id")
+                    }
+                }
+            )
+        }
+
+        if (proactiveWebhookStore != null) {
+            toolRegistry.register(
+                CloudToolDefinition(
+                    name = "proactive_webhook_create",
+                    description = "创建一个个人签名入站 Webhook（密钥密文入库，仅此次创建返回一次 secret 与入站路径）",
+                    parameters = app.amber.cloud.tasks.schema(
+                        "{\"name\":{\"type\":\"string\"},\"instruction\":{\"type\":\"string\"},\"enabled\":{\"type\":\"boolean\"}}",
+                        "name",
+                    ),
+                    highRisk = false,
+                    effect = ToolEffect.SIDE_EFFECT,
+                    ownerOnly = true,
+                ) { args ->
+                    val name = args["name"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+                    val instruction = args["instruction"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+                    val enabled = args["enabled"]?.jsonPrimitive?.booleanOrNull ?: true
+                    runCatching {
+                        val created = proactiveWebhookStore.create(
+                            name = name,
+                            instruction = instruction,
+                            enabled = enabled,
+                        )
+                        buildJsonObject {
+                            put("ok", true)
+                            put("webhook", toolJson.encodeToJsonElement(ProactiveWebhookRecord.serializer(), created.webhook))
+                            put("secret", created.secret)
+                            put("inboundPath", created.inboundPath)
+                        }
+                    }.getOrElse { err ->
+                        buildJsonObject {
+                            put("ok", false)
+                            put("error", err.message ?: "创建 Webhook 失败")
+                        }
+                    }
+                }
+            )
+
+            toolRegistry.register(
+                CloudToolDefinition(
+                    name = "proactive_webhook_list",
+                    description = "列出已配置的个人入站 Webhook（永不回显明文 secret）",
+                    parameters = app.amber.cloud.tasks.schema("{}"),
+                    highRisk = false,
+                    effect = ToolEffect.PURE,
+                    ownerOnly = true,
+                ) {
+                    val list = proactiveWebhookStore.list()
+                    buildJsonObject {
+                        put("ok", true)
+                        put(
+                            "webhooks",
+                            buildJsonArray {
+                                list.forEach { add(toolJson.encodeToJsonElement(ProactiveWebhookRecord.serializer(), it)) }
+                            }
+                        )
+                    }
+                }
+            )
+
+            toolRegistry.register(
+                CloudToolDefinition(
+                    name = "proactive_webhook_delete",
+                    description = "删除指定个人入站 Webhook 并同步吊销其密文密钥",
+                    parameters = app.amber.cloud.tasks.schema("{\"id\":{\"type\":\"string\"}}", "id"),
+                    highRisk = false,
+                    effect = ToolEffect.SIDE_EFFECT,
+                    ownerOnly = true,
+                ) { args ->
+                    val id = args["id"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+                    val deleted = proactiveWebhookStore.delete(id)
+                    buildJsonObject {
+                        put("ok", deleted)
+                        put("id", id)
+                        if (!deleted) put("error", "未找到 Webhook: $id")
+                    }
                 }
             )
         }

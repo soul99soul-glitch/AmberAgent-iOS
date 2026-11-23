@@ -135,8 +135,20 @@ public enum AmberControl {
             public var tool: String
             public var detail: String?
             public var highRisk: Bool
-            public init(sessionKey: String, toolCallId: String, tool: String, detail: String?, highRisk: Bool) {
+            public let summary: String?
+            public let targetDeviceName: String?
+            public var riskLevel: String?
+            public var targetDevice: String?
+            public var targetSummary: String?
+            public var diffPreview: String?
+            public var requiresLocalApproval: Bool?
+            public init(sessionKey: String, toolCallId: String, tool: String, detail: String?, highRisk: Bool,
+                        riskLevel: String? = nil, targetDevice: String? = nil, targetSummary: String? = nil,
+                        diffPreview: String? = nil, requiresLocalApproval: Bool? = nil) {
                 self.sessionKey = sessionKey; self.toolCallId = toolCallId; self.tool = tool; self.detail = detail; self.highRisk = highRisk
+                self.summary = targetSummary; self.targetDeviceName = targetDevice
+                self.riskLevel = riskLevel; self.targetDevice = targetDevice; self.targetSummary = targetSummary
+                self.diffPreview = diffPreview; self.requiresLocalApproval = requiresLocalApproval
             }
         }
 
@@ -173,13 +185,26 @@ public enum AmberControl {
         public var schedule: ScheduleSummary?
         public var board: [BoardItem]?
         public var soul: SoulState?
+        public var riskLevel: String?
+        public var targetDevice: String?
+        public var targetSummary: String?
+        public var diffPreview: String?
+        public var requiresLocalApproval: Bool?
 
         public init(status: Int, error: String? = nil, schedules: [ScheduleSummary]? = nil, schedule: ScheduleSummary? = nil,
-                    board: [BoardItem]? = nil, soul: SoulState? = nil) {
+                    board: [BoardItem]? = nil, soul: SoulState? = nil, riskLevel: String? = nil,
+                    targetDevice: String? = nil, targetSummary: String? = nil, diffPreview: String? = nil,
+                    requiresLocalApproval: Bool? = nil) {
             self.status = status; self.error = error; self.schedules = schedules; self.schedule = schedule
-            self.board = board; self.soul = soul
+            self.board = board; self.soul = soul; self.riskLevel = riskLevel; self.targetDevice = targetDevice
+            self.targetSummary = targetSummary; self.diffPreview = diffPreview; self.requiresLocalApproval = requiresLocalApproval
         }
 
-        public static func failure(_ status: Int, _ message: String) -> Response { Response(status: status, error: message) }
+        public static func failure(_ status: Int, _ message: String, riskLevel: String? = nil, targetDevice: String? = nil,
+                                   targetSummary: String? = nil, diffPreview: String? = nil,
+                                   requiresLocalApproval: Bool? = nil) -> Response {
+            Response(status: status, error: message, riskLevel: riskLevel, targetDevice: targetDevice,
+                     targetSummary: targetSummary, diffPreview: diffPreview, requiresLocalApproval: requiresLocalApproval)
+        }
     }
 }

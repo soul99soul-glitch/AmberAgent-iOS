@@ -302,7 +302,7 @@ fun Model.reasoningFamily(provider: ProviderSetting?): ReasoningFamily {
             ReasoningFamily.GROK_XHIGH
         id.isGrok45() || (provider.isXaiApiEndpoint() && id.contains("grok")) -> ReasoningFamily.GROK_HIGH
 
-        id.isOpenAiGpt6Model() -> ReasoningFamily.OPENAI_NO_NONE
+        id.isOpenAiGpt6() -> ReasoningFamily.OPENAI_NO_NONE
 
         id.contains("gpt-5") || id.contains("codex") || Regex("\\bo\\d+").containsMatchIn(id) ->
             ReasoningFamily.OPENAI
@@ -399,9 +399,9 @@ internal fun String.isKimiK3(): Boolean {
         Regex("""(^|/)k3(\.\d+)?([-._]|$)""").containsMatchIn(id)
 }
 
-internal fun String.isOpenAiGpt6Model(): Boolean {
-    val base = normalizedModelId().substringAfterLast('/')
-    return base == "gpt-6" || base.startsWith("gpt-6-") || base.startsWith("gpt-6.")
+fun String.isOpenAiGpt6(): Boolean {
+    val id = normalizedModelId()
+    return Regex("""(^|[^a-z0-9])gpt-6($|[-.])""").containsMatchIn(id)
 }
 
 internal fun String.isKimiK27Code(): Boolean {

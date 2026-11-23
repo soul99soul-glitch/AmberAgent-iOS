@@ -121,6 +121,7 @@ class ReasoningPolicyTest {
             "gpt-6.2-astra",
             "gpt-6.1-sol",
             "gpt-6.1-terra",
+            "gpt-6.1-mini",
             "gpt-6-astra",
             "gpt-6-sol",
             "gpt-6-terra",

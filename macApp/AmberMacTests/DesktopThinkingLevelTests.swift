@@ -31,6 +31,18 @@ final class DesktopThinkingLevelTests: XCTestCase {
             [.off, .low, .medium, .high, .xhigh, .max]
         )
         XCTAssertEqual(
+            DesktopThinkingPolicy.supportedLevels(modelID: "gpt-6.2-sol", kind: .responses),
+            [.low, .medium, .high, .xhigh, .max]
+        )
+        XCTAssertEqual(
+            DesktopThinkingPolicy.supportedLevels(modelID: "k3.1-pro", kind: .openAI, providerName: "Kimi"),
+            [.low, .high, .max]
+        )
+        XCTAssertEqual(
+            DesktopThinkingPolicy.supportedLevels(modelID: "grok-4.7", kind: .openAI, baseURL: "https://api.x.ai/v1"),
+            [.low, .medium, .high, .xhigh]
+        )
+        XCTAssertEqual(
             DesktopThinkingPolicy.supportedLevels(modelID: "claude-sonnet-4-5-20250929", kind: .claude),
             [.off, .auto, .low, .medium, .high, .max]
         )

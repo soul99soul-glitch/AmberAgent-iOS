@@ -1,5 +1,6 @@
 package app.amber.cloud.tasks
 
+import app.amber.cloud.security.isPublicNetworkAddress
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.*
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -102,12 +103,6 @@ class PublicHttp internal constructor(
 
     companion object {
         private fun origin(url: HttpUrl) = "${url.scheme}://${url.host}:${url.port}"
-        fun publicAddress(ip: InetAddress): Boolean {
-            if (ip.isAnyLocalAddress || ip.isLoopbackAddress || ip.isLinkLocalAddress || ip.isSiteLocalAddress || ip.isMulticastAddress) return false
-            val bytes = ip.address.map { it.toInt() and 255 }
-            return if (bytes.size == 4) !(bytes[0] in setOf(0, 10, 127, 169) || bytes[0] >= 224 ||
-                bytes[0] == 100 && bytes[1] in 64..127 || bytes[0] == 192 && bytes[1] in setOf(0, 168) || bytes[0] == 198 && bytes[1] in 18..19)
-            else bytes[0] in 0x20..0x3f
-        }
+        fun publicAddress(ip: InetAddress): Boolean = isPublicNetworkAddress(ip)
     }
 }

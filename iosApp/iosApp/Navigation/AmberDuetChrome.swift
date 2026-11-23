@@ -1075,7 +1075,7 @@ struct AmberDuetTaskCenterCard: View {
         switch item.destination {
         case .cloudTaskDetail(let requestId):
             selectedCloudTask = AmberCloudTaskSelection(requestId: requestId)
-        case .subAgentConversation, .executionRecord, .wakeConversation, .cloudDialogueWorkItem, .macBoard:
+        case .subAgentConversation, .executionRecord, .wakeConversation, .cloudDialogueWorkItem, .gatewayBoard:
             onDismissPanel?()
             onOpenTask?(item)
         case .none:

@@ -13,6 +13,7 @@ import app.amber.cloud.orchestration.ModelRouterBrain
 import app.amber.cloud.orchestration.RouterTurnInput
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.core.model.Conversation
+import app.amber.core.model.ConversationMemoryMode
 import app.amber.core.model.DEFAULT_ASSISTANT_ID
 import app.amber.core.model.MemoryScope
 import app.amber.core.model.toMessageNode
@@ -52,8 +53,22 @@ internal class CloudRouterIngress(private val kernel: CloudAgentKernel) : Channe
                     it.copy(id = Uuid.parse(deterministic.toString()))
                 }
             }
+            val alreadyRecorded = conversation.messageNodes.any { it.currentMessage.id == userMessage.id }
+            if (!alreadyRecorded && conversation.memoryMode == ConversationMemoryMode.ENABLED &&
+                message.scope == ConversationScope.DIRECT && message.senderRole == SenderRole.OWNER
+            ) {
+                runCatching {
+                    val ruleConversation = kernel.orchestrationStore.dialogue.ruleConversationId(
+                        message.channel.wireName, message.messageId, conversationId.toString())
+                    kernel.proceduralRuleStore.proposeFromCorrection(
+                        userText = message.text,
+                        scope = "conversation:$ruleConversation",
+                        sourceEventId = userMessage.id.toString(),
+                    )
+                }
+            }
             kernel.conversationStorage.saveConversation(conversation.copy(
-                messageNodes = if(conversation.messageNodes.any {it.currentMessage.id==userMessage.id}) conversation.messageNodes else conversation.messageNodes + userMessage.toMessageNode(),
+                messageNodes = if (alreadyRecorded) conversation.messageNodes else conversation.messageNodes + userMessage.toMessageNode(),
                 updateAt = Clock.System.now(),
             ))
         }
@@ -75,19 +90,38 @@ internal class CloudRouterIngress(private val kernel: CloudAgentKernel) : Channe
         val memories = kernel.memoryStore.recallForPrompt(input.batchPrompt).let { recalled ->
             if (conversationId == PRIMARY_CONVERSATION_ID) recalled else recalled.filter { it.scope != MemoryScope.CORE }
         }
+        val ruleConversation = input.events.map { event ->
+            kernel.orchestrationStore.dialogue.ruleConversationId(event.channelId, event.sourceMessageId, event.conversationId)
+        }.distinct().singleOrNull()
+        val activeRules = kernel.proceduralRuleStore.selectActiveForInjection(
+            conversationId = ruleConversation,
+            recordHit = true,
+        )
         kernel.contextManager.prepareRequestMessages(
-            systemPrompt = kernel.soulStore.renderRouterSystemPrompt(ModelRouterBrain.DEFAULT_ROUTER_SYSTEM_PROMPT),
+            systemPrompt = kernel.soulStore.renderRouterSystemPrompt(
+                routerInstructions = ModelRouterBrain.DEFAULT_ROUTER_SYSTEM_PROMPT,
+                activeRules = activeRules,
+            ),
             memories = memories, conversationId = conversationId.toString(),
             historyMessages = history, tokenBudget = kernel.contextWindowTokens,
         )
     }
 
-    suspend fun recordReply(conversationId: String, text: String, messageId:Uuid?=null) = conversationMutex.withLock {
+    suspend fun recordReply(
+        conversationId: String,
+        text: String,
+        messageId: Uuid? = null,
+        createPrimaryIfMissing: Boolean = false,
+    ) = conversationMutex.withLock {
         val id = Uuid.parse(conversationId)
-        val conversation = kernel.conversationStorage.loadConversation(id) ?: return@withLock
-        val reply=UIMessage.assistant(text).let {if(messageId==null)it else it.copy(id=messageId)}
+        val conversation = kernel.conversationStorage.loadConversation(id)
+            ?: if (createPrimaryIfMissing && id == PRIMARY_CONVERSATION_ID) {
+                Conversation(id = id, assistantId = DEFAULT_ASSISTANT_ID, title = "主时间线", messageNodes = emptyList())
+            } else return@withLock
+        val reply = UIMessage.assistant(text).let { if (messageId == null) it else it.copy(id = messageId) }
+        val nodes = conversation.messageNodes
         kernel.conversationStorage.saveConversation(conversation.copy(
-            messageNodes = if(conversation.messageNodes.any {it.currentMessage.id==reply.id})conversation.messageNodes else conversation.messageNodes + reply.toMessageNode(),
+            messageNodes = if (nodes.any { it.currentMessage.id == reply.id }) nodes else nodes + reply.toMessageNode(),
             updateAt = Clock.System.now(),
         ))
     }

@@ -21,7 +21,7 @@ from urllib.request import Request, urlopen
 
 
 def request(url, body=None, token=None):
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", "X-Amber-Dialogue-Version": "1"}
     if token:
         headers["Authorization"] = "Bearer " + token
     try:
@@ -262,7 +262,8 @@ while True:
                 assert request(base + f"/v2/work-items/{work_id}/stop", {"requestId": "stop-A"}, token)[1]["replayed"]
                 result = request(base + f"/v2/work-items/{work_id}", token=token)[1]
                 assert result["workItem"]["state"] == "CANCELLED" and result["outcome"] == "cancelled"
-                assert request(base + f"/v2/work-items/{work_id}/inputs", {"requestId": "too-late", "text": "late"}, token)[0] == 409
+                too_late_status, too_late_body = request(base + f"/v2/work-items/{work_id}/inputs", {"requestId": "too-late", "text": "late"}, token)
+                assert too_late_status == 200 and too_late_body["state"] == "cancelled", (too_late_status, too_late_body)
                 assert request(base + f"/v2/work-items/{work_id}/artifacts", token=token)[0] == 200
                 events = all_events()
                 assert len([x for x in events if x["id"] == accepted["eventId"]]) == 1

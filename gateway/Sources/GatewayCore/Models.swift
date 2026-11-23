@@ -68,6 +68,16 @@ public struct GatewayEvent: Codable, Sendable, Equatable {
     public var toolCallId: String?
     public var detail: String?
     public var highRisk: Bool?
+    public var riskLevel: String?
+    public var targetDevice: String?
+    public var targetSummary: String?
+    public var diffPreview: String?
+    public var requiresLocalApproval: Bool?
+    public var conversationId: String?
+    public var parentRunId: String?
+    public var workItemId: String?
+    public var sourceRefs: [String]?
+    public var sourcePaths: [String]?
     /// `promptSubmit` only: a short, whitespace-collapsed excerpt of the user's prompt, used as the task's
     /// display title on the phone (over TLS). Never put in a push body or the outbox.
     public var summary: String?
@@ -139,6 +149,13 @@ public struct SessionRecord: Codable, Sendable, Equatable {
     public var waitingToolCallId: String?
     public var waitingDetail: String?
     public var waitingHighRisk: Bool?
+    public var waitingRiskLevel: String?
+    public var waitingTargetDevice: String?
+    public var waitingTargetSummary: String?
+    public var waitingDiffPreview: String?
+    public var waitingRequiresLocalApproval: Bool?
+    public var sourceRefs: [String]?
+    public var sourcePaths: [String]?
     public var abnormal: Bool
     /// A `Stop` or `SessionEnd` was seen; distinguishes clean headless exits from crashes.
     public var sawTurnEnd: Bool

@@ -24,12 +24,21 @@ extension Daemon {
             var updatedAt: Date
             /// Amber scheduled runs waiting on a tool call: what the phone shows and answers.
             var pendingApproval: PendingApproval?
+            var sourceRefs: [String]?
+            var sourcePaths: [String]?
         }
         struct PendingApproval: Encodable {
             var toolCallId: String
             var tool: String
             var detail: String?
             var highRisk: Bool
+            var summary: String?
+            var targetDeviceName: String?
+            var riskLevel: String?
+            var targetDevice: String?
+            var targetSummary: String?
+            var diffPreview: String?
+            var requiresLocalApproval: Bool?
         }
 
         var gateway: Gateway
@@ -187,7 +196,7 @@ extension Daemon {
                 StatusResponse.Session(key: $0.key, agent: $0.agent, subject: Registry.subject(for: $0), summary: $0.generatedTitle ?? $0.summary, origin: $0.origin,
                                        host: $0.host, state: $0.state, waitReason: $0.waitReason, abnormal: $0.abnormal,
                                        monitored: $0.monitored, updatedAt: $0.updatedAt,
-                                       pendingApproval: Self.pendingApproval($0))
+                                       pendingApproval: Self.pendingApproval($0), sourceRefs: $0.sourceRefs, sourcePaths: $0.sourcePaths)
             }
         let response = StatusResponse(
             gateway: .init(id: identity.id, name: identity.name),
@@ -238,7 +247,18 @@ extension Daemon {
                 guard let reply, let decoded = try? GatewayJSON.decoder().decode(AmberControl.Response.self, from: reply) else {
                     return respond(.error(503, "Amber 未运行：在 Mac 上打开 Amber 后重试"))
                 }
-                guard decoded.status < 300 else { return respond(.error(decoded.status, decoded.error ?? "操作未完成")) }
+                guard decoded.status < 300 else {
+                    if decoded.requiresLocalApproval != nil || decoded.riskLevel != nil || decoded.targetDevice != nil || decoded.targetSummary != nil {
+                        var payload: [String: Any] = ["error": decoded.error ?? "操作未完成"]
+                        if let requiresLocalApproval = decoded.requiresLocalApproval { payload["requiresLocalApproval"] = requiresLocalApproval }
+                        if let riskLevel = decoded.riskLevel { payload["riskLevel"] = riskLevel }
+                        if let targetDevice = decoded.targetDevice { payload["targetDevice"] = targetDevice }
+                        if let targetSummary = decoded.targetSummary { payload["targetSummary"] = targetSummary }
+                        if let diffPreview = decoded.diffPreview { payload["diffPreview"] = diffPreview }
+                        return respond(.json(decoded.status, payload))
+                    }
+                    return respond(.error(decoded.status, decoded.error ?? "操作未完成"))
+                }
                 respond(HTTPResponse(status: decoded.status, body: reply))
             }
         }
@@ -247,7 +267,20 @@ extension Daemon {
     static func pendingApproval(_ rec: SessionRecord) -> StatusResponse.PendingApproval? {
         guard rec.agent == .amber, rec.state == .waiting, rec.waitReason == .permission,
               let id = rec.waitingToolCallId, let tool = rec.waitingTool else { return nil }
-        return .init(toolCallId: id, tool: tool, detail: rec.waitingDetail, highRisk: rec.waitingHighRisk ?? true)
+        let highRisk = rec.waitingHighRisk ?? true
+        return .init(
+            toolCallId: id,
+            tool: tool,
+            detail: rec.waitingDetail,
+            highRisk: highRisk,
+            summary: rec.waitingTargetSummary,
+            targetDeviceName: rec.waitingTargetDevice,
+            riskLevel: rec.waitingRiskLevel ?? (highRisk ? "L3" : "L2"),
+            targetDevice: rec.waitingTargetDevice,
+            targetSummary: rec.waitingTargetSummary,
+            diffPreview: rec.waitingDiffPreview,
+            requiresLocalApproval: rec.waitingRequiresLocalApproval ?? highRisk
+        )
     }
 
     private func registerPushToken(_ body: [String: Any], device: PairedDevice) -> HTTPResponse {

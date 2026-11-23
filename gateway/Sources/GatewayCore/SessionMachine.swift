@@ -32,6 +32,11 @@ enum SessionMachine {
                 r.waitingToolCallId = event.toolCallId
                 r.waitingDetail = event.detail
                 r.waitingHighRisk = event.highRisk
+                r.waitingRiskLevel = event.riskLevel
+                r.waitingTargetDevice = event.targetDevice
+                r.waitingTargetSummary = event.targetSummary
+                r.waitingDiffPreview = event.diffPreview
+                r.waitingRequiresLocalApproval = event.requiresLocalApproval
             }
         case .idleNotice:
             if r.state != .waiting {
@@ -67,6 +72,8 @@ enum SessionMachine {
         case .runExit:
             r.waitReason = nil
             r.quietCompletion = event.quiet
+            r.sourceRefs = event.sourceRefs
+            r.sourcePaths = event.sourcePaths
             if event.exitCode == 0 && event.signal == nil {
                 r.state = .completed
             } else {
@@ -82,6 +89,11 @@ enum SessionMachine {
         r.waitingToolCallId = nil
         r.waitingDetail = nil
         r.waitingHighRisk = nil
+        r.waitingRiskLevel = nil
+        r.waitingTargetDevice = nil
+        r.waitingTargetSummary = nil
+        r.waitingDiffPreview = nil
+        r.waitingRequiresLocalApproval = nil
     }
 
     /// The session's process is gone. Exit status is only known for `run` children, which report via `runExit`.

@@ -822,21 +822,24 @@ extension MacGatewayStore {
         }
     }
 
-    func cancelCloudTask(workItemId: String) async {
-        guard let client else { return }
+    @discardableResult
+    func cancelCloudTask(workItemId: String) async -> Bool {
+        guard let client else { return false }
         let requestId = cloudTasks.first(where: { $0.workItemId == workItemId })?.requestId ?? workItemId
-        guard busyCloudTaskIds.insert(requestId).inserted else { return }
+        guard busyCloudTaskIds.insert(requestId).inserted else { return false }
         defer { busyCloudTaskIds.remove(requestId) }
         do {
             let detail = try await client.cancelTask(id: workItemId)
-            guard self.client === client else { return }
+            guard self.client === client else { return false }
             if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }),
                mergeCloudTaskSnapshot(at: index, workItem: detail.workItem, detail: detail) {
                 persistCloudTasks()
             }
+            return detail.workItem.state == .cancelled
         } catch is CancellationError {
+            return false
         } catch {
-            guard self.client === client else { return }
+            guard self.client === client else { return false }
             if !forgetIfRevoked(error, for: client) {
                 if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }) {
                     cloudTasks[index].lastError = error.localizedDescription
@@ -844,6 +847,7 @@ extension MacGatewayStore {
                 }
                 notice = Notice(text: error.localizedDescription, isError: true)
             }
+            return false
         }
     }
 
@@ -851,7 +855,7 @@ extension MacGatewayStore {
     func startCloudTaskPollingIfNeeded() {
         guard cloudPollTask == nil, hasActiveCloudTasks, client != nil else { return }
         cloudPollTask = Task { @MainActor [weak self] in
-            defer { self?.cloudPollTask = nil }
+            defer { if !Task.isCancelled { self?.cloudPollTask = nil } }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard let self, !Task.isCancelled, self.client != nil, self.hasActiveCloudTasks else { break }

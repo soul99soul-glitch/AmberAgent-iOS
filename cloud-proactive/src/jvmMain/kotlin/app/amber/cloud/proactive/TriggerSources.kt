@@ -53,6 +53,8 @@ sealed interface ProactiveTriggerSignal {
         val httpStatusCode: Int = 200,
         val etag: String? = null,
         val rawBody: String = "",
+        val conditionPrompt: String = "",
+        val monitorId: String? = null,
         override val topicKey: String = "watchtower:$url",
         override val timestampEpochMs: Long = System.currentTimeMillis(),
     ) : ProactiveTriggerSignal {
@@ -66,6 +68,37 @@ sealed interface ProactiveTriggerSignal {
         val events: List<FeishuCalendarEvent>,
         override val topicKey: String = "calendar:$datePrefix",
         override val timestampEpochMs: Long = System.currentTimeMillis(),
+    ) : ProactiveTriggerSignal {
+        override val category: TriggerCategory = TriggerCategory.EXTERNAL_SENSOR
+    }
+
+    /** 类别 2C：外部传感器 - 临近日程主动准备信号（会前 15–30 分钟） */
+    data class UpcomingEventPrepSignal(
+        override val signalId: String,
+        val eventSignature: String,
+        val eventTitle: String,
+        val startMs: Long,
+        val endMs: Long,
+        val minutesUntilStart: Int,
+        val deviceName: String = "",
+        val recalledMemories: List<String> = emptyList(),
+        override val topicKey: String = "prep:event:$eventSignature",
+        override val timestampEpochMs: Long = System.currentTimeMillis(),
+    ) : ProactiveTriggerSignal {
+        override val category: TriggerCategory = TriggerCategory.EXTERNAL_SENSOR
+    }
+
+    /** 类别 2D：外部传感器 - 个人签名入站 Webhook 信号 */
+    data class WebhookInboundSignal(
+        override val signalId: String,
+        val webhookId: String,
+        val webhookName: String,
+        val deliveryId: String,
+        val instruction: String = "",
+        val redactedPayload: String,
+        override val topicKey: String = "webhook:$webhookId",
+        override val timestampEpochMs: Long = System.currentTimeMillis(),
+        val signedPayloadHash: String? = null,
     ) : ProactiveTriggerSignal {
         override val category: TriggerCategory = TriggerCategory.EXTERNAL_SENSOR
     }
@@ -95,6 +128,18 @@ sealed interface ProactiveTriggerSignal {
         override val category: TriggerCategory = TriggerCategory.MEMORY_COMMITMENT
     }
 
+    /** 类别 4B：延期超过 24 小时的待办温和跟进信号（按日去重） */
+    data class OverdueReminderPrepSignal(
+        override val signalId: String,
+        val dateKey: String,
+        val overdueItems: List<String>,
+        val deviceName: String = "",
+        override val topicKey: String = "prep:overdue_reminders:$dateKey",
+        override val timestampEpochMs: Long = System.currentTimeMillis(),
+    ) : ProactiveTriggerSignal {
+        override val category: TriggerCategory = TriggerCategory.MEMORY_COMMITMENT
+    }
+
     /** 类别 5：挂起任务生命周期信号（待审批超时预警 / 离线节点上线恢复） */
     data class TaskLifecycleSignal(
         override val signalId: String,
@@ -119,5 +164,20 @@ interface TriggerSource {
     /**
      * 采集下一次触发信号；若当前无信号则返回 `null`。
      */
-    suspend fun poll(): ProactiveTriggerSignal?
+    suspend fun poll(): ProactiveTriggerSignal? = null
+
+    /**
+     * 采集本轮所有到期触发信号；默认委托给单信号 [poll]。
+     */
+    suspend fun pollAll(nowEpochMs: Long = System.currentTimeMillis()): List<ProactiveTriggerSignal> =
+        listOfNotNull(poll())
+
+    /**
+     * 单个信号在流水线处理完成后的回调（供触发源更新退避周期、状态摘要等）。
+     */
+    suspend fun onResult(
+        signal: ProactiveTriggerSignal,
+        result: ProactiveRunResult,
+        nowEpochMs: Long = System.currentTimeMillis(),
+    ) = Unit
 }

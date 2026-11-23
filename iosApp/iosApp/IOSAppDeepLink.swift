@@ -22,6 +22,7 @@ enum IOSAppDeepLink {
         /// Task board of the paired Mac: `amber://tasks`. Mac Gateway pushes still carry the older
         /// `amber://settings/mac-gateway`, which lands here too.
         case macTasks
+        case gatewayTasks(MacGatewayEndpointRole)
         /// Paired Cloud schedule or native task detail (`amber://cloud-task/<workItemId>`).
         case cloudTask(workItemId: String)
         /// iOS Share Sheet prefill handoff (`amber://share/<handoffID>`).
@@ -75,6 +76,9 @@ enum IOSAppDeepLink {
             return .phoneControl
         case ("settings", ["mac-gateway"]) where queryItems.isEmpty:
             return .macTasks
+        case ("tasks", let parts) where parts.count == 1 && queryItems.isEmpty:
+            guard let role = MacGatewayEndpointRole(rawValue: parts[0]) else { return nil }
+            return .gatewayTasks(role)
         case ("tasks", []) where queryItems.isEmpty:
             return .macTasks
         case ("cloud-task", let parts) where parts.count == 1 && queryItems.isEmpty:
@@ -138,6 +142,9 @@ enum IOSAppDeepLink {
             guard UUID(uuidString: id) != nil else { return nil }
             components.host = "wake"
             components.path = "/\(id)"
+        case .gatewayTasks(let role):
+            components.host = "tasks"
+            components.path = "/\(role.rawValue)"
         case .macTasks:
             components.host = "tasks"
         case .cloudTask(let workItemId):

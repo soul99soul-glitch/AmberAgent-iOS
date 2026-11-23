@@ -726,6 +726,8 @@ struct AppShell: View {
             MacGatewayStore.shared.boundSharedSettings = sharedSettings
             MacGatewayStore.shared.receivePairingLink(payload)
             rootRouter.path = [.settings, .macGateway]
+        case .gatewayTasks(let role):
+            rootRouter.path = [.gatewayTasks(role)]
         case .macTasks:
             rootRouter.path = [.macTasks]
         case .cloudTask(let workItemId):
@@ -974,6 +976,8 @@ private extension View {
                 )
             case .macTasks:
                 MacTasksBoardView()
+            case .gatewayTasks(let role):
+                MacTasksBoardView(initialRole: role)
             case .phoneControl:
                 IOSPhoneControlSettingsView()
             case .phoneAutomations:
