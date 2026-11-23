@@ -98,7 +98,7 @@ protocol WatchRemoteExecutionRouting: AnyObject {
     ) -> IOSAppDeepLink.Destination
 }
 
-/// Default single-slot adapter backed by `MacGatewayStore`.
+/// Dual-slot adapter backed by `MacGatewayStore` (Cloud slot + independent Mac slot).
 @MainActor
 final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
     private let store: MacGatewayStore
@@ -107,29 +107,59 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
         self.store = store
     }
 
+    @MainActor
+    private struct PairedSlot {
+        let origin: WatchExecutionOrigin
+        let slot: MacGatewayStore
+        let connection: MacGatewayConnection
+
+        var hostName: String {
+            let trimmed = connection.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? origin.defaultTitle : trimmed
+        }
+
+        var isOnline: Bool {
+            slot.isReachable != false
+        }
+    }
+
+    private var pairedSlots: [PairedSlot] {
+        var result: [PairedSlot] = []
+        if let cloudConnection = store.connection {
+            result.append(PairedSlot(origin: .cloud, slot: store, connection: cloudConnection))
+        }
+        if let macSlot = store.macSlot, let macConnection = macSlot.connection {
+            result.append(PairedSlot(origin: .mac, slot: macSlot, connection: macConnection))
+        }
+        return result
+    }
+
+    private func pairedSlot(for origin: WatchExecutionOrigin) -> PairedSlot? {
+        pairedSlots.first { $0.origin == origin }
+    }
+
     func currentProjection() -> WatchRemoteExecutionProjection {
-        guard let connection = store.connection else {
+        let slots = pairedSlots
+        guard !slots.isEmpty else {
             return .unpaired
         }
-        let isMac = AmberMultiDevicePairingClassifier.isMacConnection(
-            connection: connection,
-            status: store.status
-        )
-        let origin: WatchExecutionOrigin = isMac ? .mac : .cloud
-        let hostName = connection.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? origin.defaultTitle
-            : connection.name
-        let isOnline = store.isReachable != false
-        let selectedTarget: WatchExecutionOrigin = store.isCloudMainDialogueSelected ? origin : .local
+        let onlineSlots = slots.filter(\.isOnline)
+        let isOnline = !onlineSlots.isEmpty
+        let primaryTask = selectPrimaryTask(from: onlineSlots)
+        let activities = buildRecentActivities(from: slots)
 
-        let primaryTask = selectPrimaryTask(origin: origin, hostName: hostName, isOnline: isOnline)
-        let activities = buildRecentActivities(origin: origin)
+        let preferredSlot = primaryTask.flatMap { task in slots.first(where: { $0.origin == task.origin }) }
+            ?? onlineSlots.first
+            ?? slots.first!
+        let selectedTarget: WatchExecutionOrigin = (store.isCloudMainDialogueSelected && store.hasCloudConnection)
+            ? .cloud
+            : .local
 
         return WatchRemoteExecutionProjection(
             isPaired: true,
             isOnline: isOnline,
-            remoteOrigin: origin,
-            remoteHostName: hostName,
+            remoteOrigin: primaryTask?.origin ?? preferredSlot.origin,
+            remoteHostName: primaryTask?.hostName ?? preferredSlot.hostName,
             selectedExecutionTarget: selectedTarget,
             primaryTask: primaryTask,
             recentActivities: activities
@@ -141,7 +171,8 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
         requestId: String,
         preferredOrigin: WatchExecutionOrigin?
     ) async -> WatchRemoteDispatchOutcome {
-        guard let connection = store.connection else {
+        let slots = pairedSlots
+        guard !slots.isEmpty else {
             return WatchRemoteDispatchOutcome(
                 accepted: false,
                 message: "尚未配对云端或 Mac",
@@ -149,23 +180,26 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
                 conversationId: nil
             )
         }
-        let isMac = AmberMultiDevicePairingClassifier.isMacConnection(
-            connection: connection,
-            status: store.status
-        )
-        let origin: WatchExecutionOrigin = isMac ? .mac : .cloud
-        if let preferredOrigin, preferredOrigin != .local, preferredOrigin != origin {
-            let expectedName = preferredOrigin == .mac ? "Mac" : "云端"
-            return WatchRemoteDispatchOutcome(
-                accepted: false,
-                message: "当前未配对\(expectedName)，请在 iPhone 多终端设置中切换配对",
-                runId: nil,
-                conversationId: nil
-            )
+        let chosenSlot: PairedSlot
+        if let preferredOrigin, preferredOrigin != .local {
+            guard let exact = pairedSlot(for: preferredOrigin) else {
+                let expectedName = preferredOrigin == .mac ? "Mac" : "云端"
+                return WatchRemoteDispatchOutcome(
+                    accepted: false,
+                    message: "当前未配对\(expectedName)，请在 iPhone 多终端设置中配对",
+                    runId: nil,
+                    conversationId: nil
+                )
+            }
+            chosenSlot = exact
+        } else {
+            chosenSlot = slots.first(where: \.isOnline) ?? slots[0]
         }
 
+        let targetSlot = chosenSlot.slot
+        let origin = chosenSlot.origin
         let normalizedRequestId = requestId.lowercased()
-        let result = await store.sendCloudDialogueMessage(
+        let result = await targetSlot.sendCloudDialogueMessage(
             text: text,
             requestId: normalizedRequestId
         )
@@ -176,17 +210,17 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
                 accepted: true,
                 message: origin == .mac ? "已发送到 Mac" : "已发送到云端",
                 runId: "remote:\(origin.rawValue):\(primaryId)",
-                conversationId: receipt.conversationId ?? store.cloudDialogueConversationId,
+                conversationId: receipt.conversationId ?? targetSlot.cloudDialogueConversationId,
                 deliveryUnknown: false
             )
         case .failure(let error):
             let isDeterministic = MacGatewayStore.isDeterministicNonExecutionError(error)
-            let friendly = store.cloudDialogueFriendlyErrorMessage(for: error)
+            let friendly = targetSlot.cloudDialogueFriendlyErrorMessage(for: error)
             return WatchRemoteDispatchOutcome(
                 accepted: false,
                 message: friendly.isEmpty ? "远端发送失败，请稍后重试" : friendly,
                 runId: nil,
-                conversationId: store.cloudDialogueConversationId,
+                conversationId: targetSlot.cloudDialogueConversationId,
                 deliveryUnknown: !isDeterministic
             )
         }
@@ -197,10 +231,16 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
         toolCallId: String,
         allow: Bool
     ) async -> (accepted: Bool, message: String) {
-        let cards = store.activeMacApprovalCardItems()
-        guard let card = cards.first(where: {
-            $0.sessionKey == sessionKey && $0.toolCallId == toolCallId
-        }) else {
+        var matched: (card: MacGatewayApprovalCardItem, slot: MacGatewayStore)?
+        for entry in pairedSlots {
+            if let card = entry.slot.activeMacApprovalCardItems().first(where: {
+                $0.sessionKey == sessionKey && $0.toolCallId == toolCallId
+            }) {
+                matched = (card, entry.slot)
+                break
+            }
+        }
+        guard let (card, targetSlot) = matched else {
             return (false, "这个确认步骤已失效")
         }
 
@@ -210,8 +250,8 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
             let isL3 = card.riskTier == .l3
                 || card.requiresLocalApproval
                 || card.highRisk
-                || store.requiresLocalApprovalOnly(sessionKey: sessionKey, toolCallId: toolCallId)
-                || store.isKnownHighRiskApproval(sessionKey: sessionKey, toolCallId: toolCallId)
+                || targetSlot.requiresLocalApprovalOnly(sessionKey: sessionKey, toolCallId: toolCallId)
+                || targetSlot.isKnownHighRiskApproval(sessionKey: sessionKey, toolCallId: toolCallId)
             if isL3 {
                 return (false, "高危操作请在 iPhone 或 Mac 上核对批准")
             }
@@ -219,7 +259,7 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
 
         // Use `.notification` trust context so L1/L2 decisions work from Watch
         // without requiring iPhone foreground biometrics, while L3 fails closed.
-        let ok = await store.decide(
+        let ok = await targetSlot.decide(
             sessionKey: sessionKey,
             toolCallId: toolCallId,
             allow: allow,
@@ -228,7 +268,7 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
         if ok {
             return (true, allow ? "已允许" : "已拒绝")
         }
-        return (false, store.notice?.text ?? "操作未能完成，请在 iPhone 查看")
+        return (false, targetSlot.notice?.text ?? "操作未能完成，请在 iPhone 查看")
     }
 
     func submitAskUserReply(
@@ -241,17 +281,18 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
         guard !trimmed.isEmpty else {
             return (false, "回答不能为空")
         }
+        let targetSlot = owningSlot(workItemId: workItemId, requestId: nil, conversationId: conversationId) ?? store
         let normalizedRequestId = requestId.lowercased()
         let result: Result<MacGatewayCloudDialogueReceipt, Error>
         if let workItemId, !workItemId.isEmpty {
-            result = await store.sendCloudWorkItemInput(
+            result = await targetSlot.sendCloudWorkItemInput(
                 workItemId: workItemId,
                 text: trimmed,
                 requestId: normalizedRequestId,
                 conversationId: conversationId
             )
         } else {
-            result = await store.sendCloudDialogueMessage(
+            result = await targetSlot.sendCloudDialogueMessage(
                 text: trimmed,
                 requestId: normalizedRequestId,
                 conversationId: conversationId
@@ -261,7 +302,7 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
         case .success:
             return (true, "已提交回答")
         case .failure(let error):
-            return (false, store.cloudDialogueFriendlyErrorMessage(for: error))
+            return (false, targetSlot.cloudDialogueFriendlyErrorMessage(for: error))
         }
     }
 
@@ -269,27 +310,36 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
         workItemId: String?,
         requestId: String?
     ) async -> (accepted: Bool, message: String) {
+        let slots = pairedSlots.map(\.slot)
+        let candidateSlots = slots.isEmpty ? [store] : slots
+
         if let workItemId, !workItemId.isEmpty {
-            if store.cloudDialogueProgressByWorkItem[workItemId] != nil {
-                let stopResult = await store.stopCloudWorkItem(workItemId: workItemId)
-                switch stopResult {
-                case .success:
-                    return (true, "已请求停止")
-                case .failure(let error):
-                    return (false, store.cloudDialogueFriendlyErrorMessage(for: error))
+            for targetSlot in candidateSlots {
+                if targetSlot.cloudDialogueProgressByWorkItem[workItemId] != nil {
+                    let stopResult = await targetSlot.stopCloudWorkItem(workItemId: workItemId)
+                    switch stopResult {
+                    case .success:
+                        return (true, "已请求停止")
+                    case .failure(let error):
+                        return (false, targetSlot.cloudDialogueFriendlyErrorMessage(for: error))
+                    }
                 }
-            }
-            if store.cloudTasks.contains(where: { $0.workItemId == workItemId && $0.canCancel }) {
-                await store.cancelCloudTask(workItemId: workItemId)
-                return (true, "已取消")
+                if targetSlot.cloudTasks.contains(where: { $0.workItemId == workItemId && $0.canCancel }) {
+                    await targetSlot.cancelCloudTask(workItemId: workItemId)
+                    return (true, "已取消")
+                }
             }
         }
         if let requestId, !requestId.isEmpty {
-            let cancelled = await store.cancelPendingMacSubmission(
-                requestId: requestId,
-                workItemId: workItemId
-            )
-            return cancelled ? (true, "已取消") : (false, "当前任务无法从手表取消")
+            for targetSlot in candidateSlots {
+                if targetSlot.cloudDialogueSubmissions.contains(where: { $0.requestId == requestId }) {
+                    let cancelled = await targetSlot.cancelPendingMacSubmission(
+                        requestId: requestId,
+                        workItemId: workItemId
+                    )
+                    return cancelled ? (true, "已取消") : (false, "当前任务无法从手表取消")
+                }
+            }
         }
         return (false, "当前任务不支持从手表取消")
     }
@@ -306,234 +356,279 @@ final class MacGatewayWatchExecutionAdapter: WatchRemoteExecutionRouting {
 
     // MARK: - Projection builders
 
-    private func selectPrimaryTask(
-        origin: WatchExecutionOrigin,
-        hostName: String,
-        isOnline: Bool
-    ) -> WatchRemoteTaskProjection? {
-        guard isOnline else { return nil }
-
-        // 1. Highest priority: pending approvals (L1/L2/L3) on Mac/Cloud.
-        let approvals = store.activeMacApprovalCardItems()
-        if let card = approvals.first {
-            let isL3 = card.riskTier == .l3 || card.requiresLocalApproval || card.highRisk
-            let watchRisk: WatchRiskLevel = switch card.riskTier {
-            case .l1: card.highRisk ? .high : .low
-            case .l2: card.highRisk ? .high : .medium
-            case .l3: .high
+    private func owningSlot(
+        workItemId: String?,
+        requestId: String?,
+        conversationId: String?
+    ) -> MacGatewayStore? {
+        let slots = pairedSlots
+        if let workItemId, !workItemId.isEmpty {
+            if let match = slots.first(where: {
+                $0.slot.cloudDialogueProgressByWorkItem[workItemId] != nil
+                    || $0.slot.cloudTasks.contains(where: { $0.workItemId == workItemId })
+            }) {
+                return match.slot
             }
-            let bodyParts = [
-                card.summary,
-                card.effectivePreviewText.flatMap { WatchTaskText.singleLine($0, maxLength: 100) }
-            ].compactMap { $0 }.filter { !$0.isEmpty }
-            let decision = WatchRemotePendingDecision(
-                id: card.id,
-                origin: origin,
-                hostName: hostName,
-                kind: .approval(sessionKey: card.sessionKey, toolCallId: card.toolCallId, tool: card.tool),
-                title: card.tool,
-                body: bodyParts.joined(separator: "\n"),
-                riskLevel: watchRisk,
-                localApprovalOnly: isL3,
-                workItemId: card.workItemId,
-                conversationId: card.conversationId
-            )
-            let updatedAt = store.boardItems.first(where: {
-                $0.approval?.sessionKey == card.sessionKey && $0.approval?.toolCallId == card.toolCallId
-            })?.updatedAt ?? Date()
-            return WatchRemoteTaskProjection(
-                runId: "remote:\(origin.rawValue):approval:\(card.toolCallId)",
-                origin: origin,
-                hostName: hostName,
-                workItemId: card.workItemId,
-                sessionKey: card.sessionKey,
-                conversationId: card.conversationId,
-                phase: "waitingForUser",
-                headline: WatchTaskText.singleLine(card.summary, maxLength: 60) ?? card.tool,
-                detail: isL3 ? "高危审批 · 需在主机核对" : "等你确认 · \(card.tool)",
-                summary: nil,
-                updatedAt: updatedAt,
-                isLive: true,
-                needsAttention: true,
-                canCancel: false,
-                decision: decision
-            )
+        }
+        if let requestId, !requestId.isEmpty {
+            if let match = slots.first(where: {
+                $0.slot.cloudDialogueSubmissions.contains(where: { $0.requestId == requestId })
+            }) {
+                return match.slot
+            }
+        }
+        if let conversationId, !conversationId.isEmpty {
+            if let match = slots.first(where: {
+                $0.slot.cloudDialogueConversationId == conversationId
+                    || $0.slot.needsYouItems.contains(where: { $0.conversationId == conversationId })
+            }) {
+                return match.slot
+            }
+        }
+        return slots.first(where: \.isOnline)?.slot ?? slots.first?.slot
+    }
+
+    private func selectPrimaryTask(from onlineSlots: [PairedSlot]) -> WatchRemoteTaskProjection? {
+        guard !onlineSlots.isEmpty else { return nil }
+
+        // 1. Highest priority across all paired slots: pending approvals (L1/L2/L3).
+        for entry in onlineSlots {
+            let approvals = entry.slot.activeMacApprovalCardItems()
+            if let card = approvals.first {
+                let isL3 = card.riskTier == .l3 || card.requiresLocalApproval || card.highRisk
+                let watchRisk: WatchRiskLevel = switch card.riskTier {
+                case .l1: card.highRisk ? .high : .low
+                case .l2: card.highRisk ? .high : .medium
+                case .l3: .high
+                }
+                let bodyParts = [
+                    card.summary,
+                    card.effectivePreviewText.flatMap { WatchTaskText.singleLine($0, maxLength: 100) }
+                ].compactMap { $0 }.filter { !$0.isEmpty }
+                let decision = WatchRemotePendingDecision(
+                    id: card.id,
+                    origin: entry.origin,
+                    hostName: entry.hostName,
+                    kind: .approval(sessionKey: card.sessionKey, toolCallId: card.toolCallId, tool: card.tool),
+                    title: card.tool,
+                    body: bodyParts.joined(separator: "\n"),
+                    riskLevel: watchRisk,
+                    localApprovalOnly: isL3,
+                    workItemId: card.workItemId,
+                    conversationId: card.conversationId
+                )
+                let updatedAt = entry.slot.boardItems.first(where: {
+                    $0.approval?.sessionKey == card.sessionKey && $0.approval?.toolCallId == card.toolCallId
+                })?.updatedAt ?? Date()
+                return WatchRemoteTaskProjection(
+                    runId: "remote:\(entry.origin.rawValue):approval:\(card.toolCallId)",
+                    origin: entry.origin,
+                    hostName: entry.hostName,
+                    workItemId: card.workItemId,
+                    sessionKey: card.sessionKey,
+                    conversationId: card.conversationId,
+                    phase: "waitingForUser",
+                    headline: WatchTaskText.singleLine(card.summary, maxLength: 60) ?? card.tool,
+                    detail: isL3 ? "高危审批 · 需在主机核对" : "等你确认 · \(card.tool)",
+                    summary: nil,
+                    updatedAt: updatedAt,
+                    isLive: true,
+                    needsAttention: true,
+                    canCancel: false,
+                    decision: decision
+                )
+            }
         }
 
         // 2. Waiting-for-reply items on board (e.g. ask_user / session waiting for user reply).
-        if let waitingBoardItem = store.needsYouItems.first(where: { $0.waitingForReply }) {
-            let decision = WatchRemotePendingDecision(
-                id: "remote-reply:\(waitingBoardItem.id)",
-                origin: origin,
-                hostName: hostName,
-                kind: .askUser(options: []),
-                title: "需要你的回复",
-                body: WatchTaskText.clipped("\(waitingBoardItem.title)\n\(waitingBoardItem.detail)", maxLength: 240)
-                    ?? waitingBoardItem.title,
-                riskLevel: .low,
-                localApprovalOnly: false,
-                workItemId: nil,
-                conversationId: waitingBoardItem.conversationId
-            )
-            return WatchRemoteTaskProjection(
-                runId: "remote:\(origin.rawValue):\(waitingBoardItem.id)",
-                origin: origin,
-                hostName: hostName,
-                workItemId: nil,
-                sessionKey: waitingBoardItem.sessionKey,
-                conversationId: waitingBoardItem.conversationId,
-                phase: "waitingForUser",
-                headline: waitingBoardItem.title,
-                detail: waitingBoardItem.detail,
-                summary: nil,
-                updatedAt: waitingBoardItem.updatedAt,
-                isLive: true,
-                needsAttention: true,
-                canCancel: false,
-                decision: decision
-            )
+        for entry in onlineSlots {
+            if let waitingBoardItem = entry.slot.needsYouItems.first(where: { $0.waitingForReply }) {
+                let decision = WatchRemotePendingDecision(
+                    id: "remote-reply:\(waitingBoardItem.id)",
+                    origin: entry.origin,
+                    hostName: entry.hostName,
+                    kind: .askUser(options: []),
+                    title: "需要你的回复",
+                    body: WatchTaskText.clipped("\(waitingBoardItem.title)\n\(waitingBoardItem.detail)", maxLength: 240)
+                        ?? waitingBoardItem.title,
+                    riskLevel: .low,
+                    localApprovalOnly: false,
+                    workItemId: nil,
+                    conversationId: waitingBoardItem.conversationId
+                )
+                return WatchRemoteTaskProjection(
+                    runId: "remote:\(entry.origin.rawValue):\(waitingBoardItem.id)",
+                    origin: entry.origin,
+                    hostName: entry.hostName,
+                    workItemId: nil,
+                    sessionKey: waitingBoardItem.sessionKey,
+                    conversationId: waitingBoardItem.conversationId,
+                    phase: "waitingForUser",
+                    headline: waitingBoardItem.title,
+                    detail: waitingBoardItem.detail,
+                    summary: nil,
+                    updatedAt: waitingBoardItem.updatedAt,
+                    isLive: true,
+                    needsAttention: true,
+                    canCancel: false,
+                    decision: decision
+                )
+            }
         }
 
-        // 3. Live Cloud Dialogue work items.
-        if let liveProgress = store.liveCloudDialogueProgressItems.first {
-            let latestEvent = store.cloudDialogueEvents.last(where: { $0.workItemId == liveProgress.workItemId })
-            let updatedAt = latestEvent.flatMap { store.cloudDialogueFirstSeenAtByEventId[$0.id] } ?? Date()
-            return WatchRemoteTaskProjection(
-                runId: "remote:\(origin.rawValue):\(liveProgress.workItemId)",
-                origin: origin,
-                hostName: hostName,
-                workItemId: liveProgress.workItemId,
-                sessionKey: nil,
-                conversationId: liveProgress.conversationId,
-                phase: liveProgress.needsOutcomeUnknownAction ? "waitingForUser" : "running",
-                headline: WatchTaskText.singleLine(liveProgress.topicId, maxLength: 60)
-                    ?? (origin == .mac ? "Mac 任务" : "云端任务"),
-                detail: liveProgress.displaySingleLine,
-                summary: nil,
-                updatedAt: updatedAt,
-                isLive: true,
-                needsAttention: liveProgress.needsOutcomeUnknownAction,
-                canCancel: liveProgress.isLive && !liveProgress.isStopRequested && !liveProgress.needsOutcomeUnknownAction,
-                decision: nil
-            )
+        // 3. Live Cloud/Mac Dialogue work items.
+        for entry in onlineSlots {
+            if let liveProgress = entry.slot.liveCloudDialogueProgressItems.first {
+                let latestEvent = entry.slot.cloudDialogueEvents.last(where: { $0.workItemId == liveProgress.workItemId })
+                let updatedAt = latestEvent.flatMap { entry.slot.cloudDialogueFirstSeenAtByEventId[$0.id] } ?? Date()
+                return WatchRemoteTaskProjection(
+                    runId: "remote:\(entry.origin.rawValue):\(liveProgress.workItemId)",
+                    origin: entry.origin,
+                    hostName: entry.hostName,
+                    workItemId: liveProgress.workItemId,
+                    sessionKey: nil,
+                    conversationId: liveProgress.conversationId,
+                    phase: liveProgress.needsOutcomeUnknownAction ? "waitingForUser" : "running",
+                    headline: WatchTaskText.singleLine(liveProgress.topicId, maxLength: 60)
+                        ?? (entry.origin == .mac ? "Mac 任务" : "云端任务"),
+                    detail: liveProgress.displaySingleLine,
+                    summary: nil,
+                    updatedAt: updatedAt,
+                    isLive: true,
+                    needsAttention: liveProgress.needsOutcomeUnknownAction,
+                    canCancel: liveProgress.isLive && !liveProgress.isStopRequested && !liveProgress.needsOutcomeUnknownAction,
+                    decision: nil
+                )
+            }
         }
 
-        // 4. Active native Cloud tasks (`/v2/work-items`).
-        if let activeCloudTask = store.cloudTasks.first(where: { $0.workItemId != nil && !$0.isTerminal }) {
-            let item = activeCloudTask.effectiveWorkItem
-            return WatchRemoteTaskProjection(
-                runId: "remote:\(origin.rawValue):\(activeCloudTask.workItemId ?? activeCloudTask.requestId)",
-                origin: origin,
-                hostName: hostName,
-                workItemId: activeCloudTask.workItemId,
-                sessionKey: nil,
-                conversationId: item?.conversationId,
-                phase: item?.state == .waiting ? "waitingForUser" : "running",
-                headline: activeCloudTask.displayTitle,
-                detail: activeCloudTask.summaryLine,
-                summary: nil,
-                updatedAt: activeCloudTask.updatedAt,
-                isLive: true,
-                needsAttention: item?.state == .waiting,
-                canCancel: activeCloudTask.canCancel,
-                decision: nil
-            )
+        // 4. Active native Cloud/Mac tasks (`/v2/work-items`).
+        for entry in onlineSlots {
+            if let activeCloudTask = entry.slot.cloudTasks.first(where: { $0.workItemId != nil && !$0.isTerminal }) {
+                let item = activeCloudTask.effectiveWorkItem
+                return WatchRemoteTaskProjection(
+                    runId: "remote:\(entry.origin.rawValue):\(activeCloudTask.workItemId ?? activeCloudTask.requestId)",
+                    origin: entry.origin,
+                    hostName: entry.hostName,
+                    workItemId: activeCloudTask.workItemId,
+                    sessionKey: nil,
+                    conversationId: item?.conversationId,
+                    phase: item?.state == .waiting ? "waitingForUser" : "running",
+                    headline: activeCloudTask.displayTitle,
+                    detail: activeCloudTask.summaryLine,
+                    summary: nil,
+                    updatedAt: activeCloudTask.updatedAt,
+                    isLive: true,
+                    needsAttention: item?.state == .waiting,
+                    canCancel: activeCloudTask.canCancel,
+                    decision: nil
+                )
+            }
         }
 
-        // 5. Running Mac board items.
-        if let runningBoard = store.boardItems.first(where: { $0.column == .running }) {
-            return WatchRemoteTaskProjection(
-                runId: "remote:\(origin.rawValue):\(runningBoard.id)",
-                origin: origin,
-                hostName: hostName,
-                workItemId: nil,
-                sessionKey: runningBoard.sessionKey,
-                conversationId: runningBoard.conversationId,
-                phase: "running",
-                headline: runningBoard.title,
-                detail: runningBoard.detail,
-                summary: nil,
-                updatedAt: runningBoard.updatedAt,
-                isLive: true,
-                needsAttention: false,
-                canCancel: false,
-                decision: nil
-            )
+        // 5. Running board items.
+        for entry in onlineSlots {
+            if let runningBoard = entry.slot.boardItems.first(where: { $0.column == .running }) {
+                return WatchRemoteTaskProjection(
+                    runId: "remote:\(entry.origin.rawValue):\(runningBoard.id)",
+                    origin: entry.origin,
+                    hostName: entry.hostName,
+                    workItemId: nil,
+                    sessionKey: runningBoard.sessionKey,
+                    conversationId: runningBoard.conversationId,
+                    phase: "running",
+                    headline: runningBoard.title,
+                    detail: runningBoard.detail,
+                    summary: nil,
+                    updatedAt: runningBoard.updatedAt,
+                    isLive: true,
+                    needsAttention: false,
+                    canCancel: false,
+                    decision: nil
+                )
+            }
         }
 
         return nil
     }
 
-    private func buildRecentActivities(origin: WatchExecutionOrigin) -> [WatchRecentActivity] {
+    private func buildRecentActivities(from slots: [PairedSlot]) -> [WatchRecentActivity] {
         var activities: [WatchRecentActivity] = []
         var seen = Set<String>()
 
-        for record in store.cloudTasks where record.isTerminal {
-            guard let item = record.effectiveWorkItem else { continue }
-            let id = "remote:\(origin.rawValue):task:\(item.id)"
-            guard seen.insert(id).inserted else { continue }
-            let phase: String = switch item.state {
-            case .completed: "completed"
-            case .failed: "failed"
-            case .cancelled: "cancelled"
-            default: "completed"
+        for entry in slots {
+            let origin = entry.origin
+            let targetSlot = entry.slot
+
+            for record in targetSlot.cloudTasks where record.isTerminal {
+                guard let item = record.effectiveWorkItem else { continue }
+                let id = "remote:\(origin.rawValue):task:\(item.id)"
+                guard seen.insert(id).inserted else { continue }
+                let phase: String = switch item.state {
+                case .completed: "completed"
+                case .failed: "failed"
+                case .cancelled: "cancelled"
+                default: "completed"
+                }
+                let rawSummary = record.detail?.resultMarkdown
+                    ?? record.detail?.failure
+                    ?? item.progress
+                    ?? item.state.displayTitle
+                activities.append(WatchRecentActivity(
+                    id: id,
+                    runId: id,
+                    conversationId: item.conversationId,
+                    kind: "workflow",
+                    phase: phase,
+                    title: WatchTaskText.singleLine(record.displayTitle, maxLength: 80) ?? (origin == .mac ? "Mac 任务" : "云端任务"),
+                    resultTitle: nil,
+                    summary: WatchTaskText.clipped(rawSummary, maxLength: 280) ?? item.state.displayTitle,
+                    updatedAt: item.updatedAtDate,
+                    origin: origin
+                ))
             }
-            let rawSummary = record.detail?.resultMarkdown
-                ?? record.detail?.failure
-                ?? item.progress
-                ?? item.state.displayTitle
-            activities.append(WatchRecentActivity(
-                id: id,
-                runId: id,
-                conversationId: item.conversationId,
-                kind: "workflow",
-                phase: phase,
-                title: WatchTaskText.singleLine(record.displayTitle, maxLength: 80) ?? "云端任务",
-                resultTitle: nil,
-                summary: WatchTaskText.clipped(rawSummary, maxLength: 280) ?? item.state.displayTitle,
-                updatedAt: item.updatedAtDate,
-                origin: origin
-            ))
-        }
 
-        for event in store.cloudDialogueEvents.reversed()
-        where (event.kind == .taskResult || event.kind == .assistantReply) && !event.isUpfrontAcknowledgement {
-            let trimmed = event.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            let id = "remote:\(origin.rawValue):event:\(event.id)"
-            guard seen.insert(id).inserted else { continue }
-            let phase = event.outcome == .failed ? "failed" : event.outcome == .cancelled ? "cancelled" : "completed"
-            let firstLine = trimmed.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
-            activities.append(WatchRecentActivity(
-                id: id,
-                runId: id,
-                conversationId: event.conversationId,
-                kind: event.kind == .taskResult ? "workflow" : "response",
-                phase: phase,
-                title: WatchTaskText.singleLine(firstLine, maxLength: 60) ?? (origin == .mac ? "Mac 回复" : "云端回复"),
-                resultTitle: nil,
-                summary: WatchTaskText.clipped(trimmed, maxLength: 280) ?? "",
-                updatedAt: store.cloudDialogueFirstSeenAtByEventId[event.id] ?? Date(),
-                origin: origin
-            ))
-            if activities.count >= 8 { break }
-        }
+            var dialogueCountForSlot = 0
+            for event in targetSlot.cloudDialogueEvents.reversed()
+            where (event.kind == .taskResult || event.kind == .assistantReply) && !event.isUpfrontAcknowledgement {
+                let trimmed = event.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+                let id = "remote:\(origin.rawValue):event:\(event.id)"
+                guard seen.insert(id).inserted else { continue }
+                let phase = event.outcome == .failed ? "failed" : event.outcome == .cancelled ? "cancelled" : "completed"
+                let firstLine = trimmed.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+                activities.append(WatchRecentActivity(
+                    id: id,
+                    runId: id,
+                    conversationId: event.conversationId,
+                    kind: event.kind == .taskResult ? "workflow" : "response",
+                    phase: phase,
+                    title: WatchTaskText.singleLine(firstLine, maxLength: 60) ?? (origin == .mac ? "Mac 回复" : "云端回复"),
+                    resultTitle: nil,
+                    summary: WatchTaskText.clipped(trimmed, maxLength: 280) ?? "",
+                    updatedAt: targetSlot.cloudDialogueFirstSeenAtByEventId[event.id] ?? Date(),
+                    origin: origin
+                ))
+                dialogueCountForSlot += 1
+                if dialogueCountForSlot >= 8 { break }
+            }
 
-        for item in store.boardItems where item.column == .done {
-            let id = "remote:\(origin.rawValue):board:\(item.id)"
-            guard seen.insert(id).inserted else { continue }
-            activities.append(WatchRecentActivity(
-                id: id,
-                runId: id,
-                conversationId: item.conversationId,
-                kind: "workflow",
-                phase: item.failed ? "failed" : "completed",
-                title: WatchTaskText.singleLine(item.title, maxLength: 80) ?? item.title,
-                resultTitle: nil,
-                summary: WatchTaskText.clipped(item.detail, maxLength: 280) ?? "",
-                updatedAt: item.updatedAt,
-                origin: origin
-            ))
+            for item in targetSlot.boardItems where item.column == .done {
+                let id = "remote:\(origin.rawValue):board:\(item.id)"
+                guard seen.insert(id).inserted else { continue }
+                activities.append(WatchRecentActivity(
+                    id: id,
+                    runId: id,
+                    conversationId: item.conversationId,
+                    kind: "workflow",
+                    phase: item.failed ? "failed" : "completed",
+                    title: WatchTaskText.singleLine(item.title, maxLength: 80) ?? item.title,
+                    resultTitle: nil,
+                    summary: WatchTaskText.clipped(item.detail, maxLength: 280) ?? "",
+                    updatedAt: item.updatedAt,
+                    origin: origin
+                ))
+            }
         }
 
         return Array(activities.sorted {

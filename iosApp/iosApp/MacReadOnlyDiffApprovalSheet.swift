@@ -113,7 +113,7 @@ struct MacReadOnlyDiffApprovalSheet: View {
 
             metadataLayout {
                 HStack(spacing: 6) {
-                    Image(systemName: "desktopcomputer")
+                    Image(systemName: item.endpointRole.iconName)
                         .font(.caption.weight(.semibold))
                     Text(verbatim: item.targetDeviceName)
                         .font(.caption.weight(.semibold))
@@ -349,7 +349,8 @@ struct MacReadOnlyDiffApprovalSheet: View {
                 sessionKey: item.sessionKey,
                 toolCallId: item.toolCallId,
                 allow: allow,
-                source: .foregroundApp
+                source: .foregroundApp,
+                role: item.endpointRole
             )
             isSubmitting = false
             if delivered {
@@ -411,7 +412,7 @@ struct UnifiedMacDelegationTimelineSection: View {
     @State private var projection = Projection(runs: [], standalone: [])
     @State private var actionError: String?
     private let store = MacGatewayStore.shared
-    let onFollowup: (String) -> Void
+    let onFollowup: (String, MacGatewayEndpointRole) -> Void
     let onOpenApproval: (MacGatewayApprovalCardItem) -> Void
 
     private var maxCardAreaHeight: CGFloat {
@@ -454,9 +455,9 @@ struct UnifiedMacDelegationTimelineSection: View {
         }
         .task(id: "\(conversationId ?? "")|\(locale.identifier)") {
             let updates = Observations { @MainActor in
-                let approvals = store.activeMacApprovalCardItems(for: conversationId)
+                let approvals = store.allActiveApprovalCardItems(for: conversationId)
                 let dismissed = store.dismissedUnifiedMacRunIds
-                let runs = store.unifiedMacDelegatedRuns(for: conversationId, approvals: approvals)
+                let runs = store.allUnifiedDelegatedRuns(for: conversationId, approvals: approvals)
                     .filter { !dismissed.contains($0.id) }
                 let attached = Set(runs.compactMap { $0.pendingApproval?.id })
                 return Projection(runs: runs, standalone: approvals.filter { !attached.contains($0.id) })
@@ -479,32 +480,33 @@ struct UnifiedMacDelegationTimelineSection: View {
     private var cards: some View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(projection.runs) { run in
+                let targetSlot = store.slot(for: run.endpointRole)
                 UnifiedMacDelegationRunCard(
                     run: run,
                     onRecheckPending: {
-                        performAction { try await store.recheckPendingMacSubmission(requestId: run.requestId, workItemId: run.workItemId).get() }
+                        performAction { try await targetSlot.recheckPendingMacSubmission(requestId: run.requestId, workItemId: run.workItemId).get() }
                     },
                     onCancelPending: {
                         performAction {
-                            guard await store.cancelPendingMacSubmission(requestId: run.requestId, workItemId: run.workItemId) else {
-                                throw MacGatewayError.server(macGatewayL("未能确认取消，请重新核对 Mac 状态"))
+                            guard await targetSlot.cancelPendingMacSubmission(requestId: run.requestId, workItemId: run.workItemId) else {
+                                throw MacGatewayError.server(macGatewayL("未能确认取消，请重新核对 \(run.endpointRole.displayName) 状态"))
                             }
                         }
                     },
                     onRecheckUnknown: {
-                        if let id = run.workItemId { performAction { _ = try await store.recheckOutcomeUnknownCloudWorkItem(workItemId: id).get() } }
+                        if let id = run.workItemId { performAction { _ = try await targetSlot.recheckOutcomeUnknownCloudWorkItem(workItemId: id).get() } }
                     },
                     onRetryUnknown: {
-                        if let id = run.workItemId { performAction { _ = try await store.retryOutcomeUnknownCloudWorkItem(workItemId: id).get() } }
+                        if let id = run.workItemId { performAction { _ = try await targetSlot.retryOutcomeUnknownCloudWorkItem(workItemId: id).get() } }
                     },
                     onAbandonUnknown: {
-                        if let id = run.workItemId { _ = store.abandonOutcomeUnknownCloudWorkItem(workItemId: id) }
+                        if let id = run.workItemId { _ = targetSlot.abandonOutcomeUnknownCloudWorkItem(workItemId: id) }
                     },
                     onFollowup: {
-                        if let id = run.workItemId { onFollowup(id) }
+                        if let id = run.workItemId { onFollowup(id, run.endpointRole) }
                     },
                     onStop: {
-                        if let id = run.workItemId { performAction { _ = try await store.stopCloudWorkItem(workItemId: id).get() } }
+                        if let id = run.workItemId { performAction { _ = try await targetSlot.stopCloudWorkItem(workItemId: id).get() } }
                     },
                     onOpenApproval: {
                         if let approval = run.pendingApproval { onOpenApproval(approval) }
@@ -611,9 +613,9 @@ private struct UnifiedMacDelegationRunCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 8) {
                 HStack(spacing: 4) {
-                    Image(systemName: "desktopcomputer")
+                    Image(systemName: run.endpointRole.iconName)
                         .font(.caption2.weight(.semibold))
-                    Text("[\(Text(run.badge.label))]")
+                    Text(verbatim: "[\(run.badge.label(for: run.endpointRole))]")
                         .font(.caption2.weight(.semibold))
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                 }
@@ -622,7 +624,7 @@ private struct UnifiedMacDelegationRunCard: View {
                 .padding(.vertical, 4)
                 .background(badgeFillTint.opacity(0.12), in: Capsule(style: .continuous))
                 .fixedSize(horizontal: !dynamicTypeSize.isAccessibilitySize, vertical: false)
-                .accessibilityIdentifier("chat.macRun.badge.\(run.badge.rawValue)")
+                .accessibilityIdentifier("chat.macRun.badge.\(run.endpointRole.rawValue).\(run.badge.rawValue)")
 
                 if run.isBusy {
                     ProgressView().controlSize(.mini)
@@ -851,13 +853,13 @@ private struct MacPendingApprovalTimelineBanner: View {
                     .foregroundStyle(iconTint)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("[等待 Mac 确认] \(approval.summary)")
+                    Text(verbatim: "[\(MacDelegationAttributionBadge.awaitingMacApproval.label(for: approval.endpointRole))] \(approval.summary)")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
                     Text(approval.requiresLocalApproval
-                         ? LocalizedStringKey("此高危操作请在 Mac 上批准 · 点按查看只读差异")
+                         ? LocalizedStringKey("此高危操作请在 \(approval.endpointRole.displayName) 上批准 · 点按查看只读差异")
                          : "点按打开半屏只读 Diff 审批卡")
                         .font(.caption2)
                         .foregroundStyle(approval.requiresLocalApproval ? iconTint : AmberTheme.muted)

@@ -549,6 +549,156 @@ final class WatchMultiDeviceUpgradeTests: XCTestCase {
         XCTAssertNil(cached.decision)
     }
 
+    // MARK: - 7. Dual-Slot MacGatewayWatchExecutionAdapter Integration
+
+    nonisolated private static func jsonResp(_ url: URL, status: Int = 200, _ json: String) -> (Data, URLResponse) {
+        let resp = HTTPURLResponse(
+            url: url,
+            statusCode: status,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        return (Data(json.utf8), resp)
+    }
+
+    func testDualSlotWatchAdapterProjectsMacApprovalRoutesByPreferredOriginAndEnforcesL3Redline() async throws {
+        let suite = "WatchDualSlotAdapter.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+
+        let store = MacGatewayStore(defaults: defaults, isApplicationForeground: { true })
+        let cloudClient = MacGatewayClient(
+            addrs: ["cloud.watch.test"],
+            port: 443,
+            fingerprint: "fp-c",
+            token: "tok-c",
+            transport: { req, _ in
+                let url = req.url!
+                switch url.path {
+                case "/v1/status":
+                    return Self.jsonResp(url, #"{"gateway":{"id":"gw-c","name":"Amber Cloud"},"device":{"id":"d-c","name":"iPhone","pushRegistered":true},"serverTime":1800000000,"sessions":[]}"#)
+                case "/v1/amber/board":
+                    return Self.jsonResp(url, #"{"board":[]}"#)
+                case "/v1/amber/schedules":
+                    return Self.jsonResp(url, #"{"schedules":[]}"#)
+                case "/v2/dialogue/messages":
+                    return Self.jsonResp(url, status: 202, #"{"requestId":"req-w-cloud","eventId":"ev-wc","topicId":"t-wc","workItemIds":["wi-w-cloud"],"state":"received","replayed":false}"#)
+                default:
+                    return Self.jsonResp(url, #"{"items":[],"nextCursor":0}"#)
+                }
+            }
+        )
+        let macClient = MacGatewayClient(
+            addrs: ["mac.watch.test"],
+            port: 47821,
+            fingerprint: "fp-m",
+            token: "tok-m",
+            transport: { req, _ in
+                let url = req.url!
+                switch url.path {
+                case "/v1/status":
+                    return Self.jsonResp(url, #"{"gateway":{"id":"gw-m","name":"Studio Mac"},"device":{"id":"d-m","name":"iPhone","pushRegistered":true},"serverTime":1800000000,"sessions":[]}"#)
+                case "/v1/amber/board":
+                    return Self.jsonResp(url, #"""
+                    {
+                      "board":[
+                        {
+                          "id":"run:mac-l3",
+                          "kind":"run",
+                          "column":"needsYou",
+                          "title":"高危构建清理",
+                          "detail":"等你确认 · shell_run",
+                          "updatedAt":1800000000,
+                          "waitingForReply":false,
+                          "failed":false,
+                          "approval":{
+                            "sessionKey":"amber:mac-watch-l3",
+                            "toolCallId":"call-watch-l3",
+                            "tool":"shell_run",
+                            "detail":"rm -rf DerivedData",
+                            "highRisk":true,
+                            "requiresLocalApproval":true,
+                            "riskLevel":"L3"
+                          }
+                        },
+                        {
+                          "id":"run:mac-done",
+                          "kind":"run",
+                          "column":"done",
+                          "title":"同步仓库完成",
+                          "detail":"所有测试通过",
+                          "updatedAt":1799999900,
+                          "waitingForReply":false,
+                          "failed":false
+                        }
+                      ]
+                    }
+                    """#)
+                case "/v1/amber/schedules":
+                    return Self.jsonResp(url, #"{"schedules":[]}"#)
+                case "/v2/dialogue/messages":
+                    return Self.jsonResp(url, status: 202, #"{"requestId":"req-w-mac","eventId":"ev-wm","topicId":"t-wm","workItemIds":["wi-w-mac"],"state":"received","replayed":false}"#)
+                default:
+                    return Self.jsonResp(url, #"{"items":[],"nextCursor":0}"#)
+                }
+            }
+        )
+
+        store.configureForTesting(
+            role: .cloud,
+            connection: MacGatewayConnection(gatewayId: "gw-c", name: "Amber Cloud", addrs: ["cloud.watch.test"], port: 443, fingerprint: "fp-c", deviceId: "d-c"),
+            client: cloudClient
+        )
+        store.configureForTesting(
+            role: .mac,
+            connection: MacGatewayConnection(gatewayId: "gw-m", name: "Studio Mac", addrs: ["mac.watch.test"], port: 47821, fingerprint: "fp-m", deviceId: "d-m"),
+            client: macClient
+        )
+        await store.refreshAll()
+        defer {
+            store.stopCloudDialoguePolling()
+            store.mac.stopCloudDialoguePolling()
+        }
+
+        let adapter = MacGatewayWatchExecutionAdapter(store: store)
+        let projection = adapter.currentProjection()
+        XCTAssertTrue(projection.isPaired)
+        XCTAssertTrue(projection.isOnline)
+        XCTAssertEqual(projection.remoteOrigin, .mac)
+        XCTAssertEqual(projection.remoteHostName, "Studio Mac")
+        XCTAssertEqual(projection.primaryTask?.origin, .mac)
+        XCTAssertEqual(projection.primaryTask?.decision?.localApprovalOnly, true)
+        XCTAssertTrue(projection.recentActivities.contains(where: { $0.origin == .mac && $0.title == "同步仓库完成" }))
+
+        // L3 approval on Mac slot must fail closed from Watch.
+        let blocked = await adapter.resolveApproval(
+            sessionKey: "amber:mac-watch-l3",
+            toolCallId: "call-watch-l3",
+            allow: true
+        )
+        XCTAssertFalse(blocked.accepted)
+
+        // Preferred origin routes cleanly to each independent slot.
+        let macDispatch = await adapter.submitQuestion(
+            text: "在 Mac 跑构建",
+            requestId: "req-w-mac",
+            preferredOrigin: .mac
+        )
+        let cloudDispatch = await adapter.submitQuestion(
+            text: "在云端查日程",
+            requestId: "req-w-cloud",
+            preferredOrigin: .cloud
+        )
+        store.stopCloudDialoguePolling()
+        store.mac.stopCloudDialoguePolling()
+
+        XCTAssertTrue(macDispatch.accepted)
+        XCTAssertEqual(macDispatch.runId, "remote:mac:wi-w-mac")
+        XCTAssertTrue(cloudDispatch.accepted)
+        XCTAssertEqual(cloudDispatch.runId, "remote:cloud:wi-w-cloud")
+    }
+
     // MARK: - Helpers
 
     private func makeCompanionService() -> IOSWatchCompanionService {

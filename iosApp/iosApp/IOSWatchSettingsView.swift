@@ -11,7 +11,7 @@ struct IOSWatchSettingsView: View {
     let sharedSettings: IOSSharedSettingsStore
     let conversationStore: IOSConversationStore
     @Bindable var service: IOSWatchCompanionService
-    var showsNavigationHeader: Bool = true
+    var embeddedInMultiDevice: Bool = false
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -43,13 +43,13 @@ struct IOSWatchSettingsView: View {
         conversationStore: IOSConversationStore,
         service: IOSWatchCompanionService = .shared,
         initiallyShowsNotes: Bool = false,
-        showsNavigationHeader: Bool = true
+        embeddedInMultiDevice: Bool = false
     ) {
         self.sharedSettings = sharedSettings
         self.conversationStore = conversationStore
         self._service = Bindable(service)
         self._showsNotes = State(initialValue: initiallyShowsNotes)
-        self.showsNavigationHeader = showsNavigationHeader
+        self.embeddedInMultiDevice = embeddedInMultiDevice
     }
 
     private var availableQuickActions: [WatchQuickAction] {
@@ -107,25 +107,21 @@ struct IOSWatchSettingsView: View {
 
     var body: some View {
         let _ = sharedSettings.revision
-        ZStack {
-            AmberTheme.background.ignoresSafeArea()
-            VStack(spacing: 0) {
-                if showsNavigationHeader {
-                    header
-                }
-                ScrollView {
+        Group {
+            if embeddedInMultiDevice {
+                watchScrollContent
+            } else {
+                ZStack {
+                    AmberTheme.background.ignoresSafeArea()
                     VStack(spacing: 0) {
-                        deviceSection
-                        quickActionsSection
-                        captureSection
+                        header
+                        watchScrollContent
                     }
-                    .padding(.bottom, 36)
                 }
-                .scrollIndicators(.hidden)
+                .navigationBarBackButtonHidden(true)
+                .toolbar(.hidden, for: .navigationBar)
             }
         }
-        .navigationBarBackButtonHidden(true)
-        .toolbar(.hidden, for: .navigationBar)
         .tint(AmberTheme.accent)
         .task {
             await refreshNotificationAuthorization()
@@ -177,6 +173,18 @@ struct IOSWatchSettingsView: View {
         } message: { _ in
             Text("删除后无法从 Amber Watch 设置中恢复。")
         }
+    }
+
+    private var watchScrollContent: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                deviceSection
+                quickActionsSection
+                captureSection
+            }
+            .padding(.bottom, 36)
+        }
+        .scrollIndicators(.hidden)
     }
 
     private var header: some View {
@@ -483,20 +491,21 @@ struct IOSWatchSettingsView: View {
         IOSDeepLinkInbox.shared.submit(url, persistUntilHandled: true)
     }
 
-    private func handOffNoteToRemote(_ note: WatchNote) {
+    private func handOffNoteToRemote(_ note: WatchNote, role: MacGatewayEndpointRole) {
         guard !isHandingOffNoteToRemote else { return }
         noteError = nil
         isHandingOffNoteToRemote = true
         let prompt = "请帮我整理并处理这条从 Apple Watch 记下的随手记：\n\n\(note.text)"
+        let targetSlot = MacGatewayStore.shared.slot(for: role)
         Task { @MainActor in
             defer { isHandingOffNoteToRemote = false }
-            let result = await MacGatewayStore.shared.sendCloudDialogueMessage(text: prompt)
+            let result = await targetSlot.sendCloudDialogueMessage(text: prompt)
             switch result {
             case .success:
-                noteActionNotice = "已转交远端处理。"
+                noteActionNotice = "已转交\(role.displayName)处理。"
                 selectedNote = nil
             case .failure(let error):
-                noteError = MacGatewayStore.shared.cloudDialogueFriendlyErrorMessage(for: error)
+                noteError = targetSlot.cloudDialogueFriendlyErrorMessage(for: error)
             }
         }
     }
@@ -547,10 +556,6 @@ struct IOSWatchSettingsView: View {
 
     private func noteDetail(_ note: WatchNote) -> some View {
         let gateway = MacGatewayStore.shared
-        let isMacRemote = AmberMultiDevicePairingClassifier.isMacConnection(
-            connection: gateway.connection,
-            status: gateway.status
-        )
         return NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
@@ -572,18 +577,29 @@ struct IOSWatchSettingsView: View {
                         }
                         .buttonStyle(.plain)
 
-                        if gateway.connection != nil {
+                        if gateway.hasCloudConnection {
                             Button {
-                                handOffNoteToRemote(note)
+                                handOffNoteToRemote(note, role: .cloud)
                             } label: {
-                                Label(
-                                    isMacRemote ? "交给 Mac 整理" : "交给云端整理",
-                                    systemImage: isMacRemote ? "desktopcomputer" : "icloud"
-                                )
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(AmberTheme.foreground)
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                                .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                Label("交给云端整理", systemImage: "icloud")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(AmberTheme.foreground)
+                                    .frame(maxWidth: .infinity, minHeight: 44)
+                                    .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isHandingOffNoteToRemote)
+                        }
+
+                        if gateway.hasMacConnection {
+                            Button {
+                                handOffNoteToRemote(note, role: .mac)
+                            } label: {
+                                Label("交给 Mac 整理", systemImage: "desktopcomputer")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(AmberTheme.foreground)
+                                    .frame(maxWidth: .infinity, minHeight: 44)
+                                    .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                             }
                             .buttonStyle(.plain)
                             .disabled(isHandingOffNoteToRemote)

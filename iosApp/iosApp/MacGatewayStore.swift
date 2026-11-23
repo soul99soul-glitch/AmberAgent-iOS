@@ -76,13 +76,53 @@ final class MacGatewayStore {
         var isError: Bool
     }
 
-    private nonisolated static let connectionKey = "macGateway.connection.v1"
-    private nonisolated static let tokenKey = "macGateway.deviceToken"
+    nonisolated static let legacyConnectionKey = "macGateway.connection.v1"
+    nonisolated static let legacyTokenKey = "macGateway.deviceToken"
     nonisolated static let shareCalendarUpcomingKey = "macGateway.deviceContext.shareCalendar"
     nonisolated static let shareRemindersDueKey = "macGateway.deviceContext.shareReminders"
     nonisolated static let shareWorkspaceArtifactsKey = "macGateway.deviceContext.shareArtifacts"
     nonisolated static let pendingDeviceContextDeleteKey = "macGateway.deviceContext.pendingDelete"
     nonisolated static let cloudDialogueLastViewedSeqKey = "macGateway.cloudDialogue.lastViewedSeq"
+
+    nonisolated let endpointRole: MacGatewayEndpointRole
+    nonisolated var connectionStorageKey: String { endpointRole.connectionStorageKey }
+    nonisolated var tokenStorageKey: String { endpointRole.tokenStorageKey }
+    nonisolated var dialogueStorageKey: String { endpointRole.dialogueStorageKey }
+    nonisolated var tasksStorageKey: String { endpointRole.tasksStorageKey }
+
+    /// Independent local Mac slot owned by the root `.cloud` store so Cloud (`amberd`)
+    /// and Mac (`amber-gateway`) stay paired and online simultaneously.
+    @ObservationIgnored private(set) var macSlot: MacGatewayStore?
+    /// Preferred tab when opening the unified "Amber 多终端" settings page (e.g. after scanning a QR link).
+    var preferredMultiDeviceTab: AmberMultiDeviceTab = .cloud
+
+    var mac: MacGatewayStore { macSlot ?? self }
+
+    func slot(for role: MacGatewayEndpointRole) -> MacGatewayStore {
+        switch role {
+        case .cloud:
+            return self
+        case .mac:
+            return macSlot ?? self
+        }
+    }
+
+    var hasCloudConnection: Bool { connection != nil }
+    var hasMacConnection: Bool { macSlot?.connection != nil }
+    var hasAnyPairedEndpoint: Bool { hasCloudConnection || hasMacConnection }
+
+    var multiDeviceSummaryText: String {
+        switch (hasCloudConnection, hasMacConnection) {
+        case (true, true):
+            return localized("云端 · Mac")
+        case (true, false):
+            return localized("云端")
+        case (false, true):
+            return localized("Mac")
+        case (false, false):
+            return ""
+        }
+    }
 
     /// Debug builds are signed with `aps-environment = development` (project.yml), Release with production.
     static var apnsEnvironment: String {
@@ -185,54 +225,172 @@ final class MacGatewayStore {
     @ObservationIgnored var requestGeneration = (status: 0, schedules: 0, board: 0, cloudAgents: 0)
     @ObservationIgnored var hasCheckedCloudSoulOnConnect = false
     @ObservationIgnored weak var boundSoulStore: AgentSoulStore?
-    @ObservationIgnored weak var boundSharedSettings: IOSSharedSettingsStore?
+    @ObservationIgnored weak var boundSharedSettings: IOSSharedSettingsStore? {
+        didSet {
+            macSlot?.boundSharedSettings = boundSharedSettings
+        }
+    }
     @ObservationIgnored var boundRuleStore: IOSProceduralRuleStore = .shared
     @ObservationIgnored let persistenceCoordinator = MacGatewayPersistenceCoordinator()
     @ObservationIgnored let defaults: UserDefaults
     @ObservationIgnored private let biometricAuthenticator: any MacGatewayBiometricAuthenticating
     @ObservationIgnored private let isApplicationForeground: @MainActor () -> Bool
+    @ObservationIgnored private let loadToken: @Sendable (String) -> String?
+    @ObservationIgnored private let saveToken: @Sendable (String, String) -> Bool
+    @ObservationIgnored private let deleteToken: @Sendable (String) -> Void
 
     init(
         defaults: UserDefaults = .standard,
         biometricAuthenticator: any MacGatewayBiometricAuthenticating = MacGatewayLocalBiometricAuthenticator(),
-        isApplicationForeground: @escaping @MainActor () -> Bool = { UIApplication.shared.applicationState == .active }
+        isApplicationForeground: @escaping @MainActor () -> Bool = { UIApplication.shared.applicationState == .active },
+        endpointRole: MacGatewayEndpointRole = .cloud,
+        isChildSlot: Bool = false,
+        loadToken: @escaping @Sendable (String) -> String? = { IOSCredentialSideTable.load(key: $0) },
+        saveToken: @escaping @Sendable (String, String) -> Bool = { IOSCredentialSideTable.store(key: $0, value: $1) },
+        deleteToken: @escaping @Sendable (String) -> Void = { IOSCredentialSideTable.delete(key: $0) }
     ) {
+        self.endpointRole = endpointRole
         self.defaults = defaults
         self.biometricAuthenticator = biometricAuthenticator
         self.isApplicationForeground = isApplicationForeground
-        self.shareCalendarUpcomingEnabled = defaults.bool(forKey: Self.shareCalendarUpcomingKey)
-        self.shareRemindersDueEnabled = defaults.bool(forKey: Self.shareRemindersDueKey)
-        self.shareWorkspaceArtifactsEnabled = defaults.bool(forKey: Self.shareWorkspaceArtifactsKey)
-        self.pendingDeviceContextRemoteDelete = defaults.bool(forKey: Self.pendingDeviceContextDeleteKey)
-        self.cloudDialogueLastViewedSeq = Int64(defaults.integer(forKey: Self.cloudDialogueLastViewedSeqKey))
-        bindCloudSoulStoreIfNeeded()
-        if let data = defaults.data(forKey: Self.connectionKey),
-           let saved = try? JSONDecoder().decode(MacGatewayConnection.self, from: data),
-           let token = IOSCredentialSideTable.load(key: Self.tokenKey) {
+        self.loadToken = loadToken
+        self.saveToken = saveToken
+        self.deleteToken = deleteToken
+
+        if !isChildSlot, endpointRole == .cloud {
+            Self.migrateLegacySingleSlotIfNeeded(
+                defaults: defaults,
+                loadToken: loadToken,
+                saveToken: saveToken,
+                deleteToken: deleteToken
+            )
+        }
+
+        if endpointRole == .cloud {
+            self.shareCalendarUpcomingEnabled = defaults.bool(forKey: Self.shareCalendarUpcomingKey)
+            self.shareRemindersDueEnabled = defaults.bool(forKey: Self.shareRemindersDueKey)
+            self.shareWorkspaceArtifactsEnabled = defaults.bool(forKey: Self.shareWorkspaceArtifactsKey)
+            self.pendingDeviceContextRemoteDelete = defaults.bool(forKey: Self.pendingDeviceContextDeleteKey)
+            self.cloudDialogueLastViewedSeq = Int64(defaults.integer(forKey: Self.cloudDialogueLastViewedSeqKey))
+            bindCloudSoulStoreIfNeeded()
+        }
+
+        loadPersistedConnection()
+
+        if !isChildSlot, endpointRole == .cloud {
+            self.macSlot = MacGatewayStore(
+                defaults: defaults,
+                biometricAuthenticator: biometricAuthenticator,
+                isApplicationForeground: isApplicationForeground,
+                endpointRole: .mac,
+                isChildSlot: true,
+                loadToken: loadToken,
+                saveToken: saveToken,
+                deleteToken: deleteToken
+            )
+        }
+
+        #if DEBUG
+        if !isChildSlot {
+            if ProcessInfo.processInfo.environment["AMBER_MAC_BOARD_FIXTURE"] == "1" { loadBoardFixture() }
+            if ProcessInfo.processInfo.environment["AMBER_CLOUD_CONFIG_FIXTURE"] == "1" { loadCloudConfigFixture() }
+        }
+        #endif
+    }
+
+    private func loadPersistedConnection() {
+        if let data = defaults.data(forKey: connectionStorageKey),
+           var saved = try? JSONDecoder().decode(MacGatewayConnection.self, from: data),
+           let token = loadToken(tokenStorageKey) {
+            if saved.role == nil {
+                saved.role = endpointRole
+            }
             persistenceCoordinator.advance(connection: saved)
             connection = saved
             client = MacGatewayClient(addrs: saved.addrs, port: saved.port, fingerprint: saved.fingerprint, token: token)
             loadPersistedCloudTasks()
             loadPersistedCloudDialogueState()
-        } else {
-            persistenceCoordinator.advance(connection: nil)
+            return
         }
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["AMBER_MAC_BOARD_FIXTURE"] == "1" { loadBoardFixture() }
-        if ProcessInfo.processInfo.environment["AMBER_CLOUD_CONFIG_FIXTURE"] == "1" { loadCloudConfigFixture() }
-        #endif
+        // Fallback if migration could not write the new Keychain key: keep the legacy pairing alive in memory.
+        if let legacyData = defaults.data(forKey: Self.legacyConnectionKey),
+           var legacySaved = try? JSONDecoder().decode(MacGatewayConnection.self, from: legacyData),
+           MacGatewayEndpointRole.inferMigrationRole(for: legacySaved) == endpointRole,
+           let legacyToken = loadToken(Self.legacyTokenKey) {
+            legacySaved.role = endpointRole
+            persistenceCoordinator.advance(connection: legacySaved)
+            connection = legacySaved
+            client = MacGatewayClient(addrs: legacySaved.addrs, port: legacySaved.port, fingerprint: legacySaved.fingerprint, token: legacyToken)
+            loadPersistedCloudTasks()
+            loadPersistedCloudDialogueState()
+            return
+        }
+        persistenceCoordinator.advance(connection: nil)
     }
 
-    func configureForTesting(connection: MacGatewayConnection, client: MacGatewayClient) {
-        persistenceCoordinator.advance(connection: connection)
-        let previousSoulStore = boundSoulStore ?? .shared
-        self.connection = connection
+    /// Migrates a pre-Plan-2 single-slot pairing (`macGateway.connection.v1` + `macGateway.deviceToken`)
+    /// into its inferred dual-slot key (`.cloud` or `.mac`) without losing user credentials or state.
+    private static func migrateLegacySingleSlotIfNeeded(
+        defaults: UserDefaults,
+        loadToken: @Sendable (String) -> String?,
+        saveToken: @Sendable (String, String) -> Bool,
+        deleteToken: @Sendable (String) -> Void
+    ) {
+        let hasCloudV2 = defaults.data(forKey: MacGatewayEndpointRole.cloud.connectionStorageKey) != nil
+        let hasMacV2 = defaults.data(forKey: MacGatewayEndpointRole.mac.connectionStorageKey) != nil
+        guard !hasCloudV2, !hasMacV2 else { return }
+        guard let legacyData = defaults.data(forKey: legacyConnectionKey),
+              var saved = try? JSONDecoder().decode(MacGatewayConnection.self, from: legacyData),
+              let legacyToken = loadToken(legacyTokenKey),
+              !legacyToken.isEmpty else {
+            return
+        }
+        let targetRole = MacGatewayEndpointRole.inferMigrationRole(for: saved)
+        saved.role = targetRole
+        guard let encoded = try? JSONEncoder().encode(saved) else { return }
+        guard saveToken(targetRole.tokenStorageKey, legacyToken) else {
+            // Keep legacy keys intact so `loadPersistedConnection()` can still recover the pairing.
+            return
+        }
+        defaults.set(encoded, forKey: targetRole.connectionStorageKey)
+        if targetRole == .mac {
+            if let oldDialogue = defaults.data(forKey: MacGatewayEndpointRole.cloud.dialogueStorageKey),
+               defaults.data(forKey: MacGatewayEndpointRole.mac.dialogueStorageKey) == nil {
+                defaults.set(oldDialogue, forKey: MacGatewayEndpointRole.mac.dialogueStorageKey)
+                defaults.removeObject(forKey: MacGatewayEndpointRole.cloud.dialogueStorageKey)
+            }
+            if let oldTasks = defaults.data(forKey: MacGatewayEndpointRole.cloud.tasksStorageKey),
+               defaults.data(forKey: MacGatewayEndpointRole.mac.tasksStorageKey) == nil {
+                defaults.set(oldTasks, forKey: MacGatewayEndpointRole.mac.tasksStorageKey)
+                defaults.removeObject(forKey: MacGatewayEndpointRole.cloud.tasksStorageKey)
+            }
+        }
+        defaults.removeObject(forKey: legacyConnectionKey)
+        deleteToken(legacyTokenKey)
+    }
+
+    func configureForTesting(
+        role: MacGatewayEndpointRole = .cloud,
+        connection: MacGatewayConnection,
+        client: MacGatewayClient
+    ) {
+        if role != endpointRole {
+            slot(for: role).configureForTesting(role: role, connection: connection, client: client)
+            return
+        }
+        var tagged = connection
+        tagged.role = endpointRole
+        persistenceCoordinator.advance(connection: tagged)
+        self.connection = tagged
         self.client = client
         self.isReachable = true
         self.localApprovalOnlyCallIds = []
         self.cloudDialogueTransportState = .unknown
         self.hasCheckedCloudSoulOnConnect = false
-        bindCloudSoulStoreIfNeeded(previousSoulStore)
+        if endpointRole == .cloud {
+            let previousSoulStore = boundSoulStore ?? .shared
+            bindCloudSoulStoreIfNeeded(previousSoulStore)
+        }
         loadPersistedCloudTasks()
         loadPersistedCloudDialogueState()
     }
@@ -333,45 +491,77 @@ final class MacGatewayStore {
 
     /// Apple recommends re-registering on every launch; the token can change after restores and updates.
     func applicationDidFinishLaunching() {
-        guard connection != nil else { return }
+        guard hasAnyPairedEndpoint else { return }
         UIApplication.shared.registerForRemoteNotifications()
     }
 
     func didRegisterForRemoteNotifications(deviceToken: Data) {
         let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
         apnsToken = hex
-        guard connection != nil else { return }
-        Task { await uploadPushToken(hex) }
+        macSlot?.apnsToken = hex
+        if connection != nil {
+            Task { await uploadPushToken(hex) }
+        }
+        if let macSlot, macSlot.connection != nil {
+            Task { await macSlot.uploadPushToken(hex) }
+        }
     }
 
     func didFailToRegisterForRemoteNotifications(_ error: Error) {
-        guard connection != nil else { return }
-        pushError = error.localizedDescription
+        if connection != nil {
+            pushError = error.localizedDescription
+        }
+        if let macSlot, macSlot.connection != nil {
+            macSlot.pushError = error.localizedDescription
+        }
     }
 
     // MARK: - Pairing
 
     /// Deep link entry (system camera scan or AirDrop). Pairing still needs an explicit confirmation.
-    func receivePairingLink(_ link: String) {
+    func receivePairingLink(_ link: String, preferredRole: MacGatewayEndpointRole? = nil) {
         guard let payload = MacGatewayPairingPayload.parse(link) else {
-            notice = Notice(text: localized("配对链接无效，请在 Mac 上重新运行 amber-gateway pair"), isError: true)
+            let errorNotice = Notice(text: localized("配对链接无效，请在终端重新生成配对链接"), isError: true)
+            if let preferredRole, preferredRole != endpointRole {
+                slot(for: preferredRole).notice = errorNotice
+            } else {
+                notice = errorNotice
+            }
             return
         }
-        pendingPairing = payload
-        notice = nil
+        let targetRole = preferredRole ?? MacGatewayEndpointRole.inferPairingRole(for: payload)
+        if endpointRole == .cloud {
+            preferredMultiDeviceTab = AmberMultiDeviceTab(role: targetRole)
+        }
+        let targetSlot = slot(for: targetRole)
+        targetSlot.pendingPairing = payload
+        targetSlot.notice = nil
     }
 
-    func pasteLinkFromClipboard() {
-        receivePairingLink(UIPasteboard.general.string ?? "")
+    func pasteLinkFromClipboard(for role: MacGatewayEndpointRole? = nil) {
+        receivePairingLink(UIPasteboard.general.string ?? "", preferredRole: role ?? endpointRole)
     }
 
     func confirmPairing(
+        for role: MacGatewayEndpointRole? = nil,
         sharedSettings: IOSSharedSettingsStore? = nil,
         soulStore: AgentSoulStore? = nil,
         ruleStore: IOSProceduralRuleStore? = nil,
         pairingTransport: MacGatewayClient.Transport? = nil,
         storeToken: ((String, String) -> Bool)? = nil
     ) async {
+        let targetRole = role ?? endpointRole
+        if targetRole != endpointRole {
+            await slot(for: targetRole).confirmPairing(
+                for: targetRole,
+                sharedSettings: sharedSettings ?? boundSharedSettings,
+                soulStore: soulStore ?? boundSoulStore,
+                ruleStore: ruleStore ?? boundRuleStore,
+                pairingTransport: pairingTransport,
+                storeToken: storeToken
+            )
+            return
+        }
         guard let payload = pendingPairing, !isBusy else { return }
         isBusy = true
         defer { isBusy = false }
@@ -393,24 +583,31 @@ final class MacGatewayStore {
                 throw IOSPairingBootstrapError.gatewayMismatch
             }
             guard !response.deviceId.isEmpty, !response.token.isEmpty else { throw MacGatewayError.invalidResponse }
-            let tokenWriter = storeToken ?? { key, value in
-                IOSCredentialSideTable.store(key: key, value: value)
-            }
-            guard tokenWriter(Self.tokenKey, response.token) else {
+            let tokenWriter = storeToken ?? saveToken
+            let targetTokenKey = tokenStorageKey
+            guard tokenWriter(targetTokenKey, response.token) else {
                 notice = Notice(text: localized("无法把配对凭据写入钥匙串"), isError: true)
                 return
             }
-            let saved = MacGatewayConnection(gatewayId: response.gatewayId, name: response.gatewayName, addrs: payload.addrs,
-                                             port: payload.port, fingerprint: payload.fp, deviceId: response.deviceId)
+            let saved = MacGatewayConnection(
+                gatewayId: response.gatewayId,
+                name: response.gatewayName,
+                addrs: payload.addrs,
+                port: payload.port,
+                fingerprint: payload.fp,
+                deviceId: response.deviceId,
+                role: endpointRole
+            )
             let (epoch, identity) = persistenceCoordinator.advance(connection: saved)
             let targetDefaults = defaults
             nonisolated(unsafe) let sendableDefaults = targetDefaults
             let coordinator = persistenceCoordinator
+            let targetConnectionKey = connectionStorageKey
             let savedData = try? JSONEncoder().encode(saved)
-            targetDefaults.set(savedData, forKey: Self.connectionKey)
+            targetDefaults.set(savedData, forKey: targetConnectionKey)
             Self.persistenceQueue.async {
                 guard coordinator.canCommit(epoch: epoch, identity: identity) else { return }
-                sendableDefaults.set(savedData, forKey: Self.connectionKey)
+                sendableDefaults.set(savedData, forKey: targetConnectionKey)
             }
             connection = saved
             let pairedClient = MacGatewayClient(
@@ -439,7 +636,7 @@ final class MacGatewayStore {
                         soulStore: soulStore ?? boundSoulStore ?? .shared,
                         ruleStore: ruleStore ?? boundRuleStore
                     )
-                    if let remoteConfig = applied.remoteConfigSnapshot {
+                    if endpointRole == .cloud, let remoteConfig = applied.remoteConfigSnapshot {
                         cloudConfig = remoteConfig
                     }
                     lastBootstrapSyncSummary = applied.summary
@@ -462,26 +659,51 @@ final class MacGatewayStore {
         }
     }
 
-    func unpair() async {
+    func unpair(role: MacGatewayEndpointRole? = nil) async {
+        let targetRole = role ?? endpointRole
+        if targetRole != endpointRole {
+            await slot(for: targetRole).unpair(role: targetRole)
+            return
+        }
         guard !isBusy else { return }
         isBusy = true
         defer { isBusy = false }
-        // Best effort: if the Mac is unreachable the device stays listed there until `devices revoke`.
-        // 401 means the Mac already dropped this device, which is the outcome we wanted.
-        var reachedMac = true
+        // Best effort: if the gateway is unreachable the device stays listed there until `devices revoke`.
+        // 401 means the gateway already dropped this device, which is the outcome we wanted.
+        var reachedGateway = true
         do {
             try await client?.unpair()
         } catch MacGatewayError.unauthorized {
         } catch {
-            reachedMac = false
+            reachedGateway = false
         }
         forget()
-        notice = reachedMac ? nil : Notice(text: localized("已在本机取消配对。Mac 当前不可达，可在 Mac 上运行 amber-gateway devices revoke 移除此设备"), isError: false)
+        let endpointName = endpointRole.displayName
+        notice = reachedGateway ? nil : Notice(
+            text: localized("已在本机取消配对。\(endpointName) 当前不可达，可在 \(endpointName) 上运行 amber-gateway devices revoke 移除此设备"),
+            isError: false
+        )
     }
 
     // MARK: - Status & control
 
-    func refresh() async {
+    /// Refreshes both Cloud and Mac paired slots concurrently without blocking each other.
+    func refreshAll() async {
+        guard let macSlot else {
+            await refresh()
+            return
+        }
+        async let cloudRefresh: Void = refresh()
+        async let macRefresh: Void = macSlot.refresh()
+        _ = await (cloudRefresh, macRefresh)
+    }
+
+    func refresh(role: MacGatewayEndpointRole? = nil) async {
+        let targetRole = role ?? endpointRole
+        if targetRole != endpointRole {
+            await slot(for: targetRole).refresh(role: targetRole)
+            return
+        }
         guard let client else { return }
         requestGeneration.status += 1
         let generation = requestGeneration.status
@@ -490,33 +712,40 @@ final class MacGatewayStore {
             guard self.client === client, generation == requestGeneration.status else { return }
             status = latest
             isReachable = true
-            let forceSoulPull = !hasCheckedCloudSoulOnConnect
-            hasCheckedCloudSoulOnConnect = true
-            await syncCloudSoulIfNeeded(
-                observedRevision: latest.soulRevision,
-                forcePull: forceSoulPull,
-                soulStore: boundSoulStore ?? .shared
-            )
-            await refreshCloudAgents()
-            await refreshCloudConfig()
-            await boundRuleStore.syncFromGateway(syncClient: client)
-            _ = await pollCloudDialogueEvents()
-            await refreshActiveCloudTasks()
-            startCloudTaskPollingIfNeeded()
-            startCloudDialoguePollingIfNeeded()
-            await refreshSchedules()
-            await refreshBoard()
-            await syncDeviceContextOnRefresh()
+            if endpointRole == .cloud {
+                let forceSoulPull = !hasCheckedCloudSoulOnConnect
+                hasCheckedCloudSoulOnConnect = true
+                await syncCloudSoulIfNeeded(
+                    observedRevision: latest.soulRevision,
+                    forcePull: forceSoulPull,
+                    soulStore: boundSoulStore ?? .shared
+                )
+                await refreshCloudAgents()
+                await refreshCloudConfig()
+                await boundRuleStore.syncFromGateway(syncClient: client)
+                _ = await pollCloudDialogueEvents()
+                await refreshActiveCloudTasks()
+                startCloudTaskPollingIfNeeded()
+                startCloudDialoguePollingIfNeeded()
+                await refreshSchedules()
+                await refreshBoard()
+                await syncDeviceContextOnRefresh()
+            } else {
+                _ = await pollCloudDialogueEvents()
+                startCloudDialoguePollingIfNeeded()
+                await refreshSchedules()
+                await refreshBoard()
+            }
             if latest.device.pushRegistered {
                 pushError = nil
             } else if let apnsToken {
-                // The Mac lost the token (or an earlier upload failed while it was offline): report it again.
+                // The gateway lost the token (or an earlier upload failed while it was offline): report it again.
                 await uploadPushToken(apnsToken)
             }
         } catch is CancellationError {
         } catch {
             guard self.client === client, generation == requestGeneration.status else { return }
-            if !forgetIfRevoked(error) { isReachable = false }
+            if !forgetIfRevoked(error, for: client) { isReachable = false }
         }
     }
 
@@ -554,8 +783,39 @@ final class MacGatewayStore {
         sessionKey: String,
         toolCallId: String,
         allow: Bool,
-        source: MacGatewayDecisionSource = .foregroundApp
+        source: MacGatewayDecisionSource = .foregroundApp,
+        role: MacGatewayEndpointRole? = nil
     ) async -> Bool {
+        if let role, role != endpointRole {
+            return await slot(for: role).decide(
+                sessionKey: sessionKey,
+                toolCallId: toolCallId,
+                allow: allow,
+                source: source,
+                role: role
+            )
+        }
+        if role == nil, endpointRole == .cloud, let macSlot {
+            let macOwnsApproval = macSlot.boardItems.contains {
+                $0.approval?.sessionKey == sessionKey && $0.approval?.toolCallId == toolCallId
+            } || (macSlot.status?.sessions.contains {
+                $0.key == sessionKey && $0.pendingApproval?.toolCallId == toolCallId
+            } ?? false)
+            let cloudOwnsApproval = boardItems.contains {
+                $0.approval?.sessionKey == sessionKey && $0.approval?.toolCallId == toolCallId
+            } || (status?.sessions.contains {
+                $0.key == sessionKey && $0.pendingApproval?.toolCallId == toolCallId
+            } ?? false)
+            if (macOwnsApproval && !cloudOwnsApproval) || (client == nil && macSlot.client != nil) {
+                return await macSlot.decide(
+                    sessionKey: sessionKey,
+                    toolCallId: toolCallId,
+                    allow: allow,
+                    source: source,
+                    role: .mac
+                )
+            }
+        }
         if allow, requiresLocalApprovalOnly(sessionKey: sessionKey, toolCallId: toolCallId) {
             localApprovalOnlyCallIds.insert(toolCallId)
             notice = Notice(text: localized("此高危操作请在 Mac 上批准"), isError: true)
@@ -657,7 +917,23 @@ final class MacGatewayStore {
 
     // MARK: - Task board
 
-    var needsYouCount: Int { needsYouItems.count }
+    var needsYouCount: Int { combinedNeedsYouItems.count }
+
+    /// Needs-you items across both online paired slots (equals `needsYouItems` when Mac slot is unpaired).
+    var combinedNeedsYouItems: [MacGatewayBoardItem] {
+        guard let macSlot, macSlot.connection != nil, macSlot.isReachable == true else {
+            return needsYouItems
+        }
+        let macItems = macSlot.needsYouItems
+        if needsYouItems.isEmpty { return macItems }
+        if macItems.isEmpty { return needsYouItems }
+        var seen = Set(needsYouItems.map(\.id))
+        var merged = needsYouItems
+        for item in macItems where seen.insert(item.id).inserted {
+            merged.append(item)
+        }
+        return merged
+    }
 
     private func publishBoard() {
         let items = board ?? Self.fallbackBoard(sessions: status?.sessions ?? [])
@@ -857,18 +1133,22 @@ final class MacGatewayStore {
         stopCloudTaskPolling()
         let (epoch, _) = persistenceCoordinator.advance(connection: nil)
         resetCloudDialogueMemoryState()
-        IOSCredentialSideTable.delete(key: Self.tokenKey)
+        let targetTokenKey = tokenStorageKey
+        let targetConnectionKey = connectionStorageKey
+        let targetTasksKey = tasksStorageKey
+        let targetDialogueKey = dialogueStorageKey
+        deleteToken(targetTokenKey)
         let targetDefaults = defaults
-        targetDefaults.removeObject(forKey: Self.connectionKey)
-        targetDefaults.removeObject(forKey: Self.cloudTasksKey)
-        targetDefaults.removeObject(forKey: Self.cloudDialogueStateKey)
+        targetDefaults.removeObject(forKey: targetConnectionKey)
+        targetDefaults.removeObject(forKey: targetTasksKey)
+        targetDefaults.removeObject(forKey: targetDialogueKey)
         nonisolated(unsafe) let sendableDefaults = targetDefaults
         let coordinator = persistenceCoordinator
         Self.persistenceQueue.async {
             guard coordinator.canCommit(epoch: epoch, identity: nil) else { return }
-            sendableDefaults.removeObject(forKey: Self.connectionKey)
-            sendableDefaults.removeObject(forKey: Self.cloudTasksKey)
-            sendableDefaults.removeObject(forKey: Self.cloudDialogueStateKey)
+            sendableDefaults.removeObject(forKey: targetConnectionKey)
+            sendableDefaults.removeObject(forKey: targetTasksKey)
+            sendableDefaults.removeObject(forKey: targetDialogueKey)
         }
         connection = nil
         client = nil
@@ -890,20 +1170,22 @@ final class MacGatewayStore {
         pendingImportOperation = IOSCloudPendingOperation()
         cloudDialogueTransportState = .unknown
         hasCheckedCloudSoulOnConnect = false
-        (boundSoulStore ?? .shared).handleGatewayUnpaired()
-        shareCalendarUpcomingEnabled = false
-        shareRemindersDueEnabled = false
-        shareWorkspaceArtifactsEnabled = false
-        pendingDeviceContextRemoteDelete = false
-        deviceContextMetadata = nil
-        lastDeviceContextPushAt = nil
-        cloudDialogueEncodedBytes = 0
-        targetDefaults.removeObject(forKey: Self.shareCalendarUpcomingKey)
-        targetDefaults.removeObject(forKey: Self.shareRemindersDueKey)
-        targetDefaults.removeObject(forKey: Self.shareWorkspaceArtifactsKey)
-        targetDefaults.removeObject(forKey: Self.pendingDeviceContextDeleteKey)
-        targetDefaults.removeObject(forKey: Self.cloudDialogueLastViewedSeqKey)
-        cloudDialogueLastViewedSeq = 0
+        if endpointRole == .cloud {
+            (boundSoulStore ?? .shared).handleGatewayUnpaired()
+            shareCalendarUpcomingEnabled = false
+            shareRemindersDueEnabled = false
+            shareWorkspaceArtifactsEnabled = false
+            pendingDeviceContextRemoteDelete = false
+            deviceContextMetadata = nil
+            lastDeviceContextPushAt = nil
+            cloudDialogueEncodedBytes = 0
+            targetDefaults.removeObject(forKey: Self.shareCalendarUpcomingKey)
+            targetDefaults.removeObject(forKey: Self.shareRemindersDueKey)
+            targetDefaults.removeObject(forKey: Self.shareWorkspaceArtifactsKey)
+            targetDefaults.removeObject(forKey: Self.pendingDeviceContextDeleteKey)
+            targetDefaults.removeObject(forKey: Self.cloudDialogueLastViewedSeqKey)
+            cloudDialogueLastViewedSeq = 0
+        }
         isReachable = nil
         pushError = nil
     }

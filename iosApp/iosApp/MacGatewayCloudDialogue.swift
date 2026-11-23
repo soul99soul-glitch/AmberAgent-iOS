@@ -1382,17 +1382,39 @@ extension MacGatewayStore {
         return copy
     }
 
+    /// Endpoint-aware health used by the bottom execution target pill and Mac settings tab.
+    func endpointHealth(for role: MacGatewayEndpointRole) -> MacGatewayCloudDialogueSessionHealth {
+        let targetSlot = slot(for: role)
+        if role == .cloud {
+            return targetSlot.cloudDialogueSessionHealth
+        }
+        guard targetSlot.connection != nil else {
+            return .unpaired
+        }
+        if targetSlot.isReachable == false {
+            return .unavailable(reason: localized("无法连接 Mac，请确认 Mac 在线且网络可达"))
+        }
+        if targetSlot.isReachable == nil {
+            return .checking
+        }
+        if case .failed(let message) = targetSlot.cloudDialogueTransportState {
+            return .unavailable(reason: message)
+        }
+        return .ready(modelSummary: targetSlot.connection?.name)
+    }
+
     func loadPersistedCloudDialogueState() {
+        let storageKey = dialogueStorageKey
         guard let connection else {
             resetCloudDialogueMemoryState()
             return
         }
-        guard let data = defaults.data(forKey: Self.cloudDialogueStateKey),
+        guard let data = defaults.data(forKey: storageKey),
               let envelope = try? JSONDecoder().decode(MacGatewayCloudDialoguePersistedEnvelope.self, from: data),
               envelope.gatewayId == connection.gatewayId,
               envelope.deviceId == connection.deviceId else {
             resetCloudDialogueMemoryState()
-            defaults.removeObject(forKey: Self.cloudDialogueStateKey)
+            defaults.removeObject(forKey: storageKey)
             return
         }
         let normalized = Self.redactedEnvelopeForPersistence(envelope)
@@ -1414,13 +1436,14 @@ extension MacGatewayStore {
 
     func persistCloudDialogueState(immediately: Bool = false, forceAsync: Bool = false) {
         let targetDefaults = defaults
+        let storageKey = dialogueStorageKey
         let (epoch, identity) = persistenceCoordinator.snapshot()
         let coordinator = persistenceCoordinator
         nonisolated(unsafe) let sendableDefaults = targetDefaults
         guard let connection else {
             let clearBlock: @Sendable () -> Void = {
                 guard coordinator.canCommit(epoch: epoch, identity: nil) else { return }
-                sendableDefaults.removeObject(forKey: Self.cloudDialogueStateKey)
+                sendableDefaults.removeObject(forKey: storageKey)
             }
             if (forceAsync || targetDefaults === UserDefaults.standard) && !immediately {
                 Self.persistenceQueue.async(execute: clearBlock)
@@ -1440,7 +1463,7 @@ extension MacGatewayStore {
             guard coordinator.canCommit(epoch: epoch, identity: identity) else { return nil }
             let envelope = Self.redactedEnvelopeForPersistence(rawEnvelope)
             guard let data = try? JSONEncoder().encode(envelope) else { return nil }
-            sendableDefaults.set(data, forKey: Self.cloudDialogueStateKey)
+            sendableDefaults.set(data, forKey: storageKey)
             Self.recordCloudDialogueSizeDiagnostic(byteCount: data.count)
             return data.count
         }
@@ -2825,6 +2848,35 @@ enum MacDelegationAttributionBadge: String, Equatable, Sendable {
             return "Mac 已取消"
         }
     }
+
+    func label(for role: MacGatewayEndpointRole) -> String {
+        switch role {
+        case .cloud:
+            switch self {
+            case .followup: return IOSAppLocalization.string("云端任务补充", defaultValue: "云端任务补充")
+            case .retried: return IOSAppLocalization.string("已发起重试", defaultValue: "已发起重试")
+            case .trackingEnded: return IOSAppLocalization.string("已取消回执跟踪", defaultValue: "已取消回执跟踪")
+            case .running: return IOSAppLocalization.string("云端执行中", defaultValue: "云端执行中")
+            case .awaitingMacApproval: return IOSAppLocalization.string("等待云端确认", defaultValue: "等待云端确认")
+            case .completed: return IOSAppLocalization.string("云端已完成", defaultValue: "云端已完成")
+            case .outcomeUnknown: return IOSAppLocalization.string("结果待确认", defaultValue: "结果待确认")
+            case .failed: return IOSAppLocalization.string("云端执行失败", defaultValue: "云端执行失败")
+            case .cancelled: return IOSAppLocalization.string("云端已取消", defaultValue: "云端已取消")
+            }
+        case .mac:
+            switch self {
+            case .followup: return IOSAppLocalization.string("Mac 任务补充", defaultValue: "Mac 任务补充")
+            case .retried: return IOSAppLocalization.string("已发起重试", defaultValue: "已发起重试")
+            case .trackingEnded: return IOSAppLocalization.string("已取消回执跟踪", defaultValue: "已取消回执跟踪")
+            case .running: return IOSAppLocalization.string("Mac 执行中", defaultValue: "Mac 执行中")
+            case .awaitingMacApproval: return IOSAppLocalization.string("等待 Mac 确认", defaultValue: "等待 Mac 确认")
+            case .completed: return IOSAppLocalization.string("Mac 已完成", defaultValue: "Mac 已完成")
+            case .outcomeUnknown: return IOSAppLocalization.string("结果待确认", defaultValue: "结果待确认")
+            case .failed: return IOSAppLocalization.string("Mac 执行失败", defaultValue: "Mac 执行失败")
+            case .cancelled: return IOSAppLocalization.string("Mac 已取消", defaultValue: "Mac 已取消")
+            }
+        }
+    }
 }
 
 enum MacApprovalRiskTier: String, Equatable, Sendable {
@@ -2854,7 +2906,8 @@ enum MacApprovalRiskTier: String, Equatable, Sendable {
 /// Unified read-only approval card payload consumed by the half-sheet Diff approval sheet,
 /// the unified chat timeline, and the Mac task board.
 struct MacGatewayApprovalCardItem: Identifiable, Equatable, Sendable {
-    var id: String { "\(sessionKey)::\(toolCallId)" }
+    var id: String { "\(endpointRole.rawValue)::\(sessionKey)::\(toolCallId)" }
+    var endpointRole: MacGatewayEndpointRole = .cloud
     var sessionKey: String
     var toolCallId: String
     var tool: String
@@ -2890,8 +2943,10 @@ struct MacGatewayApprovalCardItem: Identifiable, Equatable, Sendable {
         requiresLocalApproval: Bool = false,
         riskLevel: String? = nil,
         workItemId: String? = nil,
-        conversationId: String? = nil
+        conversationId: String? = nil,
+        endpointRole: MacGatewayEndpointRole = .cloud
     ) {
+        self.endpointRole = endpointRole
         self.sessionKey = sessionKey
         self.toolCallId = toolCallId
         self.tool = tool
@@ -2919,7 +2974,12 @@ struct MacGatewayApprovalCardItem: Identifiable, Equatable, Sendable {
         self.conversationId = conversationId
     }
 
-    init(approval: MacGatewayBoardItem.Approval, title: String?, fallbackDeviceName: String) {
+    init(
+        approval: MacGatewayBoardItem.Approval,
+        title: String?,
+        fallbackDeviceName: String,
+        endpointRole: MacGatewayEndpointRole = .cloud
+    ) {
         let resolvedSummary = approval.summary?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             ?? title?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
             ?? approval.tool
@@ -2935,14 +2995,17 @@ struct MacGatewayApprovalCardItem: Identifiable, Equatable, Sendable {
             requiresLocalApproval: approval.requiresLocalApproval,
             riskLevel: approval.riskLevel,
             workItemId: approval.workItemId,
-            conversationId: approval.conversationId
+            conversationId: approval.conversationId,
+            endpointRole: endpointRole
         )
     }
 }
 
-/// Equatable lightweight projection of a Mac-delegated run displayed inside the unified chat timeline.
+/// Equatable lightweight projection of a remote-delegated run displayed inside the unified chat timeline.
 struct MacDelegatedTimelineRun: Identifiable, Equatable, Sendable {
     var id: String
+    var endpointRole: MacGatewayEndpointRole = .mac
+    var endpointName: String? = nil
     var requestId: String?
     var workItemId: String?
     var conversationId: String?
@@ -3077,10 +3140,55 @@ extension MacGatewayStore {
         return true
     }
 
-    /// Aggregates active approval cards across the Mac board and status sessions,
+    /// Routes an explicit unified-timeline delegation to either the `.cloud` or `.mac` paired slot.
+    @discardableResult
+    func delegateInUnifiedTimeline(
+        to role: MacGatewayEndpointRole,
+        text: String,
+        conversationId: String,
+        requestId: String = UUID().uuidString.lowercased(),
+        targetWorkItemId: String? = nil
+    ) async -> Result<MacGatewayCloudDialogueReceipt, Error> {
+        await slot(for: role).delegateToMacInUnifiedTimeline(
+            text: text,
+            conversationId: conversationId,
+            requestId: requestId,
+            targetWorkItemId: targetWorkItemId
+        )
+    }
+
+    /// Aggregates active approval cards across both paired Cloud and Mac slots.
+    func allActiveApprovalCardItems(for conversationId: String? = nil) -> [MacGatewayApprovalCardItem] {
+        var merged = activeMacApprovalCardItems(for: conversationId)
+        if let macSlot, macSlot.connection != nil {
+            merged.append(contentsOf: macSlot.activeMacApprovalCardItems(for: conversationId))
+        }
+        return merged
+    }
+
+    /// Aggregates unified-timeline delegated runs across both paired Cloud and Mac slots,
+    /// preserving each card's true endpoint attribution (`.cloud` vs `.mac`).
+    func allUnifiedDelegatedRuns(
+        for conversationId: String?,
+        approvals suppliedApprovals: [MacGatewayApprovalCardItem]? = nil
+    ) -> [MacDelegatedTimelineRun] {
+        let allApprovals = suppliedApprovals ?? allActiveApprovalCardItems(for: conversationId)
+        let cloudApprovals = allApprovals.filter { $0.endpointRole == .cloud }
+        var runs = unifiedMacDelegatedRuns(for: conversationId, approvals: cloudApprovals)
+        if let macSlot, macSlot.connection != nil {
+            let macApprovals = allApprovals.filter { $0.endpointRole == .mac }
+            runs.append(contentsOf: macSlot.unifiedMacDelegatedRuns(for: conversationId, approvals: macApprovals))
+        }
+        return runs.sorted { lhs, rhs in
+            if lhs.sortSeq != rhs.sortSeq { return lhs.sortSeq < rhs.sortSeq }
+            return lhs.id < rhs.id
+        }
+    }
+
+    /// Aggregates active approval cards across the slot's board and status sessions,
     /// honoring both declared `requiresLocalApproval` and prior HTTP `403` rejections.
     func activeMacApprovalCardItems(for conversationId: String? = nil) -> [MacGatewayApprovalCardItem] {
-        let deviceName = connection?.name ?? localized("Mac")
+        let deviceName = connection?.name ?? endpointRole.displayName
         var items: [MacGatewayApprovalCardItem] = []
         var seenApprovalIds = Set<String>()
 
@@ -3089,7 +3197,8 @@ extension MacGatewayStore {
             var card = MacGatewayApprovalCardItem(
                 approval: approval,
                 title: boardItem.title,
-                fallbackDeviceName: deviceName
+                fallbackDeviceName: deviceName,
+                endpointRole: endpointRole
             )
             guard seenApprovalIds.insert(card.id).inserted else { continue }
             card.conversationId = card.conversationId ?? boardItem.conversationId
@@ -3115,7 +3224,8 @@ extension MacGatewayStore {
                 requiresLocalApproval: requiresLocal,
                 riskLevel: pending.riskLevel,
                 workItemId: pending.workItemId,
-                conversationId: pending.conversationId ?? session.conversationId
+                conversationId: pending.conversationId ?? session.conversationId,
+                endpointRole: endpointRole
             )
             if seenApprovalIds.insert(card.id).inserted { items.append(card) }
         }
@@ -3204,7 +3314,9 @@ extension MacGatewayStore {
             let isBusy = relatedSubmission.map { busyCloudDialogueRequestIds.contains($0.requestId) } ?? false
             runs.append(
                 MacDelegatedTimelineRun(
-                    id: "mac-work:\(progress.workItemId)",
+                    id: "\(endpointRole.rawValue)-work:\(progress.workItemId)",
+                    endpointRole: endpointRole,
+                    endpointName: connection?.name,
                     requestId: relatedSubmission?.requestId,
                     workItemId: progress.workItemId,
                     conversationId: targetConversationId,
@@ -3279,11 +3391,13 @@ extension MacGatewayStore {
 
             runs.append(
                 MacDelegatedTimelineRun(
-                    id: "mac-sub:\(submission.requestId)",
+                    id: "\(endpointRole.rawValue)-sub:\(submission.requestId)",
+                    endpointRole: endpointRole,
+                    endpointName: connection?.name,
                     requestId: submission.requestId,
                     workItemId: workItemId,
                     conversationId: targetConversationId,
-                    promptText: Self.nonEmptyTrimmed(submission.text) ?? localized("已交给 Mac 执行"),
+                    promptText: Self.nonEmptyTrimmed(submission.text) ?? localized("已交给 \(endpointRole.displayName) 执行"),
                     badge: badge,
                     statusLine: statusLine,
                     resultText: directReply?.text,

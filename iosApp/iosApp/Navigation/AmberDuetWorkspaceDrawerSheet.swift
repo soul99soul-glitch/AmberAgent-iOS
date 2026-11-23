@@ -134,7 +134,7 @@ struct AmberDuetWorkspaceDrawerSheet: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Text(gateway.connection != nil ? "已连接 \(gateway.connection?.name ?? "Amber · 云端") · 支持后台任务" : "点按头像可生成/上传形象与 Agent 参考图")
+                Text(gateway.hasAnyPairedEndpoint ? "已连接 \(gateway.multiDeviceSummaryText) · 支持多终端后台任务" : "点按头像可生成/上传形象与 Agent 参考图")
                     .font(.caption)
                     .foregroundStyle(AmberTheme.muted)
             }

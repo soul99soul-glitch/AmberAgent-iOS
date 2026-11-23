@@ -24,8 +24,19 @@ struct SettingsHomeView: View {
                 route: .language
             ),
             .init(title: "显示与字体", systemImage: "slider.horizontal.3", route: .displayFont),
-            .init(title: "Amber 多终端", subtitle: "云端 · Mac · Watch", systemImage: "laptopcomputer.and.iphone", route: .multiDevice)
+            .init(
+                title: "Amber 多终端",
+                subtitle: "云端 · Mac · Watch",
+                value: multiDeviceSummaryValue,
+                systemImage: "laptopcomputer.and.iphone",
+                route: .macGateway
+            )
         ]
+    }
+
+    private var multiDeviceSummaryValue: String? {
+        let summary = MacGatewayStore.shared.multiDeviceSummaryText
+        return summary.isEmpty ? nil : summary
     }
 
     private var agentEntries: [SettingsHomeEntry] {

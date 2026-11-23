@@ -64,10 +64,10 @@ struct AmberDuetBottomSwitcher: View {
     var onSelectTab: ((AmberDuetModeTab) -> Void)? = nil
     let onOpenTasks: () -> Void
     let onOpenWorkspace: () -> Void
-    var isDelegateToMacArmed: Bool = false
-    var onToggleDelegateToMac: (() -> Void)? = nil
-    var onSelectHost: ((Bool) -> Void)? = nil
-    var onOpenCloudPairingSettings: (() -> Void)? = nil
+    var selectedExecutionTarget: AmberComposerExecutionTarget = .local
+    var onSelectExecutionTarget: ((AmberComposerExecutionTarget) -> Void)? = nil
+    var onExitCloudMainDialogue: (() -> Void)? = nil
+    var onOpenMultiDeviceSettings: ((AmberMultiDeviceTab) -> Void)? = nil
 
     @Namespace private var glassNamespace
     @State private var tabFrames: [AmberDuetModeTab: CGRect] = [:]
@@ -104,19 +104,25 @@ struct AmberDuetBottomSwitcher: View {
 
                 Spacer(minLength: 4)
 
-                // Right (+1): 统一主时间线单层级执行去向切换胶囊（短按本机 ⇄ 远端，长按配对设置）
+                // Right (+1): 统一主时间线三向执行去向胶囊（本机 / 云端 / Mac，单手循环直切，无 .contextMenu）
                 AmberHostSwitcherPill(
                     gateway: gateway,
-                    isRemoteTargetSelected: isDelegateToMacArmed,
-                    onToggleRemoteTarget: {
-                        if let onToggleDelegateToMac {
-                            onToggleDelegateToMac()
-                        } else if selectedTab != .chat {
-                            onSelectTab?(.chat)
+                    selectedTarget: selectedExecutionTarget,
+                    onSelectExecutionTarget: { target in
+                        onSelectExecutionTarget?(target)
+                    },
+                    onExitCloudMainDialogue: {
+                        if let onExitCloudMainDialogue {
+                            onExitCloudMainDialogue()
+                        } else {
+                            gateway.setCloudMainDialogueSelected(false)
+                            if selectedTab != .chat {
+                                onSelectTab?(.chat)
+                            }
                         }
                     },
-                    onOpenPairingSettings: {
-                        onOpenCloudPairingSettings?()
+                    onOpenPairingSettings: { tab in
+                        onOpenMultiDeviceSettings?(tab)
                     }
                 )
             }

@@ -53,6 +53,7 @@ struct ChatView: View {
     @State var isPresentingPersonaStudio = false
     @State var isPresentingEmbodimentHome = false
     @State var isPresentingCloudGatewaySettings = false
+    @State var multiDeviceSettingsInitialTab: AmberMultiDeviceTab? = nil
     @State var duetSelectedToolTarget: ToolDetailTarget?
     @State var activeMacApprovalCard: MacGatewayApprovalCardItem?
     @Environment(IOSConversationStore.self)  var conversationStore
@@ -421,7 +422,15 @@ struct ChatView: View {
         }
         .sheet(isPresented: $isPresentingCloudGatewaySettings) {
             NavigationStack {
-                MacGatewaySettingsView()
+                AmberMultiDeviceSettingsView(
+                    sharedSettings: sharedSettings,
+                    conversationStore: conversationStore,
+                    initialTab: multiDeviceSettingsInitialTab,
+                    onOpenCloudDialogue: {
+                        isPresentingCloudGatewaySettings = false
+                        selectMainDialogueHost(useCloud: true)
+                    }
+                )
             }
             .amberFloatingSheet(detents: [.large])
         }
@@ -445,7 +454,7 @@ struct ChatView: View {
         .sheet(item: $activeMacApprovalCard) { approval in
             MacReadOnlyDiffApprovalSheet(
                 item: approval,
-                store: MacGatewayStore.shared,
+                store: MacGatewayStore.shared.slot(for: approval.endpointRole),
                 onRequestModification: { card in
                     beginMacModificationFromApproval(card)
                 }
@@ -543,8 +552,8 @@ struct ChatView: View {
         .onChange(of: router.sharePrefillRevision) { _, _ in
             _ = composerState.takeUnifiedMacTarget()
             composerState.activeDuetTab = .chat
-            composerState.sharePrefillNotice = MacGatewayStore.shared.connection != nil
-                ? macGatewayL("来自系统分享 · 可直接发送或点「交给 Mac」")
+            composerState.sharePrefillNotice = MacGatewayStore.shared.hasAnyPairedEndpoint
+                ? macGatewayL("来自系统分享 · 可直接发送或切换底栏去向")
                 : macGatewayL("已预填来自系统分享的内容")
             composerState.isInputFocused = true
         }
@@ -1044,12 +1053,12 @@ struct ChatView: View {
     @ViewBuilder
     private var unifiedMacDelegationDock: some View {
         let macGateway = MacGatewayStore.shared
-        if macGateway.connection != nil {
+        if macGateway.hasAnyPairedEndpoint {
             UnifiedMacDelegationTimelineSection(
                 conversationId: currentConversationIdString,
-                onFollowup: { workItemId in
+                onFollowup: { workItemId, role in
                     composerState.unifiedMacFollowupWorkItemId = workItemId
-                    composerState.isDelegateToMacArmed = false
+                    composerState.unifiedFollowupTargetRole = role
                     composerState.isInputFocused = true
                 },
                 onOpenApproval: { approval in

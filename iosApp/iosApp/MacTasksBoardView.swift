@@ -14,8 +14,12 @@ struct MacTasksBoardView: View {
         let id: String
     }
 
-    private let store = MacGatewayStore.shared
+    let store: MacGatewayStore
     private static let refreshInterval: Duration = .seconds(10)
+
+    init(store: MacGatewayStore = .shared) {
+        self.store = store
+    }
 
     var body: some View {
         ZStack {

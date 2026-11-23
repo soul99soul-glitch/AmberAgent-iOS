@@ -257,22 +257,22 @@ struct Stage2BUnifiedMacHandoffTests {
             defaults.removePersistentDomain(forName: suiteName)
         }
 
-        // Direction 1: arming remote target persists across sends until switched back to local,
-        // while staying on the unified main timeline (isCloudMainDialogueSelected remains false).
+        // Select Mac execution target in composer, submit Mac task A, and keep unified timeline active for local B.
         var composerState = ChatComposerLocalState()
-        composerState.isDelegateToMacArmed = true
-        let targetA = composerState.takeUnifiedMacTarget()
-        #expect(composerState.isDelegateToMacArmed && !composerState.isSubmittingCloudDialogue)
+        composerState.executionTarget = .mac
+        let takenA = composerState.takeUnifiedRemoteTarget()
+        #expect(takenA.role == .mac && !composerState.isSubmittingCloudDialogue)
         let receiptA = try await store.delegateToMacInUnifiedTimeline(
             text: "分析本地仓库日志",
             conversationId: convId,
             requestId: reqA,
-            targetWorkItemId: targetA
+            targetWorkItemId: takenA.workItemId
         ).get()
         store.stopCloudDialoguePolling()
 
         #expect(receiptA.workItemIds == ["work:mac-a"])
-        #expect(composerState.isDelegateToMacArmed == true, "Direction 1 keeps remote target selected until user taps back to local")
+        #expect(composerState.executionTarget == .mac, "Direction 1 keeps remote target selected until user switches back to local")
+        #expect(composerState.unifiedMacFollowupWorkItemId == nil, "Follow-up workItemId should remain clear after dispatching A")
         #expect(store.isCloudMainDialogueSelected == false, "Unified timeline delegation must not force parallel cloud host mode")
 
         // Simulate Mac A running while user chats B locally on the same conversation.
@@ -717,20 +717,65 @@ struct Stage2BUnifiedMacHandoffTests {
         #expect(latest.formattedPrefillText == "https://apple.com")
     }
 
-    // MARK: - 6. Direction 1 Single-Level Execution Target Pill & Legacy Gateway 400 Fallback
+    // MARK: - 6. Bottom-Right Unified 3-Way Execution Target Pill Gesture Policy & Legacy Gateway 400 Fallback
 
-    @Test func hostSwitcherPillUsesSingleLevelTargetToggleAndConsistentRemoteLabel() {
-        #expect(AmberHostSwitcherPillPolicy.resolveShortTap(isPaired: false) == .openPairingSettings)
-        #expect(AmberHostSwitcherPillPolicy.resolveLongPress(isPaired: false) == .openPairingSettings)
+    @Test func hostSwitcherPillRoutesSingleAndDualEndpointsWithoutContextMenu() {
+        // Unpaired: both short tap and long press open multi-device settings.
+        #expect(
+            AmberHostSwitcherPillPolicy.resolveShortTap(current: .local, cloudPaired: false, macPaired: false)
+                == .openMultiDeviceSettings(tab: .cloud)
+        )
+        #expect(
+            AmberHostSwitcherPillPolicy.resolveLongPress(current: .local, cloudPaired: false, macPaired: false)
+                == .openMultiDeviceSettings(tab: .cloud)
+        )
 
-        #expect(AmberHostSwitcherPillPolicy.resolveShortTap(isPaired: true) == .toggleRemoteTarget)
-        #expect(AmberHostSwitcherPillPolicy.resolveLongPress(isPaired: true) == .openPairingSettings)
+        // Single remote (Cloud only): short tap toggles 本机 ⇄ 云端.
+        #expect(
+            AmberHostSwitcherPillPolicy.resolveShortTap(current: .local, cloudPaired: true, macPaired: false)
+                == .selectExecutionTarget(.cloud)
+        )
+        #expect(
+            AmberHostSwitcherPillPolicy.resolveShortTap(current: .cloud, cloudPaired: true, macPaired: false)
+                == .selectExecutionTarget(.local)
+        )
 
-        let macLabel = AmberHostSwitcherPillPolicy.remoteDisplayLabel(connectionName: "Studio MacBook Pro")
-        #expect(macLabel.icon == "desktopcomputer" && macLabel.title == "Mac")
+        // Single remote (Mac only): short tap toggles 本机 ⇄ Mac; long press opens Mac tab.
+        #expect(
+            AmberHostSwitcherPillPolicy.resolveShortTap(current: .local, cloudPaired: false, macPaired: true)
+                == .selectExecutionTarget(.mac)
+        )
+        #expect(
+            AmberHostSwitcherPillPolicy.resolveShortTap(current: .mac, cloudPaired: false, macPaired: true)
+                == .selectExecutionTarget(.local)
+        )
+        #expect(
+            AmberHostSwitcherPillPolicy.resolveLongPress(current: .local, cloudPaired: false, macPaired: true)
+                == .openMultiDeviceSettings(tab: .mac)
+        )
 
-        let cloudLabel = AmberHostSwitcherPillPolicy.remoteDisplayLabel(connectionName: "Amber Cloud")
-        #expect(cloudLabel.icon == "icloud" && cloudLabel.title == "云端")
+        // Dual paired (Cloud + Mac): deterministic cycle 本机 → 云端 → Mac → 本机.
+        #expect(
+            AmberHostSwitcherPillPolicy.resolveShortTap(current: .local, cloudPaired: true, macPaired: true)
+                == .selectExecutionTarget(.cloud)
+        )
+        #expect(
+            AmberHostSwitcherPillPolicy.resolveShortTap(current: .cloud, cloudPaired: true, macPaired: true)
+                == .selectExecutionTarget(.mac)
+        )
+        #expect(
+            AmberHostSwitcherPillPolicy.resolveShortTap(current: .mac, cloudPaired: true, macPaired: true)
+                == .selectExecutionTarget(.local)
+        )
+        // Inside explicit cloud main dialogue: short tap returns to unified main timeline.
+        #expect(
+            AmberHostSwitcherPillPolicy.resolveShortTap(
+                current: .local,
+                cloudPaired: true,
+                macPaired: true,
+                isInCloudMainDialogue: true
+            ) == .exitCloudMainDialogue
+        )
     }
 
     @Test @MainActor func legacyGateway400InvalidRequestRetriesSameRequestIdWithoutConversationId() async throws {

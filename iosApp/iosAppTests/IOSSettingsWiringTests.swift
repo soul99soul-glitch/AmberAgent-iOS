@@ -74,8 +74,15 @@ final class IOSSettingsWiringTests: XCTestCase {
         let shell = try source("iosApp/AppShell.swift")
         let delegate = try source("iosApp/IOSLocalNotifications.swift")
 
+        let multiDevice = try source("iosApp/AmberMultiDeviceSettingsView.swift")
+        XCTAssertTrue(home.contains("title: \"Amber 多终端\""))
         XCTAssertTrue(home.contains("route: .macGateway"))
-        XCTAssertTrue(shell.contains("case .macGateway:\n                MacGatewaySettingsView()"))
+        XCTAssertFalse(home.contains("route: .appleWatch"))
+        XCTAssertTrue(shell.contains("case .macGateway:\n                AmberMultiDeviceSettingsView("))
+        XCTAssertTrue(shell.contains("case .appleWatch:\n                AmberMultiDeviceSettingsView("))
+        XCTAssertTrue(multiDevice.contains("MacGatewaySettingsView("))
+        XCTAssertTrue(multiDevice.contains("IOSWatchSettingsView("))
+        XCTAssertTrue(multiDevice.contains("embeddedInMultiDevice: true"))
         XCTAssertTrue(shell.contains("MacGatewayStore.shared.receivePairingLink(payload)"))
         XCTAssertTrue(shell.contains("rootRouter.path = [.settings, .macGateway]"))
         // Push landings and the Settings row open the task board.
