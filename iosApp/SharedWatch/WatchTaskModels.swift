@@ -1,5 +1,41 @@
 import Foundation
 
+/// Execution host that owns a Watch-projected task, activity, or question target.
+enum WatchExecutionOrigin: String, Codable, Hashable, Sendable {
+    case local
+    case cloud
+    case mac
+
+    var defaultTitle: String {
+        switch self {
+        case .local: "本机"
+        case .cloud: "云端"
+        case .mac: "Mac"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .local: "iphone"
+        case .cloud: "icloud"
+        case .mac: "desktopcomputer"
+        }
+    }
+
+    func localizedTitle(languageCode: String?) -> String {
+        switch self {
+        case .mac:
+            return "Mac"
+        case .local, .cloud:
+            return WatchTaskLocalization.string(
+                defaultTitle,
+                defaultValue: defaultTitle,
+                languageCode: languageCode
+            )
+        }
+    }
+}
+
 /// Compact, watch-safe view of a chat run. iPhone is the sole authority;
 /// Watch only renders this snapshot and returns user intents.
 struct WatchTaskSnapshot: Codable, Hashable, Sendable {
@@ -22,6 +58,12 @@ struct WatchTaskSnapshot: Codable, Hashable, Sendable {
     /// Monotonic phone-owned revision; ISO-8601 timestamps alone lose same-second updates.
     var sequence: Int64? = nil
     var library: WatchLibrarySnapshot? = nil
+    /// Host owning the projected task (`本机` / `云端` / `Mac`). `nil` defaults to `.local`.
+    var origin: WatchExecutionOrigin? = nil
+    /// Optional human-readable host name (redacted before entering WidgetKit App Group).
+    var originName: String? = nil
+    /// Explicit attention signal for Smart Stack & watch priority (pending approval/reply).
+    var needsAttention: Bool? = nil
 
     static let idle = WatchTaskSnapshot(
         runId: "",
@@ -42,6 +84,14 @@ struct WatchTaskSnapshot: Codable, Hashable, Sendable {
     var isActive: Bool {
         !runId.isEmpty && phase != "idle"
     }
+
+    var effectiveOrigin: WatchExecutionOrigin {
+        origin ?? .local
+    }
+
+    var requiresAttention: Bool {
+        needsAttention == true || phase == "waitingForUser" || decision != nil
+    }
 }
 
 struct WatchLibrarySnapshot: Codable, Hashable, Sendable {
@@ -55,12 +105,22 @@ struct WatchLibrarySnapshot: Codable, Hashable, Sendable {
     /// The phone theme accent as 0xRRGGBB. `nil` from older phones keeps
     /// the Watch on its built-in copper.
     var accentHex: UInt32? = nil
+    /// Current iPhone execution target (`本机` / `云端` / `Mac`) followed by Watch questions.
+    var preferredExecutionTarget: WatchExecutionOrigin? = nil
+    /// Paired remote host kind (`.cloud` or `.mac`), `nil` when unpaired.
+    var remoteTargetOrigin: WatchExecutionOrigin? = nil
+    /// Display name of paired remote host (e.g. `Amber Cloud` / `Studio Mac`).
+    var remoteTargetName: String? = nil
+    /// Reachability of the paired remote host when known.
+    var remoteTargetOnline: Bool? = nil
 }
 
 struct WatchQuickAction: Codable, Hashable, Identifiable, Sendable {
     var id: String
     var title: String
     var prompt: String
+    /// Optional explicit execution target override for this quick action.
+    var targetOrigin: WatchExecutionOrigin? = nil
 
     /// A prompt containing one of these asks the Watch for a fill-in first.
     static let placeholders = ["{输入}", "{輸入}", "{input}"]
@@ -109,6 +169,8 @@ struct WatchRecentActivity: Codable, Hashable, Identifiable, Sendable {
     var resultTitle: String? = nil
     var summary: String
     var updatedAt: Date
+    /// Host that produced this activity (`本机` / `云端` / `Mac`).
+    var origin: WatchExecutionOrigin? = nil
 }
 
 struct WatchNote: Codable, Hashable, Identifiable, Sendable {
@@ -131,6 +193,11 @@ enum WatchSnapshotOrdering {
 
 enum WatchSnapshotFreshnessPolicy {
     static let staleAfter: TimeInterval = 60
+    static let remoteStaleAfter: TimeInterval = 5 * 60
+
+    static func staleAfter(for snapshot: WatchTaskSnapshot) -> TimeInterval {
+        snapshot.effectiveOrigin == .local ? staleAfter : remoteStaleAfter
+    }
 
     static func presented(
         _ snapshot: WatchTaskSnapshot,
@@ -140,7 +207,7 @@ enum WatchSnapshotFreshnessPolicy {
         guard snapshot.isActive,
               !["completed", "failed", "cancelled"].contains(snapshot.phase),
               !isPhoneReachable,
-              now.timeIntervalSince(snapshot.updatedAt) >= staleAfter else {
+              now.timeIntervalSince(snapshot.updatedAt) >= staleAfter(for: snapshot) else {
             return snapshot
         }
         var stale = snapshot
@@ -149,6 +216,7 @@ enum WatchSnapshotFreshnessPolicy {
         stale.detail = nil
         stale.metricText = nil
         stale.decision = nil
+        stale.needsAttention = false
         stale.actions = stale.actions.filter { $0 == .openOnPhone }
         stale.isStale = true
         return stale
@@ -163,6 +231,31 @@ struct WatchDecision: Codable, Hashable, Sendable {
     var options: [WatchDecisionOption]
     var riskLevel: WatchRiskLevel
     var allowsVoice: Bool
+    /// Explicit L3 / host-local-only redline flag. When true (or `riskLevel == .high`),
+    /// Watch must hide any Approve button and disable Double Tap approval.
+    var localApprovalOnly: Bool? = nil
+    /// Host owning the decision (`本机` / `云端` / `Mac`).
+    var origin: WatchExecutionOrigin? = nil
+
+    /// L3 redline: high-risk or local-only approvals can never be approved from Watch.
+    var blocksWatchApproval: Bool {
+        riskLevel == .high || localApprovalOnly == true
+    }
+
+    /// Options safe to display as buttons on Watch (strips `.dictate` and, for L3, strips `.approve`).
+    var visibleOptionsForWatch: [WatchDecisionOption] {
+        options.filter { option in
+            if option.style == .dictate { return false }
+            if blocksWatchApproval && option.style == .approve { return false }
+            return true
+        }
+    }
+
+    /// Only low-risk (L1 / `ask_user`) decisions support Double Tap quick confirm.
+    var doubleTapPrimaryOptionId: String? {
+        guard !blocksWatchApproval, riskLevel == .low else { return nil }
+        return visibleOptionsForWatch.first { $0.style == .approve || $0.style == .choice }?.id
+    }
 }
 
 enum WatchDecisionType: String, Codable, Hashable, Sendable {
@@ -210,6 +303,9 @@ struct WatchTaskActionRequest: Codable, Hashable, Sendable {
     var optionId: String?
     var text: String?
     var createdAt: Date
+    /// Optional explicit execution host requested by Watch (e.g. `.cloud` / `.mac`).
+    /// When `nil`, iPhone follows the user's current execution target selection.
+    var targetOrigin: WatchExecutionOrigin? = nil
 }
 
 enum WatchInboundAction: String, Codable, Hashable, Sendable {

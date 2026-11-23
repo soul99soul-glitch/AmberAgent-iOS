@@ -120,7 +120,7 @@ struct WatchTaskRootView: View {
     @ViewBuilder private var home: some View {
         if model.showsCurrentTask {
             Button { model.path.append(.task(model.snapshot.runId)) } label: {
-                WatchResultCard(status: t(phaseTitle), symbol: phaseSymbol,
+                WatchResultCard(status: currentTaskCardStatus, symbol: phaseSymbol,
                     title: model.snapshot.headline,
                     summary: model.snapshot.summary ?? model.snapshot.detail ?? "",
                     updatedAt: model.snapshot.updatedAt, palette: model.accentPalette)
@@ -129,7 +129,7 @@ struct WatchTaskRootView: View {
             .accessibilityIdentifier("watch.current-task")
         } else if let entry = model.activities.first {
             Button { model.openActivity(entry) } label: {
-                WatchResultCard(status: t(entry.statusKey), symbol: entry.statusSymbol,
+                WatchResultCard(status: activityStatusLabel(for: entry), symbol: entry.statusSymbol,
                     title: entry.resultTitle ?? entry.title, summary: entry.summary, updatedAt: entry.updatedAt,
                     palette: model.accentPalette)
                     .accessibilityValue(!store.hasViewed(entry) ? t("未读") : "")
@@ -192,11 +192,30 @@ struct WatchTaskRootView: View {
                                  symbol: draft.pendingRequest == nil ? "pencil" : "clock", route: .compose(draft.key))
             }
         }
-        navigationButton(t("设置与连接"), symbol: "gearshape", route: .settings)
-        Label(connectionTitle,
-              systemImage: model.isPhoneReachable ? "iphone.gen3.radiowaves.left.and.right" : "iphone.slash")
-            .font(.caption2).foregroundStyle(model.isPhoneReachable ? Color.secondary : Color.orange)
-            .frame(maxWidth: .infinity)
+        Button { model.path.append(.settings) } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "gearshape")
+                    .font(.caption2.weight(.semibold))
+                Text(t("设置"))
+                    .font(.caption2.weight(.medium))
+                Spacer(minLength: 4)
+                Circle()
+                    .fill(model.isPhoneReachable ? Color.green : Color.orange)
+                    .frame(width: 5, height: 5)
+                    .accessibilityHidden(true)
+                Text(compactConnectionTag)
+                    .font(.caption2)
+                    .foregroundStyle(model.isPhoneReachable ? Color.secondary : Color.orange)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .frame(maxWidth: .infinity, minHeight: 28)
+            .foregroundStyle(Color.white.opacity(0.74))
+            .background(Color.white.opacity(0.06), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("watch.settings")
     }
 
     private var askButton: some View {
@@ -215,7 +234,17 @@ struct WatchTaskRootView: View {
 
     @ViewBuilder private func composer(key: String) -> some View {
         if let draft = store.draft(forKey: key) {
-            if draft.conversationId != nil { sectionTitle("继续原对话") }
+            if draft.conversationId != nil {
+                sectionTitle("继续原对话")
+            } else if draft.composerMode == .ask {
+                let target = model.effectiveTargetOrigin(for: draft)
+                Label(
+                    "\(t("发往")) \(target.localizedTitle(languageCode: model.snapshot.languageCode))",
+                    systemImage: target.symbolName
+                )
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+            }
             if draft.pendingRequest != nil {
                 card {
                     Text(t("正在确认是否已接收")).font(.caption.weight(.semibold))
@@ -229,29 +258,29 @@ struct WatchTaskRootView: View {
                 Text(template?.filled(with: draft.text) ?? draft.text)
                     .font(.body).fixedSize(horizontal: false, vertical: true).privacySensitive()
             } else {
-                TextField(t(template == nil ? "听写或输入文字" : "填写空白处"), text: Binding(
+                TextField(t(template == nil ? "听写或输入" : "填写空白处"), text: Binding(
                     get: { store.draft(forKey: key)?.text ?? "" },
-                    set: { store.updateDraftText(key: key, text: $0) }
+                    set: { model.handleComposerTextChange(key: key, newText: $0) }
                 ), axis: .vertical)
-                .lineLimit(3...8).accessibilityIdentifier("watch.composer")
+                .lineLimit(3...8)
+                .onSubmit { model.submitIfDirectSendEnabled(key: key) }
+                .accessibilityIdentifier("watch.composer")
                 if let template {
                     // Shows exactly what will be sent once the blank is filled.
                     Text(draft.text.isEmpty ? template.prompt : template.filled(with: draft.text) ?? draft.text)
                         .font(.body).foregroundStyle(draft.text.isEmpty ? Color.secondary : Color.primary)
                         .fixedSize(horizontal: false, vertical: true).privacySensitive()
-                } else if draft.text.isEmpty {
-                    Text(t("使用系统听写或文字输入，检查后再发送。"))
-                        .font(.caption2).foregroundStyle(.secondary)
-                } else {
+                } else if !draft.text.isEmpty {
                     // watchOS renders TextField as a compact input launcher;
                     // show the complete text separately for review before sending.
                     Text(draft.text).font(.body).fixedSize(horizontal: false, vertical: true).privacySensitive()
                 }
             }
-            Text("\(sentText.count) / 2000").font(.caption2.monospacedDigit())
-                .foregroundStyle(sentText.count > 2_000 ? Color.red : Color.secondary)
+            if sentText.count > 2_000 {
+                Text(t("内容超出 2000 字上限")).font(.caption2).foregroundStyle(.red)
+            }
             if model.isSending { ProgressView(t("正在发送")) }
-            actionButton(t(draft.composerMode == .note ? "保存记事" : draft.pendingRequest != nil ? "确认接收结果" : "发送问题")) {
+            actionButton(t(draft.composerMode == .note ? "保存记事" : draft.pendingRequest != nil ? "确认接收结果" : "发送")) {
                 model.submitDraft(key: key)
             }
             .buttonStyle(.borderedProminent)
@@ -317,7 +346,7 @@ struct WatchTaskRootView: View {
     }
 
     private var taskPhaseLabel: some View {
-        Label(t(phaseTitle), systemImage: phaseSymbol).font(.caption.weight(.semibold))
+        Label(currentTaskCardStatus, systemImage: phaseSymbol).font(.caption.weight(.semibold))
     }
 
     @ViewBuilder private var taskUpdateTime: some View {
@@ -327,28 +356,51 @@ struct WatchTaskRootView: View {
     }
 
     private func decisionCard(_ decision: WatchDecision, runId: String) -> some View {
-        card {
+        let visibleOptions = decision.visibleOptionsForWatch
+        let doubleTapOptionId = decision.doubleTapPrimaryOptionId
+        return card {
             if !decision.title.isEmpty { Text(decision.title).font(.headline) }
-            if decision.type == .approval {
-                Label(t(decision.riskLevel == .low ? "低风险" : decision.riskLevel == .medium ? "中等风险" : "高风险"), systemImage: "shield.lefthalf.filled")
-                    .font(.caption2).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                if decision.type == .approval {
+                    Label(t(decision.riskLevel == .low ? "低风险" : decision.riskLevel == .medium ? "中等风险" : "高风险"), systemImage: "shield.lefthalf.filled")
+                        .font(.caption2).foregroundStyle(decision.blocksWatchApproval ? .orange : .secondary)
+                }
+                if let origin = decision.origin {
+                    Label(origin.localizedTitle(languageCode: model.snapshot.languageCode), systemImage: origin.symbolName)
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
             }
             Text(decision.body).font(.body).fixedSize(horizontal: false, vertical: true)
-            ForEach(decision.options.filter { $0.style != .dictate }) { option in
+            if decision.blocksWatchApproval {
+                Text(t("高危操作不支持手表批准，请前往 iPhone / Mac 核对。"))
+                    .font(.caption2).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(visibleOptions) { option in
                 Button {
                     switch option.style {
-                    case .approve: model.perform(.approve, optionId: option.id, expectedRunId: runId, expectedDecisionId: decision.id)
-                    case .deny: model.perform(decision.type == .approval ? .deny : .choose, optionId: option.id, expectedRunId: runId, expectedDecisionId: decision.id)
-                    case .choice: model.perform(.choose, optionId: option.id, expectedRunId: runId, expectedDecisionId: decision.id)
-                    case .openOnPhone: model.perform(.openOnPhone, expectedRunId: runId, expectedDecisionId: decision.id)
+                    case .approve:
+                        guard !decision.blocksWatchApproval else { return }
+                        model.perform(.approve, optionId: option.id, expectedRunId: runId, expectedDecisionId: decision.id)
+                    case .deny:
+                        model.perform(decision.type == .approval ? .deny : .choose, optionId: option.id, expectedRunId: runId, expectedDecisionId: decision.id)
+                    case .choice:
+                        model.perform(.choose, optionId: option.id, expectedRunId: runId, expectedDecisionId: decision.id)
+                    case .openOnPhone:
+                        model.perform(.openOnPhone, expectedRunId: runId, expectedDecisionId: decision.id)
                     case .dictate: break
                     }
                 } label: {
                     Text(option.title).font(.caption.weight(.medium))
                         .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity)
                 }
-                .handGestureShortcut(.primaryAction, isEnabled: model.path.last == .task(runId) && decision.riskLevel != .high
-                    && option.id == decision.options.first(where: { $0.style == .approve || $0.style == .choice })?.id)
+                .handGestureShortcut(
+                    .primaryAction,
+                    isEnabled: model.path.last == .task(runId)
+                        && !decision.blocksWatchApproval
+                        && doubleTapOptionId != nil
+                        && option.id == doubleTapOptionId
+                )
                 .disabled(!model.canControl)
             }
             if decision.allowsVoice {
@@ -371,7 +423,7 @@ struct WatchTaskRootView: View {
                 Button { model.openActivity(entry) } label: {
                     card {
                         HStack(alignment: .firstTextBaseline, spacing: 5) {
-                            Label(t(entry.statusKey), systemImage: entry.statusSymbol)
+                            Label(activityStatusLabel(for: entry), systemImage: entry.statusSymbol)
                                 .font(.caption2).foregroundStyle(.orange)
                             Spacer(minLength: 0)
                             if !store.hasViewed(entry) {
@@ -429,7 +481,7 @@ struct WatchTaskRootView: View {
     }
 
     @ViewBuilder private func activity(_ entry: WatchRecentActivity) -> some View {
-        Label(t(entry.statusKey), systemImage: entry.statusSymbol)
+        Label(activityStatusLabel(for: entry), systemImage: entry.statusSymbol)
             .font(.caption.weight(.semibold)).foregroundStyle(.orange)
         Text(entry.title).font(.headline).fixedSize(horizontal: false, vertical: true).privacySensitive()
         updatedAt(entry.updatedAt)
@@ -447,7 +499,7 @@ struct WatchTaskRootView: View {
                 Text(t("连接 iPhone 后可继续操作")).font(.caption2).foregroundStyle(.orange)
             }
         } else if entry.kind == "note" {
-            Text(t("在 iPhone 的设置 → Apple Watch 中查看同步的记事。"))
+            Text(t("可在 iPhone 主界面收件箱或 设置 → Amber 多终端 → Watch 查看。"))
                 .font(.caption2).foregroundStyle(.secondary)
         } else {
             Text(t("在 iPhone 查看完整内容")).font(.caption2).foregroundStyle(.secondary)
@@ -485,11 +537,36 @@ struct WatchTaskRootView: View {
             if note.syncedAt == nil {
                 actionButton(t("重试同步")) { model.retryNote(id: id) }
             }
-            Text(t("在 iPhone 的设置 → Apple Watch 中查看同步的记事。"))
+            Text(t("可在 iPhone 主界面收件箱或 设置 → Amber 多终端 → Watch 查看。"))
                 .font(.caption2).foregroundStyle(.secondary)
+            let directInstruction = "请整理并处理这条随手记："
+            if model.noteQuestion(note, instruction: directInstruction).count <= 2_000 {
+                sectionTitle("交给 Amber")
+                if let remoteOrigin = model.library?.remoteTargetOrigin {
+                    actionButton(t(remoteOrigin == .mac ? "交给 Mac 整理" : "交给云端整理")) {
+                        model.composeFromNote(
+                            note,
+                            instruction: directInstruction,
+                            targetOrigin: remoteOrigin,
+                            autoSubmit: true
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isSending)
+                } else {
+                    actionButton(t("交给 Amber 处理")) {
+                        model.composeFromNote(
+                            note,
+                            instruction: directInstruction,
+                            autoSubmit: true
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isSending)
+                }
+            }
             let handOffs = Self.noteInstructions.filter { model.noteQuestion(note, instruction: $0.instruction).count <= 2_000 }
             if !handOffs.isEmpty {
-                sectionTitle("交给 Amber")
                 ForEach(handOffs, id: \.title) { item in
                     actionButton(t(item.title)) { model.composeFromNote(note, instruction: item.instruction) }
                 }
@@ -511,12 +588,25 @@ struct WatchTaskRootView: View {
             Label(connectionTitle, systemImage: "iphone")
                 .font(.caption.weight(.semibold))
             if let library = model.library {
-                Text(library.assistantName).font(.caption).privacySensitive()
+                let target = library.preferredExecutionTarget ?? .local
+                HStack(spacing: 4) {
+                    Text(library.assistantName).font(.caption).privacySensitive()
+                    Text("·").font(.caption2).foregroundStyle(.secondary)
+                    Label(target.localizedTitle(languageCode: model.snapshot.languageCode), systemImage: target.symbolName)
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
                 updatedAt(library.updatedAt)
                 if let message = library.configurationMessage { Text(t(message)).font(.caption2) }
             } else { Text(t("请在 iPhone 打开 Amber 完成首次同步。")).font(.caption2) }
             actionButton(t("重新同步")) { model.refresh() }.disabled(model.isBusy)
         }
+        sectionTitle("输入与提问")
+        Toggle(t("听写后直接发送"), isOn: Binding(
+            get: { store.settings.directSendAfterDictation },
+            set: { value in store.updateSettings { $0.directSendAfterDictation = value } }
+        ))
+        Text(t("开启后语音听写完成即发送，关闭时先确认草稿。"))
+            .font(.caption2).foregroundStyle(.secondary)
         sectionTitle("触感")
         Toggle(t("触感反馈"), isOn: Binding(
             get: { store.settings.hapticsEnabled }, set: { value in store.updateSettings { $0.hapticsEnabled = value } }
@@ -631,5 +721,28 @@ struct WatchTaskRootView: View {
     private var logoBreathes: Bool {
         ["running", "reconnecting"].contains(model.snapshot.phase) && !reduceMotion && !isLuminanceReduced
     }
+    private var currentTaskCardStatus: String {
+        let base = t(phaseTitle)
+        let origin = model.snapshot.effectiveOrigin
+        guard origin != .local || model.snapshot.origin != nil else { return base }
+        return "\(base) · \(origin.localizedTitle(languageCode: model.snapshot.languageCode))"
+    }
+
+    private func activityStatusLabel(for entry: WatchRecentActivity) -> String {
+        let base = t(entry.statusKey)
+        guard entry.kind != "note", let origin = entry.origin else { return base }
+        return "\(base) · \(origin.localizedTitle(languageCode: model.snapshot.languageCode))"
+    }
+
+    private var compactConnectionTag: String {
+        if !model.isPhoneReachable {
+            return t("离线")
+        }
+        if let target = model.library?.preferredExecutionTarget, target != .local {
+            return target.localizedTitle(languageCode: model.snapshot.languageCode)
+        }
+        return t("已连接")
+    }
+
     private func t(_ key: String) -> String { model.localized(key) }
 }

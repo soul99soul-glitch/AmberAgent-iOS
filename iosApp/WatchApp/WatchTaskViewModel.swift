@@ -187,7 +187,12 @@ final class WatchTaskViewModel: ObservableObject {
         }
     }
 
-    func compose(mode: WatchComposerMode, conversationId: String? = nil, quickAction: WatchQuickAction? = nil) {
+    func compose(
+        mode: WatchComposerMode,
+        conversationId: String? = nil,
+        quickAction: WatchQuickAction? = nil,
+        targetOrigin: WatchExecutionOrigin? = nil
+    ) {
         // A template draft holds only the fill-in under its own key, so it
         // survives prompt edits and never inherits a full-prompt draft.
         let key = mode == .note ? "note" : quickAction.map { ($0.isTemplate ? "quick-fill:" : "quick:") + $0.id }
@@ -196,8 +201,14 @@ final class WatchTaskViewModel: ObservableObject {
            old.pendingRequest == nil, quickAction.isTemplate || old.text != quickAction.prompt {
             store.removeDraft(key: "quick:\(quickAction.id)")
         }
-        _ = store.ensureDraft(key: key, mode: mode, conversationId: conversationId, quickActionId: quickAction?.id,
-                              initialText: quickAction.map { $0.isTemplate ? "" : $0.prompt } ?? "")
+        _ = store.ensureDraft(
+            key: key,
+            mode: mode,
+            conversationId: conversationId,
+            quickActionId: quickAction?.id,
+            initialText: quickAction.map { $0.isTemplate ? "" : $0.prompt } ?? "",
+            targetOrigin: targetOrigin ?? quickAction?.targetOrigin
+        )
         guard store.draft(forKey: key) != nil else {
             setStatus(localized(store.storageError ?? "手表本地缓存保存失败，请稍后重试"))
             return
@@ -207,12 +218,53 @@ final class WatchTaskViewModel: ObservableObject {
     }
 
     /// Siri / Shortcuts: open the new-question composer, optionally prefilled.
-    func startAsk(prefill: String?) {
+    /// When `autoSubmit` is true (or direct-send is enabled) and prefill is non-empty,
+    /// submits smoothly in one step whenever iPhone is reachable and ready.
+    func startAsk(prefill: String?, autoSubmit: Bool = false) {
         path = []
         compose(mode: .ask)
-        if let prefill, !prefill.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            store.updateDraftText(key: "ask", text: prefill)
+        guard let prefill, !prefill.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
         }
+        store.updateDraftText(key: "ask", text: prefill)
+        if autoSubmit || store.settings.directSendAfterDictation {
+            submitDraft(key: "ask")
+        }
+    }
+
+    /// Handles dictation/text input inside the Watch composer. When "听写后直接发送"
+    /// is enabled, transitioning from empty to non-empty ask input submits immediately.
+    func handleComposerTextChange(key: String, newText: String) {
+        let previous = store.draft(forKey: key)
+        let wasEmpty = previous?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
+        _ = store.updateDraftText(key: key, text: newText)
+        guard store.settings.directSendAfterDictation,
+              let draft = store.draft(forKey: key),
+              draft.composerMode == .ask,
+              draft.pendingRequest == nil,
+              draft.quickActionId == nil,
+              wasEmpty else { return }
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, newText.count <= 2_000 else { return }
+        submitDraft(key: key)
+    }
+
+    /// Explicit submit trigger (e.g. keyboard/dictation Done) honoring direct-send setting.
+    func submitIfDirectSendEnabled(key: String) {
+        guard store.settings.directSendAfterDictation,
+              let draft = store.draft(forKey: key),
+              draft.composerMode == .ask,
+              draft.pendingRequest == nil else { return }
+        let trimmed = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, draft.text.count <= 2_000 else { return }
+        submitDraft(key: key)
+    }
+
+    func effectiveTargetOrigin(for draft: WatchComposerDraft) -> WatchExecutionOrigin {
+        if draft.conversationId != nil, draft.targetOrigin == nil {
+            return .local
+        }
+        return draft.targetOrigin ?? library?.preferredExecutionTarget ?? .local
     }
 
     func startQuickAction(id: String) {
@@ -237,20 +289,33 @@ final class WatchTaskViewModel: ObservableObject {
     }
 
     /// Turns a saved note into a new, reviewable question. The note itself
-    /// is unchanged; nothing is sent until the user confirms.
-    func composeFromNote(_ note: WatchNote, instruction: String) {
-        let key = "note-ask:\(note.id)"
+    /// is unchanged; nothing is sent until the user confirms (unless `autoSubmit` is requested).
+    func composeFromNote(
+        _ note: WatchNote,
+        instruction: String,
+        targetOrigin: WatchExecutionOrigin? = nil,
+        autoSubmit: Bool = false
+    ) {
+        let key = targetOrigin.map { "note-ask:\($0.rawValue):\(note.id)" } ?? "note-ask:\(note.id)"
         let text = noteQuestion(note, instruction: instruction)
         if let old = store.draft(forKey: key), old.pendingRequest == nil, old.text != text {
             store.removeDraft(key: key)
         }
-        _ = store.ensureDraft(key: key, mode: .ask, initialText: text)
+        _ = store.ensureDraft(
+            key: key,
+            mode: .ask,
+            initialText: text,
+            targetOrigin: targetOrigin
+        )
         guard store.draft(forKey: key) != nil else {
             setStatus(localized(store.storageError ?? "手表本地缓存保存失败，请稍后重试"))
             return
         }
         clearStatus()
         path.append(.compose(key))
+        if autoSubmit {
+            submitDraft(key: key)
+        }
     }
 
     func noteQuestion(_ note: WatchNote, instruction: String) -> String {
@@ -292,14 +357,18 @@ final class WatchTaskViewModel: ObservableObject {
             setStatus(localized("无法连接 iPhone，问题已保留为草稿"))
             return
         }
-        guard library?.isConfigured == true || draft.pendingRequest != nil else {
+        let remoteOverrideReady = draft.targetOrigin != nil
+            && draft.targetOrigin != .local
+            && library?.remoteTargetOnline == true
+        guard library?.isConfigured == true || remoteOverrideReady || draft.pendingRequest != nil else {
             setStatus(localized(library?.configurationMessage ?? "请先在 iPhone 完成模型配置"))
             return
         }
         let request = draft.pendingRequest ?? WatchTaskActionRequest(
             requestId: draft.requestId, runId: "", conversationId: draft.conversationId,
             decisionId: nil, action: draft.quickActionId == nil ? .ask : .runQuickAction,
-            optionId: draft.quickActionId, text: draft.text, createdAt: Date()
+            optionId: draft.quickActionId, text: draft.text, createdAt: Date(),
+            targetOrigin: draft.targetOrigin
         )
         guard store.beginSending(key: key, request: request) else {
             setStatus(localized(store.storageError ?? "手表本地缓存保存失败，请稍后重试"))
@@ -484,7 +553,8 @@ final class WatchTaskViewModel: ObservableObject {
         freshnessTask?.cancel()
         guard value.isActive, !isPhoneReachable,
               !["completed", "failed", "cancelled", "stale"].contains(value.phase) else { return }
-        let remaining = max(0, WatchSnapshotFreshnessPolicy.staleAfter - Date().timeIntervalSince(value.updatedAt))
+        let staleAfter = WatchSnapshotFreshnessPolicy.staleAfter(for: value)
+        let remaining = max(0, staleAfter - Date().timeIntervalSince(value.updatedAt))
         freshnessTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(remaining))
             guard !Task.isCancelled, let self else { return }

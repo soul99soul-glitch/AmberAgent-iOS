@@ -126,6 +126,7 @@ final class IOSWatchCompanionService {
             && lhs.action == rhs.action
             && lhs.optionId == rhs.optionId
             && lhs.text == rhs.text
+            && lhs.targetOrigin == rhs.targetOrigin
             && abs(lhs.createdAt.timeIntervalSince(rhs.createdAt)) <= 1
     }
 
@@ -400,6 +401,7 @@ final class IOSWatchCompanionService {
         sharedSettings: IOSSharedSettingsStore,
         conversationStore: IOSConversationStore?,
         configurationMessage: String? = nil,
+        remoteProjection: WatchRemoteExecutionProjection? = nil,
         now: Date = Date()
     ) async -> WatchLibrarySnapshot {
         let settings = sharedSettings.snapshot
@@ -443,7 +445,13 @@ final class IOSWatchCompanionService {
             ))
         }
 
-        var projectedActivities = recentActivities + notes.map(noteActivity)
+        let localActivities = recentActivities.map { activity -> WatchRecentActivity in
+            var copy = activity
+            if copy.origin == nil { copy.origin = .local }
+            return copy
+        }
+        let remoteActivities = remoteProjection?.recentActivities ?? []
+        var projectedActivities = localActivities + remoteActivities + notes.map(noteActivity)
         projectedActivities = projectedActivities.map { activity in
             // Preserve a producer-owned result title (for example an exact
             // persisted MiniApp name). Conversation titles are only the
@@ -466,15 +474,24 @@ final class IOSWatchCompanionService {
         }
         let activities = Array(projectedActivities.prefix(Self.maxRecentConversations))
 
+        let prefersReadyRemote = remoteProjection?.isPaired == true
+            && remoteProjection?.isOnline == true
+            && remoteProjection?.selectedExecutionTarget != .local
+        let effectiveConfigMessage = prefersReadyRemote ? nil : configurationMessage
+
         return WatchLibrarySnapshot(
             assistantName: assistantName,
-            isConfigured: configurationMessage == nil,
-            configurationMessage: configurationMessage,
+            isConfigured: effectiveConfigMessage == nil,
+            configurationMessage: effectiveConfigMessage,
             quickActions: quickActions,
             recent: recent,
             activities: activities.isEmpty ? nil : activities,
             updatedAt: now,
-            accentHex: AmberThemeRuntime.shared.accentHex
+            accentHex: AmberThemeRuntime.shared.accentHex,
+            preferredExecutionTarget: remoteProjection?.selectedExecutionTarget ?? .local,
+            remoteTargetOrigin: remoteProjection?.remoteOrigin,
+            remoteTargetName: remoteProjection?.remoteHostName,
+            remoteTargetOnline: remoteProjection?.isPaired == true ? remoteProjection?.isOnline : nil
         )
     }
 

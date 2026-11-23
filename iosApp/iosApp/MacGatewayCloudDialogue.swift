@@ -1259,6 +1259,7 @@ extension MacGatewayStore {
             markCloudDialogueViewed()
         }
         persistCloudDialogueState()
+        notifyWatchRemoteStateChanged()
         // Switching the visible host does not end accepted cloud work or its pending reply.
         // The loop retires itself once the cloud is hidden and all work has settled.
         startCloudDialoguePollingIfNeeded()
@@ -1966,6 +1967,7 @@ extension MacGatewayStore {
                 )
                 if didMutate {
                     persistCloudDialogueState()
+                    notifyWatchRemoteStateChanged()
                     // A terminal page can end hidden polling before its ambiguous inputs get another receipt check.
                     if !shouldPollCloudDialogue {
                         await reconcileFlaggedCloudDialogueFollowups(for: client)
@@ -2506,7 +2508,7 @@ extension MacGatewayStore {
         }
     }
 
-    private func cloudDialogueFriendlyErrorMessage(for error: Error) -> String {
+    func cloudDialogueFriendlyErrorMessage(for error: Error) -> String {
         if case MacGatewayError.server(let message) = error {
             let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if normalized == "not found" || normalized == "not_found" || normalized.contains("404") {
@@ -2705,7 +2707,7 @@ extension MacGatewayStore {
         return normalized == "receipt_not_found" || normalized == "not found" || normalized == "not_found" || normalized.contains("404")
     }
 
-    private static func isDeterministicNonExecutionError(_ error: Error) -> Bool {
+    static func isDeterministicNonExecutionError(_ error: Error) -> Bool {
         switch error {
         case MacGatewayError.unauthorized, MacGatewayError.forbidden, MacGatewayError.conflict:
             return true

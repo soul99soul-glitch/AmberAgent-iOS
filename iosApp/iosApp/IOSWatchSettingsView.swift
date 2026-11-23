@@ -27,6 +27,8 @@ struct IOSWatchSettingsView: View {
     @State private var showsConfigurationIssue = false
     @State private var noteToDelete: WatchNote?
     @State private var noteError: String?
+    @State private var noteActionNotice: String?
+    @State private var isHandingOffNoteToRemote = false
     @State private var connectionRefreshTask: Task<Void, Never>?
     @State private var connectionRevision = 0
     @State private var showsQuickActionEditor = false
@@ -322,8 +324,8 @@ struct IOSWatchSettingsView: View {
                     }
                 }
             }
-            if let message = noteError ?? service.storageError ?? notificationMessage {
-                sectionFooter(message, color: .orange)
+            if let message = noteError ?? noteActionNotice ?? service.storageError ?? notificationMessage {
+                sectionFooter(message, color: noteError != nil || service.storageError != nil ? .orange : AmberTheme.muted)
             } else if notificationAuthorization == .denied {
                 sectionFooter("通知权限已拒绝，请到系统设置 > Amber > 通知中开启。")
             }
@@ -432,7 +434,7 @@ struct IOSWatchSettingsView: View {
 
     @ViewBuilder private var noteRows: some View {
         if service.notes.isEmpty {
-            Text("手表保存的记事会显示在这里，不会自动发送给 Amber。")
+            Text("手表保存的记事会显示在这里并同步到主界面收件箱，可一键转交对话或任务。")
                 .font(.caption).foregroundStyle(AmberTheme.muted)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 54).padding(.trailing, 14).padding(.bottom, 12)
@@ -451,12 +453,50 @@ struct IOSWatchSettingsView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    Button { handOffNoteToChat(note) } label: {
+                        Image(systemName: "arrow.up.right.circle")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundStyle(AmberTheme.accent)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("转交对话处理")
                     Button(role: .destructive) { noteToDelete = note } label: {
                         Image(systemName: "trash").frame(width: 44, height: 44)
                     }
                     .buttonStyle(.borderless).accessibilityLabel("删除记事")
                 }
                 .padding(.leading, 54).padding(.trailing, 14).padding(.vertical, 8)
+            }
+        }
+    }
+
+    private func handOffNoteToChat(_ note: WatchNote) {
+        noteError = nil
+        let prompt = "请帮我整理并处理这条从 Apple Watch 记下的随手记：\n\n\(note.text)"
+        guard let destination = IOSDeepLinkInbox.shared.preparePromptHandoff(prompt),
+              let url = IOSAppDeepLink.url(for: destination) else {
+            noteError = "记事内容超出单次提问上限，请分段处理。"
+            return
+        }
+        selectedNote = nil
+        IOSDeepLinkInbox.shared.submit(url, persistUntilHandled: true)
+    }
+
+    private func handOffNoteToRemote(_ note: WatchNote) {
+        guard !isHandingOffNoteToRemote else { return }
+        noteError = nil
+        isHandingOffNoteToRemote = true
+        let prompt = "请帮我整理并处理这条从 Apple Watch 记下的随手记：\n\n\(note.text)"
+        Task { @MainActor in
+            defer { isHandingOffNoteToRemote = false }
+            let result = await MacGatewayStore.shared.sendCloudDialogueMessage(text: prompt)
+            switch result {
+            case .success:
+                noteActionNotice = "已转交远端处理。"
+                selectedNote = nil
+            case .failure(let error):
+                noteError = MacGatewayStore.shared.cloudDialogueFriendlyErrorMessage(for: error)
             }
         }
     }
@@ -506,14 +546,51 @@ struct IOSWatchSettingsView: View {
     }
 
     private func noteDetail(_ note: WatchNote) -> some View {
-        NavigationStack {
+        let gateway = MacGatewayStore.shared
+        let isMacRemote = AmberMultiDevicePairingClassifier.isMacConnection(
+            connection: gateway.connection,
+            status: gateway.status
+        )
+        return NavigationStack {
             ScrollView {
-                Text(note.text)
-                    .font(.body)
-                    .foregroundStyle(AmberTheme.foreground)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(20)
+                VStack(alignment: .leading, spacing: 18) {
+                    Text(note.text)
+                        .font(.body)
+                        .foregroundStyle(AmberTheme.foreground)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    VStack(spacing: 10) {
+                        Button {
+                            handOffNoteToChat(note)
+                        } label: {
+                            Label("转交对话处理", systemImage: "sparkles")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(AmberTheme.accentInk)
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .background(AmberTheme.accent, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+
+                        if gateway.connection != nil {
+                            Button {
+                                handOffNoteToRemote(note)
+                            } label: {
+                                Label(
+                                    isMacRemote ? "交给 Mac 整理" : "交给云端整理",
+                                    systemImage: isMacRemote ? "desktopcomputer" : "icloud"
+                                )
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(AmberTheme.foreground)
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                                .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isHandingOffNoteToRemote)
+                        }
+                    }
+                }
+                .padding(20)
             }
             .background(AmberTheme.background.ignoresSafeArea())
             .navigationTitle("Watch 记事")

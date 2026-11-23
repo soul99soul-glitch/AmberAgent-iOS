@@ -50,9 +50,13 @@ typealias WatchLibrarySnapshotProvider = @MainActor (IOSSharedSettingsStore, IOS
 /// into ChatViewModel / ChatKernelRunHost actions.
 @MainActor
 final class WatchTaskCoordinator: WatchTaskActionHandling {
-    static let shared = WatchTaskCoordinator(coldStartPreparer: {
-        await WatchTaskCoordinator.productionColdStartPreparer()
-    })
+    static let shared = WatchTaskCoordinator(
+        coldStartPreparer: {
+            await WatchTaskCoordinator.productionColdStartPreparer()
+        },
+        remoteGateway: MacGatewayWatchExecutionAdapter(),
+        intentInboxStore: .shared
+    )
 
     private weak var chatViewModel: ChatViewModel?
     /// Cold-start Watch runs may outlive AppShell's later foreground VM.
@@ -64,6 +68,11 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
     private let deepLinkInbox: IOSDeepLinkInbox
     private let coldStartPreparer: WatchTaskColdStartPreparer?
     private let librarySnapshotProvider: WatchLibrarySnapshotProvider
+    private let remoteGateway: WatchRemoteExecutionRouting?
+    private let intentInboxStore: AmberIntentInboxStore?
+    private nonisolated(unsafe) var remoteStateObserver: NSObjectProtocol?
+    private var activeRemoteTask: WatchRemoteTaskProjection?
+    private var remoteRefreshTask: Task<Void, Never>?
     private let attachmentWaitNanoseconds: UInt64
     private var sharedSettings: IOSSharedSettingsStore?
     private weak var conversationStore: IOSConversationStore?
@@ -113,21 +122,57 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         coldStartPreparer: WatchTaskColdStartPreparer? = nil,
         attachmentWaitNanoseconds: UInt64 = 5_000_000_000,
         librarySnapshotProvider: WatchLibrarySnapshotProvider? = nil,
-        agentRuntimeDao: AgentRuntimeDao = IosDatabaseFactory.shared.createDatabase().agentRuntimeDao()
+        agentRuntimeDao: AgentRuntimeDao = IosDatabaseFactory.shared.createDatabase().agentRuntimeDao(),
+        remoteGateway: WatchRemoteExecutionRouting? = nil,
+        intentInboxStore: AmberIntentInboxStore? = nil
     ) {
         self.bridge = bridge
         self.companionService = companionService
         self.deepLinkInbox = deepLinkInbox
         self.coldStartPreparer = coldStartPreparer
         self.attachmentWaitNanoseconds = attachmentWaitNanoseconds
-        self.librarySnapshotProvider = librarySnapshotProvider ?? { settings, store, message in
+        self.remoteGateway = remoteGateway
+        self.intentInboxStore = intentInboxStore
+        self.librarySnapshotProvider = librarySnapshotProvider ?? { [weak remoteGateway] settings, store, message in
             await companionService.makeLibrarySnapshot(
-                sharedSettings: settings, conversationStore: store, configurationMessage: message
+                sharedSettings: settings,
+                conversationStore: store,
+                configurationMessage: message,
+                remoteProjection: remoteGateway?.currentProjection()
             )
         }
         self.durableRunStore = IOSDurableRunStore(dao: agentRuntimeDao)
         self.toolLedger = IOSAgentRunLedger(dao: agentRuntimeDao)
         self.agentRuntimeDao = agentRuntimeDao
+        if remoteGateway != nil {
+            self.remoteStateObserver = NotificationCenter.default.addObserver(
+                forName: .amberWatchRemoteStateDidChange,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.handleRemoteStateChanged()
+                }
+            }
+        }
+    }
+
+    deinit {
+        if let remoteStateObserver {
+            NotificationCenter.default.removeObserver(remoteStateObserver)
+        }
+    }
+
+    /// Coalesced entry point invoked whenever Cloud/Mac task, approval, or target selection updates.
+    func handleRemoteStateChanged() {
+        remoteRefreshTask?.cancel()
+        remoteRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.republish()
+            if self.isAttached {
+                await self.refreshWatchSnapshot()
+            }
+        }
     }
 
     private static func productionColdStartPreparer() async -> WatchTaskColdStartContext? {
@@ -225,6 +270,8 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         librarySnapshot = refreshedLibrary
         if currentRunId != nil, currentPresentation != nil {
             republish()
+        } else if let remoteTask = remoteGateway?.currentProjection().primaryTask {
+            republish(explicitRemoteTask: remoteTask)
         } else if bridge.latestSnapshot.isActive {
             // A restored iOS-side snapshot can precede coordinator attachment.
             // Add the fresh library while preserving the task phase and its
@@ -982,6 +1029,18 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
             await refreshWatchSnapshot()
             return accepted(request, message: nil)
         case .openOnPhone:
+            if let remote = activeRemoteTask,
+               request.runId == remote.runId,
+               let remoteGateway {
+                let destination = remoteGateway.openRemoteDeepLink(
+                    workItemId: remote.workItemId,
+                    origin: remote.origin
+                )
+                if let url = IOSAppDeepLink.url(for: destination) {
+                    deepLinkInbox.submit(url, persistUntilHandled: true)
+                }
+                return accepted(request, message: "已发送到 iPhone", conversationId: remote.conversationId)
+            }
             return await handoffToPhone(request, requiresCurrentRun: true)
         case .openConversation:
             return await handoffToPhone(request, requiresCurrentRun: false)
@@ -998,13 +1057,25 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
             guard companionService.saveNote(note) else {
                 return rejected(request, companionService.storageError ?? "记事无法保存，请稍后重试")
             }
+            enqueueWatchNoteToIntentInbox(note)
+            if isAttached {
+                scheduleWatchLibraryRefresh()
+            }
             return accepted(request, message: "已保存到 iPhone")
         case .ask:
+            let rawText = request.text ?? ""
+            if let remoteResult = await routeWatchQuestionToRemoteIfSelected(
+                request: request,
+                prompt: rawText,
+                explicitOrigin: request.targetOrigin
+            ) {
+                return remoteResult
+            }
             guard let chatViewModel else {
                 return rejected(request, "iPhone 聊天状态不可用")
             }
             let started = await chatViewModel.startWatchQuestion(
-                text: request.text ?? "",
+                text: rawText,
                 conversationId: request.conversationId,
                 replyInstruction: companionService.replyLength.instruction
             )
@@ -1039,6 +1110,13 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
             guard let prompt = action.prompt(forSent: text) else {
                 return rejected(request, "快捷动作内容已更新，请从手表刷新")
             }
+            if let remoteResult = await routeWatchQuestionToRemoteIfSelected(
+                request: request,
+                prompt: prompt,
+                explicitOrigin: request.targetOrigin ?? action.targetOrigin
+            ) {
+                return remoteResult
+            }
             guard let chatViewModel else {
                 return rejected(request, "iPhone 聊天状态不可用")
             }
@@ -1058,6 +1136,19 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
                 conversationId: conversationId
             )
         case .cancel:
+            if let remote = activeRemoteTask,
+               request.runId == remote.runId,
+               let remoteGateway {
+                let outcome = await remoteGateway.cancelRemoteTask(
+                    workItemId: remote.workItemId,
+                    requestId: nil
+                )
+                if outcome.accepted {
+                    republish()
+                    return accepted(request, message: outcome.message)
+                }
+                return rejected(request, outcome.message)
+            }
             guard let currentRunId, request.runId == currentRunId else {
                 return rejected(request, "当前没有可取消的任务")
             }
@@ -1216,6 +1307,35 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
     }
 
     private func handleApproval(_ request: WatchTaskActionRequest) async -> WatchTaskActionResult {
+        if let remote = activeRemoteTask,
+           request.runId == remote.runId,
+           let remoteDecision = remote.decision,
+           case .approval(let sessionKey, let toolCallId, _) = remoteDecision.kind,
+           request.decisionId == remoteDecision.id,
+           let remoteGateway {
+            let allow: Bool
+            switch request.action {
+            case .approve: allow = true
+            case .deny: allow = false
+            default:
+                if request.optionId == "approve" { allow = true }
+                else if request.optionId == "deny" { allow = false }
+                else { return rejected(request, "无法识别审批选项") }
+            }
+            if allow, remoteDecision.riskLevel == .high || remoteDecision.localApprovalOnly {
+                return rejected(request, "高危操作请在 iPhone 或 Mac 上核对批准")
+            }
+            let outcome = await remoteGateway.resolveApproval(
+                sessionKey: sessionKey,
+                toolCallId: toolCallId,
+                allow: allow
+            )
+            republish()
+            return outcome.accepted
+                ? accepted(request, message: outcome.message)
+                : rejected(request, outcome.message)
+        }
+
         guard let decision = currentDecision,
               decision.type == .approval,
               request.decisionId == decision.id else {
@@ -1252,8 +1372,9 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         // The Watch gate is repeated at the point of execution. A stale or
         // swapped prompt must fail closed even if the old decision id matches.
         if allow {
-            guard WatchTaskSnapshotBuilder.allowsApprovalOnWatch(approvalPrompt) else {
-                return rejected(request, "这个确认步骤已失效")
+            guard !decision.blocksWatchApproval,
+                  WatchTaskSnapshotBuilder.allowsApprovalOnWatch(approvalPrompt) else {
+                return rejected(request, "高危操作请在 iPhone 或 Mac 上核对批准")
             }
         }
 
@@ -1269,6 +1390,48 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
     }
 
     private func handleAskUser(_ request: WatchTaskActionRequest) async -> WatchTaskActionResult {
+        if let remote = activeRemoteTask,
+           request.runId == remote.runId,
+           let remoteDecision = remote.decision,
+           case .askUser(let options) = remoteDecision.kind,
+           request.decisionId == remoteDecision.id,
+           let remoteGateway {
+            let answer: String
+            if request.action == .choose {
+                guard let optionId = request.optionId else {
+                    return rejected(request, "无法识别这个回答选项")
+                }
+                if optionId == "skip" {
+                    answer = ""
+                } else if optionId.hasPrefix("choice-"),
+                          let index = Int(optionId.dropFirst("choice-".count)),
+                          options.indices.contains(index) {
+                    answer = options[index]
+                } else {
+                    return rejected(request, "无法识别这个回答选项")
+                }
+            } else {
+                guard request.action == .answer, let text = request.text else {
+                    return rejected(request, "这个问题不接受语音回答")
+                }
+                answer = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !answer.isEmpty else { return rejected(request, "回答不能为空") }
+            }
+            guard !answer.isEmpty else {
+                return rejected(request, "远端提问不支持跳过，请直接回答或在 iPhone 查看")
+            }
+            let outcome = await remoteGateway.submitAskUserReply(
+                workItemId: remoteDecision.workItemId ?? remote.workItemId,
+                conversationId: remoteDecision.conversationId ?? remote.conversationId,
+                text: answer,
+                requestId: request.requestId
+            )
+            republish()
+            return outcome.accepted
+                ? accepted(request, message: outcome.message)
+                : rejected(request, outcome.message)
+        }
+
         guard let decision = currentDecision,
               decision.type == .askUser || decision.type == .voiceReply,
               request.decisionId == decision.id else {
@@ -1328,9 +1491,103 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         )
     }
 
-    private func republish() {
-        guard let runId = currentRunId,
-              let presentation = currentPresentation else {
+    private func routeWatchQuestionToRemoteIfSelected(
+        request: WatchTaskActionRequest,
+        prompt: String,
+        explicitOrigin: WatchExecutionOrigin?
+    ) async -> WatchTaskActionResult? {
+        // Explicit continuation of an existing local conversation stays on iPhone.
+        if let conversationId = request.conversationId, !conversationId.isEmpty, explicitOrigin == nil {
+            return nil
+        }
+        guard let remoteGateway else { return nil }
+        let projection = remoteGateway.currentProjection()
+        let desiredOrigin: WatchExecutionOrigin
+        if let explicitOrigin {
+            desiredOrigin = explicitOrigin
+        } else {
+            desiredOrigin = projection.selectedExecutionTarget
+        }
+        guard desiredOrigin != .local else { return nil }
+
+        let composed = ChatViewModel.watchMessage(
+            prompt.trimmingCharacters(in: .whitespacesAndNewlines),
+            replyInstruction: companionService.replyLength.instruction
+        )
+        let outcome = await remoteGateway.submitQuestion(
+            text: composed,
+            requestId: request.requestId,
+            preferredOrigin: explicitOrigin
+        )
+        if outcome.accepted {
+            republish()
+            if isAttached { scheduleWatchLibraryRefresh() }
+            return accepted(
+                request,
+                message: outcome.message,
+                runId: outcome.runId,
+                conversationId: outcome.conversationId
+            )
+        }
+        if outcome.deliveryUnknown {
+            return deliveryUnknown(request, outcome.message)
+        }
+        return rejected(request, outcome.message)
+    }
+
+    private func enqueueWatchNoteToIntentInbox(_ note: WatchNote) {
+        guard let intentInboxStore else { return }
+        let firstLine = note.text
+            .components(separatedBy: .newlines)
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let shortTitle = WatchTaskText.singleLine(firstLine, maxLength: 36) ?? "手表随手记"
+        let candidate = AmberIntentCandidate(
+            id: "watch-note:\(note.id)",
+            title: "手表随手记：\(shortTitle)",
+            sourceQuote: note.text,
+            conversationId: nil,
+            sourceMessageId: nil,
+            suggestedKind: .actionTodo,
+            suggestedPrompt: "请帮我整理并处理这条从 Apple Watch 记下的随手记：\n\n\(note.text)",
+            riskLevel: .low,
+            status: .pending,
+            createdAt: note.createdAt
+        )
+        _ = intentInboxStore.addCandidate(candidate)
+    }
+
+    private func republish(explicitRemoteTask: WatchRemoteTaskProjection? = nil) {
+        let remoteTask = explicitRemoteTask ?? remoteGateway?.currentProjection().primaryTask
+        let localSnapshot: WatchTaskSnapshot? = if let runId = currentRunId,
+                                                   let presentation = currentPresentation {
+            WatchTaskSnapshotBuilder.make(
+                runId: runId,
+                conversationId: currentConversationId,
+                presentation: presentation,
+                summary: currentSummary,
+                decision: currentDecision,
+                languageCode: resolvedLanguageCode,
+                origin: .local
+            )
+        } else {
+            nil
+        }
+
+        if let remoteTask, shouldPreferRemoteTask(remoteTask, overLocal: localSnapshot) {
+            activeRemoteTask = remoteTask
+            var snapshot = WatchTaskSnapshotBuilder.remoteSnapshot(
+                from: remoteTask,
+                languageCode: resolvedLanguageCode
+            )
+            snapshot.library = librarySnapshot ?? bridge.latestSnapshot.library
+            bridge.publish(snapshot)
+            scheduleWatchAttention(for: snapshot)
+            return
+        }
+
+        activeRemoteTask = nil
+        guard var snapshot = localSnapshot else {
             var idle = WatchTaskSnapshot.idle
             idle.languageCode = resolvedLanguageCode
             idle.library = librarySnapshot ?? bridge.latestSnapshot.library
@@ -1339,17 +1596,28 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
             scheduleWatchAttention(for: idle)
             return
         }
-        var snapshot = WatchTaskSnapshotBuilder.make(
-            runId: runId,
-            conversationId: currentConversationId,
-            presentation: presentation,
-            summary: currentSummary,
-            decision: currentDecision,
-            languageCode: resolvedLanguageCode
-        )
         snapshot.library = librarySnapshot ?? bridge.latestSnapshot.library
         bridge.publish(snapshot)
         scheduleWatchAttention(for: snapshot)
+    }
+
+    /// Priority: pending user decision > active running > terminal/idle.
+    private func shouldPreferRemoteTask(
+        _ remote: WatchRemoteTaskProjection,
+        overLocal local: WatchTaskSnapshot?
+    ) -> Bool {
+        guard let local else { return true }
+        let localNeedsAttention = local.requiresAttention && !["completed", "failed", "cancelled"].contains(local.phase)
+        let remoteNeedsAttention = remote.needsAttention || remote.decision != nil || remote.phase == "waitingForUser"
+        if remoteNeedsAttention != localNeedsAttention {
+            return remoteNeedsAttention
+        }
+        let localIsLive = ["running", "reconnecting", "waitingForUser"].contains(local.phase)
+        let remoteIsLive = remote.isLive && !["completed", "failed", "cancelled"].contains(remote.phase)
+        if remoteIsLive != localIsLive {
+            return remoteIsLive
+        }
+        return remote.updatedAt > local.updatedAt
     }
 
     private func scheduleWatchAttention(for snapshot: WatchTaskSnapshot) {

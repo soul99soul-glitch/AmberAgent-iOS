@@ -1,10 +1,10 @@
 import AppIntents
 
 /// Siri and Shortcuts entry points. Every intent reuses the app's own draft,
-/// note and quick-action paths; nothing here sends to the phone by itself.
+/// note and quick-action paths.
 struct AskAmberIntent: AppIntent {
     static let title: LocalizedStringResource = "问 Amber"
-    static let description = IntentDescription("打开提问页，检查后发送。")
+    static let description = IntentDescription("通过语音或快捷指令向 Amber 提问。")
     static let openAppWhenRun = true
 
     @Parameter(title: "问题")
@@ -14,7 +14,8 @@ struct AskAmberIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        model.startAsk(prefill: question)
+        let hasQuestion = question?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        model.startAsk(prefill: question, autoSubmit: hasQuestion)
         return .result()
     }
 }
@@ -91,19 +92,29 @@ struct AmberWatchShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
             intent: AskAmberIntent(),
-            phrases: ["Ask \(.applicationName)"],
+            phrases: [
+                "问 \(.applicationName)",
+                "向 \(.applicationName) 提问",
+                "让 \(.applicationName) 帮忙"
+            ],
             shortTitle: "问 Amber",
             systemImageName: "sparkles"
         )
         AppShortcut(
             intent: TakeNoteIntent(),
-            phrases: ["Take a note in \(.applicationName)"],
+            phrases: [
+                "用 \(.applicationName) 随手记",
+                "用 \(.applicationName) 记一下"
+            ],
             shortTitle: "随手记",
             systemImageName: "square.and.pencil"
         )
         AppShortcut(
             intent: RunQuickActionIntent(),
-            phrases: ["Run \(\.$action) in \(.applicationName)", "Run a quick action in \(.applicationName)"],
+            phrases: [
+                "用 \(.applicationName) 运行 \(\.$action)",
+                "用 \(.applicationName) 运行快捷动作"
+            ],
             shortTitle: "快捷动作",
             systemImageName: "bolt.fill"
         )

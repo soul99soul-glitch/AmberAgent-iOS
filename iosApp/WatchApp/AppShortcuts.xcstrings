@@ -1,7 +1,7 @@
 {
-  "sourceLanguage": "en",
+  "sourceLanguage": "zh-Hans",
   "strings": {
-    "Ask ${applicationName}": {
+    "问 ${applicationName}": {
       "localizations": {
         "en": {
           "stringUnit": {
@@ -41,7 +41,127 @@
         }
       }
     },
-    "Take a note in ${applicationName}": {
+    "向 ${applicationName} 提问": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ask ${applicationName} a question"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "向 ${applicationName} 提问"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "向 ${applicationName} 提問"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "${applicationName} に聞いてみる"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "${applicationName}에게 물어보기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Задать вопрос ${applicationName}"
+          }
+        }
+      }
+    },
+    "让 ${applicationName} 帮忙": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Get help from ${applicationName}"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "让 ${applicationName} 帮忙"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "讓 ${applicationName} 幫忙"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "${applicationName} に手伝ってもらう"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "${applicationName} 도움 받기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Попросить помощи у ${applicationName}"
+          }
+        }
+      }
+    },
+    "用 ${applicationName} 随手记": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quick note in ${applicationName}"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用 ${applicationName} 随手记"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用 ${applicationName} 隨手記"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "${applicationName} でクイックメモ"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "${applicationName} 빠른 메모"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Быстрая заметка в ${applicationName}"
+          }
+        }
+      }
+    },
+    "用 ${applicationName} 记一下": {
       "localizations": {
         "en": {
           "stringUnit": {
@@ -81,7 +201,7 @@
         }
       }
     },
-    "Run ${action} in ${applicationName}": {
+    "用 ${applicationName} 运行 ${action}": {
       "localizations": {
         "en": {
           "stringUnit": {
@@ -121,7 +241,7 @@
         }
       }
     },
-    "Run a quick action in ${applicationName}": {
+    "用 ${applicationName} 运行快捷动作": {
       "localizations": {
         "en": {
           "stringUnit": {
