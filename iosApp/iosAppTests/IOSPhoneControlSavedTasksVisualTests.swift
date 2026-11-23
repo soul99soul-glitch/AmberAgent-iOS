@@ -17,6 +17,7 @@ final class IOSPhoneControlSavedTasksVisualTests: XCTestCase {
         XCTAssertTrue(index.bindSavedTask(actionID: "visual", title: "合成手机任务 · 连续运行与结果记录", conversationID: id))
         for round in 1...2 { index.recordRun(conversationID: id, runID: "visual-\(round)", now: Date(timeIntervalSince1970: Double(1_790_000_000 + round * 86400))) }
         for (suffix, width, type, style) in [
+            ("normal-light", 393.0, DynamicTypeSize.large, UIUserInterfaceStyle.light),
             ("normal-dark", 393.0, DynamicTypeSize.large, UIUserInterfaceStyle.dark),
             ("accessibility-light", 320.0, .accessibility3, .light)
         ] {
@@ -34,6 +35,69 @@ final class IOSPhoneControlSavedTasksVisualTests: XCTestCase {
                     XCTAssertEqual(router.phoneAutomationChatPresentationRevision, 1)
                 })
         }
+    }
+
+    func testAutomationLinesSectionsPaginationAndEmptyStates() async throws {
+        let fixture = try SavedTasksStoreFixture()
+        defer { fixture.tearDown() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = IOSConversationStore(baseDirectory: root)
+        await store.bootstrap()
+        let dedicatedID = try XCTUnwrap(store.currentConversation?.id.toHexDashString())
+        let createdTempConversation = await store.newConversation()
+        XCTAssertTrue(createdTempConversation)
+        let tempID = try XCTUnwrap(store.currentConversation?.id.toHexDashString())
+
+        let emptyIndex = IOSPhoneAutomationLines(defaults: fixture.defaults)
+        try await render(
+            NavigationStack { IOSPhoneAutomationLinesView(conversationStore: store, lines: emptyIndex, inbox: IOSDeepLinkInbox()) }
+                .environment(RouterPath()),
+            name: "phone-automation-lines-empty-light",
+            width: 393.0,
+            type: .large,
+            style: .light
+        )
+
+        let index = IOSPhoneAutomationLines(defaults: fixture.defaults)
+        XCTAssertTrue(index.bindSavedTask(actionID: "duolingo", title: "多邻国", conversationID: dedicatedID))
+        for round in 1...15 {
+            index.recordRun(
+                conversationID: dedicatedID,
+                runID: "duo-\(round)",
+                now: Date(timeIntervalSince1970: Double(1_795_000_000 + round * 3600))
+            )
+        }
+        index.recordRun(conversationID: tempID, runID: "temp-1", now: Date(timeIntervalSince1970: 1_794_800_000))
+        index.recordRun(conversationID: "missing-conversation-id", runID: "missing-1", now: Date(timeIntervalSince1970: 1_794_700_000))
+
+        for (suffix, style) in [("light", UIUserInterfaceStyle.light), ("dark", UIUserInterfaceStyle.dark)] {
+            try await render(
+                NavigationStack { IOSPhoneAutomationLinesView(conversationStore: store, lines: index, inbox: IOSDeepLinkInbox()) }
+                    .environment(RouterPath()),
+                name: "phone-automation-lines-sections-\(suffix)",
+                width: 393.0,
+                type: .large,
+                style: style
+            )
+        }
+
+        try await render(
+            NavigationStack { IOSPhoneAutomationLinesView(conversationStore: store, lines: index, inbox: IOSDeepLinkInbox()) }
+                .environment(RouterPath()),
+            name: "phone-automation-lines-paginated-light",
+            width: 393.0,
+            type: .large,
+            style: .light,
+            interaction: { host in
+                try await host.activate(label: "运行记录 · 15 次")
+                try await host.waitForElement(label: "查看全部 15 次")
+                XCTAssertNil(host.element(label: "收起较早记录"))
+                try await host.activate(label: "查看全部 15 次")
+                try await host.waitForElement(label: "收起较早记录")
+                XCTAssertNil(host.element(label: "查看全部 15 次"))
+            }
+        )
     }
 
     func testValidationErrorsAreVisibleWhenActionsAreActivatedFromBottomOfAccessibilityForm() async throws {
