@@ -75,7 +75,7 @@ final class ChatConversationRunState {
     @ObservationIgnored var messagePersistencePendingCount = 0
     @ObservationIgnored var messagePersistenceTail: Task<ChatMessagePersistenceResult, Never>?
     @ObservationIgnored var isCommittingSteerQueue = false
-    @ObservationIgnored var restoreSteerQueueAfterCommit = false
+    @ObservationIgnored var steerQueueRestoreTargetsAfterCommit: Set<String?> = []
     @ObservationIgnored var steerQueueAutoContinueTask: Task<Void, Never>?
     var waitingForChildRunId: String?
     var childResultWakeTask: Task<Void, Never>?

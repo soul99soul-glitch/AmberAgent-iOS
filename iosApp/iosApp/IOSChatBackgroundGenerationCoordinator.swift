@@ -571,8 +571,8 @@ final class IOSChatBackgroundGenerationCoordinator {
         }
     }
 
-    func hasActiveJob(conversationId: KotlinUuid) -> Bool {
-        !jobs(conversationId: conversationId).isEmpty
+    func hasActiveJob(conversationId: KotlinUuid, excludingRunId: String? = nil) -> Bool {
+        jobs(conversationId: conversationId).values.contains { $0.runId != excludingRunId }
     }
 
     func isWaitingForForegroundResume(conversationId: KotlinUuid) -> Bool {

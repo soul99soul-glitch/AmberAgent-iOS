@@ -302,7 +302,7 @@ extension ChatViewModel {
                     self.handleSteerQueueAtRunTerminal(
                         state: state,
                         autoContinue: autoContinue,
-                        completedSlot: autoContinue ? taskSlot : nil
+                        completedIds: autoContinue ? taskSlot.map { [$0.runId, $0.slotId] } ?? [] : []
                     )
                 },
                 restoreSteerQueueLeftover: { [weak self] conversationId in

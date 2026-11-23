@@ -3277,9 +3277,8 @@ extension MacGatewayStore {
         return merged
     }
 
-    /// Dismisses a terminal unified-timeline delegated run on its owning endpoint slot,
-    /// recording all canonical identities (`run.id`, `requestId`, `workItemId`, and linked submission IDs)
-    /// and persisting immediately so polling, ID transitions, reconnects, and restarts do not resurrect it.
+    /// Dismisses a terminal run on its owning endpoint. A concrete work item is
+    /// independent of other work items dispatched by the same request.
     /// Non-terminal, busy, receipt-unconfirmed, outcome-unknown, or approval-waiting runs are never dismissed.
     @discardableResult
     func dismissUnifiedDelegatedRun(_ run: MacDelegatedTimelineRun) -> Bool {
@@ -3288,8 +3287,8 @@ extension MacGatewayStore {
         if targetSlot !== self {
             return targetSlot.dismissUnifiedDelegatedRun(run)
         }
-        let keys = dismissalIdentityKeys(for: run, includeLinkedSubmissionKeys: true)
-        guard !keys.isEmpty else { return false }
+        var keys = [run.id]
+        if let workKey = singleWorkKey(forSubmissionCard: run) { keys.append(workKey) }
         recordDismissedUnifiedRunKeys(keys)
         if connection != nil {
             persistCloudDialogueState(immediately: true)
@@ -3307,56 +3306,25 @@ extension MacGatewayStore {
         }
         let dismissed = dismissedUnifiedMacRunIds
         guard !dismissed.isEmpty else { return false }
-        return dismissalIdentityKeys(for: run, includeLinkedSubmissionKeys: false)
-            .contains { dismissed.contains($0) }
+        if dismissed.contains(run.id) { return true }
+        if let workKey = singleWorkKey(forSubmissionCard: run), dismissed.contains(workKey) { return true }
+        // A terminal card may have been closed before its main request had a work item.
+        if let workItemId = run.workItemId,
+           run.id == Self.dismissedWorkRunKey(role: endpointRole, workItemId: workItemId),
+           let requestId = run.requestId {
+            return dismissed.contains(Self.dismissedSubmissionRunKey(role: endpointRole, requestId: requestId))
+        }
+        return false
     }
 
-    private func dismissalIdentityKeys(
-        for run: MacDelegatedTimelineRun,
-        includeLinkedSubmissionKeys: Bool
-    ) -> [String] {
-        var keys: [String] = []
-        func appendUnique(_ key: String) {
-            let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, !keys.contains(trimmed) else { return }
-            keys.append(trimmed)
-        }
-        appendUnique(run.id)
-        let reqId = Self.nonEmptyTrimmed(run.requestId)
-        let workId = Self.nonEmptyTrimmed(run.workItemId)
-        if let reqId {
-            appendUnique(Self.dismissedSubmissionRunKey(role: run.endpointRole, requestId: reqId))
-        }
-        if let workId {
-            appendUnique(Self.dismissedWorkRunKey(role: run.endpointRole, workItemId: workId))
-        }
-        if includeLinkedSubmissionKeys {
-            let topicIdFromWorkId: String? = workId.flatMap {
-                $0.hasPrefix("topic:") ? String($0.dropFirst("topic:".count)) : nil
-            }
-            for submission in cloudDialogueSubmissions {
-                let matchesRequest = reqId != nil && submission.requestId == reqId
-                let matchesWork = workId != nil && (
-                    submission.workItemId == workId ||
-                    submission.receipt?.workItemIds.contains(workId!) == true
-                )
-                let matchesTopicFallback = topicIdFromWorkId != nil &&
-                    submission.kind == .mainMessage &&
-                    submission.receipt?.topicId == topicIdFromWorkId &&
-                    submission.receipt?.workItemIds.isEmpty == true
-                guard matchesRequest || matchesWork || matchesTopicFallback else { continue }
-                appendUnique(Self.dismissedSubmissionRunKey(role: run.endpointRole, requestId: submission.requestId))
-                if let subWorkId = Self.nonEmptyTrimmed(submission.workItemId) {
-                    appendUnique(Self.dismissedWorkRunKey(role: run.endpointRole, workItemId: subWorkId))
-                }
-                for receiptWorkId in submission.receipt?.workItemIds ?? [] {
-                    if let trimmed = Self.nonEmptyTrimmed(receiptWorkId) {
-                        appendUnique(Self.dismissedWorkRunKey(role: run.endpointRole, workItemId: trimmed))
-                    }
-                }
-            }
-        }
-        return keys
+    private func singleWorkKey(forSubmissionCard run: MacDelegatedTimelineRun) -> String? {
+        guard let requestId = run.requestId,
+              run.id == Self.dismissedSubmissionRunKey(role: endpointRole, requestId: requestId),
+              let workItemId = run.workItemId,
+              let submission = cloudDialogueSubmissions.first(where: { $0.requestId == requestId }),
+              submission.kind == .mainMessage,
+              (submission.receipt?.workItemIds.count ?? 0) <= 1 else { return nil }
+        return Self.dismissedWorkRunKey(role: endpointRole, workItemId: workItemId)
     }
 
     private func recordDismissedUnifiedRunKeys(_ keys: [String]) {
@@ -3556,7 +3524,7 @@ extension MacGatewayStore {
             let isBusy = relatedSubmission.map { busyCloudDialogueRequestIds.contains($0.requestId) } ?? false
             let resolvedRequestId = relatedSubmission?.requestId
                 ?? Self.nonEmptyTrimmed(relatedResultEvent?.causedByRequestId)
-                ?? Self.nonEmptyTrimmed(relatedUserEvent?.causedByRequestId)
+                ?? (relatedUserEvent?.kind == .userMessage ? Self.nonEmptyTrimmed(relatedUserEvent?.causedByRequestId) : nil)
             runs.append(
                 MacDelegatedTimelineRun(
                     id: "\(endpointRole.rawValue)-work:\(progress.workItemId)",

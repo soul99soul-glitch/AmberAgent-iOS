@@ -79,9 +79,10 @@ extension ChatViewModel {
         state.isCommittingSteerQueue = true
         defer {
             state.isCommittingSteerQueue = false
-            if state.restoreSteerQueueAfterCommit {
-                state.restoreSteerQueueAfterCommit = false
-                restoreSteerQueueLeftoverToComposer(state: state)
+            let restoreTargets = state.steerQueueRestoreTargetsAfterCommit
+            if !restoreTargets.isEmpty {
+                state.steerQueueRestoreTargetsAfterCommit = []
+                restoreSteerQueueLeftoverToComposer(state: state, targetRunIds: restoreTargets)
             }
         }
         let drained = entries.map { queuedUserMessage($0, receipt: "applied") }
@@ -115,15 +116,13 @@ extension ChatViewModel {
     func handleSteerQueueAtRunTerminal(
         state: ChatConversationRunState,
         autoContinue: Bool,
-        completedSlot: ChatAsyncTaskSlot? = nil
+        completedIds: Set<String> = []
     ) {
         ensureSteerQueueLoaded(state: state)
-        if let completedSlot,
-           state.selectedFollowupRunId == completedSlot.runId || state.selectedFollowupRunId == completedSlot.slotId {
+        if let selected = state.selectedFollowupRunId, completedIds.contains(selected) {
             state.selectedFollowupRunId = nil
         }
         if !autoContinue { state.steerQueueAutoContinueTask?.cancel() }
-        let completedIds: Set<String> = completedSlot.map { [$0.runId, $0.slotId] } ?? []
         if !completedIds.isEmpty {
             for index in state.steerQueue.indices where state.steerQueue[index].status == .received {
                 if let target = state.steerQueue[index].targetRunId, completedIds.contains(target) {
@@ -229,20 +228,35 @@ extension ChatViewModel {
         restoreSteerQueueLeftoverToComposer(state: currentRun.state)
     }
 
-    func restoreSteerQueueLeftoverToComposer(state: ChatConversationRunState) {
-        state.steerQueueAutoContinueTask?.cancel()
+    func restoreSteerQueueLeftoverToComposer(
+        state: ChatConversationRunState,
+        targetRunIds: Set<String?> = [nil]
+    ) {
+        let restoreUntargeted = targetRunIds.contains(nil)
+        if restoreUntargeted { state.steerQueueAutoContinueTask?.cancel() }
         ensureSteerQueueLoaded(state: state)
         // A cancellation may arrive while the queue's conversation write is in
         // flight. Restore only what remains after its actual commit result.
         if state.isCommittingSteerQueue {
-            state.restoreSteerQueueAfterCommit = true
+            state.steerQueueRestoreTargetsAfterCommit.formUnion(targetRunIds)
             return
         }
-        guard !state.steerQueue.isEmpty else { return }
-        let textOnly = state.steerQueue.filter { !$0.hasAttachments && $0.targetRunId == nil }
-        let withAttachments = state.steerQueue.filter { $0.hasAttachments || $0.targetRunId != nil }
+        var textOnly: [IOSSteerQueueEntry] = []
+        let remaining = state.steerQueue.compactMap { entry -> IOSSteerQueueEntry? in
+            guard targetRunIds.contains(entry.targetRunId) else { return entry }
+            guard entry.hasAttachments else {
+                textOnly.append(entry)
+                return nil
+            }
+            // Keep media available for manual refill. Only release its target
+            // when another run cannot consume it as an untargeted follow-up.
+            var retained = entry
+            if restoreUntargeted { retained.targetRunId = nil }
+            return retained
+        }
+        guard remaining != state.steerQueue else { return }
         for entry in textOnly { projectQueuedEntry(entry, receipt: "not_applied", state: state) }
-        state.steerQueue = withAttachments
+        state.steerQueue = remaining
         inboxIO.persistQueue(state.steerQueue, for: state.conversationId)
         guard !textOnly.isEmpty else { return }
         if state.pendingAssistantRegeneration == nil {
@@ -273,42 +287,7 @@ extension ChatViewModel {
             )
         }
         if let run = runRegistry.run(for: conversationId) ?? (isCurrentConversation(conversationId) ? currentRun : nil) {
-            var matchedSlot: ChatAsyncTaskSlot?
-            for slot in run.orderedSlots where !slot.isTerminal {
-                let matchesRun = slot.runId == runId || slot.slotId == runId
-                let isDetachedZombie = !slot.isQueuedForConcurrencySlot && slot.host?.isRunning != true
-                guard matchesRun || isDetachedZombie else { continue }
-                if matchesRun { matchedSlot = slot }
-                markTaskSlotTerminal(slot, in: run)
-            }
-            if run.state.selectedFollowupRunId == runId {
-                run.state.selectedFollowupRunId = nil
-            }
-            refreshLiveTaskMessageIds(in: run)
-            runActivityRevision &+= 1
-            let autoContinue = resolvedStatus == .completed
-            ensureSteerQueueLoaded(state: run.state)
-            var didRebindTarget = false
-            for index in run.state.steerQueue.indices where run.state.steerQueue[index].status == .received {
-                if run.state.steerQueue[index].targetRunId == runId {
-                    run.state.routingEntryIds.remove(run.state.steerQueue[index].id)
-                    if !autoContinue || matchedSlot == nil {
-                        run.state.steerQueue[index].targetRunId = nil
-                        didRebindTarget = true
-                    }
-                }
-            }
-            if didRebindTarget {
-                inboxIO.persistQueue(run.state.steerQueue, for: run.state.conversationId)
-            }
-            handleSteerQueueAtRunTerminal(
-                state: run.state,
-                autoContinue: autoContinue,
-                completedSlot: autoContinue ? matchedSlot : nil
-            )
-            if !autoContinue {
-                _ = clearResidualQueuedReceipts(in: run.state)
-            }
+            settleBackgroundSteerQueue(in: run, runId: runId, succeeded: resolvedStatus == .completed)
         }
         await orchestrationToolService.notifyRunTerminal(
             conversationId: conversationId,
@@ -318,6 +297,40 @@ extension ChatViewModel {
             terminalStatus: resolvedStatus,
             terminalReason: terminal?.terminalReason
         )
+    }
+
+    private func settleBackgroundSteerQueue(in run: ChatConversationRun, runId: String, succeeded: Bool) {
+        let state = run.state
+        let slot = run.slot(forRunId: runId)
+        if let slot, !slot.isTerminal { markTaskSlotTerminal(slot, in: run) }
+        var terminalRunIds: Set<String> = [runId]
+        if let slot {
+            terminalRunIds.formUnion([slot.runId, slot.slotId])
+        }
+        if let selected = state.selectedFollowupRunId, terminalRunIds.contains(selected) {
+            state.selectedFollowupRunId = nil
+        }
+        refreshLiveTaskMessageIds(in: run)
+        runActivityRevision &+= 1
+        ensureSteerQueueLoaded(state: state)
+
+        if succeeded {
+            handleSteerQueueAtRunTerminal(state: state, autoContinue: true, completedIds: terminalRunIds)
+            return
+        }
+
+        var terminalTargets = Set(terminalRunIds.map(Optional.some))
+        // Untargeted entries can still belong to another run or its continuation.
+        if !run.hasActiveOrQueuedTask, state.steerQueueAutoContinueTask == nil,
+           let conversationId = state.conversationId,
+           !IOSChatBackgroundGenerationCoordinator.shared.hasActiveJob(conversationId: conversationId, excludingRunId: runId) {
+            terminalTargets.insert(nil)
+        }
+        for entry in state.steerQueue where terminalTargets.contains(entry.targetRunId) {
+            state.routingEntryIds.remove(entry.id)
+        }
+        restoreSteerQueueLeftoverToComposer(state: state, targetRunIds: terminalTargets)
+        clearResidualQueuedReceipts(in: state, targetRunIds: terminalTargets)
     }
 
     /// 孤儿排队消息兜底：当会话已无任何真正在跑的前台槽位或后台 job，

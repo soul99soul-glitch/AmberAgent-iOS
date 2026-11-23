@@ -63,7 +63,10 @@ extension ChatViewModel {
     /// 清理会话气泡中残余的 `chat_followup_state == "queued"` 标记，
     /// 避免任务已经结束后界面仍永久展示「已收到 · 待当前步骤结束后生效」。
     @discardableResult
-    func clearResidualQueuedReceipts(in state: ChatConversationRunState) -> Bool {
+    func clearResidualQueuedReceipts(
+        in state: ChatConversationRunState,
+        targetRunIds: Set<String?>? = nil
+    ) -> Bool {
         var didUpdate = false
         let notAppliedValue = Kotlinx_serialization_jsonJson.companion.parseToJsonElement(string: "\"not_applied\"")
         for msgIndex in state.messages.indices {
@@ -75,6 +78,10 @@ extension ChatViewModel {
                 guard let textPart = replacedParts[partIndex] as? UIMessagePart.Text,
                       IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: "chat_followup_state") == "queued" else {
                     continue
+                }
+                if let targetRunIds {
+                    let runId = IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: "chat_followup_run_id")
+                    guard targetRunIds.contains(runId == "" ? nil : runId) else { continue }
                 }
                 var metadata = textPart.metadata ?? [:]
                 metadata["chat_followup_state"] = notAppliedValue

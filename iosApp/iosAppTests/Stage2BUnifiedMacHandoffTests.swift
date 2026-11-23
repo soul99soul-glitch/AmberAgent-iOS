@@ -1074,6 +1074,46 @@ struct Stage2BUnifiedMacHandoffTests {
         #expect(!withFreshRun.contains(where: { $0.workItemId == "work:fail-provisional-1" }))
     }
 
+    @Test @MainActor func dismissingOneWorkItemKeepsItsSiblingVisibleWhenItFinishes() async throws {
+        let conversationId = "conv-dismiss-batch"
+        let requestId = "550e8400-e29b-41d4-a716-446655440904"
+        let transport: MacGatewayClient.Transport = { request, _ in
+            let url = try #require(request.url)
+            if request.httpMethod == "POST", url.path == "/v2/dialogue/messages" {
+                return Self.jsonResponse(url: url, status: 202, json: """
+                    {"eventId":"batch-input","requestId":"\(requestId)","topicId":"batch-topic",
+                     "workItemIds":["work:a","work:b"],"state":"received","replayed":false}
+                    """)
+            }
+            return Self.jsonResponse(url: url, status: 404, json: #"{"error":"not_found"}"#)
+        }
+        let (store, defaults, suiteName) = try makeTestStore(suiteSuffix: "DismissBatch", transport: transport)
+        defer {
+            store.stopCloudDialoguePolling()
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+        _ = try await store.delegateInUnifiedTimeline(
+            to: .cloud, text: "并行执行两个任务", conversationId: conversationId, requestId: requestId
+        ).get()
+        store.stopCloudDialoguePolling()
+
+        for (index, workItemId) in ["work:a", "work:b"].enumerated() {
+            let seq = index + 1
+            let json = """
+                {"items":[{"seq":\(seq),"id":"result:\(workItemId)","kind":"task_result","role":"assistant",
+                 "text":"失败","topicId":"batch-topic","workItemId":"\(workItemId)","outcome":"failed",
+                 "causedByRequestId":"\(requestId)","conversationId":"\(conversationId)"}],"nextCursor":\(seq)}
+                """
+            let page = try JSONDecoder().decode(MacGatewayCloudDialogueEventsPage.self, from: Data(json.utf8))
+            store.ingestCloudDialogueEventsPage(page, requestedAfter: Int64(index))
+            if index == 0 {
+                let first = try #require(store.allUnifiedDelegatedRuns(for: conversationId).first { $0.workItemId == workItemId })
+                #expect(store.dismissUnifiedDelegatedRun(first))
+            }
+        }
+        #expect(store.allUnifiedDelegatedRuns(for: conversationId).map(\.workItemId) == ["work:b"])
+    }
+
     @Test @MainActor func dismissedMacSlotCardPersistsPerSlotAndBoundedPruningPreservesReferencedKeys() async throws {
         let convId = "conv-dismiss-mac-slot"
         let transport: MacGatewayClient.Transport = { request, _ in

@@ -811,8 +811,22 @@ final class IOSSteerQueueTests: XCTestCase {
             baselineMessages: []
         )
         viewModel.currentRun.registerSlot(failedSlot)
+        let waitingSlot = ChatAsyncTaskSlot(
+            conversationId: conversationId,
+            inputDigest: "unrelated",
+            anchorUserMessageId: nil,
+            phoneControlUserInitiated: false,
+            providerSetting: completedSlot.providerSetting,
+            params: completedSlot.params,
+            toolExposureBridge: nil,
+            recipeCatalogSnapshot: nil,
+            baselineMessages: []
+        )
+        waitingSlot.isQueuedForConcurrencySlot = true
+        viewModel.currentRun.registerSlot(waitingSlot)
         viewModel.generationActiveOverrideForTesting = { _ in true }
         XCTAssertTrue(viewModel.enqueueSteerMessage(text: "后台失败后退回输入框", targetRunId: failedRunId))
+        XCTAssertTrue(viewModel.enqueueSteerMessage(text: "另一任务仍在等待的补充", targetRunId: waitingSlot.runId))
         viewModel.generationActiveOverrideForTesting = nil
 
         await viewModel.handleBackgroundRunTerminal(
@@ -824,15 +838,16 @@ final class IOSSteerQueueTests: XCTestCase {
         )
 
         XCTAssertTrue(failedSlot.isTerminal)
-        XCTAssertTrue(viewModel.steerQueue.isEmpty)
+        XCTAssertTrue(waitingSlot.isQueuedForConcurrencySlot)
+        XCTAssertEqual(viewModel.steerQueue.map(\.targetRunId), [waitingSlot.runId])
         XCTAssertEqual(viewModel.inputText, "后台失败后退回输入框")
-        let hasQueuedReceipt = viewModel.messages.contains { message in
+        let queuedReceiptTexts = viewModel.messages.filter { message in
             message.parts.contains { part in
                 guard let textPart = part as? UIMessagePart.Text else { return false }
                 return IosToolOutputJsonBridge.shared.metadataString(part: textPart, key: "chat_followup_state") == "queued"
             }
-        }
-        XCTAssertFalse(hasQueuedReceipt, "失败终态后不得残留 queued 气泡提示")
+        }.map { $0.toText() }
+        XCTAssertEqual(queuedReceiptTexts, ["另一任务仍在等待的补充"])
     }
 
     func testOrphanSteerQueueAndSubmittedZombieLeaseAutoUnstickOnForegroundAndStop() async throws {
