@@ -140,7 +140,7 @@ final class DesktopWorkspace {
                 approval: agentTasks.records.first { $0.conversationID == conversation && $0.status == .waiting }?.approval,
                 conversationID: conversation)
         }
-        let sessions = gateway?.isEnabled == true ? gatewaySessions() : []
+        let sessions = gateway?.isEnabled == true || (gateway != nil && GatewayPaths.resolve().daemonRunning) ? gatewaySessions() : []
         return DesktopBoard.build(tasks: scheduler.tasks, live: live, paused: scheduler.isPaused, sessions: sessions, now: now)
     }
     /// Active main column surface: conversation transcript, task board, or an Obsidian-style plugin workspace view.
@@ -261,6 +261,9 @@ final class DesktopWorkspace {
     @ObservationIgnored var scheduledGenerations: [UUID: DesktopGeneration] = [:]
     /// Conversations a remote Mac dialogue work item is writing into right now.
     var dialogueRunConversationIDs: Set<UUID> = []
+    func hasBackgroundWriter(_ id: UUID) -> Bool {
+        scheduledRunConversationIDs.contains(id) || dialogueRunConversationIDs.contains(id)
+    }
     @ObservationIgnored var dialogueGenerations: [String: (run: DesktopGeneration, conversationID: UUID, startedAt: Date)] = [:]
     @ObservationIgnored var dialogueRunTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored var dialogueConversationByRemoteKey: [String: UUID] = [:]
@@ -693,7 +696,7 @@ final class DesktopWorkspace {
         completion: (@MainActor (Bool) -> Void)? = nil,
         action: @escaping @MainActor (DesktopConversation, UUID) async throws -> DesktopConversation) -> Task<Void, Never>? {
         guard !isLoading, !isSelectedConversationGenerating, !isSelectedConversationMutatingBranch,
-              !isManagingBackup, let owner = selectedID, !scheduledRunConversationIDs.contains(owner),
+              !isManagingBackup, let owner = selectedID, !hasBackgroundWriter(owner),
               selectedConversation?.messages.contains(where: { $0.id == messageID }) == true else {
             completion?(false); return nil
         }

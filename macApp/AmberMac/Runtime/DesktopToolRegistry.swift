@@ -139,7 +139,7 @@ enum DesktopToolRegistry {
     static let diffPreviewLimit = 400
     static let targetSummaryLimit = 140
 
-    private static let l2ReversibleWriteTools: Set<String> = [
+    static let l2ReversibleWriteTools: Set<String> = [
         "workspace_file_write",
         "workspace_file_edit",
         "agent_soul_update",

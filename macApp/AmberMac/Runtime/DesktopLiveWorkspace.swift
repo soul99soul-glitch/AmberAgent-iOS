@@ -69,14 +69,10 @@ import Foundation
             reporter.approval(conversationID: conversationID, approval)
             self?.handleDialogueApprovalUpdate(conversationID: conversationID, approval: approval)
         }
-        let gatewayPaths = GatewayPaths.resolve()
-        let macExecutorId = GatewayIdentity.loadOrCreate(at: gatewayPaths.identity).id
         let dialogueCoordinator = DesktopMacDialogueCoordinator(
             fileURL: directory.appendingPathComponent("mac-dialogue-state.json"),
-            executorId: macExecutorId,
             soulRevisionProvider: { [weak agentSoul] in agentSoul?.revision ?? 0 }
         )
-        dialogueCoordinator.recoverInterruptedWorkItems()
         attachMacDialogue(dialogueCoordinator)
         let control = DesktopGatewayControl(tasks: tasks, reporter: reporter, scheduler: scheduler)
         control.board = { [weak self] in self?.boardItems() ?? [] }

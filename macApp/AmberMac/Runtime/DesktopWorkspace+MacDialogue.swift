@@ -68,11 +68,10 @@ extension DesktopWorkspace {
         }
     }
 
-    private func resolveDialogueConversation(for item: DesktopDialogueWorkItem) async -> (id: UUID, isNew: Bool) {
+    private func resolveDialogueConversation(for item: DesktopDialogueWorkItem) -> (id: UUID, isNew: Bool) {
         let remoteKey = item.conversationId ?? item.topicId
         if let existingID = dialogueConversationByRemoteKey[remoteKey],
            summaries.contains(where: { $0.id == existingID }) || conversations.contains(where: { $0.id == existingID }) {
-            await loadConversation(existingID)?.value
             if conversations.contains(where: { $0.id == existingID }),
                !generatingConversationIDs.contains(existingID),
                !mutatingBranchConversationIDs.contains(existingID),
@@ -92,6 +91,13 @@ extension DesktopWorkspace {
         let workItemId = item.workItemId
         await waitUntilLoaded()
 
+        let remoteKey = item.conversationId ?? item.topicId
+        if dialogueConversationByRemoteKey[remoteKey] == nil {
+            dialogueConversationByRemoteKey[remoteKey] = coordinator.lastLocalConversationID(for: remoteKey)
+        }
+        if let id = dialogueConversationByRemoteKey[remoteKey] {
+            await loadConversation(id)?.value
+        }
         if Task.isCancelled || coordinator.isStoppingOrTerminal(workItemId) {
             coordinator.settle(workItemId: workItemId, outcome: "cancelled", text: "任务已停止。")
             return
@@ -101,7 +107,7 @@ extension DesktopWorkspace {
             return
         }
 
-        let resolved = await resolveDialogueConversation(for: item)
+        let resolved = resolveDialogueConversation(for: item)
         let conversationID = resolved.id
         let isNew = resolved.isNew
         let taskTitle = Self.shortTaskTitle(from: item.prompt)
@@ -116,7 +122,8 @@ extension DesktopWorkspace {
             conversationID: conversationID,
             taskName: taskTitle,
             parentRunId: item.parentRunId,
-            workItemId: workItemId
+            workItemId: workItemId,
+            remoteConversationId: item.conversationId
         )
 
         var succeeded = false
@@ -125,14 +132,19 @@ extension DesktopWorkspace {
             dialogueRunConversationIDs.remove(conversationID)
             dialogueWorkItemByConversation[conversationID] = nil
             agentTasks.unattendedConversations[conversationID] = nil
-            gatewayReporter?.runFinished(conversationID: conversationID, succeeded: succeeded)
+            gatewayReporter?.runFinished(conversationID: conversationID, succeeded: succeeded,
+                                         cancelled: coordinator.workItem(workItemId)?.lifecycle == .cancelled)
         }
 
-        coordinator.markRunStarted(
+        guard coordinator.markRunStarted(
             workItemId: workItemId,
             localConversationID: conversationID,
             statusText: "Mac 端正在处理…"
-        )
+        ) else {
+            if isNew { conversations.removeAll { $0.id == conversationID } }
+            coordinator.settle(workItemId: workItemId, outcome: "failed", text: "无法保存运行状态，任务未启动。")
+            return
+        }
 
         let request: (DesktopProviderConfiguration, String)
         do {
@@ -145,10 +157,14 @@ extension DesktopWorkspace {
         }
 
         // Strict L1-L3 policy: remote delegated work never auto-approves high-risk (L3) operations.
-        let policy = DesktopApprovalPolicy(autoApproveOrdinary: agentTasks.autoApprove, autoApproveHighRisk: false)
+        let policy = DesktopApprovalPolicy(autoApproveOrdinary: agentTasks.autoApprove, autoApproveHighRisk: false,
+                                           allowedTools: DesktopToolRegistry.l2ReversibleWriteTools)
         var pendingTexts = [item.prompt]
+        var continuationInputs: [DesktopDialogueInputRecord] = []
         var lastOutcome: (state: DesktopMessageState, error: String?) = (.complete, nil)
         var finalAssistantText = ""
+        var outcomeUnknown = false
+        var followupSaveFailed = false
 
         while !pendingTexts.isEmpty {
             if Task.isCancelled || coordinator.isStoppingOrTerminal(workItemId) {
@@ -218,6 +234,10 @@ extension DesktopWorkspace {
                 break
             }
 
+            if !coordinator.consumeFollowups(continuationInputs) {
+                followupSaveFailed = true
+                run.cancel()
+            }
             dialogueGenerations[workItemId] = (run, conversationID, startedAt)
             if Task.isCancelled || coordinator.isStoppingOrTerminal(workItemId) {
                 run.cancel()
@@ -235,6 +255,7 @@ extension DesktopWorkspace {
             } onCancel: {
                 run.cancel()
             }
+            outcomeUnknown = run.hasUnknownToolOutcome
             dialogueGenerations[workItemId] = nil
             await persistence?.value
 
@@ -251,14 +272,17 @@ extension DesktopWorkspace {
             // consume them truthfully and run a continuation turn.
             let remaining = coordinator.pendingFollowups(workItemId: workItemId)
             if !remaining.isEmpty {
-                coordinator.consumeFollowups(remaining)
-                coordinator.appendProcessEvent(workItemId: workItemId, text: "已吸收新的补充要求，继续执行…")
+                continuationInputs = remaining
                 pendingTexts = remaining.map(\.text)
             }
         }
 
         let sources = gatewayReporter?.sources(forConversation: conversationID) ?? (refs: [], paths: [])
-        if lastOutcome.state == .cancelled || coordinator.isStopping(workItemId) || Task.isCancelled {
+        if outcomeUnknown || followupSaveFailed {
+            coordinator.settle(workItemId: workItemId, outcome: "failed",
+                               text: outcomeUnknown ? "工具执行结果需要在 Mac 上核对。" : "补充指令未能保存，请核对本次执行。",
+                               outcomeUnknown: true, sourceRefs: sources.refs, sourcePaths: sources.paths)
+        } else if lastOutcome.state == .cancelled || coordinator.isStopping(workItemId) || Task.isCancelled {
             coordinator.settle(
                 workItemId: workItemId,
                 outcome: "cancelled",
@@ -302,7 +326,7 @@ extension DesktopWorkspace {
             }
         }
         if !consumed.isEmpty {
-            coordinator.consumeFollowups(consumed)
+            guard coordinator.consumeFollowups(consumed) else { return [] }
             coordinator.appendProcessEvent(workItemId: workItemId, text: "已吸收新的补充要求，继续在 Mac 端执行…")
         }
         return messages

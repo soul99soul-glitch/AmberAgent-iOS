@@ -32,7 +32,7 @@ public struct HTTPRequest: Sendable {
             let key = rawKey.removingPercentEncoding ?? rawKey
             let rawValue = parts.count > 1 ? String(parts[1]).replacingOccurrences(of: "+", with: " ") : ""
             let value = rawValue.removingPercentEncoding ?? rawValue
-            result[key] = value
+            if result[key] == nil { result[key] = value }
         }
         return result
     }
@@ -140,6 +140,8 @@ public final class HTTPServer {
             switch Self.parse(buffer) {
             case .complete(let request):
                 self.handler(request) { self.respond(connection, $0) }
+            case .tooLarge:
+                self.respond(connection, .error(413, "request too large"))
             case .invalid:
                 self.respond(connection, .error(400, "bad request"))
             case .incomplete:
@@ -164,6 +166,7 @@ public final class HTTPServer {
 
     enum ParseResult {
         case incomplete
+        case tooLarge
         case invalid
         case complete(HTTPRequest)
     }
@@ -191,6 +194,7 @@ public final class HTTPServer {
         }
         let length = Int(headers["content-length"] ?? "0") ?? -1
         guard length >= 0 else { return .invalid }
+        guard length <= maxRequest - end.upperBound else { return .tooLarge }
         let body = buffer[end.upperBound...]
         guard body.count >= length else { return .incomplete }
         return .complete(HTTPRequest(method: String(requestLine[0]), path: path, query: query, headers: headers, body: Data(body.prefix(length))))

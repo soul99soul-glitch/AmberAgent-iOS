@@ -345,6 +345,8 @@ final class GatewayAPITests {
         )
         waitingSession.waitingTool = "workspace_file_write"
         waitingSession.waitingToolCallId = "call-7"
+        waitingSession.remoteConversationId = "phone-conversation"
+        waitingSession.workItemId = "work:mac-42"
         waitingSession.waitingDetail = "{ \"path\": \"summary.md\" }"
         waitingSession.waitingHighRisk = false
         var registry = Registry()
@@ -389,6 +391,9 @@ final class GatewayAPITests {
         #expect(pending["tool"] as? String == "workspace_file_write")
         #expect(pending["toolCallId"] as? String == "call-7")
         #expect(pending["highRisk"] as? Bool == false)
+        #expect(sessionJSON["conversationId"] as? String == "phone-conversation")
+        #expect(pending["conversationId"] as? String == "phone-conversation")
+        #expect(pending["workItemId"] as? String == "work:mac-42")
 
         // 5. Multi-client concurrent decision: first client wins (200), second client gets 409
         let answered = Locked(false)
@@ -453,6 +458,19 @@ final class GatewayAPITests {
         #expect(offlineCode == 503)
         #expect((offlineJSON["error"] as? String)?.contains("Amber 未运行") == true)
 
+        let inputURL = base.appendingPathComponent("v2/dialogue/messages")
+        for invalid in [Data("{".utf8), Data([0xff]), Data(#"{"text":"hi"}"#.utf16.flatMap { [UInt8($0), 0] }),
+                        try JSONSerialization.data(withJSONObject: ["text": String(repeating: "a", count: 100_000)])] {
+            var request = URLRequest(url: inputURL)
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = invalid
+            let (data, response) = try await client.session.data(for: request)
+            #expect((response as? HTTPURLResponse)?.statusCode == 400)
+            let error = try JSONSerialization.jsonObject(with: data) as? [String: String]
+            #expect(error?["error"] == "invalid_request")
+        }
+
         // 2. Invalid cursor query validation (400 invalid_cursor)
         for badQuery in ["after=-1", "after=abc", "limit=0", "limit=101", "limit=nan"] {
             let url = URL(string: "https://127.0.0.1:\(payload.port)/v2/dialogue/events?\(badQuery)")!
@@ -461,9 +479,9 @@ final class GatewayAPITests {
             #expect(json["error"] as? String == "invalid_cursor")
         }
 
-        // 3. Stand-in Amber.app socket verifies forwarding, status codes, unwrapped JSON & >100KB event page
+        // 3. Stand-in Amber.app socket verifies forwarding, status codes, unwrapped JSON & event page larger than the control request limit
         let received = Locked<[AmberControl.Request]>([])
-        let largePayloadText = String(repeating: "A", count: 120_000)
+        let largePayloadText = String(repeating: "界", count: 1_400_000)
         let app = UnixSocketServer(path: paths.amberSocket.path, queue: DispatchQueue(label: "fake-amber-dialogue")) { data in
             guard let req = try? GatewayJSON.decoder().decode(AmberControl.Request.self, from: data) else { return nil }
             received.mutate { $0.append(req) }
@@ -574,7 +592,7 @@ final class GatewayAPITests {
         #expect(eJSON["nextCursor"] as? Int == 7)
         #expect(eJSON["soulRevision"] as? Int == 4)
         let items = try #require(eJSON["items"] as? [[String: Any]])
-        #expect((items.first?["text"] as? String)?.count == 120_000)
+        #expect(items.first?["text"] as? String == largePayloadText)
 
         let timelineURL = URL(string: "https://127.0.0.1:\(payload.port)/v2/dialogue/timeline?after=0&limit=100")!
         let (tCode, _) = try await client.call("GET", timelineURL, token: token, headers: v1Headers)
@@ -585,6 +603,7 @@ final class GatewayAPITests {
         #expect(forwarded.count == 9)
         #expect(forwarded[0].action == .dialogueMessage)
         #expect(forwarded[0].deviceId == deviceId)
+        #expect(forwarded[0].gatewayId == (paired["gatewayId"] as? String))
         #expect(forwarded[0].deviceName == "测试 iPhone")
         #expect(forwarded[0].dialogueVersion == "1")
         #expect(forwarded[1].workItemId == "work:mac-1")
@@ -592,6 +611,7 @@ final class GatewayAPITests {
         #expect(forwarded[8].action == .dialogueEvents && forwarded[8].after == 0 && forwarded[8].limit == 100)
 
         let auditText = try String(contentsOf: paths.audit, encoding: .utf8)
+        #expect(!auditText.contains("conv-1"))
         #expect(auditText.contains("amber-dialogue-message"))
         #expect(auditText.contains("amber-dialogue-followup"))
         #expect(auditText.contains("amber-dialogue-stop"))

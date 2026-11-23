@@ -74,6 +74,7 @@ public enum AmberControl {
         /// `putSoul`: C-SOUL-V1 persona payload.
         public var soulPut: SoulPutRequest?
         /// `/v2/dialogue/*` & `/v2/work-items/{id}/*` pass-through fields.
+        public var gatewayId: String?
         public var dialogueVersion: String?
         public var workItemId: String?
         public var requestId: String?
@@ -145,6 +146,8 @@ public enum AmberControl {
         public enum Column: String, Codable, Sendable, CaseIterable { case needsYou, running, scheduled, done }
         public struct Approval: Codable, Sendable, Equatable {
             public var sessionKey: String
+            public var workItemId: String?
+            public var conversationId: String?
             public var toolCallId: String
             public var tool: String
             public var detail: String?

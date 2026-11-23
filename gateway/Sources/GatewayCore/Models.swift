@@ -74,6 +74,8 @@ public struct GatewayEvent: Codable, Sendable, Equatable {
     public var diffPreview: String?
     public var requiresLocalApproval: Bool?
     public var conversationId: String?
+    public var cancelled: Bool?
+    public var remoteConversationId: String?
     public var parentRunId: String?
     public var workItemId: String?
     public var sourceRefs: [String]?
@@ -144,6 +146,9 @@ public struct SessionRecord: Codable, Sendable, Equatable {
     public var state: TaskState
     public var waitReason: WaitReason?
     /// Tool that raised the current permission wait; only its own `toolDone` resolves the wait.
+    public var conversationId: String?
+    public var remoteConversationId: String?
+    public var workItemId: String?
     public var waitingTool: String?
     /// Amber permission waits: what the phone shows and answers (see `GatewayEvent`).
     public var waitingToolCallId: String?

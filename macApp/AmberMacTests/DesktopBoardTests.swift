@@ -95,6 +95,27 @@ import XCTest
         XCTAssertEqual(items.map(\.column), [.running])
     }
 
+    func testDelegatedApprovalKeepsLocalAndRemoteOwners() throws {
+        let local = UUID().uuidString
+        var event = GatewayEvent(agent: .amber, kind: .permissionRequest, sessionId: "run", timestamp: now)
+        event.conversationId = local
+        event.remoteConversationId = "phone-conversation"
+        event.workItemId = "work:mac-1"
+        event.tool = "terminal_exec"
+        event.toolCallId = "call"
+        event.requiresLocalApproval = true
+        var registry = Registry()
+        _ = registry.ingest(event, config: GatewayConfig(), now: now) { Presence(screenLocked: false, idleSeconds: 0) }
+        let items = DesktopBoard.build(tasks: [], live: [], paused: false, sessions: Array(registry.sessions.values), now: now)
+        XCTAssertEqual(items.count, 1)
+        let item = try XCTUnwrap(items.first)
+        XCTAssertEqual(item.column, .needsYou)
+        XCTAssertEqual(item.conversationId, local)
+        XCTAssertEqual(item.approval?.conversationId, "phone-conversation")
+        XCTAssertEqual(item.approval?.workItemId, "work:mac-1")
+        XCTAssertEqual(item.approval?.requiresLocalApproval, true)
+    }
+
     func testRunsPerTaskCapPausedStateAndAmberSessionsAreNotDoubled() {
         var daily = task("每日汇总")
         daily.recentRuns = (1...6).map { run(.completed, ago: TimeInterval($0) * 600) }

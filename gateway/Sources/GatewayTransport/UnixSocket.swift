@@ -29,6 +29,7 @@ public enum UnixSocketClient {
     /// Request/response over one connection: write, half-close, read until the peer closes (or `maxResponse`).
     /// nil on connect failure, timeout or an empty reply.
     public static func request(_ payload: Data, to path: String, timeout: TimeInterval, maxResponse: Int = UnixSocketServer.maxMessageSize) -> Data? {
+        guard maxResponse > 0 else { return nil }
         let deadline = Date().addingTimeInterval(timeout)
         guard var addr = UnixAddress.make(path) else { return nil }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -50,6 +51,7 @@ public enum UnixSocketClient {
 
         var offset = 0
         while offset < payload.count {
+            guard deadline.timeIntervalSinceNow > 0 else { return nil }
             let n = payload.withUnsafeBytes { write(fd, $0.baseAddress! + offset, payload.count - offset) }
             if n > 0 {
                 offset += n
@@ -65,20 +67,20 @@ public enum UnixSocketClient {
 
         var response = Data()
         var buffer = [UInt8](repeating: 0, count: min(65_536, maxResponse))
-        while response.count < maxResponse {
-            let chunk = min(buffer.count, maxResponse - response.count)
-            let n = read(fd, &buffer, chunk)
+        while deadline.timeIntervalSinceNow > 0 {
+            let n = read(fd, &buffer, buffer.count)
             if n > 0 {
+                guard n <= maxResponse - response.count else { return nil }
                 response.append(contentsOf: buffer[0..<n])
             } else if n < 0 && errno == EAGAIN {
                 guard wait(fd, events: Int16(POLLIN), until: deadline) else { return nil }
             } else if n < 0 && errno == EINTR {
                 continue
             } else {
-                break
+                return n == 0 && !response.isEmpty ? response : nil
             }
         }
-        return response.isEmpty ? nil : response
+        return nil
     }
 
     private static func wait(_ fd: Int32, events: Int16, until deadline: Date) -> Bool {
@@ -100,6 +102,7 @@ public enum UnixSocketClient {
 public final class UnixSocketServer {
     public static let maxMessageSize = 4 * 1024 * 1024
 
+    private let maxRequestSize: Int
     private let path: String
     private let queue: DispatchQueue
     private let handler: (Data) -> Data?
@@ -112,12 +115,14 @@ public final class UnixSocketServer {
     public init(path: String, queue: DispatchQueue, handler: @escaping (Data) -> Bool) {
         self.path = path
         self.queue = queue
+        self.maxRequestSize = 64 * 1024
         self.handler = { handler($0) ? UnixSocketClient.ack : nil }
     }
 
     public init(path: String, queue: DispatchQueue, respond: @escaping (Data) -> Data?) {
         self.path = path
         self.queue = queue
+        self.maxRequestSize = Self.maxMessageSize
         self.handler = respond
     }
 
@@ -180,7 +185,9 @@ public final class UnixSocketServer {
 
         var message = Data()
         var buffer = [UInt8](repeating: 0, count: 65_536)
-        while message.count <= Self.maxMessageSize {
+        let readDeadline = Date().addingTimeInterval(0.5)
+        while message.count <= maxRequestSize {
+            guard readDeadline.timeIntervalSinceNow > 0 else { return }
             let n = read(client, &buffer, buffer.count)
             if n > 0 {
                 message.append(contentsOf: buffer[0..<n])
@@ -192,10 +199,13 @@ public final class UnixSocketServer {
                 return
             }
         }
-        guard message.count <= Self.maxMessageSize, let reply = handler(message) else { return }
+        guard message.count <= maxRequestSize, let reply = handler(message) else { return }
         var offset = 0
+        let writeDeadline = Date().addingTimeInterval(0.5)
         while offset < reply.count {
+            guard writeDeadline.timeIntervalSinceNow > 0 else { return }
             let n = reply.withUnsafeBytes { write(client, $0.baseAddress! + offset, reply.count - offset) }
+            if n < 0 && errno == EINTR { continue }
             guard n > 0 else { return }
             offset += n
         }

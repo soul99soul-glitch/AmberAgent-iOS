@@ -17,6 +17,7 @@ import Foundation
         var session: String
         var name: String
         var parentRunId: String?
+        var remoteConversationId: String?
         var workItemId: String?
         var sourceRefs: [String] = []
         var sourcePaths: [String] = []
@@ -44,9 +45,9 @@ import Foundation
 
     /// Whether a run is reported is decided once, here: a run the gateway saw start always gets its end,
     /// even if the gateway is switched off meanwhile, so no session is left open on the phone.
-    func runStarted(runID: UUID, conversationID: UUID, taskName: String, parentRunId: String? = nil, workItemId: String? = nil) {
-        guard isEnabled() else { return }
-        runs[conversationID] = RunMetadata(session: runID.uuidString.lowercased(), name: taskName, parentRunId: parentRunId, workItemId: workItemId)
+    func runStarted(runID: UUID, conversationID: UUID, taskName: String, parentRunId: String? = nil, workItemId: String? = nil, remoteConversationId: String? = nil) {
+        guard workItemId != nil || isEnabled() else { return }
+        runs[conversationID] = RunMetadata(session: runID.uuidString.lowercased(), name: taskName, parentRunId: parentRunId, remoteConversationId: remoteConversationId, workItemId: workItemId)
         send(.runStart, conversationID: conversationID)
     }
 
@@ -88,11 +89,13 @@ import Foundation
     func runFinished(
         conversationID: UUID?,
         succeeded: Bool,
+        cancelled: Bool = false,
         quiet: Bool = false
     ) {
         guard let conversationID, let run = runs[conversationID] else { return }
         send(.runExit, conversationID: conversationID) {
             $0.exitCode = succeeded ? 0 : 1
+            if cancelled { $0.cancelled = true }
             if quiet { $0.quiet = true }
             if !run.sourceRefs.isEmpty { $0.sourceRefs = run.sourceRefs }
             if !run.sourcePaths.isEmpty { $0.sourcePaths = run.sourcePaths }
@@ -105,6 +108,12 @@ import Foundation
         guard let run = runs[conversationID] else { return }
         var event = GatewayEvent(agent: .amber, kind: kind, sessionId: run.session, process: process, origin: .headless, title: run.name)
         event.conversationId = conversationID.uuidString.lowercased()
+        if run.workItemId != nil {
+            // Only the summary is private display data. The title also goes to push providers.
+            event.title = "Mac 委派任务"
+            event.summary = run.name
+            event.remoteConversationId = run.remoteConversationId
+        }
         event.parentRunId = run.parentRunId
         event.workItemId = run.workItemId
         fill(&event)

@@ -122,8 +122,8 @@ extension DesktopWorkspace {
     // MARK: - Send & Queue
 
     func send() {
-        if let selectedID, scheduledRunConversationIDs.contains(selectedID) {
-            errorMessage = "定时任务正在这条会话中运行，请等它结束后再发送。"; return
+        if let selectedID, hasBackgroundWriter(selectedID) {
+            errorMessage = "后台任务正在这条会话中运行，请等它结束后再发送。"; return
         }
         // Only when the user explicitly selects a running task does Send act as a supplement to that task.
         if let supplementTask = selectedSupplementTask {
@@ -283,7 +283,7 @@ extension DesktopWorkspace {
 
     func startQueuedRequest(owner: UUID, runID: UUID?) {
         guard !mutatingBranchConversationIDs.contains(owner), !isManagingBackup,
-              !scheduledRunConversationIDs.contains(owner),
+              !hasBackgroundWriter(owner),
               let index = conversations.firstIndex(where: { $0.id == owner }),
               !unsavedConversationIDs.contains(owner),
               canStartNewTaskImmediately(in: owner) else { return }
@@ -386,7 +386,7 @@ extension DesktopWorkspace {
 
     private func canStartQueuedNewTask(in owner: UUID) -> Bool {
         !mutatingBranchConversationIDs.contains(owner)
-            && !scheduledRunConversationIDs.contains(owner)
+            && !hasBackgroundWriter(owner)
             && !unsavedConversationIDs.contains(owner)
             && conversations.contains(where: { $0.id == owner })
             && canStartNewTaskImmediately(in: owner)

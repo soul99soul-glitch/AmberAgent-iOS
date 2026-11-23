@@ -301,7 +301,7 @@ final class DesktopAgentTasks {
     func decideFromNotification(runID: UUID, toolID: String, allow: Bool) async -> Bool {
         await loading?.value
         guard let approval = records.first(where: { $0.id == runID })?.approval, approval.id == toolID else { return false }
-        if allow, DesktopToolRegistry.isHighRisk(approval.name) { return false }
+        if allow, DesktopToolRegistry.riskLevel(for: approval.name, arguments: approval.arguments) == .l3 { return false }
         // Waits for the decision to be written, so a remote caller's next status read already reflects it.
         return await decide(runID: runID, allow: allow)?.value ?? false
     }

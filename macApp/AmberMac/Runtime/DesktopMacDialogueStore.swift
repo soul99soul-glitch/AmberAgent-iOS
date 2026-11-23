@@ -260,6 +260,7 @@ struct DesktopDialogueWorkItem: Codable, Equatable, Sendable {
 enum DesktopDialogueError: Error, Equatable, Sendable {
     case invalidRequest
     case invalidCursor
+    case storageUnavailable
     case taskNotFound
     case receiptNotFound
     case requestIdConflict
@@ -268,6 +269,7 @@ enum DesktopDialogueError: Error, Equatable, Sendable {
 
     var httpStatus: Int {
         switch self {
+        case .storageUnavailable: 503
         case .invalidRequest, .invalidCursor: 400
         case .taskNotFound, .receiptNotFound: 404
         case .requestIdConflict, .staleEpoch, .taskTerminal: 409
@@ -276,6 +278,7 @@ enum DesktopDialogueError: Error, Equatable, Sendable {
 
     var code: String {
         switch self {
+        case .storageUnavailable: "storage_unavailable"
         case .invalidRequest: "invalid_request"
         case .invalidCursor: "invalid_cursor"
         case .taskNotFound: "task_not_found"
@@ -302,7 +305,7 @@ final class DesktopMacDialogueCoordinator {
     }
 
     let fileURL: URL?
-    let executorId: String
+    private(set) var executorId: String
     var soulRevisionProvider: @MainActor () -> Int64
 
     /// Local execution hooks (wired by `DesktopWorkspace.attachMacDialogue`).
@@ -310,6 +313,9 @@ final class DesktopMacDialogueCoordinator {
     var onFollowupAccepted: (@MainActor (String) -> Void)?
     var onStopWorkItem: (@MainActor (String) -> Void)?
 
+    private var writerLock: FileHandle?
+    private var loadFailed = false
+    private var needsFlush = false
     private var state = PersistedState()
     private var inputIndexByDeviceRequest: [String: Int] = [:]
     private var inputIndexById: [String: Int] = [:]
@@ -327,12 +333,28 @@ final class DesktopMacDialogueCoordinator {
         load()
     }
 
+    /// Only the live writer binds the control socket. Another app instance may already own active runs.
+    func acquireWriter() throws -> Bool {
+        guard let fileURL, writerLock == nil else { return true }
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let fd = open(fileURL.appendingPathExtension("lock").path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw DesktopDialogueError.storageUnavailable }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { return false }
+        writerLock = handle
+        load()
+        recoverInterruptedWorkItems()
+        return true
+    }
+
     // MARK: - AmberControl Entry Point
 
     func handleControl(_ request: AmberControl.Request) -> AmberControl.Response {
+        if let gatewayId = request.gatewayId { executorId = gatewayId }
         let legacyClient = request.dialogueVersion != String(DesktopDialogueContract.schemaVersion)
         let deviceId = request.deviceId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         do {
+            try ensureStorageAvailable()
             switch request.action {
             case .dialogueMessage:
                 guard !deviceId.isEmpty else { return .failure(400, DesktopDialogueError.invalidRequest.code) }
@@ -428,6 +450,7 @@ final class DesktopMacDialogueCoordinator {
         ledgerId: String? = nil,
         legacyClient: Bool = false
     ) throws -> (status: Int, receipt: DesktopDialogueReceipt) {
+        try ensureStorageAvailable()
         guard Self.isValidRequestId(requestId) else { throw DesktopDialogueError.invalidRequest }
         guard kind == "message" || kind == "followup" || kind == "stop" else { throw DesktopDialogueError.invalidRequest }
         if kind != "message", (workItemId ?? "").isEmpty { throw DesktopDialogueError.invalidRequest }
@@ -450,7 +473,11 @@ final class DesktopMacDialogueCoordinator {
         // 1. Idempotency check by (deviceId, requestId)
         if let existingIndex = inputIndexByDeviceRequest[dedupeKey] {
             let existing = state.inputs[existingIndex]
-            if existing.fingerprint != fp {
+            let owner = conversationId ?? workItemId.flatMap { state.workItems[$0]?.conversationId }
+            // Legacy fingerprints delimit fields with NUL. Verify the field boundary for text containing it.
+            let containsDelimiter = text.utf8.contains(0) || existing.text.utf8.contains(0)
+            if existing.fingerprint != fp || existing.conversationId != owner ||
+                (containsDelimiter && existing.text != Self.redact(text)) {
                 throw DesktopDialogueError.requestIdConflict
             }
             if legacyClient && isRejectedForLegacy(existing) {
@@ -494,6 +521,7 @@ final class DesktopMacDialogueCoordinator {
         let resolvedConversationId = conversationId ?? existingWorkItem?.conversationId
         let resolvedEpoch = epoch ?? existingWorkItem?.maxEpoch ?? 1
 
+        let previous = state
         var createdWorkItem: DesktopDialogueWorkItem?
         if kind == "message" {
             let newWorkItemId = "work:mac-\(UUID().uuidString.lowercased())"
@@ -606,7 +634,12 @@ final class DesktopMacDialogueCoordinator {
             state.inputs[insertedIndex].disposition = .consumed
         }
 
-        persist()
+        guard persist() else {
+            state = previous
+            rebuildIndexes()
+            needsFlush = false
+            throw DesktopDialogueError.storageUnavailable
+        }
 
         if legacyClient && isRejectedForLegacy(state.inputs[insertedIndex]) {
             throw DesktopDialogueError.taskTerminal
@@ -686,8 +719,8 @@ final class DesktopMacDialogueCoordinator {
         workItemId: String,
         localConversationID: UUID? = nil,
         statusText: String = "Mac 端已接手任务，正在准备执行…"
-    ) {
-        guard var item = state.workItems[workItemId], !item.lifecycle.isTerminal else { return }
+    ) -> Bool {
+        guard var item = state.workItems[workItemId], item.lifecycle == .active else { return false }
         if let localConversationID {
             item.localConversationID = localConversationID
             state.workItems[workItemId] = item
@@ -736,7 +769,7 @@ final class DesktopMacDialogueCoordinator {
                 )
             )
         }
-        persist()
+        return persist()
     }
 
     func appendProcessEvent(
@@ -813,8 +846,9 @@ final class DesktopMacDialogueCoordinator {
     }
 
     /// Atomically marks the supplied follow-up inputs as consumed and writes causal `input_consumed` events.
-    func consumeFollowups(_ inputs: [DesktopDialogueInputRecord]) {
-        guard !inputs.isEmpty else { return }
+    func consumeFollowups(_ inputs: [DesktopDialogueInputRecord]) -> Bool {
+        guard !inputs.isEmpty else { return true }
+        let previous = state
         var changed = false
         for input in inputs {
             guard let index = inputIndexById[input.id], state.inputs[index].disposition == .received else { continue }
@@ -843,7 +877,12 @@ final class DesktopMacDialogueCoordinator {
                 )
             }
         }
-        if changed { persist() }
+        guard !changed || persist() else {
+            state = previous
+            rebuildIndexes()
+            return false
+        }
+        return true
     }
 
     /// Atomically settles a work item to a terminal outcome (`completed`, `failed`, or `cancelled`),
@@ -1041,12 +1080,24 @@ final class DesktopMacDialogueCoordinator {
     }
 
     private func load() {
-        guard let fileURL, let data = try? Data(contentsOf: fileURL),
-              let decoded = try? JSONDecoder().decode(PersistedState.self, from: data) else {
-            return
+        guard let fileURL else { return }
+        loadFailed = false
+        do {
+            state = try JSONDecoder().decode(PersistedState.self, from: Data(contentsOf: fileURL))
+            if let previous = state.inputs.last?.executorId { executorId = previous }
+            rebuildIndexes()
+        } catch CocoaError.fileReadNoSuchFile {
+            // First launch.
+        } catch {
+            loadFailed = true
         }
-        state = decoded
-        rebuildIndexes()
+    }
+
+    func lastLocalConversationID(for remoteKey: String) -> UUID? {
+        for input in state.inputs.reversed() where (input.conversationId ?? input.topicId) == remoteKey {
+            if let id = input.createdWorkItemId, let localID = state.workItems[id]?.localConversationID { return localID }
+        }
+        return nil
     }
 
     private func rebuildIndexes() {
@@ -1069,16 +1120,31 @@ final class DesktopMacDialogueCoordinator {
         }
     }
 
-    private func persist() {
-        guard let fileURL else { return }
-        let fm = FileManager.default
-        let dir = fileURL.deletingLastPathComponent()
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(state) else { return }
-        try? data.write(to: fileURL, options: .atomic)
-        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+    private func ensureStorageAvailable() throws {
+        guard !loadFailed, !needsFlush || persist() else { throw DesktopDialogueError.storageUnavailable }
+    }
+
+    @discardableResult
+    private func persist() -> Bool {
+        guard let fileURL else { return true }
+        guard !loadFailed else { return false }
+        do {
+            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let data = try JSONEncoder().encode(state)
+            let temporary = fileURL.deletingLastPathComponent().appendingPathComponent(UUID().uuidString)
+            let fd = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
+            guard fd >= 0 else { throw DesktopDialogueError.storageUnavailable }
+            defer { unlink(temporary.path) }
+            let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            try handle.write(contentsOf: data)
+            try handle.close()
+            guard rename(temporary.path, fileURL.path) == 0 else { throw DesktopDialogueError.storageUnavailable }
+            needsFlush = false
+            return true
+        } catch {
+            needsFlush = true
+            return false
+        }
     }
 
     static func isValidRequestId(_ value: String) -> Bool {

@@ -251,6 +251,42 @@ final class DesktopMacDialogueTests: XCTestCase {
         XCTAssertEqual(reloadedPage.nextCursor, v1Page.nextCursor)
     }
 
+    func testFailedLedgerWriteDoesNotDispatchAndRetryRunsOnce() throws {
+        let dir = tempDir()
+        let file = dir.appendingPathComponent("ledger")
+        let coordinator = DesktopMacDialogueCoordinator(fileURL: file)
+        var dispatches = 0
+        coordinator.onStartWorkItem = { _ in dispatches += 1 }
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        let request = AmberControl.Request(action: .dialogueMessage, deviceId: "phone", rawBody: #"{"requestId":"key","text":"hello"}"#)
+        XCTAssertEqual(coordinator.handleControl(request).status, 503)
+        XCTAssertEqual(dispatches, 0)
+        XCTAssertNil(coordinator.receipt(deviceId: "phone", requestId: "key"))
+        try FileManager.default.removeItem(at: file)
+        XCTAssertEqual(coordinator.handleControl(request).status, 202)
+        XCTAssertEqual(coordinator.handleControl(request).status, 200)
+        XCTAssertEqual(dispatches, 1)
+        let broken = Data("damaged ledger".utf8)
+        try broken.write(to: file)
+        XCTAssertEqual(DesktopMacDialogueCoordinator(fileURL: file).handleControl(request).status, 503)
+        XCTAssertEqual(try Data(contentsOf: file), broken)
+    }
+
+    func testSecondWriterWaitsForOwnerBeforeRecovery() throws {
+        let file = tempDir().appendingPathComponent("ledger")
+        var owner: DesktopMacDialogueCoordinator? = DesktopMacDialogueCoordinator(fileURL: file)
+        XCTAssertTrue(try XCTUnwrap(owner).acquireWriter())
+        let receipt = try XCTUnwrap(owner).submit(deviceId: "phone", requestId: "k", text: "hello", kind: "message").receipt
+        let next = DesktopMacDialogueCoordinator(fileURL: file)
+        XCTAssertFalse(try next.acquireWriter())
+        let work = try XCTUnwrap(receipt.workItemIds.first)
+        XCTAssertEqual(owner?.workItem(work)?.lifecycle, .active)
+        owner = nil
+        XCTAssertTrue(try next.acquireWriter())
+        let events = try next.page(after: 0, limit: 100).items
+        XCTAssertEqual(events.filter { $0.kind == "task_result" && $0.outcomeUnknown }.count, 1)
+    }
+
     // MARK: - 2. Local Agent Bridge: Missing Provider Fails Clearly (Never Stalls)
 
     func testMissingProviderProducesClearFailedTaskResult() async throws {
@@ -307,7 +343,8 @@ final class DesktopMacDialogueTests: XCTestCase {
             settings: settings,
             storage: DesktopMemoryConversationStorage(),
             provider: provider,
-            initialConversations: []
+            initialConversations: [],
+            agentTasks: DesktopAgentTasks(defaults: UserDefaults(suiteName: "amber.dialogue.tasks.\(UUID().uuidString)")!)
         )
         let coordinator = DesktopMacDialogueCoordinator(
             fileURL: dir.appendingPathComponent("state.json"),
@@ -316,12 +353,24 @@ final class DesktopMacDialogueTests: XCTestCase {
         )
         workspace.attachMacDialogue(coordinator)
 
+        workspace.agentTasks.autoApprove = true
+
         // Scenario A: submit message -> enqueue followup while active -> provider completes -> followup consumed & completed
         let (_, msgReceipt) = try coordinator.submit(
             deviceId: "ios-1", requestId: "req-run-1", text: "分析日志", kind: "message", conversationId: "conv-a"
         )
         let work1 = try XCTUnwrap(msgReceipt.workItemIds.first)
         try await waitUntil { provider.startedRuns.count == 1 }
+
+        let context = try XCTUnwrap(provider.lastContext)
+        let policy = try XCTUnwrap(context.approvalPolicy)
+        XCTAssertFalse(policy.autoApproves("spawn_agent"))
+        XCTAssertTrue(policy.autoApproves("workspace_file_write"))
+        workspace.select(context.conversationID)
+        workspace.draft = "本机草稿"
+        workspace.send()
+        XCTAssertEqual(workspace.draft, "本机草稿")
+        XCTAssertEqual(provider.startedRuns.count, 1)
 
         let (fStatus, fReceipt) = try coordinator.submit(
             deviceId: "ios-1", requestId: "req-follow-1", text: "顺便输出结论摘要", kind: "followup", workItemId: work1
@@ -386,6 +435,13 @@ final class DesktopMacDialogueTests: XCTestCase {
 @MainActor
 private final class StubDialogueProvider: DesktopTextProvider {
     var startedRuns: [DesktopGeneration] = []
+    var lastContext: DesktopRunContext?
+
+    func start(configuration: DesktopProviderConfiguration, apiKey: String, messages: [DesktopMessage],
+               responseID: UUID, context: DesktopRunContext) throws -> DesktopGeneration {
+        lastContext = context
+        return try start(configuration: configuration, apiKey: apiKey, messages: messages, responseID: responseID)
+    }
 
     func userMessage(id: UUID, text: String, attachments: [DesktopMessageAttachment]) throws -> DesktopMessage {
         DesktopMessage(id: id, role: .user, text: text)

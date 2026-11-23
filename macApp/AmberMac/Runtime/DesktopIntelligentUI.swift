@@ -421,8 +421,8 @@ extension DesktopWorkspace {
         guard !mutatingBranchConversationIDs.contains(conversationID) else {
             return .failure("正在保存消息更改，请稍候再提交。")
         }
-        guard !scheduledRunConversationIDs.contains(conversationID) else {
-            return .failure("定时任务正在这条会话中运行，请等它结束后再提交。")
+        guard !hasBackgroundWriter(conversationID) else {
+            return .failure("后台任务正在这条会话中运行，请等它结束后再提交。")
         }
         guard !generatingConversationIDs.contains(conversationID) else {
             return .failure("当前回复结束后可提交；你也可以先点击「填入输入框草稿」。")
@@ -492,7 +492,7 @@ extension DesktopWorkspace {
         guard let request = try? requestConfiguration(conversationID: conversationID),
               !generatingConversationIDs.contains(conversationID),
               !mutatingBranchConversationIDs.contains(conversationID),
-              !scheduledRunConversationIDs.contains(conversationID),
+              !hasBackgroundWriter(conversationID),
               settings.intelligentUIEnabled else {
             return .saved
         }

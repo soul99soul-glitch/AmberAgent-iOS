@@ -176,7 +176,7 @@ import CryptoKit
                 let timeReason = timeout.fired ? DesktopAgentStopReason.timeLimit(minutes: runMinutes) : nil
                 if result.toolOutcomeUnknown != nil || result.durabilityFailureMessage != nil {
                     await tasks.finish(id, status: .outcomeUnknown, error: "工具结果需要核对，请查看原会话和任务记录；不会自动重放。")
-                    generation.yield(.failed("工具执行结果需要核对，已保留任务记录；请检查后继续。"))
+                    generation.failWithUnknownToolOutcome("工具执行结果需要核对，已保留任务记录；请检查后继续。")
                 } else if let timeReason {
                     await tasks.finish(id, status: .failed, error: timeReason.record)
                     generation.yield(.failed(timeReason.banner))

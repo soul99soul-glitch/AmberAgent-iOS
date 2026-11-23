@@ -429,7 +429,7 @@ extension DesktopWorkspace {
     }
 
     func beginBackup() -> Bool {
-        guard !isLoading, !isGenerating, !isMutatingBranch, !isManagingBackup, insights.activeOwners.isEmpty,
+        guard !isLoading, !isGenerating, dialogueRunConversationIDs.isEmpty, !isMutatingBranch, !isManagingBackup, insights.activeOwners.isEmpty,
               !imageGeneration.isRunning, titles.activeOwners.isEmpty, !recipes.operations.contains(where: \.isRunning) else {
             backupErrorMessage = "请先结束生成或正在进行的会话更改，再执行备份或恢复。"
             return false
@@ -508,7 +508,7 @@ extension DesktopWorkspace {
             await loadConversation(id)?.value
             guard conversations.contains(where: { $0.id == id }) else { return failed("无法读取结果会话。") }
             guard !generatingConversationIDs.contains(id), !mutatingBranchConversationIDs.contains(id),
-                  !scheduledRunConversationIDs.contains(id) else {
+                  !hasBackgroundWriter(id) else {
                 return failed("结果会话正在生成或保存，本次未运行。")
             }
             conversationID = id

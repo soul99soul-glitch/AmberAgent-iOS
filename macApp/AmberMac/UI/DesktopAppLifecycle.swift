@@ -63,11 +63,18 @@ final class AmberMacAppDelegate: NSObject, NSApplicationDelegate, @preconcurrenc
         workspace.scheduler?.cancelAll(reason: "应用退出，本次运行已中断。")
         workspace.cancelScheduledRuns()
         workspace.gatewayControl?.stop()
+        let dialogueTasks = Array(workspace.dialogueRunTasks.values)
+        if let coordinator = workspace.macDialogue {
+            for workItemId in Array(workspace.dialogueRunTasks.keys) {
+                workspace.stopMacDialogueWorkItem(workItemId, coordinator: coordinator)
+            }
+        }
         workspace.agentTasks.cancelAll()
         for server in workspace.mcp.store.servers { workspace.mcp.disconnect(id: server.id) }
         workspace.insights.cancelAll()
         workspace.stopAll()
         Task {
+            for task in dialogueTasks { await task.value }
             await workspace.mcp.shutdown()
             await workspace.imageGeneration.shutdown()
             await workspace.titles.flush()
@@ -81,6 +88,7 @@ final class AmberMacAppDelegate: NSObject, NSApplicationDelegate, @preconcurrenc
             let saved = conversationsSaved && collaborationsSaved
             if !saved {
                 workspace.errorMessage = "仍有会话未能保存，已取消退出。请检查磁盘空间或文件权限，并导出重要会话备份。"
+                workspace.gatewayControl?.start()
                 isTerminating = false
                 openMainWindow?()
             }

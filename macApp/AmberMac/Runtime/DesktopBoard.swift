@@ -61,10 +61,10 @@ import Foundation
             }
         }
 
-        for rec in sessions where rec.agent != .amber && rec.agent != .run {
+        for rec in sessions where rec.agent != .run && (rec.agent != .amber || rec.workItemId != nil) {
             // No prompt ever submitted (e.g. a host's sub-second background call): nothing to name it by.
             // Kept only while it waits on you, so a pending request is never hidden.
-            if rec.generatedTitle == nil, rec.summary == nil, rec.state != .waiting { continue }
+            if rec.workItemId == nil, rec.generatedTitle == nil, rec.summary == nil, rec.state != .waiting { continue }
             let column: AmberControl.BoardItem.Column
             switch rec.state {
             case .waiting:
@@ -76,6 +76,23 @@ import Foundation
             case .completed, .stopped:
                 guard now.timeIntervalSince(rec.updatedAt) < doneWindow else { continue }
                 column = .done
+            }
+            if rec.agent == .amber {
+                var approval: AmberControl.BoardItem.Approval?
+                if rec.state == .waiting, rec.waitReason == .permission,
+                   let tool = rec.waitingTool, let call = rec.waitingToolCallId {
+                    approval = .init(sessionKey: rec.key, toolCallId: call, tool: tool, detail: rec.waitingDetail,
+                                     highRisk: rec.waitingHighRisk ?? true, riskLevel: rec.waitingRiskLevel,
+                                     targetDevice: rec.waitingTargetDevice, targetSummary: rec.waitingTargetSummary,
+                                     diffPreview: rec.waitingDiffPreview, requiresLocalApproval: rec.waitingRequiresLocalApproval)
+                    approval?.conversationId = rec.remoteConversationId
+                    approval?.workItemId = rec.workItemId
+                }
+                items.append(.init(id: "session:\(rec.key)", kind: .run, column: column,
+                                   title: rec.summary ?? Registry.subject(for: rec),
+                                   detail: rec.state.label(rec.waitReason, abnormal: rec.abnormal), updatedAt: rec.updatedAt,
+                                   conversationId: rec.conversationId, failed: rec.abnormal, approval: approval))
+                continue
             }
             let source = [rec.agent.displayName, rec.host].compactMap { $0 }.joined(separator: " · ")
             items.append(.init(id: "session:\(rec.key)", kind: .agentSession, column: column,

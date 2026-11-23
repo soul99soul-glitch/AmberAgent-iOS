@@ -11,6 +11,7 @@ import Foundation
     private let scheduler: DesktopScheduler?
     private let queue = DispatchQueue(label: "amber.gateway.control")
     private var server: UnixSocketServer?
+    private var wantsToListen = false
 
     /// The task board as the phone sees it; set by the live app (it knows the scheduled runs in flight).
     var board: (@MainActor () -> [AmberControl.BoardItem])?
@@ -23,8 +24,10 @@ import Foundation
 
     /// Socket file permissions (600 in a 700 directory) are the access control, same as the hook socket.
     func start() {
+        wantsToListen = true
         guard server == nil else { return }
         do {
+            if let dialogue, try !dialogue.acquireWriter() { return }
             try paths.ensureDirectories()
             let server = UnixSocketServer(path: paths.amberSocket.path, queue: queue, respond: Self.bridge { [weak self] in await self?.handle($0) })
             try server.start()
@@ -34,12 +37,14 @@ import Foundation
         }
     }
 
-    func stop() { server?.stop(); server = nil }
+    func stop() { wantsToListen = false; server?.stop(); server = nil }
 
     /// Rebinds if another process took over or removed the socket path (e.g. a second Amber that has since quit).
     /// Cheap; called from the gateway settings poll and on activation.
     func ensureListening() {
-        guard let server, !server.isBound else { return }
+        guard wantsToListen else { return }
+        guard let server else { start(); return }
+        guard !server.isBound else { return }
         server.stop()
         self.server = nil
         start()

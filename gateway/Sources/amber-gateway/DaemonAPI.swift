@@ -23,6 +23,7 @@ extension Daemon {
             var monitored: Bool
             var updatedAt: Date
             /// Amber scheduled runs waiting on a tool call: what the phone shows and answers.
+            var conversationId: String?
             var pendingApproval: PendingApproval?
             var sourceRefs: [String]?
             var sourcePaths: [String]?
@@ -39,6 +40,8 @@ extension Daemon {
             var targetSummary: String?
             var diffPreview: String?
             var requiresLocalApproval: Bool?
+            var conversationId: String?
+            var workItemId: String?
         }
 
         var gateway: Gateway
@@ -54,7 +57,8 @@ extension Daemon {
     static let maxDialogueBodyBytes = 100_000
 
     func handleAPI(_ request: HTTPRequest, respond: @escaping (HTTPResponse) -> Void) {
-        let body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:]
+        let object = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any]
+        let body = object ?? [:]
         if request.method == "POST", request.path == "/v1/pair" {
             return respond(pair(body))
         }
@@ -72,6 +76,12 @@ extension Daemon {
         if now.timeIntervalSince(device.lastSeenAt) > 60 {
             device.lastSeenAt = now
             updateDevice(device.id) { $0.lastSeenAt = now }
+        }
+
+        func dialogueBody() -> String? {
+            guard let object, object["text"] == nil || object["text"] is String,
+                  request.body.count <= Self.maxDialogueBodyBytes, !request.body.contains(0) else { return nil }
+            return String(data: request.body, encoding: .utf8)
         }
 
         switch (request.method, request.path) {
@@ -128,8 +138,7 @@ extension Daemon {
             audit.record("amber-soul-put", ["device": device.id, "source": soulPut.source ?? "remote"])
             forwardSoulToAmber(.init(action: .putSoul, deviceName: device.name, soulPut: soulPut), respond: respond)
         case ("POST", "/v2/dialogue/messages"):
-            guard request.body.count <= Self.maxDialogueBodyBytes,
-                  let rawBody = String(data: request.body, encoding: .utf8) else {
+            guard let rawBody = dialogueBody() else {
                 return respond(.error(400, "invalid_request"))
             }
             let dialogueVersion = request.headers["x-amber-dialogue-version"]
@@ -149,8 +158,7 @@ extension Daemon {
             let dialogueVersion = request.headers["x-amber-dialogue-version"]
             switch parts[1] {
             case "inputs":
-                guard request.body.count <= Self.maxDialogueBodyBytes,
-                      let rawBody = String(data: request.body, encoding: .utf8) else {
+                guard let rawBody = dialogueBody() else {
                     return respond(.error(400, "invalid_request"))
                 }
                 audit.record("amber-dialogue-followup", Self.dialogueAuditFields(device: device, body: body, workItemId: workItemId, version: dialogueVersion))
@@ -160,8 +168,7 @@ extension Daemon {
                     respond: respond
                 )
             case "stop":
-                guard request.body.count <= Self.maxDialogueBodyBytes,
-                      let rawBody = String(data: request.body, encoding: .utf8) else {
+                guard let rawBody = dialogueBody() else {
                     return respond(.error(400, "invalid_request"))
                 }
                 audit.record("amber-dialogue-stop", Self.dialogueAuditFields(device: device, body: body, workItemId: workItemId, version: dialogueVersion))
@@ -281,7 +288,7 @@ extension Daemon {
                 StatusResponse.Session(key: $0.key, agent: $0.agent, subject: Registry.subject(for: $0), summary: $0.generatedTitle ?? $0.summary, origin: $0.origin,
                                        host: $0.host, state: $0.state, waitReason: $0.waitReason, abnormal: $0.abnormal,
                                        monitored: $0.monitored, updatedAt: $0.updatedAt,
-                                       pendingApproval: Self.pendingApproval($0), sourceRefs: $0.sourceRefs, sourcePaths: $0.sourcePaths)
+                                       conversationId: $0.remoteConversationId, pendingApproval: Self.pendingApproval($0), sourceRefs: $0.sourceRefs, sourcePaths: $0.sourcePaths)
             }
         let response = StatusResponse(
             gateway: .init(id: identity.id, name: identity.name),
@@ -302,24 +309,30 @@ extension Daemon {
     }
 
     private static func dialogueAuditFields(device: PairedDevice, body: [String: Any], workItemId: String? = nil, version: String?) -> [String: String] {
-        var fields: [String: String] = [
-            "device": device.id,
-            "version": version ?? "legacy"
-        ]
-        if let workItemId, !workItemId.isEmpty { fields["workItemId"] = workItemId }
-        if let requestId = body["requestId"] as? String, !requestId.isEmpty { fields["requestId"] = String(requestId.prefix(128)) }
-        if let conversationId = body["conversationId"] as? String, !conversationId.isEmpty { fields["conversationId"] = String(conversationId.prefix(128)) }
+        var fields = ["device": device.id, "version": version == "1" ? "1" : "legacy"]
+        // IDs are arbitrary client strings. A digest preserves correlation without logging their contents.
+        for (key, value) in [("requestId", body["requestId"] as? String),
+                             ("conversationId", body["conversationId"] as? String), ("workItemId", workItemId)] {
+            if let value, !value.isEmpty { fields[key + "Hash"] = Secrets.sha256(value) }
+        }
         return fields
     }
 
     private func forwardDialogueToAmber(_ request: AmberControl.Request, respond: @escaping (HTTPResponse) -> Void) {
+        var identified = request
+        identified.gatewayId = identity.id
+        let request = identified
         let socket = paths.amberSocket.path
         let queue = queue
         DispatchQueue.global(qos: .userInitiated).async {
+            let maxResponse = request.action == .dialogueEvents ? Int.max : UnixSocketServer.maxMessageSize
             let reply = (try? GatewayJSON.encoder().encode(request))
-                .flatMap { UnixSocketClient.request($0, to: socket, timeout: AmberControl.timeout) }
+                .flatMap { UnixSocketClient.request($0, to: socket, timeout: AmberControl.timeout, maxResponse: maxResponse) }
             queue.async {
                 guard let reply, let decoded = try? GatewayJSON.decoder().decode(AmberControl.Response.self, from: reply) else {
+                    if FileManager.default.fileExists(atPath: socket) {
+                        return respond(.error(503, "未收到 Mac 执行器的完整回执，请按原请求 ID 核对"))
+                    }
                     return respond(.error(503, "Amber 未运行：在 Mac 上打开 Amber 后重试"))
                 }
                 if let rawJSON = decoded.rawJSON {
@@ -396,7 +409,8 @@ extension Daemon {
             targetDevice: rec.waitingTargetDevice,
             targetSummary: rec.waitingTargetSummary,
             diffPreview: rec.waitingDiffPreview,
-            requiresLocalApproval: rec.waitingRequiresLocalApproval ?? highRisk
+            requiresLocalApproval: rec.waitingRequiresLocalApproval ?? highRisk,
+            conversationId: rec.remoteConversationId, workItemId: rec.workItemId
         )
     }
 

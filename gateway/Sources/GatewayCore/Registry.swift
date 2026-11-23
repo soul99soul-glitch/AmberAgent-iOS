@@ -94,6 +94,11 @@ public struct Registry: Codable, Sendable, Equatable {
             pendingPushSince: nil,
             lastPushAt: [:]
         )
+        if event.agent == .amber, let workItemId = event.workItemId {
+            rec.workItemId = workItemId
+            rec.conversationId = event.conversationId
+            rec.remoteConversationId = event.remoteConversationId
+        }
         if rec.cwd == nil { rec.cwd = event.cwd }
         if let title = event.title { rec.title = title }
         // The first real prompt names the conversation, the way Synara titles its threads; later turns don't rename it.

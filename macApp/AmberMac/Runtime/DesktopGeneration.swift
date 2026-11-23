@@ -15,6 +15,14 @@ final class DesktopGeneration: @unchecked Sendable {
     private let signal: AsyncStream<Void>.Continuation
     private let lock = NSLock()
     private var pending: [DesktopProviderEvent] = []
+    private var unknownToolOutcome = false
+    var hasUnknownToolOutcome: Bool { lock.withLock { unknownToolOutcome } }
+
+    func failWithUnknownToolOutcome(_ reason: String) {
+        lock.withLock { unknownToolOutcome = true }
+        yield(.failed(reason))
+    }
+
     private var terminal = false
     private var cancellationRequested = false
     private let cancellationCompletesAsynchronously: Bool

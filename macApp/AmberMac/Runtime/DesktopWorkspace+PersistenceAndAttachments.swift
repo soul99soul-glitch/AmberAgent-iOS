@@ -9,7 +9,7 @@ extension DesktopWorkspace {
     /// (「压缩上下文」/「恢复完整上下文」) keeps working exactly as before.
     func scheduleAutomaticCompaction(owner: UUID) {
         guard !generatingConversationIDs.contains(owner), !isLoading, !mutatingBranchConversationIDs.contains(owner),
-              !isManagingBackup, !scheduledRunConversationIDs.contains(owner), !insights.activeOwners.contains(owner),
+              !isManagingBackup, !hasBackgroundWriter(owner), !insights.activeOwners.contains(owner),
               // A conversation that is not durably saved must not start another model call on top of it.
               !unsavedConversationIDs.contains(owner), !unsavedMetadataIDs.contains(owner),
               !agentTasks.records.contains(where: { $0.conversationID == owner && $0.approval != nil }),
@@ -51,6 +51,9 @@ extension DesktopWorkspace {
             recordError("正在保存消息更改，请稍候再删除会话。", owner: id); return
         }
         guard let summary = summaries.first(where: { $0.id == id }) else { return }
+        if dialogueRunConversationIDs.contains(id) {
+            recordError("请先停止正在这条会话中执行的 Mac 委派任务。", owner: id); return
+        }
         if imageGeneration.ownerID == id { imageGeneration.cancel() }
         scheduledGenerations[id]?.cancel()
         queuedRequestTasks[id]?.task.cancel()

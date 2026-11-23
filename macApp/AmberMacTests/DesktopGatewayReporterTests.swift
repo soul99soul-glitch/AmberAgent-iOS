@@ -109,7 +109,8 @@ import XCTest
             conversationID: conversation,
             taskName: "周报整理",
             parentRunId: "ios-run-7",
-            workItemId: "work:abc123"
+            workItemId: "work:abc123",
+            remoteConversationId: "phone-owner"
         )
         reporter.approval(
             conversationID: conversation,
@@ -126,6 +127,8 @@ import XCTest
         reporter.runFinished(conversationID: conversation, succeeded: true)
 
         let events = await drained(spool, count: 4)
+        XCTAssertTrue(events.allSatisfy { $0.remoteConversationId == "phone-owner" })
+        XCTAssertTrue(events.allSatisfy { $0.title == "Mac 委派任务" && $0.summary == "周报整理" })
         XCTAssertEqual(events.map(\.kind), [.runStart, .permissionRequest, .toolDone, .runExit])
         XCTAssertEqual(events[0].conversationId, conversation.uuidString.lowercased())
         XCTAssertEqual(events[0].parentRunId, "ios-run-7")

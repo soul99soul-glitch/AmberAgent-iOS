@@ -78,7 +78,7 @@ enum SessionMachine {
                 r.state = .completed
             } else {
                 r.state = .stopped
-                r.abnormal = true
+                r.abnormal = !(r.agent == .amber && event.cancelled == true)
             }
         }
         clearPermissionDetail(&r)

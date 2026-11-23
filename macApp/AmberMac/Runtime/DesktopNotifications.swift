@@ -19,7 +19,7 @@ enum DesktopNotificationAction {
     static func approvalBody(_ approval: DesktopToolApproval) -> String {
         let collapsed = approval.arguments.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let excerpt = collapsed.count > 120 ? String(collapsed.prefix(119)) + "…" : collapsed
-        let risk = DesktopToolRegistry.isHighRisk(approval.name) ? "（高风险，请打开 Amber 核对后批准）" : ""
+        let risk = DesktopToolRegistry.riskLevel(for: approval.name, arguments: approval.arguments) == .l3 ? "（高风险，请打开 Amber 核对后批准）" : ""
         return "工具：\(approval.name)\(risk)" + (excerpt.isEmpty || excerpt == "{}" ? "" : "\n参数：\(excerpt)")
     }
 }
@@ -160,7 +160,7 @@ extension DesktopScheduleRunRecord {
     /// A scheduled run is waiting for an approval. High-risk tools get no「批准」button.
     @discardableResult
     func notifyApproval(runID: UUID, conversationID: UUID, taskName: String, approval: DesktopToolApproval) async -> Bool {
-        let highRisk = DesktopToolRegistry.isHighRisk(approval.name)
+        let highRisk = DesktopToolRegistry.riskLevel(for: approval.name, arguments: approval.arguments) == .l3
         return await deliver(identifier: DesktopNotificationAction.approvalIdentifier(runID: runID),
             title: "⏱ \(taskName) 等待批准", body: DesktopNotificationAction.approvalBody(approval),
             userInfo: ["runID": runID.uuidString.lowercased(), "conversationID": conversationID.uuidString.lowercased(),
