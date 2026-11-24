@@ -1840,3 +1840,164 @@ struct MacGatewayCloudDialogueTests {
         #expect(store.cloudDialogueProgressByWorkItem["work-f2"]?.isLive == true)
     }
 }
+
+extension MacGatewayCloudDialogueTests {
+    @MainActor
+    private struct FileFixture {
+        let id = UUID().uuidString
+        let defaults: UserDefaults
+        let directory: URL
+        let connection = MacGatewayConnection(gatewayId: "file-gateway", name: "Cloud", addrs: ["fixture.example"],
+                                              port: 443, fingerprint: "fixture", deviceId: "file-device", role: .cloud)
+
+        init() {
+            defaults = UserDefaults(suiteName: id)!
+            directory = URL.temporaryDirectory.appending(path: id)
+        }
+
+        func store(client: MacGatewayClient) -> MacGatewayStore {
+            let store = MacGatewayStore(defaults: defaults, dialogueDirectory: directory,
+                                        loadToken: { _ in nil }, deleteToken: { _ in })
+            store.configureForTesting(connection: connection, client: client)
+            return store
+        }
+
+        func clean() {
+            defaults.removePersistentDomain(forName: id)
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        var legacy: MacGatewayCloudDialoguePersistedEnvelope {
+            let event = MacGatewayCloudDialogueEvent(seq: 1, id: "e1", kind: .userMessage, role: "user",
+                                                      text: "旧消息", topicId: "topic", workItemId: nil, outcome: nil, soulRevision: nil)
+            return .init(gatewayId: connection.gatewayId, deviceId: connection.deviceId,
+                         isCloudMainDialogueSelected: false, cursor: 1, events: [event], receipts: [:],
+                         followups: [], progressByWorkItem: [:], submissions: [], conversationId: "original")
+        }
+
+        var offline: MacGatewayClient {
+            MacGatewayClient(addrs: connection.addrs, port: 443, fingerprint: "fixture", token: "fixture",
+                             transport: { _, _ in throw URLError(.notConnectedToInternet) })
+        }
+    }
+
+    @Test @MainActor func fileMigrationPreservesLegacyAndDebouncesLatestEventCursorTogether() async throws {
+        let fx = FileFixture()
+        defer { fx.clean() }
+        let original = try JSONEncoder().encode(fx.legacy)
+        fx.defaults.set(original, forKey: MacGatewayEndpointRole.cloud.dialogueStorageKey)
+        let store = fx.store(client: fx.offline)
+        let files = try #require(store.dialogueFiles)
+        #expect(try Data(contentsOf: files.snapshot.url) == original)
+        #expect(fx.defaults.data(forKey: store.dialogueStorageKey) == nil)
+        #expect(store.cloudDialogueEvents == fx.legacy.events)
+        for seq in 2...5 {
+            var event = fx.legacy.events[0]
+            event.id = "e\(seq)"
+            event.seq = Int64(seq)
+            store.ingestCloudDialogueEventsPage(.init(items: [event], nextCursor: Int64(seq), soulRevision: nil),
+                                                requestedAfter: Int64(seq - 1))
+            store.persistCloudDialogueState()
+        }
+        #expect(try Data(contentsOf: files.snapshot.url) == original)
+        await files.snapshot.pending?.value
+        let restored = fx.store(client: fx.offline)
+        #expect(restored.cloudDialogueCursor == 5)
+        #expect(restored.cloudDialogueEvents == store.cloudDialogueEvents)
+        store.persistCloudDialogueState()
+        let pending = try #require(files.snapshot.pending)
+        await store.unpair()
+        await pending.value
+        #expect(!FileManager.default.fileExists(atPath: files.snapshot.url.path))
+        #expect(!FileManager.default.fileExists(atPath: files.journalURL.path))
+    }
+
+    @Test @MainActor func dialogueMigrationFailureRetainsReadableLegacyUntilRetry() throws {
+        let fx = FileFixture()
+        defer { fx.clean() }
+        let legacy = try JSONEncoder().encode(fx.legacy)
+        let key = MacGatewayEndpointRole.cloud.dialogueStorageKey
+        fx.defaults.set(legacy, forKey: key)
+        try Data().write(to: fx.directory)
+        let blocked = fx.store(client: fx.offline)
+        #expect(blocked.cloudDialogueEvents == fx.legacy.events)
+        #expect(fx.defaults.data(forKey: key) == legacy)
+        try FileManager.default.removeItem(at: fx.directory)
+        let recovered = fx.store(client: fx.offline)
+        let file = try #require(recovered.dialogueFiles?.snapshot.url)
+        #expect(try Data(contentsOf: file) == legacy)
+        #expect(fx.defaults.object(forKey: key) == nil)
+    }
+
+    @Test @MainActor func fileJournalSurvivesRelaunchBeforePOSTAndCheckpointSupersedesIt() async throws {
+        let fx = FileFixture()
+        defer { fx.clean() }
+        let requestID = UUID().uuidString.lowercased()
+        let receipt = MacGatewayCloudDialogueReceipt(eventId: "ev", requestId: requestID, topicId: "topic",
+                                                      workItemIds: [], state: .received, replayed: false, soulRevision: nil)
+        let journalURL = fx.directory.appending(path: "cloud/submissions.json")
+        let reply = try JSONEncoder().encode(receipt)
+        let client = MacGatewayClient(addrs: fx.connection.addrs, port: 443, fingerprint: "fixture", token: "fixture",
+                                      transport: { request, _ in
+            let url = try #require(request.url)
+            let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            guard request.httpMethod == "POST" else {
+                return (Data(#"{"items":[],"nextCursor":0}"#.utf8), response)
+            }
+            let journal = try JSONDecoder().decode(MacGatewayCloudDialoguePersistedEnvelope.self, from: Data(contentsOf: journalURL))
+            #expect(journal.submissions.map(\.requestId) == [requestID])
+            #expect(journal.events.isEmpty)
+            #expect(journal.cursor == 0)
+            await MainActor.run {
+                let recovered = fx.store(client: fx.offline)
+                #expect(recovered.cloudDialogueSubmissions.first?.text == "durable follow-up")
+                #expect(recovered.cloudDialogueFollowups.first?.workItemId == "work")
+                #expect(recovered.cloudDialogueCursor == 1)
+                #expect(recovered.cloudDialogueEvents == fx.legacy.events)
+            }
+            return (reply, response)
+        })
+        fx.defaults.set(try JSONEncoder().encode(fx.legacy), forKey: MacGatewayEndpointRole.cloud.dialogueStorageKey)
+        let store = fx.store(client: client)
+        let files = try #require(store.dialogueFiles)
+        files.snapshot.delay = .seconds(60)
+        let response = await store.sendCloudWorkItemInput(workItemId: "work", text: "durable follow-up", requestId: requestID)
+        #expect(try response.get() == receipt)
+        store.stopCloudDialoguePolling()
+        let oldJournal = try Data(contentsOf: journalURL)
+        files.snapshot.delay = .zero
+        store.persistCloudDialogueState()
+        await files.snapshot.pending?.value
+        #expect(!FileManager.default.fileExists(atPath: journalURL.path))
+        // Crash exactly after publishing the checkpoint and before removing its journal.
+        try oldJournal.write(to: journalURL)
+        let recovered = fx.store(client: fx.offline)
+        #expect(recovered.cloudDialogueSubmissions.count == 1)
+        #expect(recovered.cloudDialogueSubmissions.first?.receipt == receipt)
+        #expect(recovered.cloudDialogueReceipts[requestID] == receipt)
+    }
+
+    @Test @MainActor func journalWriteFailureBlocksAllThreePOSTs() async throws {
+        let fx = FileFixture()
+        defer { fx.clean() }
+        let client = MacGatewayClient(addrs: fx.connection.addrs, port: 443, fingerprint: "fixture", token: "fixture",
+                                      transport: { _, _ in
+            Issue.record("Unexpected transport call after a failed journal write")
+            throw URLError(.notConnectedToInternet)
+        })
+        let store = fx.store(client: client)
+        try Data().write(to: fx.directory)
+        let results = [
+            await store.sendCloudDialogueMessage(text: "message"),
+            await store.sendCloudWorkItemInput(workItemId: "work", text: "follow-up"),
+            await store.stopCloudWorkItem(workItemId: "work")
+        ]
+        for result in results {
+            if case .success = result { Issue.record("POST succeeded without a durable intent") }
+        }
+        #expect(store.cloudDialogueSubmissions.isEmpty)
+        #expect(store.cloudDialogueFollowups.isEmpty)
+        #expect(store.cloudDialogueProgressByWorkItem.isEmpty)
+        #expect(store.cloudDialogueLastError != nil)
+    }
+}

@@ -332,6 +332,7 @@ final class MacGatewayStore {
         }
     }
     @ObservationIgnored var boundRuleStore: IOSProceduralRuleStore = .shared
+    @ObservationIgnored let dialogueFiles: MacGatewayDialogueFiles?
     @ObservationIgnored let persistenceCoordinator = MacGatewayPersistenceCoordinator()
     @ObservationIgnored let defaults: UserDefaults
     @ObservationIgnored private let biometricAuthenticator: any MacGatewayBiometricAuthenticating
@@ -342,6 +343,7 @@ final class MacGatewayStore {
 
     init(
         defaults: UserDefaults = .standard,
+        dialogueDirectory: URL? = nil,
         biometricAuthenticator: any MacGatewayBiometricAuthenticating = MacGatewayLocalBiometricAuthenticator(),
         isApplicationForeground: @escaping @MainActor () -> Bool = { UIApplication.shared.applicationState == .active },
         endpointRole: MacGatewayEndpointRole = .cloud,
@@ -350,6 +352,9 @@ final class MacGatewayStore {
         saveToken: @escaping @Sendable (String, String) -> Bool = { IOSCredentialSideTable.store(key: $0, value: $1) },
         deleteToken: @escaping @Sendable (String) -> Void = { IOSCredentialSideTable.delete(key: $0) }
     ) {
+        let directory = dialogueDirectory ?? (defaults === UserDefaults.standard
+            ? MacGatewayDialogueFiles.applicationDirectory : nil)
+        self.dialogueFiles = directory.map { MacGatewayDialogueFiles(directory: $0, role: endpointRole) }
         self.endpointRole = endpointRole
         self.defaults = defaults
         self.biometricAuthenticator = biometricAuthenticator
@@ -381,6 +386,7 @@ final class MacGatewayStore {
         if !isChildSlot, endpointRole == .cloud {
             self.macSlot = MacGatewayStore(
                 defaults: defaults,
+                dialogueDirectory: directory,
                 biometricAuthenticator: biometricAuthenticator,
                 isApplicationForeground: isApplicationForeground,
                 endpointRole: .mac,
@@ -1258,6 +1264,7 @@ final class MacGatewayStore {
     private func forget() {
         stopCloudTaskPolling()
         let (epoch, _) = persistenceCoordinator.advance(connection: nil)
+        dialogueFiles?.clear()
         resetCloudDialogueMemoryState()
         let targetTokenKey = tokenStorageKey
         let targetConnectionKey = connectionStorageKey

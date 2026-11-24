@@ -697,6 +697,7 @@ struct MacGatewayCloudDialoguePersistedEnvelope: Codable, Equatable, Sendable {
     var conversationId: String? = nil
     var dismissedUnifiedMacRunIds: [String]? = nil
     var trimmedInputEventIds: Set<String>? = nil
+    var journalID: UUID? = nil
 }
 
 /// Transport state of the `/v2/dialogue/*` session channel on the paired gateway.
@@ -1501,17 +1502,32 @@ extension MacGatewayStore {
             resetCloudDialogueMemoryState()
             return
         }
-        guard let data = defaults.data(forKey: storageKey),
-              let envelope = try? JSONDecoder().decode(MacGatewayCloudDialoguePersistedEnvelope.self, from: data),
-              envelope.gatewayId == connection.gatewayId,
-              envelope.deviceId == connection.deviceId else {
+        let envelope: MacGatewayCloudDialoguePersistedEnvelope
+        let size: Int
+        if let dialogueFiles {
+            do {
+                guard let restored = try dialogueFiles.load(connection: connection, defaults: defaults, key: storageKey) else {
+                    resetCloudDialogueMemoryState()
+                    return
+                }
+                (envelope, size) = restored
+            } catch {
+                resetCloudDialogueMemoryState()
+                cloudDialogueLastError = error.localizedDescription
+                return
+            }
+        } else if let data = defaults.data(forKey: storageKey),
+                  let saved = try? JSONDecoder().decode(MacGatewayCloudDialoguePersistedEnvelope.self, from: data),
+                  saved.gatewayId == connection.gatewayId, saved.deviceId == connection.deviceId {
+            (envelope, size) = (saved, data.count)
+        } else {
             resetCloudDialogueMemoryState()
             defaults.removeObject(forKey: storageKey)
             return
         }
         let normalized = Self.redactedEnvelopeForPersistence(envelope)
-        cloudDialogueEncodedBytes = data.count
-        Self.recordCloudDialogueSizeDiagnostic(byteCount: data.count)
+        cloudDialogueEncodedBytes = size
+        Self.recordCloudDialogueSizeDiagnostic(byteCount: size)
         isCloudMainDialogueSelected = normalized.isCloudMainDialogueSelected
         cloudDialogueConversationId = Self.nonEmptyTrimmed(normalized.conversationId)
         cloudDialogueCursor = normalized.cursor
@@ -1806,13 +1822,73 @@ extension MacGatewayStore {
         )
     }
 
+    private func cloudDialogueEnvelope(connection: MacGatewayConnection) -> MacGatewayCloudDialoguePersistedEnvelope {
+        let persistedDismissed = orderedDismissedUnifiedRunIdsForPersistence()
+        return MacGatewayCloudDialoguePersistedEnvelope(
+            gatewayId: connection.gatewayId, deviceId: connection.deviceId,
+            isCloudMainDialogueSelected: isCloudMainDialogueSelected, cursor: cloudDialogueCursor,
+            events: cloudDialogueEvents, receipts: cloudDialogueReceipts, followups: cloudDialogueFollowups,
+            progressByWorkItem: cloudDialogueProgressByWorkItem, submissions: cloudDialogueSubmissions,
+            conversationId: cloudDialogueConversationId,
+            dismissedUnifiedMacRunIds: persistedDismissed.isEmpty ? nil : persistedDismissed,
+            trimmedInputEventIds: cloudDialogueTrimmedInputEventIds.isEmpty ? nil : cloudDialogueTrimmedInputEventIds
+        )
+    }
+
+    /// Stage the optimistic presentation and its request as one operation. A failed local
+    /// journal must leave the previous pending receipt, stop status and follow-up intact.
+    private func stageDialogueIntent(
+        requestID: String, connection: MacGatewayConnection, update: () -> Void
+    ) -> Error? {
+        guard let dialogueFiles else {
+            update()
+            persistCloudDialogueState(immediately: true)
+            return nil
+        }
+        let submissions = cloudDialogueSubmissions
+        let followups = cloudDialogueFollowups
+        let progress = cloudDialogueProgressByWorkItem
+        let conversationID = cloudDialogueConversationId
+        let selectedID = selectedCloudDialogueWorkItemId
+        update()
+        let state = cloudDialogueEnvelope(connection: connection)
+        do {
+            try dialogueFiles.recordIntent(requestID: requestID, state: state)
+            scheduleDialogueSnapshot(state, in: dialogueFiles)
+            return nil
+        } catch {
+            cloudDialogueSubmissions = submissions
+            cloudDialogueFollowups = followups
+            cloudDialogueProgressByWorkItem = progress
+            cloudDialogueConversationId = conversationID
+            selectedCloudDialogueWorkItemId = selectedID
+            cloudDialogueLastError = error.localizedDescription
+            return error
+        }
+    }
+
+    private func scheduleDialogueSnapshot(_ state: MacGatewayCloudDialoguePersistedEnvelope, in files: MacGatewayDialogueFiles) {
+        files.schedule(state) { [weak self] size in
+            self?.cloudDialogueEncodedBytes = size
+            Self.recordCloudDialogueSizeDiagnostic(byteCount: size)
+        }
+    }
+
     func persistCloudDialogueState(immediately: Bool = false, forceAsync: Bool = false) {
+        if let dialogueFiles {
+            if let connection {
+                scheduleDialogueSnapshot(cloudDialogueEnvelope(connection: connection), in: dialogueFiles)
+            } else {
+                dialogueFiles.clear()
+            }
+            return
+        }
         let targetDefaults = defaults
         let storageKey = dialogueStorageKey
         let (epoch, identity) = persistenceCoordinator.snapshot()
         let coordinator = persistenceCoordinator
         nonisolated(unsafe) let sendableDefaults = targetDefaults
-        let useAsyncPath = (forceAsync || targetDefaults === UserDefaults.standard) && !immediately
+        let useAsyncPath = forceAsync && !immediately
 
         guard let connection else {
             let commitClear: @Sendable (UInt64) -> Void = { generation in
@@ -1831,16 +1907,7 @@ extension MacGatewayStore {
             return
         }
 
-        let persistedDismissed = orderedDismissedUnifiedRunIdsForPersistence()
-        let rawEnvelope = MacGatewayCloudDialoguePersistedEnvelope(
-            gatewayId: connection.gatewayId, deviceId: connection.deviceId,
-            isCloudMainDialogueSelected: isCloudMainDialogueSelected, cursor: cloudDialogueCursor,
-            events: cloudDialogueEvents, receipts: cloudDialogueReceipts, followups: cloudDialogueFollowups,
-            progressByWorkItem: cloudDialogueProgressByWorkItem, submissions: cloudDialogueSubmissions,
-            conversationId: cloudDialogueConversationId,
-            dismissedUnifiedMacRunIds: persistedDismissed.isEmpty ? nil : persistedDismissed,
-            trimmedInputEventIds: cloudDialogueTrimmedInputEventIds.isEmpty ? nil : cloudDialogueTrimmedInputEventIds
-        )
+        let rawEnvelope = cloudDialogueEnvelope(connection: connection)
         let writeSnapshot: @Sendable (UInt64) -> Int? = { generation in
             guard coordinator.isLatestDialogueWrite(generation: generation, epoch: epoch, identity: identity) else { return nil }
             let envelope = Self.redactedEnvelopeForPersistence(rawEnvelope)
@@ -1949,27 +2016,29 @@ extension MacGatewayStore {
             return .failure(MacGatewayError.server(validationError))
         }
 
-        upsertSubmission(
-            MacGatewayCloudDialoguePersistedSubmission(
-                gatewayId: connection.gatewayId,
-                deviceId: connection.deviceId,
-                kind: .mainMessage,
-                requestId: requestId,
-                workItemId: nil,
-                text: effectiveText,
-                receipt: existing?.receipt,
-                lastError: nil,
-                updatedAt: Date(),
-                isConfirmedNotExecuted: false,
-                conversationId: request.conversationId,
-                retryOfWorkItemId: existing?.retryOfWorkItemId ?? retryOfWorkItemId,
-                isUnifiedDelegation: existing?.isUnifiedDelegation ?? isUnifiedDelegation
+        let stagingError = stageDialogueIntent(requestID: requestId, connection: connection) {
+            upsertSubmission(
+                MacGatewayCloudDialoguePersistedSubmission(
+                    gatewayId: connection.gatewayId,
+                    deviceId: connection.deviceId,
+                    kind: .mainMessage,
+                    requestId: requestId,
+                    workItemId: nil,
+                    text: effectiveText,
+                    receipt: existing?.receipt,
+                    lastError: nil,
+                    updatedAt: Date(),
+                    isConfirmedNotExecuted: false,
+                    conversationId: request.conversationId,
+                    retryOfWorkItemId: existing?.retryOfWorkItemId ?? retryOfWorkItemId,
+                    isUnifiedDelegation: existing?.isUnifiedDelegation ?? isUnifiedDelegation
+                )
             )
-        )
-        if !isUnifiedDelegation, existing == nil, retryOfWorkItemId == nil, let explicitId = Self.nonEmptyTrimmed(conversationId) {
-            cloudDialogueConversationId = explicitId
+            if !isUnifiedDelegation, existing == nil, retryOfWorkItemId == nil, let explicitId = Self.nonEmptyTrimmed(conversationId) {
+                cloudDialogueConversationId = explicitId
+            }
         }
-        persistCloudDialogueState(immediately: true)
+        if let stagingError { return .failure(stagingError) }
 
         busyCloudDialogueRequestIds.insert(requestId)
         defer { busyCloudDialogueRequestIds.remove(requestId) }
@@ -2039,33 +2108,35 @@ extension MacGatewayStore {
             return .failure(MacGatewayError.server(validationError))
         }
 
-        upsertSubmission(
-            MacGatewayCloudDialoguePersistedSubmission(
-                gatewayId: connection.gatewayId,
-                deviceId: connection.deviceId,
-                kind: .followupInput,
-                requestId: requestId,
-                workItemId: effectiveWorkItemId,
-                text: effectiveText,
-                receipt: existing?.receipt,
-                lastError: nil,
-                updatedAt: Date(),
-                isConfirmedNotExecuted: false,
-                conversationId: request.conversationId,
-                isUnifiedDelegation: existing?.isUnifiedDelegation ?? isUnifiedDelegation
+        let stagingError = stageDialogueIntent(requestID: requestId, connection: connection) {
+            upsertSubmission(
+                MacGatewayCloudDialoguePersistedSubmission(
+                    gatewayId: connection.gatewayId,
+                    deviceId: connection.deviceId,
+                    kind: .followupInput,
+                    requestId: requestId,
+                    workItemId: effectiveWorkItemId,
+                    text: effectiveText,
+                    receipt: existing?.receipt,
+                    lastError: nil,
+                    updatedAt: Date(),
+                    isConfirmedNotExecuted: false,
+                    conversationId: request.conversationId,
+                    isUnifiedDelegation: existing?.isUnifiedDelegation ?? isUnifiedDelegation
+                )
             )
-        )
-        upsertFollowupRecord(
-            requestId: requestId,
-            eventId: existing?.receipt?.eventId,
-            workItemId: effectiveWorkItemId,
-            topicId: existing?.receipt?.topicId,
-            text: effectiveText,
-            state: existing?.receipt?.state ?? .received,
-            lastError: nil,
-            conversationId: request.conversationId
-        )
-        persistCloudDialogueState(immediately: true)
+            upsertFollowupRecord(
+                requestId: requestId,
+                eventId: existing?.receipt?.eventId,
+                workItemId: effectiveWorkItemId,
+                topicId: existing?.receipt?.topicId,
+                text: effectiveText,
+                state: existing?.receipt?.state ?? .received,
+                lastError: nil,
+                conversationId: request.conversationId
+            )
+        }
+        if let stagingError { return .failure(stagingError) }
 
         busyCloudDialogueRequestIds.insert(requestId)
         defer { busyCloudDialogueRequestIds.remove(requestId) }
@@ -2124,30 +2195,32 @@ extension MacGatewayStore {
             return .failure(MacGatewayError.server(validationError))
         }
 
-        upsertSubmission(
-            MacGatewayCloudDialoguePersistedSubmission(
-                gatewayId: connection.gatewayId,
-                deviceId: connection.deviceId,
-                kind: .stopWorkItem,
-                requestId: requestId,
-                workItemId: effectiveWorkItemId,
-                text: nil,
-                receipt: existing?.receipt,
-                lastError: nil,
-                updatedAt: Date(),
-                isConfirmedNotExecuted: false,
-                conversationId: effectiveConversationId
+        let stagingError = stageDialogueIntent(requestID: requestId, connection: connection) {
+            upsertSubmission(
+                MacGatewayCloudDialoguePersistedSubmission(
+                    gatewayId: connection.gatewayId,
+                    deviceId: connection.deviceId,
+                    kind: .stopWorkItem,
+                    requestId: requestId,
+                    workItemId: effectiveWorkItemId,
+                    text: nil,
+                    receipt: existing?.receipt,
+                    lastError: nil,
+                    updatedAt: Date(),
+                    isConfirmedNotExecuted: false,
+                    conversationId: effectiveConversationId
+                )
             )
-        )
-        markWorkItemStopRequested(
-            workItemId: effectiveWorkItemId,
-            topicId: existing?.receipt?.topicId,
-            eventSeq: nil
-        )
-        if selectedCloudDialogueWorkItemId == effectiveWorkItemId {
-            selectedCloudDialogueWorkItemId = nil
+            markWorkItemStopRequested(
+                workItemId: effectiveWorkItemId,
+                topicId: existing?.receipt?.topicId,
+                eventSeq: nil
+            )
+            if selectedCloudDialogueWorkItemId == effectiveWorkItemId {
+                selectedCloudDialogueWorkItemId = nil
+            }
         }
-        persistCloudDialogueState(immediately: true)
+        if let stagingError { return .failure(stagingError) }
 
         busyCloudDialogueRequestIds.insert(requestId)
         defer { busyCloudDialogueRequestIds.remove(requestId) }
@@ -3622,10 +3695,11 @@ extension MacGatewayStore {
         }
         // Without an execution id (or for a follow-up) cancel only local receipt tracking.
         guard let index = cloudDialogueSubmissions.firstIndex(where: { $0.requestId == requestId }) else { return false }
-        cloudDialogueSubmissions[index].isAbandoned = true
-        cloudDialogueSubmissions[index].updatedAt = Date()
-        persistCloudDialogueState(immediately: true)
-        return true
+        guard let connection else { return false }
+        return stageDialogueIntent(requestID: requestId, connection: connection) {
+            cloudDialogueSubmissions[index].isAbandoned = true
+            cloudDialogueSubmissions[index].updatedAt = Date()
+        } == nil
     }
 
     /// Routes an explicit unified-timeline delegation to either the `.cloud` or `.mac` paired slot.
