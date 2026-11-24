@@ -1105,7 +1105,7 @@ struct MacGatewayCloudDialogueTests {
 
         let newConnection = MacGatewayConnection(
             gatewayId: "gw-new", name: "New Cloud", addrs: ["new.example"],
-            port: 443, fingerprint: "fp-new", deviceId: "device-new"
+            port: 443, fingerprint: "fp-new", deviceId: "device-new", role: .cloud
         )
         let newClient = MacGatewayClient(
             addrs: ["new.example"], port: 443, fingerprint: "fp-new", token: "new-token",
@@ -1133,8 +1133,11 @@ struct MacGatewayCloudDialogueTests {
             try await Task.sleep(for: .milliseconds(10))
         }
 
+        #expect(await gate.arrivedCount >= 2)
+
         // Switch pairing to newConnection + newClient before old requests fail.
         store.configureForTesting(connection: newConnection, client: newClient)
+        #expect(store.connection == newConnection)
         store.isReachable = true
         store.cloudDialogueTransportState = .healthy
         store.notice = nil
