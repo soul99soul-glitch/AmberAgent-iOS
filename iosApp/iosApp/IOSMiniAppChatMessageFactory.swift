@@ -12,13 +12,13 @@ enum IOSMiniAppChatMessageFactory {
 
     static func mightContainMiniApp(_ text: String) -> Bool {
         let utf8 = text.utf8
-        if let result = utf8.withContiguousStorageIfAvailable({ Self.scanMiniAppMarkers(in: $0) }) {
+        if let result = utf8.withContiguousStorageIfAvailable({ Self.scanMiniAppMarkers(in: $0, text: text) }) {
             return result
         }
-        return scanMiniAppMarkers(in: utf8)
+        return scanMiniAppMarkers(in: text)
     }
 
-    private static func scanMiniAppMarkers(in buffer: UnsafeBufferPointer<UInt8>) -> Bool {
+    private static func scanMiniAppMarkers(in buffer: UnsafeBufferPointer<UInt8>, text: String) -> Bool {
         let count = buffer.count
         guard count >= htmlTagBytes.count else { return false }
 
@@ -30,19 +30,19 @@ enum IOSMiniAppChatMessageFactory {
         while index < count {
             let byte = buffer[index]
             if byte == 0x22 { // '"'
-                if !hasHTML, matchesExact(buffer, at: index, pattern: jsonHTMLBytes) {
+                if !hasHTML, matchesExact(buffer, at: index, pattern: jsonHTMLBytes, text: text) {
                     hasHTML = true
                     if hasTitle && hasDescription { return true }
-                } else if !hasTitle, matchesExact(buffer, at: index, pattern: jsonTitleBytes) {
+                } else if !hasTitle, matchesExact(buffer, at: index, pattern: jsonTitleBytes, text: text) {
                     hasTitle = true
                     if hasHTML && hasDescription { return true }
-                } else if !hasDescription, matchesExact(buffer, at: index, pattern: jsonDescriptionBytes) {
+                } else if !hasDescription, matchesExact(buffer, at: index, pattern: jsonDescriptionBytes, text: text) {
                     hasDescription = true
                     if hasHTML && hasTitle { return true }
                 }
             } else if byte == 0x3C { // '<'
-                if matchesASCIICaseInsensitive(buffer, at: index, lowercasePattern: htmlTagBytes)
-                    || matchesASCIICaseInsensitive(buffer, at: index, lowercasePattern: doctypeHTMLBytes) {
+                if matchesASCIICaseInsensitive(buffer, at: index, lowercasePattern: htmlTagBytes, text: text)
+                    || matchesASCIICaseInsensitive(buffer, at: index, lowercasePattern: doctypeHTMLBytes, text: text) {
                     return true
                 }
             }
@@ -51,7 +51,8 @@ enum IOSMiniAppChatMessageFactory {
         return false
     }
 
-    private static func scanMiniAppMarkers(in utf8: String.UTF8View) -> Bool {
+    private static func scanMiniAppMarkers(in text: String) -> Bool {
+        let utf8 = text.utf8
         var hasHTML = false
         var hasTitle = false
         var hasDescription = false
@@ -61,19 +62,19 @@ enum IOSMiniAppChatMessageFactory {
         while index < end {
             let byte = utf8[index]
             if byte == 0x22 { // '"'
-                if !hasHTML, matchesExact(utf8, at: index, pattern: jsonHTMLBytes) {
+                if !hasHTML, matchesExact(text, at: index, pattern: jsonHTMLBytes) {
                     hasHTML = true
                     if hasTitle && hasDescription { return true }
-                } else if !hasTitle, matchesExact(utf8, at: index, pattern: jsonTitleBytes) {
+                } else if !hasTitle, matchesExact(text, at: index, pattern: jsonTitleBytes) {
                     hasTitle = true
                     if hasHTML && hasDescription { return true }
-                } else if !hasDescription, matchesExact(utf8, at: index, pattern: jsonDescriptionBytes) {
+                } else if !hasDescription, matchesExact(text, at: index, pattern: jsonDescriptionBytes) {
                     hasDescription = true
                     if hasHTML && hasTitle { return true }
                 }
             } else if byte == 0x3C { // '<'
-                if matchesASCIICaseInsensitive(utf8, at: index, lowercasePattern: htmlTagBytes)
-                    || matchesASCIICaseInsensitive(utf8, at: index, lowercasePattern: doctypeHTMLBytes) {
+                if matchesASCIICaseInsensitive(text, at: index, lowercasePattern: htmlTagBytes)
+                    || matchesASCIICaseInsensitive(text, at: index, lowercasePattern: doctypeHTMLBytes) {
                     return true
                 }
             }
@@ -91,54 +92,70 @@ enum IOSMiniAppChatMessageFactory {
     private static func matchesExact(
         _ buffer: UnsafeBufferPointer<UInt8>,
         at start: Int,
-        pattern: [UInt8]
+        pattern: [UInt8],
+        text: String
     ) -> Bool {
         let length = pattern.count
         guard start + length <= buffer.count else { return false }
         for offset in 1..<length where buffer[start + offset] != pattern[offset] {
             return false
         }
-        return true
+        return isWholeCharacterMatch(buffer, start: start, end: start + length, text: text)
     }
 
     @inline(__always)
     private static func matchesASCIICaseInsensitive(
         _ buffer: UnsafeBufferPointer<UInt8>,
         at start: Int,
-        lowercasePattern: [UInt8]
+        lowercasePattern: [UInt8],
+        text: String
     ) -> Bool {
         let length = lowercasePattern.count
         guard start + length <= buffer.count else { return false }
         for offset in 1..<length where asciiLowercased(buffer[start + offset]) != lowercasePattern[offset] {
             return false
         }
-        return true
+        return isWholeCharacterMatch(buffer, start: start, end: start + length, text: text)
+    }
+
+    private static func isWholeCharacterMatch(
+        _ buffer: UnsafeBufferPointer<UInt8>, start: Int, end: Int, text: String
+    ) -> Bool {
+        // String.contains respects grapheme boundaries. ASCII neighbors guarantee them here.
+        let hasASCIILeft = start == 0 || buffer[start - 1] < 0x80
+        let hasASCIIRight = end == buffer.count || buffer[end] < 0x80
+        if hasASCIILeft && hasASCIIRight { return true }
+        let utf8 = text.utf8
+        return (hasASCIILeft || utf8.index(utf8.startIndex, offsetBy: start).samePosition(in: text) != nil)
+            && (hasASCIIRight || utf8.index(utf8.startIndex, offsetBy: end).samePosition(in: text) != nil)
     }
 
     private static func matchesExact(
-        _ utf8: String.UTF8View,
+        _ text: String,
         at start: String.UTF8View.Index,
         pattern: [UInt8]
     ) -> Bool {
+        let utf8 = text.utf8
         var cursor = start
         for expected in pattern {
             guard cursor < utf8.endIndex, utf8[cursor] == expected else { return false }
             utf8.formIndex(after: &cursor)
         }
-        return true
+        return start.samePosition(in: text) != nil && cursor.samePosition(in: text) != nil
     }
 
     private static func matchesASCIICaseInsensitive(
-        _ utf8: String.UTF8View,
+        _ text: String,
         at start: String.UTF8View.Index,
         lowercasePattern: [UInt8]
     ) -> Bool {
+        let utf8 = text.utf8
         var cursor = start
         for expected in lowercasePattern {
             guard cursor < utf8.endIndex, asciiLowercased(utf8[cursor]) == expected else { return false }
             utf8.formIndex(after: &cursor)
         }
-        return true
+        return start.samePosition(in: text) != nil && cursor.samePosition(in: text) != nil
     }
 
     /// Newest MiniApp-looking assistant in the current turn (after `afterUserIndex`), skipping trailing notices.

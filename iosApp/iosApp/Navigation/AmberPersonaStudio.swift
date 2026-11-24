@@ -769,10 +769,7 @@ final class AmberPersonaStore {
             )
             try Task.checkCancellation()
             guard let firstPath = record.files.first?.path,
-                  let sheet = ChatImageEncoder.downsampledImage(
-                      from: URL(fileURLWithPath: firstPath),
-                      maxPixelSize: 2048
-                  ) else {
+                  let sheet = UIImage(contentsOfFile: firstPath) else {
                 lastGenerationError = "生图未返回有效的精灵图，原有形象已保留。"
                 return
             }
@@ -964,8 +961,8 @@ struct AmberPersonaStudioContent: View {
     /// File imports that are 4×4 / Codex-Pets 8×9 sprite sheets become four state clips;
     /// any other image stays an ordinary static portrait.
     private func stageImportedImageData(_ data: Data) {
-        if let image = ChatImageEncoder.downsampledImage(from: data, maxPixelSize: 2048),
-           store.stageImportedSpriteSheet(image) {
+        // Slice the original grid before applying the per-frame pixel limit.
+        if let image = UIImage(data: data), store.stageImportedSpriteSheet(image) {
             previewMood = .idle
             return
         }
@@ -1087,9 +1084,7 @@ struct AmberPersonaStudioContent: View {
             Task {
                 for item in items {
                     if let data = try? await item.loadTransferable(type: Data.self),
-                       let image = await Task.detached(priority: .userInitiated, operation: {
-                           ChatImageEncoder.downsampledImage(from: data, maxPixelSize: 768)
-                       }).value {
+                       let image = await ChatImageEncoder.downsampleOffMain(from: data, maxPixelSize: 768) {
                         _ = store.addReferenceImage(image)
                     }
                 }

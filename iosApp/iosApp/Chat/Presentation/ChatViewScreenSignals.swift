@@ -54,20 +54,11 @@ extension ChatView {
         let taskCounts = taskCountCache.counts(messages: messages, isGenerationActive: viewModel.isGenerationActive)
         next.inChatActiveTaskCount = taskCounts.active
         next.inChatNeedsAttentionCount = taskCounts.needsAttention
-        let episodeRevision = ChatEpisodeStore.shared.mutationRevision
-        let nextIsAtEmptyEpisodeBoundary = Self.resolvedIsAtEmptyEpisodeBoundary(
+        next.isAtEmptyEpisodeBoundary = Self.resolvedIsAtEmptyEpisodeBoundary(
             conversationId: currentConversationIdString,
             messages: messages
         )
-        let episodeBoundaryChanged = nextIsAtEmptyEpisodeBoundary != isAtEmptyEpisodeBoundary
-            || episodeRevision != lastEpisodeMutationRevision
-        if nextIsAtEmptyEpisodeBoundary != isAtEmptyEpisodeBoundary {
-            isAtEmptyEpisodeBoundary = nextIsAtEmptyEpisodeBoundary
-        }
-        if episodeRevision != lastEpisodeMutationRevision {
-            lastEpisodeMutationRevision = episodeRevision
-        }
-        if resetTitleSeed || next.firstUserTitleSeed == nil || episodeBoundaryChanged {
+        if resetTitleSeed || next.firstUserTitleSeed == nil {
             let activeMessages = ChatEpisodeStore.shared.unsealedNonSystemMessages(
                 for: currentConversationIdString,
                 in: messages
@@ -179,7 +170,7 @@ extension ChatView {
             return "\(resolvedSoulName) · 云端"
         }
         _ = conversationStore.currentRevision
-        if !isAtEmptyEpisodeBoundary {
+        if !chatListSummary.isAtEmptyEpisodeBoundary {
             let storedTitle = conversationStore.currentConversation?.title
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !storedTitle.isEmpty {

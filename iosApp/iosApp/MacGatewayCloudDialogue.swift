@@ -696,6 +696,7 @@ struct MacGatewayCloudDialoguePersistedEnvelope: Codable, Equatable, Sendable {
     var submissions: [MacGatewayCloudDialoguePersistedSubmission]
     var conversationId: String? = nil
     var dismissedUnifiedMacRunIds: [String]? = nil
+    var trimmedInputEventIds: Set<String>? = nil
 }
 
 /// Transport state of the `/v2/dialogue/*` session channel on the paired gateway.
@@ -1149,16 +1150,29 @@ extension MacGatewayStore {
     /// Main dialogue messages (`POST /v2/dialogue/messages`) that have been accepted (`.received`)
     /// or failed locally, and whose user event has not yet been merged into `cloudDialogueVisibleEvents`.
     var unmergedCloudMainSubmissions: [MacGatewayCloudDialoguePersistedSubmission] {
-        cloudDialogueSubmissions
+        let mergedEventIds = cloudDialogueMergedInputEventIds
+        return cloudDialogueSubmissions
             .filter { submission in
                 guard submission.kind == .mainMessage else { return false }
                 if let eventId = submission.receipt?.eventId,
-                   cloudDialogueVisibleEvents.contains(where: { $0.id == eventId }) {
+                   mergedEventIds.contains(eventId) {
                     return false
                 }
                 return true
             }
             .sorted { $0.updatedAt < $1.updatedAt }
+    }
+
+    var unmergedCloudDialogueFollowups: [MacGatewayCloudDialogueFollowupRecord] {
+        let mergedEventIds = cloudDialogueMergedInputEventIds
+        return cloudDialogueFollowups.filter { record in
+            guard let eventId = record.eventId else { return true }
+            return !mergedEventIds.contains(eventId)
+        }
+    }
+
+    private var cloudDialogueMergedInputEventIds: Set<String> {
+        cloudDialogueTrimmedInputEventIds.union(cloudDialogueVisibleEvents.lazy.map(\.id))
     }
 
     /// True while a submitted main dialogue message is still awaiting its initial routing or direct reply.
@@ -1502,6 +1516,7 @@ extension MacGatewayStore {
         cloudDialogueConversationId = Self.nonEmptyTrimmed(normalized.conversationId)
         cloudDialogueCursor = normalized.cursor
         cloudDialogueEvents = normalized.events
+        cloudDialogueTrimmedInputEventIds = normalized.trimmedInputEventIds ?? []
         cloudDialogueReceipts = normalized.receipts
         cloudDialogueFollowups = normalized.followups
         cloudDialogueProgressByWorkItem = normalized.progressByWorkItem
@@ -1529,7 +1544,9 @@ extension MacGatewayStore {
         var protectedRequestIds = busyCloudDialogueRequestIds
 
         for (key, progress) in cloudDialogueProgressByWorkItem {
-            if progress.isLive || progress.isOutcomeUnknown || progress.needsOutcomeUnknownAction || progress.isStopRequested {
+            let blockedAwaitingDecision = progress.outcome == .blocked
+                && !dismissedUnifiedMacRunIds.contains(Self.dismissedWorkRunKey(role: endpointRole, workItemId: progress.workItemId))
+            if progress.isLive || progress.isOutcomeUnknown || progress.needsOutcomeUnknownAction || progress.isStopRequested || blockedAwaitingDecision {
                 protectedWorkItemIds.insert(key)
                 protectedWorkItemIds.insert(progress.workItemId)
                 if !progress.topicId.isEmpty {
@@ -1543,6 +1560,7 @@ extension MacGatewayStore {
             let hasProtectedWorkItem = (submission.workItemId.map { protectedWorkItemIds.contains($0) } == true)
                 || (effectiveReceipt?.workItemIds.contains { protectedWorkItemIds.contains($0) } == true)
             let isUnsettledSubmission = submission.isAwaitingReceiptConfirmation
+                || submission.isOutcomeUnknown
                 || (!submission.isAbandoned && !submission.isConfirmedNotExecuted && effectiveReceipt == nil)
                 || effectiveReceipt?.state == .received
                 || effectiveReceipt?.outcomeUnknown == true
@@ -1588,6 +1606,7 @@ extension MacGatewayStore {
         if cloudDialogueEvents.count > maxEvents {
             let tailStart = cloudDialogueEvents.count - maxEvents
             var keptEvents: [MacGatewayCloudDialogueEvent] = []
+            var trimmedInputEventIds = cloudDialogueTrimmedInputEventIds
             keptEvents.reserveCapacity(maxEvents + 16)
             for (index, event) in cloudDialogueEvents.enumerated() {
                 let isInTail = index >= tailStart
@@ -1598,10 +1617,13 @@ extension MacGatewayStore {
                     || (event.causedByRequestId.map { protectedRequestIds.contains($0) } == true)
                 if isInTail || isProtected {
                     keptEvents.append(event)
+                } else if event.kind == .userMessage || event.kind == .followup {
+                    trimmedInputEventIds.insert(event.id)
                 }
             }
             if keptEvents.count != cloudDialogueEvents.count {
                 cloudDialogueEvents = keptEvents
+                cloudDialogueTrimmedInputEventIds = trimmedInputEventIds
                 didMutate = true
             }
         }
@@ -1689,6 +1711,17 @@ extension MacGatewayStore {
 
         for followup in cloudDialogueFollowups {
             referencedWorkItemIds.insert(followup.workItemId)
+        }
+
+        // Keep markers only for retained local inputs, so an evicted bubble cannot return as an optimistic send.
+        if !cloudDialogueTrimmedInputEventIds.isEmpty {
+            let referencedInputIds = Set(cloudDialogueSubmissions.compactMap { $0.receipt?.eventId })
+                .union(cloudDialogueFollowups.compactMap(\.eventId))
+            let retainedMarkers = cloudDialogueTrimmedInputEventIds.intersection(referencedInputIds)
+            if retainedMarkers != cloudDialogueTrimmedInputEventIds {
+                cloudDialogueTrimmedInputEventIds = retainedMarkers
+                didMutate = true
+            }
         }
 
         if cloudDialogueProgressByWorkItem.count > maxEvents {
@@ -1805,7 +1838,8 @@ extension MacGatewayStore {
             events: cloudDialogueEvents, receipts: cloudDialogueReceipts, followups: cloudDialogueFollowups,
             progressByWorkItem: cloudDialogueProgressByWorkItem, submissions: cloudDialogueSubmissions,
             conversationId: cloudDialogueConversationId,
-            dismissedUnifiedMacRunIds: persistedDismissed.isEmpty ? nil : persistedDismissed
+            dismissedUnifiedMacRunIds: persistedDismissed.isEmpty ? nil : persistedDismissed,
+            trimmedInputEventIds: cloudDialogueTrimmedInputEventIds.isEmpty ? nil : cloudDialogueTrimmedInputEventIds
         )
         let writeSnapshot: @Sendable (UInt64) -> Int? = { generation in
             guard coordinator.isLatestDialogueWrite(generation: generation, epoch: epoch, identity: identity) else { return nil }
@@ -1865,6 +1899,7 @@ extension MacGatewayStore {
         cloudDialogueConversationId = nil
         cloudDialogueCursor = 0
         cloudDialogueEvents = []
+        cloudDialogueTrimmedInputEventIds = []
         cloudDialogueEntranceEventIds.removeAll()
         cloudSuggestionReplyID = nil
         cloudSuggestionSequence = 0
@@ -1938,6 +1973,8 @@ extension MacGatewayStore {
 
         busyCloudDialogueRequestIds.insert(requestId)
         defer { busyCloudDialogueRequestIds.remove(requestId) }
+        resetCloudDialoguePollBackoff(restartIfSleeping: true)
+        startCloudDialoguePollingIfNeeded()
 
         do {
             let receipt = try await client.postDialogueMessage(request)
@@ -2340,11 +2377,11 @@ extension MacGatewayStore {
             return .failure(MacGatewayError.server(localized("未与云端或 Mac 配对")))
         }
         if reconcileSubmissions { await reconcilePendingCloudDialogueSubmissionsIfNeeded() }
-        guard self.client === client else { return .failure(CancellationError()) }
+        guard !Task.isCancelled, self.client === client else { return .failure(CancellationError()) }
         let currentCursor = cloudDialogueCursor
         do {
             let page = try await client.dialogueEvents(after: currentCursor, limit: limit)
-            guard self.client === client else { return .failure(CancellationError()) }
+            guard !Task.isCancelled, self.client === client else { return .failure(CancellationError()) }
             if cloudDialogueTransportState != .healthy {
                 cloudDialogueTransportState = .healthy
             }
@@ -2358,7 +2395,7 @@ extension MacGatewayStore {
                     observedRevision: rev,
                     soulStore: soulStore
                 )
-                guard self.client === client else { return .failure(CancellationError()) }
+                guard !Task.isCancelled, self.client === client else { return .failure(CancellationError()) }
             }
             if !page.items.isEmpty {
                 let didMutate = ingestCloudDialogueEventsPage(
@@ -2378,7 +2415,9 @@ extension MacGatewayStore {
             }
             return .success(page)
         } catch {
-            guard self.client === client else { return .failure(CancellationError()) }
+            guard !Task.isCancelled, !(error is CancellationError), self.client === client else {
+                return .failure(CancellationError())
+            }
             if forgetIfRevoked(error, for: client) {
                 return .failure(MacGatewayError.unauthorized)
             }
@@ -3189,7 +3228,7 @@ extension MacGatewayStore {
     func currentCloudDialoguePollInterval() -> Duration {
         let steps = cloudDialoguePollStepDurations
         guard !steps.isEmpty else { return .seconds(1) }
-        if hasActiveCloudDialogueWork {
+        if hasActiveCloudDialogueWork || hasActiveCloudTasks {
             return steps[0]
         }
         let index = min(max(cloudDialogueIdlePollStreak, 0), steps.count - 1)
@@ -3199,7 +3238,7 @@ extension MacGatewayStore {
     func resetCloudDialoguePollBackoff(restartIfSleeping: Bool = false) {
         let hadBackoff = cloudDialogueIdlePollStreak > 0
         cloudDialogueIdlePollStreak = 0
-        if restartIfSleeping && hadBackoff && cloudDialoguePollTask != nil {
+        if restartIfSleeping && hadBackoff && isCloudDialoguePollSleeping {
             stopCloudDialoguePolling()
             startCloudDialoguePollingIfNeeded()
         }
@@ -3224,7 +3263,7 @@ extension MacGatewayStore {
                     receivedNewEvents = false
                 }
                 let sleepDuration: Duration
-                if receivedNewEvents || self.hasActiveCloudDialogueWork {
+                if receivedNewEvents || self.hasActiveCloudDialogueWork || self.hasActiveCloudTasks {
                     self.cloudDialogueIdlePollStreak = 0
                     sleepDuration = self.currentCloudDialoguePollInterval()
                 } else {
@@ -3234,7 +3273,13 @@ extension MacGatewayStore {
                         self.cloudDialogueIdlePollStreak += 1
                     }
                 }
-                try? await Task.sleep(for: sleepDuration)
+                self.isCloudDialoguePollSleeping = true
+                do {
+                    try await Task.sleep(for: sleepDuration)
+                } catch {
+                    break
+                }
+                self.isCloudDialoguePollSleeping = false
             }
         }
     }
@@ -3242,6 +3287,7 @@ extension MacGatewayStore {
     func stopCloudDialoguePolling() {
         cloudDialoguePollTask?.cancel()
         cloudDialoguePollTask = nil
+        isCloudDialoguePollSleeping = false
     }
 }
 

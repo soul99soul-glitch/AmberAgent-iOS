@@ -663,6 +663,7 @@ extension ChatViewModel {
                     }
                 }
                 slot.isTerminal = true
+                scheduleTerminalHostRelease(for: slot, in: run)
                 refreshLiveTaskMessageIds(in: run)
                 if isCurrentConversation(run.state.conversationId) {
                     bumpMessageRevision(reason: .generationCancelled)

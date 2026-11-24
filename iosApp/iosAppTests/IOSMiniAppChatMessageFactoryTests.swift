@@ -29,6 +29,10 @@ final class IOSMiniAppChatMessageFactoryTests: XCTestCase {
             ("前缀说明\n<!DOCTYPE HTML>\n<body>ok</body>", true),
             ("前缀说明\n<HtMl><body>ok</body></HtMl>", true),
             ("<!doctype xml><root/>", false),
+            ("<HTML\u{0301}", false),
+            ("\u{0600}<!DOCTYPE HTML>", false),
+            ("\"html\"\u{0301} \"title\" \"description\"", false),
+            ("<HTML\u{200D} 中文 <HTML>", true),
         ]
         for (sample, expected) in cases {
             XCTAssertEqual(

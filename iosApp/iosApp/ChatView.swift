@@ -36,8 +36,6 @@ struct ChatView: View {
     @State var islandHoldToken = 0
     @State var composerInputController = ComposerInputController()
     @State var chatListSummary = ChatListSummarySnapshot()
-    @State var isAtEmptyEpisodeBoundary = false
-    @State var lastEpisodeMutationRevision: UInt64 = 0
     @State var taskCountCache = ChatTaskCountCache()
     @State var artifactShelf = ChatArtifactShelfState()
     /// 产物架索引的正文图片与生成式 UI 解析缓存；引用类型，命中与淘汰不触发视图刷新。
@@ -617,6 +615,10 @@ struct ChatView: View {
             refreshChatListSummary()
             syncIslandPresentation()
         }
+        .onChange(of: ChatEpisodeStore.shared.mutationRevision) { _, _ in
+            refreshChatListSummary()
+            syncIslandPresentation()
+        }
         .onChange(of: scenePhase) { _, _ in
             syncIslandPresentation()
         }
@@ -927,7 +929,7 @@ struct ChatView: View {
     private var awaitsConversationBootstrap: Bool {
         !conversationStore.isBootstrapped
             && !viewModel.isLoading
-            && viewModel.messages.isEmpty
+            && !chatListSummary.hasMessages
     }
 
     /// 顶栏 / 外屏竖条的返回键共用同一套语义，避免两处各自推断根在哪。
@@ -947,7 +949,7 @@ struct ChatView: View {
             return
         }
         if viewModel.startNewEpisode() {
-            refreshChatListSummary(resetTitleSeed: true)
+            refreshChatListSummary()
             syncIslandPresentation()
             viewportState.followPaused = false
             scrollToBottomSource = .button

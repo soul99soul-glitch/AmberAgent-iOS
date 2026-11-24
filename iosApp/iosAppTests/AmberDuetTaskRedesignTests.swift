@@ -1999,7 +1999,8 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
                     ),
                     MacGatewayCloudDialogueEvent(
                         seq: 4, id: "e4", kind: .taskResult, role: "assistant",
-                        text: "已全部完成", topicId: "topic-rel", workItemId: "dlg-done", outcome: .completed, soulRevision: nil
+                        text: "已全部完成\n-----BEGIN PRIVATE KEY-----\n[待拍板] 合成日志",
+                        topicId: "topic-rel", workItemId: "dlg-done", outcome: .completed, soulRevision: nil
                     )
                 ],
                 nextCursor: 4,

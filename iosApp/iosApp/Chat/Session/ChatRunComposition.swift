@@ -77,7 +77,6 @@ extension ChatViewModel {
                                 taskSlot.isTerminal = true
                                 taskSlot.keepaliveMonitorTask?.cancel()
                                 taskSlot.keepaliveMonitorTask = nil
-                                taskSlot.releaseTerminalPayloads()
                                 self.scheduleTerminalHostRelease(for: taskSlot, in: nil)
                                 self.dequeueNextPendingTasksIfPossible()
                             }
@@ -346,7 +345,6 @@ extension ChatViewModel {
                             taskSlot.isTerminal = true
                             taskSlot.keepaliveMonitorTask?.cancel()
                             taskSlot.keepaliveMonitorTask = nil
-                            taskSlot.releaseTerminalPayloads()
                             self.runRegistry.removePendingTask(slotId: taskSlot.slotId)
                             self.scheduleTerminalHostRelease(for: taskSlot, in: nil)
                             self.dequeueNextPendingTasksIfPossible()

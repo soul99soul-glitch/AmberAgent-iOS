@@ -268,6 +268,7 @@ final class MacGatewayStore {
     var cloudDialogueConversationId: String? = nil
     var cloudDialogueCursor: Int64 = 0
     var cloudDialogueEvents: [MacGatewayCloudDialogueEvent] = []
+    var cloudDialogueTrimmedInputEventIds: Set<String> = []
     var cloudDialogueEntranceEventIds: Set<String> = []
     /// Low-frequency composer trigger; process/progress events do not change it.
     var cloudSuggestionReplyID: String?
@@ -315,6 +316,7 @@ final class MacGatewayStore {
     @ObservationIgnored var cloudDialoguePollTask: Task<Void, Never>?
     @ObservationIgnored var isAppInBackground = false
     @ObservationIgnored var cloudDialogueIdlePollStreak = 0
+    @ObservationIgnored var isCloudDialoguePollSleeping = false
     @ObservationIgnored var cloudDialoguePollStepDurations: [Duration] = [
         .seconds(1), .seconds(2), .seconds(3), .seconds(5)
     ]

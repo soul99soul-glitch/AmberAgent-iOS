@@ -836,6 +836,12 @@ enum AmberUnifiedTaskBuilder {
         return structuredDecision(in: initialTrimmed) ?? containsDecisionMarker(trimmedRaw)
     }
 
+    private static func sanitizedDialogueTaskText(_ text: String) -> String {
+        IOSContextCompactionFidelity.redactCredentials(
+            IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope(text)
+        )
+    }
+
     private static func needsDecisionLazy(metadata: [String: String], fallback: () -> Bool) -> Bool {
         for key in ["needs_decision", "needs_user_decision"] {
             if let value = metadata[key]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
@@ -1048,14 +1054,9 @@ enum AmberUnifiedTaskBuilder {
                     isStopRequested: progress.isStopRequested
                 ) {
                     let latestText = latestResultEvent(for: workItemId).map {
-                        IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope(
-                            slot.cloudDialogueDisplayText(for: $0)
-                        )
+                        sanitizedDialogueTaskText(slot.cloudDialogueDisplayText(for: $0))
                     }
-                    let statusText = IOSSubAgentOutputProjection
-                        .sanitizeAssistantDisplayTextIfEnvelope(progress.statusLine)
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    return Self.textNeedsDecision(latestText ?? (statusText.isEmpty ? nil : statusText))
+                    return Self.textNeedsDecision(latestText ?? sanitizedDialogueTaskText(progress.statusLine))
                 }
                 counts.record(phase)
             }
@@ -1307,14 +1308,9 @@ enum AmberUnifiedTaskBuilder {
                 let latestResultEvent = directEvents
                     .last(where: { $0.kind == .taskResult || ($0.kind == .assistantReply && !$0.isUpfrontAcknowledgement) })
                 let latestResultText = latestResultEvent.map { slot.cloudDialogueDisplayText(for: $0) }
-                let sanitizedResult = latestResultText.map {
-                    IOSContextCompactionFidelity.redactCredentials(
-                        IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope($0)
-                    )
-                }
-                let sanitizedStatus = IOSContextCompactionFidelity.redactCredentials(
-                    IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope(progress.statusLine)
-                ).trimmingCharacters(in: .whitespacesAndNewlines)
+                let sanitizedResult = latestResultText.map(Self.sanitizedDialogueTaskText)
+                let sanitizedStatus = Self.sanitizedDialogueTaskText(progress.statusLine)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 let rawMarkdown = Self.userFacingResultMarkdown(from: sanitizedResult)
                 let summary = Self.extractDeliverableSummary(
                     from: sanitizedResult ?? (sanitizedStatus.isEmpty ? nil : sanitizedStatus)

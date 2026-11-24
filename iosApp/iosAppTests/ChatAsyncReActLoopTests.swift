@@ -1142,6 +1142,13 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         XCTAssertEqual(slot.lastUserVisibleProgressUptime, 2, "空白正文不得刷新时钟")
         XCTAssertTrue(slot.hasEmittedKeepaliveInCurrentSilenceWindow)
         XCTAssertEqual(state.messages.last?.toText().trimmingCharacters(in: .whitespacesAndNewlines), "")
+
+        XCTAssertTrue(bindings.setProvisionalAssistant(snapshot("已完成 B。\n\n")))
+        slot.lastUserVisibleProgressUptime = 3
+        slot.hasEmittedKeepaliveInCurrentSilenceWindow = true
+        XCTAssertTrue(bindings.setProvisionalAssistant(snapshot("已完成 C。\n\n")))
+        XCTAssertGreaterThan(slot.lastUserVisibleProgressUptime, 3, "同长正文更正也是可见进展")
+        XCTAssertFalse(slot.hasEmittedKeepaliveInCurrentSilenceWindow)
     }
 
     func testKeepaliveFiresOnceAfter60sSilenceResetsOnMeaningfulProgressAndStopsOnTerminalOrFailure() throws {

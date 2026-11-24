@@ -1155,6 +1155,14 @@ enum ChatImageEncoder {
         }
     }
 
+    static func downsampleOffMain(from data: Data, maxPixelSize: Int) async -> UIImage? {
+        await decodeGate.withPermit {
+            await Task.detached(priority: .userInitiated) {
+                downsampledImage(from: data, maxPixelSize: maxPixelSize)
+            }.value
+        }
+    }
+
     static func decodeJPEGOffMain(contentsOf url: URL) async -> Data? {
         await decodeGate.withPermit {
             await Task.detached(priority: .userInitiated) {

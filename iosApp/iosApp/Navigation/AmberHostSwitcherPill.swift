@@ -589,9 +589,7 @@ struct AmberInlineCloudMainDialogueView: View {
     }
 
     private var unmergedFollowups: [MacGatewayCloudDialogueFollowupRecord] {
-        store.cloudDialogueFollowups.filter { record in
-            !store.cloudDialogueVisibleEvents.contains(where: { $0.id == record.eventId })
-        }
+        store.unmergedCloudDialogueFollowups
     }
 
     private var scrollTailToken: String {
@@ -1105,9 +1103,7 @@ struct MacGatewayCloudDialogueSheet: View {
                             .listRowBackground(Color.clear)
                     }
 
-                    ForEach(store.cloudDialogueFollowups.filter { record in
-                        !store.cloudDialogueVisibleEvents.contains(where: { $0.id == record.eventId })
-                    }) { followup in
+                    ForEach(store.unmergedCloudDialogueFollowups) { followup in
                         AmberCloudFollowupBubbleRow(
                             text: followup.text,
                             statusText: followup.deliveryStatus(isSending: store.busyCloudDialogueRequestIds.contains(followup.requestId)),

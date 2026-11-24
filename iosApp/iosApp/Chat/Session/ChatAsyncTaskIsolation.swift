@@ -22,11 +22,6 @@ struct ChatLocalTaskFollowup: Identifiable, Equatable, Sendable {
     }
 }
 
-struct ChatProvisionalVisibleProseMetric: Equatable {
-    let visibleTextPartCount: Int
-    let lastVisibleUTF16Count: Int
-}
-
 /// Per-task isolation slot within a conversation (`ChatConversationRun`).
 /// Each task owns its own `ChatKernelRunHost`, baseline transcript, generated message IDs,
 /// anchor position in `state.messages`; follow-ups live in the conversation queue.
@@ -72,7 +67,7 @@ final class ChatAsyncTaskSlot {
     var lastSyncedVisibleStage: AgentActivityStage?
     var lastSyncedVisibleToolSignature: String?
     var lastSyncedVisibleProseSignature: Int?
-    var lastProvisionalProseSnapshot: (messageId: KotlinUuid, isSegmented: Bool, metric: ChatProvisionalVisibleProseMetric?)?
+    var lastProvisionalProseSnapshot: (messageId: KotlinUuid, isSegmented: Bool, text: [Substring])?
     var explicitFailureOrStallReason: String?
     var keepaliveMonitorTask: Task<Void, Never>?
     var keepaliveMessages: [UIMessage] = []
@@ -271,6 +266,8 @@ extension ChatViewModel {
                 return
             }
             let releasedHost = slot.host
+            // A cancelling host still needs the isolated transcript for its terminal commit.
+            slot.releaseTerminalPayloads()
             slot.host = nil
             if let run, let releasedHost, run.primaryHost === releasedHost {
                 run.primaryHost = nil
@@ -306,7 +303,6 @@ extension ChatViewModel {
         if let host = slot.host, host.isRunning {
             _ = host.cancel(runId: slot.runId)
         }
-        slot.releaseTerminalPayloads()
         scheduleTerminalHostRelease(for: slot, in: run)
     }
 
@@ -528,19 +524,19 @@ extension ChatViewModel {
                 index = state.messages.lastIndex(where: { $0.id == message.id })
             }
             if let index {
-                // Compare only lightweight tail prose metrics without full-text trimming or SipHash.
+                // Compare the tail only. Providers can replace text without changing its length.
                 let isSegmented = IOSChatRenderPreferences.shared.isSegmentedReplyDelivery
-                let previousMetric: ChatProvisionalVisibleProseMetric?
+                let previousText: [Substring]
                 if let cached = slot.lastProvisionalProseSnapshot,
                    cached.messageId == previous.id,
                    cached.isSegmented == isSegmented {
-                    previousMetric = cached.metric
+                    previousText = cached.text
                 } else {
-                    previousMetric = Self.provisionalVisibleProseMetric(for: previous, isSegmented: isSegmented)
+                    previousText = Self.provisionalVisibleProse(for: previous, isSegmented: isSegmented)
                 }
-                let latestMetric = Self.provisionalVisibleProseMetric(for: message, isSegmented: isSegmented)
-                slot.lastProvisionalProseSnapshot = (message.id, isSegmented, latestMetric)
-                if let latestMetric, latestMetric != previousMetric {
+                let latestText = Self.provisionalVisibleProse(for: message, isSegmented: isSegmented)
+                slot.lastProvisionalProseSnapshot = (message.id, isSegmented, latestText)
+                if !latestText.isEmpty, latestText != previousText {
                     slot.recordMeaningfulUserVisibleProgress()
                 }
                 // The aggregate is rebuilt only when an authoritative transcript next arrives.
@@ -694,7 +690,6 @@ extension ChatViewModel {
         if run.state.selectedFollowupRunId == slot.runId || run.state.selectedFollowupRunId == slot.slotId {
             run.state.selectedFollowupRunId = nil
         }
-        slot.releaseTerminalPayloads()
         scheduleTerminalHostRelease(for: slot, in: run)
         refreshLiveTaskMessageIds(in: run)
         runActivityRevision &+= 1
@@ -755,14 +750,10 @@ extension ChatViewModel {
                             }
                         }
                         slot.isTerminal = true
-                        slot.releaseTerminalPayloads()
                         scheduleTerminalHostRelease(for: slot, in: run)
                         interruptedRunIds.append(runId)
                     } else if let host = slot.host, host.isRunning {
                         host.cancel(cause: .backgroundInterruption)
-                        slot.isTerminal = true
-                        slot.releaseTerminalPayloads()
-                        scheduleTerminalHostRelease(for: slot, in: run)
                         interruptedRunIds.append(runId)
                     }
                 }
@@ -854,63 +845,32 @@ extension ChatViewModel {
         return keepaliveMsg
     }
 
-    static func provisionalVisibleProseMetric(
+    private static func provisionalVisibleProse(
         for message: UIMessage,
-        isSegmented: Bool = IOSChatRenderPreferences.shared.isSegmentedReplyDelivery
-    ) -> ChatProvisionalVisibleProseMetric? {
-        guard message.role == MessageRole.assistant else { return nil }
-        let isStreamingMsg = message.finishedAt == nil
-        let useSegmented = isSegmented && isStreamingMsg
-        let keepaliveText = ChatAsyncTaskSlot.keepaliveDefaultText
-        let keepaliveUTF16Count = keepaliveText.utf16.count
-        var visibleTextPartCount = 0
-        var lastVisibleUTF16Count = 0
-
-        for part in message.parts {
-            guard let textPart = part as? UIMessagePart.Text else { continue }
+        isSegmented: Bool
+    ) -> [Substring] {
+        guard message.role == MessageRole.assistant else { return [] }
+        let useSegmented = isSegmented && message.finishedAt == nil
+        let whitespace = CharacterSet.whitespacesAndNewlines
+        return message.parts.compactMap { part in
+            guard let textPart = part as? UIMessagePart.Text else { return nil }
             let text = textPart.text
-            var start = text.startIndex
-            var leadingUTF16 = 0
-            while start < text.endIndex, text[start].isWhitespace {
-                leadingUTF16 += text[start].utf16.count
-                start = text.index(after: start)
-            }
-            guard start < text.endIndex else { continue }
-
-            var end = text.endIndex
-            var trailingUTF16 = 0
+            let scalars = text.unicodeScalars
+            guard let start = scalars.firstIndex(where: { !whitespace.contains($0) }) else { return nil }
+            var end = scalars.endIndex
             while end > start {
-                let prev = text.index(before: end)
-                guard text[prev].isWhitespace else { break }
-                trailingUTF16 += text[prev].utf16.count
-                end = prev
+                let previous = scalars.index(before: end)
+                guard whitespace.contains(scalars[previous]) else { break }
+                end = previous
             }
-
-            let trimmedUTF16Count = text.utf16.count - leadingUTF16 - trailingUTF16
-            if trimmedUTF16Count == keepaliveUTF16Count,
-               text[start..<end] == keepaliveText {
-                continue
-            }
-
-            if useSegmented {
-                let committedCount = ChatSegmentedMarkdownCommitPolicy.committedUTF16Count(
-                    in: text,
-                    isStreaming: true
-                )
-                guard committedCount > 0 else { continue }
-                visibleTextPartCount += 1
-                lastVisibleUTF16Count = committedCount
-            } else {
-                visibleTextPartCount += 1
-                lastVisibleUTF16Count = trimmedUTF16Count
-            }
+            let trimmed = text[start..<end]
+            guard trimmed != ChatAsyncTaskSlot.keepaliveDefaultText else { return nil }
+            guard useSegmented else { return trimmed }
+            let count = ChatSegmentedMarkdownCommitPolicy.committedUTF16Count(in: text, isStreaming: true)
+            let committedEnd = String.Index(utf16Offset: count, in: text)
+            guard committedEnd > start else { return nil }
+            return text[..<committedEnd]
         }
-
-        guard visibleTextPartCount > 0 else { return nil }
-        return ChatProvisionalVisibleProseMetric(
-            visibleTextPartCount: visibleTextPartCount,
-            lastVisibleUTF16Count: lastVisibleUTF16Count
-        )
     }
 
     static func visibleSyncedProseSignature(in messages: [UIMessage]) -> Int? {

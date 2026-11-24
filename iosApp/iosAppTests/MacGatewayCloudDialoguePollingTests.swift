@@ -94,6 +94,39 @@ struct MacGatewayCloudDialoguePollingTests {
     }
 
     @Test @MainActor
+    func cancelledPollDoesNotMarkHealthyGatewayOffline() async throws {
+        let suite = "CloudDialoguePolling.CancelledHealth.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let (started, publishStart) = AsyncStream<Void>.makeStream()
+        let store = MacGatewayStore(defaults: defaults)
+        let client = MacGatewayClient(addrs: ["cloud.example"], port: 443, fingerprint: "fp", token: "test",
+                                      transport: { request, _ in
+            if URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.contains(
+                URLQueryItem(name: "after", value: "0")
+            ) == true {
+                publishStart.yield(())
+                try await Task.sleep(for: .seconds(30))
+            }
+            return (Data(#"{"items":[],"nextCursor":1}"#.utf8),
+                    HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        })
+        store.configureForTesting(
+            connection: MacGatewayConnection(gatewayId: "test", name: "Cloud", addrs: ["cloud.example"],
+                                             port: 443, fingerprint: "fp", deviceId: "test"),
+            client: client
+        )
+        let retiredPoll = Task { await store.pollCloudDialogueEvents(reconcileSubmissions: false) }
+        defer { retiredPoll.cancel() }
+        for await _ in started { break }
+        store.cloudDialogueCursor = 1
+        _ = try await store.pollCloudDialogueEvents(reconcileSubmissions: false).get()
+        retiredPoll.cancel()
+        _ = await retiredPoll.value
+        #expect(store.cloudDialogueTransportState == .healthy)
+    }
+
+    @Test @MainActor
     func upfrontAcknowledgementBeforeWorkItemKeepsPollingAfterSwitchingToLocalAndDirectReplySettlesImmediately() async throws {
         let suite = "CloudDialoguePolling.AckBeforeWork.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
@@ -412,6 +445,30 @@ struct MacGatewayCloudDialoguePollingTests {
             eventId: "evt-pending-sub", requestId: "req-sub-pending",
             topicId: "topic-sub-pending", workItemIds: [], state: .received, replayed: false
         )
+        store.cloudDialogueEvents[4] = MacGatewayCloudDialogueEvent(
+            seq: 5, id: "evt-settled-5", kind: .userMessage, role: "user", text: "已答复",
+            topicId: "topic-settled-5"
+        )
+        store.cloudDialogueEvents[5] = MacGatewayCloudDialogueEvent(
+            seq: 6, id: "evt-settled-6", kind: .followup, role: "user", text: "已消费",
+            topicId: "topic-settled-6", workItemId: "work:settled"
+        )
+        store.cloudDialogueProgressByWorkItem["work:settled"] = MacGatewayCloudDialogueWorkItemProgress(
+            workItemId: "work:settled", topicId: "topic-settled-6", statusLine: "已完成",
+            processEventCount: 1, lastEventSeq: 6, outcome: .completed
+        )
+        store.cloudDialogueSubmissions.append(MacGatewayCloudDialoguePersistedSubmission(
+            gatewayId: connection.gatewayId, deviceId: connection.deviceId,
+            kind: .mainMessage, requestId: "req-settled", workItemId: nil, text: "已答复",
+            receipt: MacGatewayCloudDialogueReceipt(
+                eventId: "evt-settled-5", requestId: "req-settled", topicId: "topic-settled-5",
+                workItemIds: [], state: .consumed, replayed: false
+            ), lastError: nil, updatedAt: now
+        ))
+        store.cloudDialogueFollowups.append(MacGatewayCloudDialogueFollowupRecord(
+            requestId: "req-consumed", eventId: "evt-settled-6", workItemId: "work:settled",
+            topicId: "topic-settled-6", text: "已消费", state: .consumed, lastError: nil
+        ))
 
         let didTrim = store.trimCloudDialogueMemoryWindowIfNeeded(maxEvents: 400)
         #expect(didTrim)
@@ -424,6 +481,13 @@ struct MacGatewayCloudDialoguePollingTests {
         #expect(keptIds.contains("evt-unconfirmed-receipt"))
         #expect(keptIds.contains("evt-pending-sub"))
         #expect(!keptIds.contains("evt-settled-5"), "Old settled events outside the 400-event window should be trimmed")
+        #expect(!keptIds.contains("evt-settled-6"))
+        #expect(!store.unmergedCloudMainSubmissions.contains { $0.requestId == "req-settled" })
+        #expect(!store.unmergedCloudDialogueFollowups.contains { $0.requestId == "req-consumed" })
+        store.persistCloudDialogueState(immediately: true)
+        store.loadPersistedCloudDialogueState()
+        #expect(!store.unmergedCloudMainSubmissions.contains { $0.requestId == "req-settled" })
+        #expect(!store.unmergedCloudDialogueFollowups.contains { $0.requestId == "req-consumed" })
         #expect(keptIds.contains("evt-settled-454"))
         #expect(store.cloudDialogueFirstSeenAtByEventId["evt-settled-5"] == nil)
         #expect(!store.cloudDialogueEntranceEventIds.contains("evt-settled-5"))

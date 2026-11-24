@@ -22,6 +22,7 @@ struct ChatListSummarySnapshot: Equatable {
     var awaitingFirstAssistantChunk = false
     var lastAssistantHasOpenReasoning = false
     var firstUserTitleSeed: String?
+    var isAtEmptyEpisodeBoundary = false
     var activeToolStep: ChatToolStepModel?
     var failedToolStep: ChatToolStepModel?
     var webMountRecentUserTurnStartMillis: Int64?

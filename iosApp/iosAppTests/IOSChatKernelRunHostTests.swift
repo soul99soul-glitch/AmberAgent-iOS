@@ -663,6 +663,48 @@ final class IOSChatKernelRunHostTests: IOSChatKernelRunHostTestCase {
 
     // MARK: - 终态破环释放与切会话驱逐
 
+    func testForegroundInterruptionKeepsTranscriptUntilHostSettles() async throws {
+        let suite = "IOSChatKernelRunHostTests.Interruption.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        let owner = ChatViewModel(
+            settingsStore: SettingsStore(userDefaults: defaults),
+            sharedSettings: IOSSharedSettingsStore(userDefaults: defaults),
+            autoGenerateResponses: false
+        )
+        owner.kernelTextProviderOverrideForTesting = IOSChatScriptedStreamingProvider(streams: [
+            .init(chunks: [
+                F.streamChunk(delta: F.assistantText("已显示的部分答复")),
+                F.streamChunk(delta: F.assistantText("尚未产出")),
+            ], intervalNanos: 2_000_000_000)
+        ])
+        let run = owner.currentRun
+        let user = F.userMessage("生成答复")
+        run.state.messages = [user]
+        let slot = ChatAsyncTaskSlot(
+            conversationId: run.state.conversationId,
+            inputDigest: "interrupted-partial",
+            anchorUserMessageId: ChatMessageProjector.messageId(for: user),
+            phoneControlUserInitiated: false,
+            providerSetting: F.makeProviderSetting(), params: F.makeParams(toolNames: []),
+            toolExposureBridge: nil, recipeCatalogSnapshot: nil, baselineMessages: [user]
+        )
+        let runId = owner.startOrEnqueueTaskSlot(slot, in: run)
+        let host = try XCTUnwrap(slot.host)
+        defer { host.cancel() }
+        let hasPartial = await waitForCondition { slot.currentTranscript.last?.toText() == "已显示的部分答复" }
+        XCTAssertTrue(hasPartial)
+
+        XCTAssertEqual(owner.reconcileForegroundRunsAfterSystemSuspensionIfNeeded(), [runId])
+        XCTAssertEqual(slot.currentTranscript.last?.toText(), "已显示的部分答复")
+
+        let released = await waitForCondition { slot.isTerminal && slot.host == nil }
+        XCTAssertTrue(released)
+        XCTAssertTrue(slot.currentTranscript.isEmpty)
+        XCTAssertTrue(slot.terminalHasVisibleProseOrTools)
+        XCTAssertEqual(run.state.messages.last?.toText(), "已显示的部分答复")
+    }
+
     /// 切会话驱逐终态 run 后，Host / RunState / TaskSlot 弱引用必须全部归 nil，
     /// 不得误伤待审批或活跃 run，且迟到回调不得通过 current(for:) 复活已驱逐空 run。
     func testConversationSwitchEvictsTerminalRunAndReleasesHostAndStateWithoutTouchingPendingApproval() async throws {
