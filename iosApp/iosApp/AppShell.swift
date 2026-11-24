@@ -1,8 +1,13 @@
+import os
 import SwiftUI
 import UIKit
 
 @MainActor
 struct AppShell: View {
+    private static let coldStartSignposter = OSSignposter(
+        subsystem: "app.amber.ios",
+        category: "ColdStart"
+    )
 
     let settingsStore: SettingsStore
 
@@ -60,7 +65,12 @@ struct AppShell: View {
             defaultPolicyMigrationIds: embeddedIshDefaultPolicyMigrationIds
         )
         let documentAccessStore = headlessComposition?.documentStore ?? DocumentAccessStore()
+        let workspaceStoreSignpost = Self.coldStartSignposter.beginInterval(
+            "IOSWorkspaceStore.shared",
+            id: Self.coldStartSignposter.makeSignpostID()
+        )
         let workspaceStore = IOSWorkspaceStore.shared
+        Self.coldStartSignposter.endInterval("IOSWorkspaceStore.shared", workspaceStoreSignpost)
         let systemPermissionCoordinator = headlessComposition?.systemPermissionCoordinator
             ?? IOSSystemPermissionCoordinator()
         let sharedSettingsStore = headlessComposition?.sharedSettings ?? IOSSharedSettingsStore()
@@ -120,9 +130,14 @@ struct AppShell: View {
         // Load before ChatViewModel can prepare its first provider request.
         // AppShell is MainActor-isolated, so this synchronous file read cannot
         // race the first view render or an early memory mutation.
+        let memoryPersistenceSignpost = Self.coldStartSignposter.beginInterval(
+            "IOSMemoryPersistence.shared",
+            id: Self.coldStartSignposter.makeSignpostID()
+        )
         if IOSMemoryPersistence.shared.loadState == .notLoaded {
             IOSMemoryPersistence.shared.load()
         }
+        Self.coldStartSignposter.endInterval("IOSMemoryPersistence.shared", memoryPersistenceSignpost)
         UIDevice.current.isBatteryMonitoringEnabled = true
         IOSMemoryExtractionCoordinator.shared.configure(
             settings: sharedSettingsStore, conversations: conversationStore,

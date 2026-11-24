@@ -137,6 +137,12 @@ enum IOSWorkspaceToolCatalog {
 @MainActor
 @Observable
 final class IOSWorkspaceStore: Equatable {
+    enum LoadState: Equatable {
+        case loaded
+        case missing
+        case unreadable
+    }
+
     nonisolated static func == (lhs: IOSWorkspaceStore, rhs: IOSWorkspaceStore) -> Bool {
         lhs === rhs
     }
@@ -144,6 +150,7 @@ final class IOSWorkspaceStore: Equatable {
 
     private(set) var files: [IOSWorkspaceFileRecord] = []
     private(set) var artifacts: [IOSWorkspaceArtifactRecord] = []
+    private(set) var loadState: LoadState = .missing
     private(set) var errorMessage: String?
     private(set) var revision: Int = 0
 
@@ -241,6 +248,7 @@ final class IOSWorkspaceStore: Equatable {
             guard fileManager.fileExists(atPath: stateURL.path) else {
                 files = []
                 artifacts = []
+                loadState = .missing
                 errorMessage = nil
                 return
             }
@@ -248,10 +256,12 @@ final class IOSWorkspaceStore: Equatable {
             let state = try decoder.decode(IOSWorkspaceState.self, from: data)
             files = state.files
             artifacts = state.artifacts
+            loadState = .loaded
             errorMessage = nil
         } catch {
             files = []
             artifacts = []
+            loadState = .unreadable
             errorMessage = error.localizedDescription
         }
         pruneExpiredUndoSnapshots()
@@ -260,6 +270,7 @@ final class IOSWorkspaceStore: Equatable {
 
     @discardableResult
     func importFile(url: URL, source: String = "document_picker", now: Date = Date()) async throws -> IOSWorkspaceFileRecord {
+        try requireWritableState()
         try ensureDirectories()
         let shouldStopAccessing = try startScopedAccessIfNeeded(url)
         defer {
@@ -375,6 +386,7 @@ final class IOSWorkspaceStore: Equatable {
         sourceId: String? = nil,
         now: Date = Date()
     ) throws -> IOSWorkspaceArtifactRecord {
+        try requireWritableState()
         try ensureDirectories()
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines).workspaceNilIfBlank ?? "Untitled Artifact"
         let id = UUID().uuidString
@@ -1477,16 +1489,26 @@ final class IOSWorkspaceStore: Equatable {
     func undoMillis(_ date: Date) -> Int64 { Self.millis(date) }
     func undoEnsureDirectories() throws { try ensureDirectories() }
 
+    private func requireWritableState() throws {
+        guard loadState != .unreadable else {
+            throw IOSWorkspaceStoreError.storage(
+                "Workspace index is unreadable and has been preserved. Writes are blocked to prevent overwriting existing data."
+            )
+        }
+    }
+
     private func persist(
         files nextFiles: [IOSWorkspaceFileRecord]? = nil,
         artifacts nextArtifacts: [IOSWorkspaceArtifactRecord]? = nil
     ) throws {
+        try requireWritableState()
         try ensureDirectories()
         let state = IOSWorkspaceState(files: nextFiles ?? files, artifacts: nextArtifacts ?? artifacts)
         let data = try encoder.encode(state)
         try data.write(to: stateURL, options: [.atomic])
         if let nextFiles, files != nextFiles { files = nextFiles }
         if let nextArtifacts, artifacts != nextArtifacts { artifacts = nextArtifacts }
+        loadState = .loaded
     }
 
     private func publish() {

@@ -34,6 +34,14 @@ struct IOSMemoryEventRecord: Codable, Identifiable {
 
 @Observable @MainActor
 final class IOSMemoryEventStore {
+    static let maxMemoryRecallObservationCount = 500
+
+    private struct RecallFeatureProbe: Decodable {
+        let feature: String?
+    }
+
+    private static let probeDecoder = JSONDecoder()
+
     private let fileURL: URL
     private(set) var records: [IOSMemoryEventRecord] = []
     private(set) var errorMessage: String?
@@ -48,10 +56,13 @@ final class IOSMemoryEventStore {
     @discardableResult
     func append(_ events: [MemoryEvent]) -> Bool {
         guard errorMessage == nil else { return false }
-        let ids = Set(records.map(\.id))
-        let fresh = events.filter { !ids.contains($0.id) }.map(IOSMemoryEventRecord.init)
+        var seenIds = Set(records.map(\.id))
+        var fresh: [IOSMemoryEventRecord] = []
+        for event in events where seenIds.insert(event.id).inserted {
+            fresh.append(IOSMemoryEventRecord(event))
+        }
         guard !fresh.isEmpty else { return true }
-        let updated = records + fresh
+        let updated = Self.pruneMemoryRecallObservations(records + fresh)
         do {
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(updated).write(to: fileURL, options: .atomic)
@@ -60,6 +71,39 @@ final class IOSMemoryEventStore {
         } catch {
             errorMessage = "无法保存记忆事件。"
             return false
+        }
+    }
+
+    private static func isMemoryRecallObservation(_ record: IOSMemoryEventRecord) -> Bool {
+        guard record.type == MemoryEventType.memoryUpdated.wireName,
+              let data = record.message.data(using: .utf8),
+              let probe = try? probeDecoder.decode(RecallFeatureProbe.self, from: data) else {
+            return false
+        }
+        return probe.feature == "memory_recall"
+    }
+
+    private static func pruneMemoryRecallObservations(
+        _ records: [IOSMemoryEventRecord],
+        limit: Int = maxMemoryRecallObservationCount
+    ) -> [IOSMemoryEventRecord] {
+        let recallIndices = records.indices.filter { isMemoryRecallObservation(records[$0]) }
+        guard recallIndices.count > limit else { return records }
+        let keptRecallIndices: Set<Int>
+        if limit <= 0 {
+            keptRecallIndices = []
+        } else {
+            let sortedNewestFirst = recallIndices.sorted { lhs, rhs in
+                let leftTime = records[lhs].createdAt
+                let rightTime = records[rhs].createdAt
+                if leftTime != rightTime { return leftTime > rightTime }
+                return lhs > rhs
+            }
+            keptRecallIndices = Set(sortedNewestFirst.prefix(limit))
+        }
+        let dropIndices = Set(recallIndices).subtracting(keptRecallIndices)
+        return records.enumerated().compactMap { index, record in
+            dropIndices.contains(index) ? nil : record
         }
     }
 }
