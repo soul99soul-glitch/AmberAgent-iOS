@@ -73,6 +73,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
     private nonisolated(unsafe) var remoteStateObserver: NSObjectProtocol?
     private var activeRemoteTask: WatchRemoteTaskProjection?
     private var remoteRefreshTask: Task<Void, Never>?
+    private let remoteStateDebounceNanoseconds: UInt64
     private let attachmentWaitNanoseconds: UInt64
     private var sharedSettings: IOSSharedSettingsStore?
     private weak var conversationStore: IOSConversationStore?
@@ -121,6 +122,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         deepLinkInbox: IOSDeepLinkInbox = .shared,
         coldStartPreparer: WatchTaskColdStartPreparer? = nil,
         attachmentWaitNanoseconds: UInt64 = 5_000_000_000,
+        remoteStateDebounceNanoseconds: UInt64 = 400_000_000,
         librarySnapshotProvider: WatchLibrarySnapshotProvider? = nil,
         agentRuntimeDao: AgentRuntimeDao = IosDatabaseFactory.shared.createDatabase().agentRuntimeDao(),
         remoteGateway: WatchRemoteExecutionRouting? = nil,
@@ -131,6 +133,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         self.deepLinkInbox = deepLinkInbox
         self.coldStartPreparer = coldStartPreparer
         self.attachmentWaitNanoseconds = attachmentWaitNanoseconds
+        self.remoteStateDebounceNanoseconds = remoteStateDebounceNanoseconds
         self.remoteGateway = remoteGateway
         self.intentInboxStore = intentInboxStore
         self.librarySnapshotProvider = librarySnapshotProvider ?? { [weak remoteGateway] settings, store, message in
@@ -165,11 +168,24 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
 
     /// Coalesced entry point invoked whenever Cloud/Mac task, approval, or target selection updates.
     func handleRemoteStateChanged() {
+        republish()
         remoteRefreshTask?.cancel()
+        guard isAttached, bridge.hasInstalledWatchCompanion else {
+            remoteRefreshTask = nil
+            return
+        }
+        let delayNanoseconds = remoteStateDebounceNanoseconds
         remoteRefreshTask = Task { @MainActor [weak self] in
+            if delayNanoseconds > 0 {
+                do {
+                    try await Task.sleep(nanoseconds: delayNanoseconds)
+                } catch {
+                    return
+                }
+            }
             guard let self, !Task.isCancelled else { return }
             self.republish()
-            if self.isAttached {
+            if self.isAttached, self.bridge.hasInstalledWatchCompanion {
                 await self.refreshWatchSnapshot()
             }
         }
@@ -244,6 +260,13 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
     /// Rebuilds the Watch library projection from the same settings and
     /// conversation store used by the active phone UI.
     func refreshWatchSnapshot() async {
+        await refreshWatchSnapshot(bypassCompanionGate: false)
+    }
+
+    func refreshWatchSnapshot(bypassCompanionGate: Bool) async {
+        if !bypassCompanionGate {
+            guard bridge.hasInstalledWatchCompanion else { return }
+        }
         libraryRefreshRevision &+= 1
         let revision = libraryRefreshRevision
         await prepareForWatchRequestIfNeeded()
@@ -1026,7 +1049,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
     private func handleWatchActionUncached(_ request: WatchTaskActionRequest) async -> WatchTaskActionResult {
         switch request.action {
         case .refresh:
-            await refreshWatchSnapshot()
+            await refreshWatchSnapshot(bypassCompanionGate: true)
             return accepted(request, message: nil)
         case .openOnPhone:
             if let remote = activeRemoteTask,
@@ -1095,7 +1118,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
                   let text = request.text else {
                 return rejected(request, "快捷动作无效")
             }
-            await refreshWatchSnapshot()
+            await refreshWatchSnapshot(bypassCompanionGate: true)
             guard let library = librarySnapshot,
                   library.isConfigured else {
                 return rejected(request, librarySnapshot?.configurationMessage ?? "当前助手尚未配置")

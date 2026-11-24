@@ -428,14 +428,22 @@ final class IOSWatchCompanionService {
             let title = summary.title.trimmingCharacters(in: .whitespacesAndNewlines)
             let displayTitle = title.isEmpty ? "新对话" : WatchTaskText.singleLine(title, maxLength: 60) ?? "新对话"
             conversationTitlesByID[conversationID.lowercased()] = displayTitle
-            let messages = await conversationStore.messages(for: summary.id) ?? []
-            let preview = messages.reversed().compactMap { message -> String? in
-                guard message.role == MessageRole.user || message.role == MessageRole.assistant else {
-                    return nil
-                }
-                let text = message.toText().trimmingCharacters(in: .whitespacesAndNewlines)
-                return text.isEmpty ? nil : WatchTaskText.singleLine(text, maxLength: 120)
-            }.first ?? ""
+            let cachedPreview = conversationStore.listPreview(for: summary.id)
+            let preview: String
+            if let singleLine = WatchTaskText.singleLine(cachedPreview, maxLength: 120) {
+                preview = singleLine
+            } else if let current = conversationStore.currentConversation,
+                      current.id == summary.id {
+                preview = current.currentMessages.reversed().compactMap { message -> String? in
+                    guard message.role == MessageRole.user || message.role == MessageRole.assistant else {
+                        return nil
+                    }
+                    let text = message.toText().trimmingCharacters(in: .whitespacesAndNewlines)
+                    return text.isEmpty ? nil : WatchTaskText.singleLine(text, maxLength: 120)
+                }.first ?? ""
+            } else {
+                preview = ""
+            }
             recent.append(WatchRecentConversation(
                 id: conversationID,
                 title: displayTitle,

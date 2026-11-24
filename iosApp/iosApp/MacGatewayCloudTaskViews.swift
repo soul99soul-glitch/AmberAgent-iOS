@@ -275,15 +275,8 @@ struct MacGatewayCloudTaskDetailSheet: View {
                 isLoadingBackfill = (record == nil)
                 _ = await store.ensureCloudTaskLoaded(workItemId: resolvedWorkItemId)
                 isLoadingBackfill = false
-                while !Task.isCancelled {
-                    guard let current = record,
-                          let id = current.workItemId,
-                          !current.isTerminal else {
-                        break
-                    }
-                    try? await Task.sleep(for: .seconds(1))
-                    if Task.isCancelled { break }
-                    await store.refreshCloudTask(workItemId: id)
+                if store.hasActiveCloudTasks {
+                    store.startCloudTaskPollingIfNeeded()
                 }
             }
         }

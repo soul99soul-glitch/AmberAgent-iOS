@@ -508,6 +508,7 @@ extension MacGatewayClient {
 
 extension MacGatewayStore {
     nonisolated static let cloudTasksKey = "macGateway.cloudTasks.v1"
+    nonisolated static let maxTerminalDetailBackfillRetries = 4
     nonisolated static let persistenceQueue = DispatchQueue(label: "app.amber.ios.macGateway.persistence", qos: .utility)
 
     var effectiveCloudAgents: [MacGatewayCloudAgent] {
@@ -750,12 +751,20 @@ extension MacGatewayStore {
         do {
             let detail = try await client.workItem(id: workItemId)
             guard self.client === client else { return }
+            terminalCloudTaskDetailRetryState.removeValue(forKey: workItemId)
             upsertBackfilledCloudTask(detail)
         } catch is CancellationError {
         } catch {
             guard self.client === client else { return }
             if forgetIfRevoked(error, for: client) { return }
             if let index = cloudTasks.firstIndex(where: { $0.workItemId == workItemId }) {
+                if cloudTasks[index].isTerminal && cloudTasks[index].detail == nil {
+                    var retry = terminalCloudTaskDetailRetryState[workItemId] ?? TerminalCloudTaskDetailRetryState()
+                    retry.failureCount += 1
+                    let backoffSeconds = min(pow(2.0, Double(retry.failureCount)), 16.0)
+                    retry.nextRetryAt = Date().addingTimeInterval(backoffSeconds)
+                    terminalCloudTaskDetailRetryState[workItemId] = retry
+                }
                 let errorMessage = error.localizedDescription
                 guard cloudTasks[index].lastError != errorMessage else { return }
                 cloudTasks[index].lastError = errorMessage
@@ -808,10 +817,19 @@ extension MacGatewayStore {
         _ = await ensureCloudTaskLoaded(workItemId: workItemId)
     }
 
-    func refreshActiveCloudTasks() async {
+    func refreshActiveCloudTasks(now: Date = Date()) async {
         let targets = cloudTasks.compactMap { record -> String? in
             guard let workItemId = record.workItemId else { return nil }
-            if !record.isTerminal || record.detail == nil {
+            if !record.isTerminal {
+                return workItemId
+            }
+            if record.detail == nil {
+                if let retry = terminalCloudTaskDetailRetryState[workItemId] {
+                    guard retry.failureCount < Self.maxTerminalDetailBackfillRetries,
+                          now >= retry.nextRetryAt else {
+                        return nil
+                    }
+                }
                 return workItemId
             }
             return nil

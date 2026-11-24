@@ -19,6 +19,22 @@ import Shared
 /// it would not see this row and the recovery decision would never publish.
 @MainActor
 final class WatchTaskCoordinatorAgentRuntimeDaoReuseTests: XCTestCase {
+    private final class PairedDaoTestTransport: WatchConnectivityTransporting {
+        var isSupported = true
+        var isSessionActivated = true
+        var isPaired = true
+        var isWatchAppInstalled = true
+        var isReachable = false
+        func activate() {}
+        func updateApplicationContext(_ context: [String: Any]) throws {}
+        func transferUserInfo(_ userInfo: [String: Any]) -> String { "transfer" }
+        func sendMessage(
+            _ message: [String: Any],
+            replyHandler: (([String: Any]) -> Void)?,
+            errorHandler: ((Error) -> Void)?
+        ) {}
+    }
+
     private func makeIsolatedDao(_ name: String = #function) -> AgentRuntimeDao {
         let path = FileManager.default.temporaryDirectory
             .appendingPathComponent("\(name)-\(UUID().uuidString).db")
@@ -67,8 +83,10 @@ final class WatchTaskCoordinatorAgentRuntimeDaoReuseTests: XCTestCase {
             try? FileManager.default.removeItem(at: root)
             UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
         }
+        let bridge = WatchConnectivityBridge()
+        bridge.configure(transport: PairedDaoTestTransport())
         let coordinator = WatchTaskCoordinator(
-            bridge: WatchConnectivityBridge(),
+            bridge: bridge,
             companionService: IOSWatchCompanionService(
                 baseDirectory: root, defaults: UserDefaults(suiteName: suite)!
             ),

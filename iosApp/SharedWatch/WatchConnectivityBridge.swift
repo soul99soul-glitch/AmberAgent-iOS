@@ -205,10 +205,14 @@ final class SystemWatchConnectivityTransport: NSObject, WatchConnectivityTranspo
 protocol WatchTaskActionHandling: AnyObject {
     func handleWatchAction(_ request: WatchTaskActionRequest) async -> WatchTaskActionResult
     func refreshWatchSnapshot() async
+    func refreshWatchSnapshot(bypassCompanionGate: Bool) async
 }
 
 extension WatchTaskActionHandling {
     func refreshWatchSnapshot() async {}
+    func refreshWatchSnapshot(bypassCompanionGate: Bool) async {
+        await refreshWatchSnapshot()
+    }
 }
 
 /// Decoded on the WCSession queue so MainActor only receives Sendable values.
@@ -246,6 +250,11 @@ final class WatchConnectivityBridge: NSObject {
     private(set) var connectionError: String?
     var isCompanionReachable: Bool {
         transport?.isReachable == true && transport?.isSessionActivated == true
+    }
+
+    var hasInstalledWatchCompanion: Bool {
+        guard let transport, transport.isSupported else { return false }
+        return transport.isSessionActivated && transport.isPaired && transport.isWatchAppInstalled
     }
 
     var backgroundDeliveryIsDrained: Bool {
@@ -528,7 +537,7 @@ final class WatchConnectivityBridge: NSObject {
                 defer { lifetime.end() }
                 // The owner publishes only after a successful refresh. Do not
                 // manufacture an idle revision when cold attachment times out.
-                await self?.actionHandler?.refreshWatchSnapshot()
+                await self?.actionHandler?.refreshWatchSnapshot(bypassCompanionGate: true)
             }
             #endif
         case .incompatible:
@@ -630,6 +639,9 @@ extension WatchConnectivityBridge: WCSessionDelegate {
             self.requestSnapshotFromPhone()
             #else
             self.lastPushedSnapshot = nil
+            if self.hasInstalledWatchCompanion {
+                await self.actionHandler?.refreshWatchSnapshot()
+            }
             self.publish(self.latestSnapshot)
             #endif
             self.onReachabilityChanged?(self.isCompanionReachable)
@@ -642,6 +654,22 @@ extension WatchConnectivityBridge: WCSessionDelegate {
     }
     nonisolated func sessionDidDeactivate(_ session: WCSession) {
         session.activate()
+    }
+    nonisolated func sessionWatchStateDidChange(_ session: WCSession) {
+        let isAvailable = session.activationState == .activated
+            && session.isPaired
+            && session.isWatchAppInstalled
+        Task { @MainActor [weak self] in
+            guard let self, isAvailable else { return }
+            await self.handleWatchStateChanged()
+        }
+    }
+
+    func handleWatchStateChanged() async {
+        guard hasInstalledWatchCompanion else { return }
+        lastPushedSnapshot = nil
+        await actionHandler?.refreshWatchSnapshot()
+        publish(latestSnapshot)
     }
     #endif
 
@@ -702,7 +730,7 @@ extension WatchConnectivityBridge: WCSessionDelegate {
                 reply.respond((try? WatchTaskCodec.resultMessage(for: self.resultForDelivery(result))) ?? [:])
                 return
             case .requestSnapshot:
-                await self.actionHandler?.refreshWatchSnapshot()
+                await self.actionHandler?.refreshWatchSnapshot(bypassCompanionGate: true)
                 reply.respond((try? WatchTaskCodec.snapshotMessage(for: self.latestSnapshot)) ?? [:])
                 return
             case .incompatible:

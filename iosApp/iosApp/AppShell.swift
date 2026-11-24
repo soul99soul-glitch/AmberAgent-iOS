@@ -29,6 +29,9 @@ struct AppShell: View {
     @State private var didRunStartupRecovery = false
     @State private var didFinalizeStaleBackgroundJobs = false
     @State private var staleBackgroundOutcomeUnknownRunIds = Set<String>()
+    @State private var lastMemoryMaintenanceResumeAt: Date?
+    @State private var lastStoreCoordinatorSyncAt: Date?
+    @State private var lastWakeSchedulerActiveAt: Date?
     @State private var isResolvingThemeTryOn = false
     @State private var themeTryOnError: String?
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -172,9 +175,9 @@ struct AppShell: View {
             Text(themeTryOnError ?? "")
         }
         .task {
+            lastStoreCoordinatorSyncAt = Date()
             await storeCoordinator.start()
-            IOSMemoryExtractionCoordinator.shared.resume()
-            IOSMemoryConsolidationCoordinator.shared.resume()
+            resumeMemoryMaintenanceIfNeeded()
         }
         .onChange(of: chatViewModel.isLoading) { _, isLoading in
             if !isLoading { IOSMemoryExtractionCoordinator.shared.resume() }
@@ -198,12 +201,14 @@ struct AppShell: View {
         .onChange(of: scenePhase) { _, phase in
             handleScenePhaseChange(phase)
             if phase == .active {
-                Task { await storeCoordinator.refresh() }
-                if didBootstrapConversations {
+                if shouldRunColdStartDeduplicated(&lastStoreCoordinatorSyncAt) {
+                    Task { await storeCoordinator.refresh() }
+                }
+                if didBootstrapConversations,
+                   shouldRunColdStartDeduplicated(&lastWakeSchedulerActiveAt) {
                     Task { await IOSWakeScheduler.shared.applicationBecameActive() }
                 }
-                IOSMemoryExtractionCoordinator.shared.resume()
-                IOSMemoryConsolidationCoordinator.shared.resume()
+                resumeMemoryMaintenanceIfNeeded()
                 MacGatewayStore.shared.boundSharedSettings = sharedSettings
                 Task { await MacGatewayStore.shared.handleForegroundBecameActive() }
             }
@@ -341,7 +346,8 @@ struct AppShell: View {
             consumePendingShareInboxIfAvailable()
         }
         await openPendingAppDeepLinkIfReady()
-        if scenePhase == .active {
+        if scenePhase == .active,
+           shouldRunColdStartDeduplicated(&lastWakeSchedulerActiveAt) {
             await IOSWakeScheduler.shared.applicationBecameActive()
         }
         #if DEBUG && targetEnvironment(simulator)
@@ -492,6 +498,22 @@ struct AppShell: View {
         IOSAppLanguage(storedValue: appLanguage)
     }
 
+    private static let coldStartMaintenanceDedupeWindow: TimeInterval = 3.0
+
+    private func shouldRunColdStartDeduplicated(_ lastTimestamp: inout Date?, now: Date = Date()) -> Bool {
+        if let lastTimestamp, now.timeIntervalSince(lastTimestamp) < Self.coldStartMaintenanceDedupeWindow {
+            return false
+        }
+        lastTimestamp = now
+        return true
+    }
+
+    private func resumeMemoryMaintenanceIfNeeded() {
+        guard shouldRunColdStartDeduplicated(&lastMemoryMaintenanceResumeAt) else { return }
+        IOSMemoryExtractionCoordinator.shared.resume()
+        IOSMemoryConsolidationCoordinator.shared.resume()
+    }
+
     private func handleScenePhaseChange(_ phase: ScenePhase) {
         IOSBackgroundLifecycleLog.record(
             "scenePhase=\(String(describing: phase))",
@@ -499,10 +521,15 @@ struct AppShell: View {
         )
         switch phase {
         case .background:
+            lastMemoryMaintenanceResumeAt = nil
+            lastStoreCoordinatorSyncAt = nil
+            lastWakeSchedulerActiveAt = nil
+            MacGatewayStore.shared.setAppInBackground(true)
             councilChatViewModel.runtimeWillEnterBackground()
             // 握着后台执行权就别交接，让正在跑的流自己跑完。
             _ = chatViewModel.handoffGenerationToBackgroundIfNeeded(honorKeepAliveLease: true)
         case .active:
+            MacGatewayStore.shared.setAppInBackground(false)
             _ = chatViewModel.reconcileForegroundRunsAfterSystemSuspensionIfNeeded(
                 hasValidKeepAliveLease: BackgroundGenerationKeepAlive.shared.hasValidExecutionAssertion
             )

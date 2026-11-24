@@ -4,6 +4,22 @@ import XCTest
 
 @MainActor
 final class IOSWatchCompanionServiceTests: XCTestCase {
+    private final class PairedCompanionTransport: WatchConnectivityTransporting {
+        var isSupported = true
+        var isSessionActivated = true
+        var isPaired = true
+        var isWatchAppInstalled = true
+        var isReachable = false
+        func activate() {}
+        func updateApplicationContext(_ context: [String: Any]) throws {}
+        func transferUserInfo(_ userInfo: [String: Any]) -> String { "transfer" }
+        func sendMessage(
+            _ message: [String: Any],
+            replyHandler: (([String: Any]) -> Void)?,
+            errorHandler: ((Error) -> Void)?
+        ) {}
+    }
+
     private func makeStore(
         _ root: URL,
         suiteName: String = "IOSWatchCompanionServiceTests",
@@ -376,6 +392,7 @@ final class IOSWatchCompanionServiceTests: XCTestCase {
             updatedAt: Date(timeIntervalSince1970: 100)
         )))
         let bridge = WatchConnectivityBridge()
+        bridge.configure(transport: PairedCompanionTransport())
         var cached = WatchTaskSnapshot.idle
         cached.runId = runId
         cached.phase = "completed"
@@ -627,5 +644,55 @@ final class IOSWatchCompanionServiceTests: XCTestCase {
         XCTAssertFalse(result.started)
         XCTAssertEqual(viewModel.inputText, "手机正在编辑的原文草稿")
         XCTAssertTrue(result.failureMessage?.contains("草稿") == true)
+    }
+
+    func testMakeLibrarySnapshotReadsListPreviewWithoutLoadingNonCurrentConversationMessages() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("amber-watch-preview-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let suite = "WatchListPreview.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let service = IOSWatchCompanionService(baseDirectory: root, defaults: defaults)
+        let conversationStore = IOSConversationStore(
+            baseDirectory: root.appendingPathComponent("conversations", isDirectory: true)
+        )
+        let createdFirst = await conversationStore.newConversation()
+        XCTAssertTrue(createdFirst)
+        let firstId = try XCTUnwrap(conversationStore.currentConversation?.id)
+        let savedFirst = await conversationStore.save(
+            messages: [
+                UIMessage.companion.user(prompt: "旧会话问题"),
+                UIMessage.companion.assistant(prompt: "不应该通过 messages(for:) 从磁盘读出的正文")
+            ],
+            to: firstId
+        )
+        XCTAssertTrue(savedFirst)
+        conversationStore.setListPreview(id: firstId, preview: "首页已缓存的轻量摘要")
+
+        let createdSecond = await conversationStore.newConversation()
+        XCTAssertTrue(createdSecond)
+        let secondId = try XCTUnwrap(conversationStore.currentConversation?.id)
+        let savedSecond = await conversationStore.save(
+            messages: [
+                UIMessage.companion.user(prompt: "当前会话问题"),
+                UIMessage.companion.assistant(prompt: "当前内存会话回复")
+            ],
+            to: secondId
+        )
+        XCTAssertTrue(savedSecond)
+
+        let settings = IOSSharedSettingsStore(userDefaults: defaults)
+        let library = await service.makeLibrarySnapshot(
+            sharedSettings: settings,
+            conversationStore: conversationStore
+        )
+
+        let firstRecent = try XCTUnwrap(library.recent.first(where: { $0.id == firstId.toHexDashString() }))
+        XCTAssertEqual(firstRecent.preview, "首页已缓存的轻量摘要")
+
+        let secondRecent = try XCTUnwrap(library.recent.first(where: { $0.id == secondId.toHexDashString() }))
+        XCTAssertEqual(secondRecent.preview, "当前内存会话回复")
     }
 }

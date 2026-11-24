@@ -5,6 +5,29 @@ import Shared
 
 @MainActor
 final class WatchColdStartTests: XCTestCase {
+    private final class PairedTestTransport: WatchConnectivityTransporting {
+        var isSupported = true
+        var isSessionActivated: Bool
+        var isPaired: Bool
+        var isWatchAppInstalled: Bool
+        var isReachable = false
+
+        init(isSessionActivated: Bool = true, isPaired: Bool = true, isWatchAppInstalled: Bool = true) {
+            self.isSessionActivated = isSessionActivated
+            self.isPaired = isPaired
+            self.isWatchAppInstalled = isWatchAppInstalled
+        }
+
+        func activate() {}
+        func updateApplicationContext(_ context: [String: Any]) throws {}
+        func transferUserInfo(_ userInfo: [String: Any]) -> String { "transfer" }
+        func sendMessage(
+            _ message: [String: Any],
+            replyHandler: (([String: Any]) -> Void)?,
+            errorHandler: ((Error) -> Void)?
+        ) {}
+    }
+
     private struct Fixture {
         let root: URL
         let suite: String
@@ -37,8 +60,10 @@ final class WatchColdStartTests: XCTestCase {
         let newStarted = expectation(description: "new refresh suspended")
         var suspend = false
         var pending: [CheckedContinuation<WatchLibrarySnapshot, Never>] = []
+        let bridge = WatchConnectivityBridge()
+        bridge.configure(transport: PairedTestTransport())
         let coordinator = WatchTaskCoordinator(
-            bridge: WatchConnectivityBridge(),
+            bridge: bridge,
             companionService: IOSWatchCompanionService(baseDirectory: fixture.root.appendingPathComponent("watch"), defaults: fixture.defaults),
             deepLinkInbox: IOSDeepLinkInbox(defaults: fixture.defaults),
             librarySnapshotProvider: { _, _, _ in
@@ -97,7 +122,7 @@ final class WatchColdStartTests: XCTestCase {
             coldStartPreparer: { context }
         )
 
-        await coordinator.refreshWatchSnapshot()
+        await coordinator.refreshWatchSnapshot(bypassCompanionGate: true)
 
         let snapshot = coordinator.currentSnapshot()
         XCTAssertEqual(snapshot.runId, runId)
@@ -171,11 +196,70 @@ final class WatchColdStartTests: XCTestCase {
             attachmentWaitNanoseconds: 1_000_000
         )
 
-        await coordinator.refreshWatchSnapshot()
+        await coordinator.refreshWatchSnapshot(bypassCompanionGate: true)
 
         XCTAssertEqual(coordinator.currentSnapshot(), beforeRefresh)
         XCTAssertEqual(coordinator.currentSnapshot().runId, "still-active")
         XCTAssertEqual(coordinator.currentSnapshot().phase, AgentActivityPhase.reconnecting.rawValue)
+    }
+
+    func testUnpairedCompanionGatesAutomaticRefreshWhileAllowingWatchInitiatedAndStateChangeRefresh() async throws {
+        let fixture = try await makeFixture()
+        defer { tearDown(fixture) }
+
+        let transport = PairedTestTransport(isSessionActivated: true, isPaired: false, isWatchAppInstalled: false)
+        let bridge = WatchConnectivityBridge()
+        bridge.configure(transport: transport)
+        XCTAssertFalse(bridge.hasInstalledWatchCompanion)
+
+        var providerCalls = 0
+        let coordinator = WatchTaskCoordinator(
+            bridge: bridge,
+            companionService: IOSWatchCompanionService(
+                baseDirectory: fixture.root.appendingPathComponent("watch", isDirectory: true),
+                defaults: fixture.defaults
+            ),
+            deepLinkInbox: IOSDeepLinkInbox(defaults: fixture.defaults),
+            remoteStateDebounceNanoseconds: 20_000_000,
+            librarySnapshotProvider: { _, _, _ in
+                providerCalls += 1
+                return WatchLibrarySnapshot(
+                    assistantName: "Amber",
+                    isConfigured: true,
+                    quickActions: [],
+                    recent: [],
+                    updatedAt: Date()
+                )
+            }
+        )
+
+        coordinator.attach(chatViewModel: fixture.chatViewModel, sharedSettings: fixture.sharedSettings)
+        await coordinator.refreshWatchSnapshot()
+        coordinator.handleRemoteStateChanged()
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(providerCalls, 0, "Unpaired devices must not load conversations for automatic Watch refreshes")
+
+        // Watch-initiated `.refresh` action must bypass the companion gate.
+        let refreshAction = WatchTaskActionRequest(
+            requestId: UUID().uuidString,
+            runId: "",
+            conversationId: nil,
+            decisionId: nil,
+            action: .refresh,
+            optionId: nil,
+            text: nil,
+            createdAt: Date()
+        )
+        let refreshResult = await coordinator.handleWatchAction(refreshAction)
+        XCTAssertTrue(refreshResult.accepted)
+        XCTAssertEqual(providerCalls, 1)
+
+        // Newly paired & installed Watch triggers an initial snapshot refresh via state change.
+        transport.isPaired = true
+        transport.isWatchAppInstalled = true
+        XCTAssertTrue(bridge.hasInstalledWatchCompanion)
+        await bridge.handleWatchStateChanged()
+        XCTAssertEqual(providerCalls, 2)
     }
 
     private func makeFixture() async throws -> Fixture {

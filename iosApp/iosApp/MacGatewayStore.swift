@@ -34,9 +34,19 @@ struct MacGatewayLocalBiometricAuthenticator: MacGatewayBiometricAuthenticating 
 }
 
 final class MacGatewayPersistenceCoordinator: @unchecked Sendable {
+    struct PendingDialogueWrite: @unchecked Sendable {
+        let generation: UInt64
+        let epoch: UInt64
+        let identity: String?
+        let commit: @Sendable (UInt64) -> Void
+    }
+
     private let lock = NSLock()
     private var sessionEpoch: UInt64 = 0
     private var activeIdentity: String?
+    private var dialogueWriteGeneration: UInt64 = 0
+    private var pendingDialogueWrite: PendingDialogueWrite?
+    private var isDialogueDrainScheduled = false
 
     static func identity(for connection: MacGatewayConnection?) -> String? {
         guard let connection else { return nil }
@@ -49,6 +59,8 @@ final class MacGatewayPersistenceCoordinator: @unchecked Sendable {
         defer { lock.unlock() }
         sessionEpoch &+= 1
         activeIdentity = Self.identity(for: connection)
+        dialogueWriteGeneration &+= 1
+        pendingDialogueWrite = nil
         return (sessionEpoch, activeIdentity)
     }
 
@@ -62,6 +74,57 @@ final class MacGatewayPersistenceCoordinator: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return epoch == sessionEpoch && identity == activeIdentity
+    }
+
+    /// Replaces any queued async dialogue write with the newest snapshot (latest-wins).
+    /// Returns `true` when the caller must schedule a drain pass on `persistenceQueue`.
+    func enqueueLatestDialogueWrite(
+        epoch: UInt64,
+        identity: String?,
+        commit: @escaping @Sendable (UInt64) -> Void
+    ) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard epoch == sessionEpoch && identity == activeIdentity else { return false }
+        dialogueWriteGeneration &+= 1
+        pendingDialogueWrite = PendingDialogueWrite(
+            generation: dialogueWriteGeneration,
+            epoch: epoch,
+            identity: identity,
+            commit: commit
+        )
+        guard !isDialogueDrainScheduled else { return false }
+        isDialogueDrainScheduled = true
+        return true
+    }
+
+    func takeNextPendingDialogueWrite() -> PendingDialogueWrite? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let write = pendingDialogueWrite else {
+            isDialogueDrainScheduled = false
+            return nil
+        }
+        pendingDialogueWrite = nil
+        return write
+    }
+
+    /// Supersedes any pending async dialogue write before a synchronous commit.
+    func claimImmediateDialogueWrite(epoch: UInt64, identity: String?) -> UInt64? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard epoch == sessionEpoch && identity == activeIdentity else { return nil }
+        dialogueWriteGeneration &+= 1
+        pendingDialogueWrite = nil
+        return dialogueWriteGeneration
+    }
+
+    func isLatestDialogueWrite(generation: UInt64, epoch: UInt64, identity: String?) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return generation == dialogueWriteGeneration
+            && epoch == sessionEpoch
+            && identity == activeIdentity
     }
 }
 
@@ -241,10 +304,21 @@ final class MacGatewayStore {
     var lastBootstrapSyncSummary: IOSPairingBootstrapSyncSummary?
     var notice: Notice?
 
+    struct TerminalCloudTaskDetailRetryState {
+        var failureCount: Int = 0
+        var nextRetryAt: Date = .distantPast
+    }
+
     @ObservationIgnored var client: MacGatewayClient?
     @ObservationIgnored private var apnsToken: String?
     @ObservationIgnored var cloudPollTask: Task<Void, Never>?
     @ObservationIgnored var cloudDialoguePollTask: Task<Void, Never>?
+    @ObservationIgnored var isAppInBackground = false
+    @ObservationIgnored var cloudDialogueIdlePollStreak = 0
+    @ObservationIgnored var cloudDialoguePollStepDurations: [Duration] = [
+        .seconds(1), .seconds(2), .seconds(3), .seconds(5)
+    ]
+    @ObservationIgnored var terminalCloudTaskDetailRetryState: [String: TerminalCloudTaskDetailRetryState] = [:]
     /// Bumped per request so a slower, older response never overwrites a newer one (polls, pull to refresh and
     /// the refresh after a decision overlap).
     @ObservationIgnored var requestGeneration = (status: 0, schedules: 0, board: 0, cloudAgents: 0)
@@ -518,6 +592,39 @@ final class MacGatewayStore {
     func applicationDidFinishLaunching() {
         guard hasAnyPairedEndpoint else { return }
         UIApplication.shared.registerForRemoteNotifications()
+    }
+
+    /// Coordinates foreground/background polling across both Cloud and Mac slots.
+    /// Background only pauses polling when completely idle (no awaiting reply, no active workItem, no active cloudTask).
+    func setAppInBackground(_ inBackground: Bool) {
+        let changed = isAppInBackground != inBackground
+        isAppInBackground = inBackground
+        macSlot?.setAppInBackground(inBackground)
+
+        if inBackground {
+            if shouldSuspendCloudDialoguePollingInBackground {
+                stopCloudDialoguePolling()
+            }
+            if !hasActiveCloudTasks {
+                stopCloudTaskPolling()
+            }
+        } else {
+            cloudDialogueIdlePollStreak = 0
+            if changed {
+                if cloudDialoguePollTask != nil {
+                    stopCloudDialoguePolling()
+                }
+                if shouldPollCloudDialogue {
+                    // Starting the loop runs an immediate catch-up poll before the 1s sleep.
+                    startCloudDialoguePollingIfNeeded()
+                }
+            } else if shouldPollCloudDialogue {
+                startCloudDialoguePollingIfNeeded()
+            }
+            if hasActiveCloudTasks {
+                startCloudTaskPollingIfNeeded()
+            }
+        }
     }
 
     func didRegisterForRemoteNotifications(deviceToken: Data) {
@@ -1183,6 +1290,7 @@ final class MacGatewayStore {
         cloudAgents = []
         cloudTasks = []
         busyCloudTaskIds = []
+        terminalCloudTaskDetailRetryState.removeAll()
         localApprovalOnlyCallIds = []
         cloudConfig = nil
         cloudConfigError = nil
