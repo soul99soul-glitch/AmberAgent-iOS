@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 @MainActor
 @Observable
@@ -15,17 +16,20 @@ final class IOSAdvancedTaskStore {
 
     @ObservationIgnored private let userDefaults: UserDefaults
     @ObservationIgnored private let storageKey: String
-    @ObservationIgnored private let encoder = JSONEncoder()
-    @ObservationIgnored private let decoder = JSONDecoder()
+    @ObservationIgnored let snapshotFile: DebouncedSnapshotFile?
+    @ObservationIgnored private var logStreams: [String: TaskLogStream] = [:]
 
     init(
         userDefaults: UserDefaults = .standard,
-        storageKey: String = IOSAdvancedTaskStore.defaultStorageKey
+        storageKey: String = IOSAdvancedTaskStore.defaultStorageKey,
+        fileURL: URL? = nil
     ) {
         self.userDefaults = userDefaults
         self.storageKey = storageKey
-        let loadedTasks = Self.load(from: userDefaults, key: storageKey, decoder: decoder)
-        self.tasks = loadedTasks
+        let url = fileURL ?? (userDefaults === UserDefaults.standard
+            ? URL.applicationSupportDirectory.appending(path: storageKey + ".json") : nil)
+        self.snapshotFile = url.map(DebouncedSnapshotFile.init)
+        self.tasks = Self.load(from: userDefaults, key: storageKey, fileURL: url)
         // Establish the process boundary at the moment this store hydrates.
         // AppShell may be created after a new dispatch has already started;
         // sweeping there would incorrectly interrupt that live execution.
@@ -87,7 +91,10 @@ final class IOSAdvancedTaskStore {
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return nil }
         if let status { tasks[index].status = status }
         if let resultSummary { tasks[index].resultSummary = Self.redacted(resultSummary) }
-        if let logTail { tasks[index].logTail = Self.redactedLog(logTail) }
+        if let logTail {
+            logStreams.removeValue(forKey: id)
+            tasks[index].logTail = Self.redactedLog(logTail)
+        }
         if let error { tasks[index].error = Self.redacted(error) }
         if let retryable { tasks[index].retryable = retryable }
         if let cancelCapability { tasks[index].cancelCapability = cancelCapability }
@@ -97,13 +104,18 @@ final class IOSAdvancedTaskStore {
             }
         }
         tasks[index].updatedAt = now
-        persist()
+        if status?.isTerminal == true, let stream = logStreams.removeValue(forKey: id) {
+            tasks[index].logTail = stream.finish()
+        }
+        persist(immediately: status?.isTerminal == true)
         return tasks[index]
     }
 
     func appendLog(id: String, chunk: String, now: Date = Date()) {
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
-        tasks[index].logTail = Self.redactedLog(tasks[index].logTail + chunk)
+        let stream = logStreams[id] ?? TaskLogStream(prefix: tasks[index].logTail)
+        logStreams[id] = stream
+        tasks[index].logTail = stream.append(chunk)
         tasks[index].updatedAt = now
         persist()
     }
@@ -145,7 +157,7 @@ final class IOSAdvancedTaskStore {
             }
             tasks[index].updatedAt = now
         }
-        persist()
+        persist(immediately: true)
         return ids
     }
 
@@ -169,7 +181,7 @@ final class IOSAdvancedTaskStore {
             tasks[index].metadata["outcome"] = "unknown"
             tasks[index].updatedAt = now
         }
-        persist()
+        persist(immediately: true)
         return ids
     }
 
@@ -192,7 +204,7 @@ final class IOSAdvancedTaskStore {
             tasks[index].metadata["outcome"] = "unknown"
             tasks[index].updatedAt = now
         }
-        persist()
+        persist(immediately: true)
         return ids
     }
 
@@ -219,7 +231,7 @@ final class IOSAdvancedTaskStore {
             tasks[index].metadata["execution_finished_at"] = String(now.timeIntervalSince1970)
             tasks[index].updatedAt = now
         }
-        persist()
+        persist(immediately: true)
         return ids
     }
 
@@ -240,27 +252,67 @@ final class IOSAdvancedTaskStore {
             tasks.insert(sanitized, at: 0)
         }
         tasks = Array(tasks.sorted { $0.updatedAt > $1.updatedAt }.prefix(Self.maxPersistedTasks))
-        persist()
+        logStreams.removeValue(forKey: record.id)
+        if !logStreams.isEmpty {
+            let retained = Set(tasks.map(\.id))
+            logStreams = logStreams.filter { retained.contains($0.key) }
+        }
+        persist(immediately: record.status.isTerminal)
         return sanitized
     }
 
     func replaceAll(_ records: [IOSAdvancedTaskRecord]) {
+        logStreams.removeAll()
         tasks = Array(records.sorted { $0.updatedAt > $1.updatedAt }.prefix(Self.maxPersistedTasks))
         persist()
     }
 
-    private func persist() {
-        if let data = try? encoder.encode(tasks) {
-            userDefaults.set(data, forKey: storageKey)
+    private func persist(immediately: Bool = false) {
+        let snapshot = tasks
+        if let snapshotFile, !immediately {
+            snapshotFile.schedule { try JSONEncoder().encode(snapshot) }
+            return
+        }
+        do {
+            let data = try JSONEncoder().encode(snapshot)
+            if let snapshotFile {
+                // A caller can end its system background task as soon as a terminal update returns.
+                snapshotFile.cancel()
+                try DebouncedSnapshotFile.write(data, to: snapshotFile.url)
+            } else {
+                userDefaults.set(data, forKey: storageKey)
+            }
+        } catch {
+            DebouncedSnapshotFile.logger.error("Task checkpoint failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
-    private static func load(from defaults: UserDefaults, key: String, decoder: JSONDecoder) -> [IOSAdvancedTaskRecord] {
-        guard let data = defaults.data(forKey: key),
-              let decoded = try? decoder.decode([IOSAdvancedTaskRecord].self, from: data) else {
+    private static func load(from defaults: UserDefaults, key: String, fileURL: URL?) -> [IOSAdvancedTaskRecord] {
+        do {
+            let data: Data
+            if let fileURL, FileManager.default.fileExists(atPath: fileURL.path) {
+                data = try Data(contentsOf: fileURL)
+            } else if let legacy = defaults.data(forKey: key) {
+                data = legacy
+            } else {
+                return []
+            }
+            let records = try JSONDecoder().decode([IOSAdvancedTaskRecord].self, from: data)
+            if let fileURL, defaults.object(forKey: key) != nil {
+                do {
+                    if !FileManager.default.fileExists(atPath: fileURL.path) {
+                        try DebouncedSnapshotFile.write(data, to: fileURL)
+                    }
+                    defaults.removeObject(forKey: key)
+                } catch {
+                    DebouncedSnapshotFile.logger.error("Task migration deferred: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+            return Array(records.sorted { $0.updatedAt > $1.updatedAt }.prefix(maxPersistedTasks))
+        } catch {
+            DebouncedSnapshotFile.logger.error("Task restore failed: \(error.localizedDescription, privacy: .public)")
             return []
         }
-        return Array(decoded.sorted { $0.updatedAt > $1.updatedAt }.prefix(maxPersistedTasks))
     }
 
     static func redactedCommand(_ value: String) -> String {
@@ -287,22 +339,124 @@ final class IOSAdvancedTaskStore {
     private static func redact(_ value: String, preservingWhitespace: Bool) -> String {
         let trimmed = preservingWhitespace ? value : value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
-        let patterns = [
-            #"(?i)bearer\s+[A-Za-z0-9._~+/=-]{6,}"#,
-            #"(?i)(api[_-]?key|token|password|passwd|secret|authorization)\s*[:=]\s*["']?[^"'\s]+["']?"#,
-            #"sk-[A-Za-z0-9_\-]{12,}"#,
-            #"(?i)(ssh-rsa|ssh-ed25519)\s+[A-Za-z0-9+/=]+"#
-        ]
         var output = IOSSSHOutputRedactor.redact(trimmed, credential: .password(""))
-        for pattern in patterns {
-            output = output.replacingOccurrences(
-                of: pattern,
-                with: "[redacted]",
-                options: .regularExpression
-            )
+        for rule in TaskLogRedactionRule.all {
+            output = rule.replaceMatches(in: output)
         }
+        return clippedField(output)
+    }
+
+    fileprivate static func clippedField(_ output: String) -> String {
         guard output.count > maxFieldLength else { return output }
         return String(output.prefix(maxFieldLength)) + "..."
     }
 }
 
+
+/// Each stage keeps only an unfinished introducer. Once a credential matches, further
+/// value characters are discarded until its delimiter, even if it spans many chunks.
+private struct TaskLogRedactionRule {
+    let match: NSRegularExpression
+    let incomplete: NSRegularExpression
+    let continuation: NSRegularExpression
+    let quoted: Bool
+
+    init(_ markers: [String], value: String, unfinished: String, continuation: String,
+         caseSensitive: Bool = false, quoted: Bool = false) {
+        let flags: NSRegularExpression.Options = caseSensitive ? [] : [.caseInsensitive]
+        let marker = "(?:" + markers.joined(separator: "|") + ")"
+        let prefixes = Set(markers.flatMap { word in
+            (1..<word.count).map { String(word.prefix($0)) }
+        })
+        match = try! NSRegularExpression(pattern: marker + value, options: flags)
+        incomplete = try! NSRegularExpression(
+            pattern: "(?:" + marker + unfinished + "|" + prefixes.joined(separator: "|") + #")\z"#,
+            options: flags
+        )
+        self.continuation = try! NSRegularExpression(pattern: "^" + continuation, options: flags)
+        self.quoted = quoted
+    }
+
+    static let all = [
+        Self(["bearer"], value: #"\s+[A-Za-z0-9._~+/=-]{6,}"#, unfinished: #"(?:\s+[A-Za-z0-9._~+/=-]{0,5})?"#,
+             continuation: #"[A-Za-z0-9._~+/=-]*"#),
+        Self(["apikey", "api_key", "api-key", "token", "password", "passwd", "secret", "authorization"],
+             value: #"\s*[:=]\s*["']?[^"'\s]+["']?"#, unfinished: #"\s*(?:[:=]\s*["']?)?"#,
+             continuation: #"[^"'\s]*["']?"#, quoted: true),
+        Self(["sk-"], value: #"[A-Za-z0-9_\-]{12,}"#, unfinished: #"[A-Za-z0-9_\-]{0,11}"#,
+             continuation: #"[A-Za-z0-9_\-]*"#, caseSensitive: true),
+        Self(["ssh-rsa", "ssh-ed25519"], value: #"\s+[A-Za-z0-9+/=]+"#, unfinished: #"\s*"#,
+             continuation: #"[A-Za-z0-9+/=]*"#)
+    ]
+
+    func replaceMatches(in text: String) -> String {
+        match.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text),
+                                       withTemplate: IOSSSHOutputRedactor.replacement)
+    }
+
+    struct Stream {
+        let rule: TaskLogRedactionRule
+        var pending = ""
+        var insideValue = false
+
+        mutating func consume(_ chunk: String, finishing: Bool = false) -> String {
+            var input = pending + chunk
+            pending = ""
+            if insideValue {
+                let range = NSRange(input.startIndex..., in: input)
+                if let match = rule.continuation.firstMatch(in: input, range: range),
+                   let consumed = Range(match.range, in: input) {
+                    insideValue = consumed.upperBound == input.endIndex && !endsWithClosingQuote(input[consumed])
+                    input.removeSubrange(consumed)
+                }
+            }
+            let range = NSRange(input.startIndex..., in: input)
+            let last = rule.match.matches(in: input, range: range).last
+            let end = last.map { NSMaxRange($0.range) } ?? 0
+            if !finishing, let last, end == range.length, let matched = Range(last.range, in: input) {
+                insideValue = !endsWithClosingQuote(input[matched])
+            } else if !finishing, let suffix = rule.incomplete.firstMatch(
+                in: input, range: NSRange(location: end, length: range.length - end)
+            ), let held = Range(suffix.range, in: input) {
+                pending = String(input[held])
+                input.removeSubrange(held)
+            }
+            return rule.replaceMatches(in: input)
+        }
+
+        private func endsWithClosingQuote(_ matched: Substring) -> Bool {
+            rule.quoted && (matched.last == "\"" || matched.last == "'")
+        }
+    }
+}
+
+@MainActor
+private final class TaskLogStream {
+    private let pem = IOSSSHOutputRedactor(credentials: [])
+    private var stages = TaskLogRedactionRule.all.map { TaskLogRedactionRule.Stream(rule: $0) }
+    private var prefix: String
+
+    init(prefix: String) {
+        self.prefix = ""
+        if !prefix.isEmpty { _ = append(prefix) }
+    }
+
+    func append(_ chunk: String) -> String {
+        render(pem.redact(.init(text: chunk, isStderr: false))?.text ?? "", finishing: false)
+    }
+
+    func finish() -> String {
+        render(pem.finish().map(\.text).joined(), finishing: true)
+    }
+
+    private func render(_ text: String, finishing: Bool) -> String {
+        var safe = text
+        for i in stages.indices { safe = stages[i].consume(safe, finishing: finishing) }
+        if prefix.isEmpty { safe = String(safe.drop(while: { $0.isWhitespace })) }
+        // Keep the existing 4,000-character display boundary of redactedLog.
+        prefix = IOSAdvancedTaskStore.clippedField(prefix + safe)
+        var preview = ""
+        for var stage in stages { preview = stage.consume(preview, finishing: true) }
+        return IOSAdvancedTaskStore.clippedField((prefix + preview).trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+}
