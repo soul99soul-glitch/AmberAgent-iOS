@@ -3,6 +3,8 @@ import Shared
 import SwiftStreamingMarkdown
 
 struct ChatGeneratedImageTile: View {
+    static let tilePixelLimit = 1200
+
     let urlString: String
     var display = ChatGeneratedImageRequestDisplay(toolInput: nil)
     var onModify: (String, String, String) -> Void = { _, _, _ in }
@@ -13,7 +15,7 @@ struct ChatGeneratedImageTile: View {
     private var canModify: Bool { allowsModify && messageEditingAllowed }
     @State private var saveState: ChatGeneratedImagePhotoSaveState = .idle
     @State private var saveAlert: ChatGeneratedImageSaveAlert?
-    @State private var dataImageState: ChatDataImageLoadState = .loading
+    @State private var imageState: ChatDataImageLoadState = .loading
     @State private var previewTarget: ChatGeneratedImagePreviewTarget?
     @State private var editTarget: ChatGeneratedImageEditTarget?
 
@@ -24,60 +26,37 @@ struct ChatGeneratedImageTile: View {
     }
 
     var body: some View {
-        let resolvedURL = isDataURL ? nil : url
+        let shareItem = ChatGeneratedImagePreview.shareItem(for: urlString)
         VStack(spacing: 6) {
             Group {
-                if isDataURL {
-                    switch dataImageState {
-                    case .success(let decodedDataImage):
-                        Image(uiImage: decodedDataImage)
-                            .resizable()
-                            .scaledToFit()
-                            .modifier(ChatGeneratedImageAppearModifier())
-                    case .loading:
-                        ProgressView()
-                            .tint(AmberTheme.accent)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    case .failure:
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 24, weight: .semibold))
-                            .foregroundStyle(AmberTheme.accentRed)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                } else {
-                    AsyncImage(url: resolvedURL) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .scaledToFit()
-                                .modifier(ChatGeneratedImageAppearModifier())
-                        case .failure:
-                            Image(systemName: "exclamationmark.triangle")
-                                .font(.system(size: 24, weight: .semibold))
-                                .foregroundStyle(AmberTheme.accentRed)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        case .empty:
-                            ProgressView()
-                                .tint(AmberTheme.accent)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        @unknown default:
-                            EmptyView()
-                        }
-                    }
+                switch imageState {
+                case .success(let tileImage):
+                    Image(uiImage: tileImage)
+                        .resizable()
+                        .scaledToFit()
+                        .modifier(ChatGeneratedImageAppearModifier())
+                case .loading:
+                    ProgressView()
+                        .tint(AmberTheme.accent)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .failure:
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(AmberTheme.accentRed)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .modifier(ChatWidthDrivenAspectRatio(aspectRatio: display.aspectRatio))
             .contentShape(Rectangle())
             .onTapGesture {
-                let image: UIImage?
-                if case .success(let loadedImage) = dataImageState {
-                    image = loadedImage
+                let placeholder: UIImage?
+                if case .success(let loadedImage) = imageState {
+                    placeholder = loadedImage
                 } else {
-                    image = nil
+                    placeholder = nil
                 }
-                previewTarget = ChatGeneratedImagePreviewTarget(urlString: urlString, image: image)
+                previewTarget = ChatGeneratedImagePreviewTarget(urlString: urlString, image: placeholder)
             }
             .clipShape(RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))
             .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))
@@ -86,33 +65,54 @@ struct ChatGeneratedImageTile: View {
                     .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
             }
             .task(id: urlString) {
-                guard isDataURL else { return }
-                dataImageState = .loading
-                let resolved = await ChatDataImageLoadState.resolve(urlString: urlString)
-                guard !Task.isCancelled else { return }
-                dataImageState = resolved
+                imageState = .loading
+                if isDataURL {
+                    let resolved = await ChatDataImageLoadState.resolve(
+                        urlString: urlString,
+                        maxPixelSize: Self.tilePixelLimit
+                    )
+                    guard !Task.isCancelled else { return }
+                    imageState = resolved
+                } else {
+                    do {
+                        let loaded = try await ChatMediaImageLoader.shared.image(
+                            urlString: urlString,
+                            pixelLimit: Self.tilePixelLimit
+                        )
+                        guard !Task.isCancelled else { return }
+                        imageState = .success(loaded)
+                    } catch {
+                        guard !Task.isCancelled else { return }
+                        imageState = .failure
+                    }
+                }
             }
 
-            if resolvedURL != nil || isDataURL {
+            if shareItem != nil {
                 HStack(spacing: 6) {
-                    if let resolvedURL {
+                    switch shareItem {
+                    case .url(let resolvedURL):
                         ShareLink(item: resolvedURL) {
                             generatedImageShareLabel
                         }
                         .accessibilityLabel("分享图片")
                         .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.94, haptic: .lightImpact))
-                    } else if case .success(let decodedDataImage) = dataImageState {
-                        let sharedImage = Image(uiImage: decodedDataImage)
-                        ShareLink(item: sharedImage, preview: SharePreview("生成的图片", image: sharedImage)) {
+                    case .data(let payload):
+                        if case .success(let tileImage) = imageState {
+                            let previewThumbnail = Image(uiImage: tileImage)
+                            ShareLink(item: payload, preview: SharePreview("生成的图片", image: previewThumbnail)) {
+                                generatedImageShareLabel
+                            }
+                            .accessibilityLabel("分享图片")
+                            .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.94, haptic: .lightImpact))
+                        } else {
+                            // 解码完成前先占住同尺寸的位置，避免出现时挤动保存/修改按钮。
                             generatedImageShareLabel
+                                .opacity(0.4)
+                                .accessibilityHidden(true)
                         }
-                        .accessibilityLabel("分享图片")
-                        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.94, haptic: .lightImpact))
-                    } else {
-                        // 解码完成前先占住同尺寸的位置，避免出现时挤动保存/修改按钮。
-                        generatedImageShareLabel
-                            .opacity(0.4)
-                            .accessibilityHidden(true)
+                    case nil:
+                        EmptyView()
                     }
 
                     Button {
@@ -237,102 +237,4 @@ private struct ChatGeneratedImageEditTarget: Identifiable {
     let id = UUID()
     let urlString: String
     let aspectRatio: String
-}
-
-private struct ChatUserImageTile: View {
-    let urlString: String
-    @State private var dataImageState: ChatDataImageLoadState = .loading
-    @State private var previewTarget: ChatGeneratedImagePreviewTarget?
-
-    private var isDataURL: Bool { urlString.hasPrefix("data:") }
-    private var url: URL? { IOSImageGenerationRepository.resolvedImageURL(from: urlString) }
-
-    private static let maxW: CGFloat = 220
-    private static let maxH: CGFloat = 300
-
-    var body: some View {
-        imageView
-            .contentShape(Rectangle())
-            .onTapGesture {
-                let image: UIImage?
-                if case .success(let loadedImage) = dataImageState {
-                    image = loadedImage
-                } else {
-                    image = nil
-                }
-                previewTarget = ChatGeneratedImagePreviewTarget(urlString: urlString, image: image)
-            }
-            .task(id: urlString) {
-                guard isDataURL else { return }
-                dataImageState = .loading
-                let resolved = await ChatDataImageLoadState.resolve(urlString: urlString)
-                guard !Task.isCancelled else { return }
-                dataImageState = resolved
-            }
-            .fullScreenCover(item: $previewTarget) { target in
-                ChatGeneratedImagePreview(urlString: target.urlString, image: target.image)
-            }
-    }
-
-    @ViewBuilder
-    private var imageView: some View {
-        if isDataURL {
-            switch dataImageState {
-            case .success(let decoded):
-            // Fixed frame sized to the image's real aspect (fitted within max), so the
-            // view bounds == the picture and the rounded clip hugs it — no letterbox.
-                let size = Self.fittedSize(decoded.size)
-                Image(uiImage: decoded)
-                    .resizable()
-                    .frame(width: size.width, height: size.height)
-                    .clipShape(RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous)
-                            .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
-                    )
-            case .loading:
-                placeholder(failed: false)
-            case .failure:
-                placeholder(failed: true)
-            }
-        } else if let url {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().scaledToFit()
-                        .frame(maxWidth: Self.maxW, maxHeight: Self.maxH)
-                        .clipShape(RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))
-                case .failure:
-                    placeholder(failed: true)
-                default:
-                    placeholder(failed: false)
-                }
-            }
-        } else {
-            placeholder(failed: true)
-        }
-    }
-
-    private func placeholder(failed: Bool) -> some View {
-        RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous)
-            .fill(AmberTheme.surface2)
-            .frame(width: 150, height: 190)
-            .overlay(
-                Group {
-                    if failed {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 22, weight: .semibold))
-                            .foregroundStyle(AmberTheme.accentRed)
-                    } else {
-                        ProgressView().tint(AmberTheme.accent)
-                    }
-                }
-            )
-    }
-
-    private static func fittedSize(_ s: CGSize) -> CGSize {
-        guard s.width > 0, s.height > 0 else { return CGSize(width: maxW, height: maxW) }
-        let scale = min(maxW / s.width, maxH / s.height)
-        return CGSize(width: (s.width * scale).rounded(), height: (s.height * scale).rounded())
-    }
 }

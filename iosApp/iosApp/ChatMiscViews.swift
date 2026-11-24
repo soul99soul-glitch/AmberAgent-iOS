@@ -1,3 +1,4 @@
+import ImageIO
 import SwiftUI
 import UIKit
 import Shared
@@ -1033,11 +1034,95 @@ private struct ChatImageEncodingInput: @unchecked Sendable {
     let image: UIImage
 }
 
+/// Bounds concurrent ImageIO downsample + encode work during multi-photo imports
+/// so large photo batches cannot stack peak decoded bitmaps simultaneously.
+private actor ChatImageDecodeConcurrencyGate {
+    private let limit: Int
+    private var activeCount = 0
+    private var waiters: [(id: UUID, continuation: CheckedContinuation<Void, Never>)] = []
+
+    init(limit: Int) {
+        self.limit = max(1, limit)
+    }
+
+    func withPermit<T: Sendable>(_ operation: () async -> T) async -> T {
+        await acquire()
+        defer { release() }
+        return await operation()
+    }
+
+    private func acquire() async {
+        if activeCount < limit {
+            activeCount += 1
+            return
+        }
+        let waiterID = UUID()
+        await withCheckedContinuation { continuation in
+            waiters.append((id: waiterID, continuation: continuation))
+        }
+    }
+
+    private func release() {
+        if !waiters.isEmpty {
+            let next = waiters.removeFirst()
+            next.continuation.resume()
+        } else {
+            activeCount = max(0, activeCount - 1)
+        }
+    }
+}
+
 /// Compresses an image into a self-contained `data:` URL (sent to the model) plus a small
 /// JPEG used only for the composer thumbnail. Downscaling keeps the persisted payload small.
 enum ChatImageEncoder {
     static let maxSendDimension: CGFloat = 1536
     static let maxThumbnailDimension: CGFloat = 160
+    static let maxConcurrentDecodes = 2
+
+    private static let decodeGate = ChatImageDecodeConcurrencyGate(limit: maxConcurrentDecodes)
+
+    /// Downsamples raw encoded image data via ImageIO without allocating a full-resolution bitmap.
+    /// Applies EXIF orientation (`kCGImageSourceCreateThumbnailWithTransform: true`) and preserves alpha.
+    static func downsampledImage(from data: Data, maxPixelSize: Int) -> UIImage? {
+        guard !data.isEmpty, maxPixelSize > 0 else { return nil }
+        let sourceOptions: [CFString: Any] = [
+            kCGImageSourceShouldCache: false,
+        ]
+        guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions as CFDictionary) else {
+            return nil
+        }
+        return downsampledImage(from: source, maxPixelSize: maxPixelSize)
+    }
+
+    /// Downsamples an image file URL via ImageIO without loading or decoding a full-resolution bitmap.
+    /// Applies EXIF orientation (`kCGImageSourceCreateThumbnailWithTransform: true`) and preserves alpha.
+    static func downsampledImage(from url: URL, maxPixelSize: Int) -> UIImage? {
+        guard maxPixelSize > 0 else { return nil }
+        let sourceOptions: [CFString: Any] = [
+            kCGImageSourceShouldCache: false,
+        ]
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions as CFDictionary) else {
+            return nil
+        }
+        return downsampledImage(from: source, maxPixelSize: maxPixelSize)
+    }
+
+    private static func downsampledImage(from source: CGImageSource, maxPixelSize: Int) -> UIImage? {
+        let thumbnailOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(1, maxPixelSize),
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(
+            source,
+            0,
+            thumbnailOptions as CFDictionary
+        ) else {
+            return nil
+        }
+        return UIImage(cgImage: cgImage, scale: 1, orientation: .up)
+    }
 
     static func encode(_ image: UIImage) -> (dataUrl: String, previewData: Data)? {
         guard let jpeg = sendJPEGData(image) else { return nil }
@@ -1047,22 +1132,62 @@ enum ChatImageEncoder {
         return (dataUrl, previewData)
     }
 
+    static func encode(data: Data) -> (dataUrl: String, previewData: Data)? {
+        guard let image = downsampledImage(from: data, maxPixelSize: Int(maxSendDimension)) else {
+            return nil
+        }
+        return encode(image)
+    }
+
     static func decodeAndEncodeOffMain(_ data: Data) async -> (dataUrl: String, previewData: Data)? {
-        await Task.detached(priority: .userInitiated) {
-            guard let image = UIImage(data: data) else { return nil }
-            return encode(image)
-        }.value
+        await decodeGate.withPermit {
+            await Task.detached(priority: .userInitiated) {
+                encode(data: data)
+            }.value
+        }
+    }
+
+    static func decodeJPEGOffMain(from data: Data) async -> Data? {
+        await decodeGate.withPermit {
+            await Task.detached(priority: .userInitiated) {
+                sendJPEGData(from: data)
+            }.value
+        }
+    }
+
+    static func decodeJPEGOffMain(contentsOf url: URL) async -> Data? {
+        await decodeGate.withPermit {
+            await Task.detached(priority: .userInitiated) {
+                sendJPEGData(contentsOf: url)
+            }.value
+        }
     }
 
     static func encodeOffMain(_ image: UIImage) async -> (dataUrl: String, previewData: Data)? {
         let input = ChatImageEncodingInput(image: image)
-        return await Task.detached(priority: .userInitiated) {
-            encode(input.image)
-        }.value
+        return await decodeGate.withPermit {
+            await Task.detached(priority: .userInitiated) {
+                encode(input.image)
+            }.value
+        }
     }
 
     static func sendJPEGData(_ image: UIImage) -> Data? {
         downscaled(image, maxDimension: maxSendDimension).jpegData(compressionQuality: 0.7)
+    }
+
+    static func sendJPEGData(from data: Data) -> Data? {
+        guard let image = downsampledImage(from: data, maxPixelSize: Int(maxSendDimension)) else {
+            return nil
+        }
+        return image.jpegData(compressionQuality: 0.7)
+    }
+
+    static func sendJPEGData(contentsOf url: URL) -> Data? {
+        guard let image = downsampledImage(from: url, maxPixelSize: Int(maxSendDimension)) else {
+            return nil
+        }
+        return image.jpegData(compressionQuality: 0.7)
     }
 
     private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {

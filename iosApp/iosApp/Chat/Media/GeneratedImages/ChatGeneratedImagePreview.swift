@@ -1,28 +1,118 @@
 import SwiftUI
 import Shared
 import SwiftStreamingMarkdown
+import UniformTypeIdentifiers
+
+enum ChatGeneratedImageShareItem: Sendable {
+    case url(URL)
+    case data(ChatGeneratedImageSharePayload)
+}
+
+/// Losslessly exports the original encoded image bytes from a `data:` URL when shared,
+/// never re-encoding a downsampled preview or card thumbnail.
+struct ChatGeneratedImageSharePayload: Transferable, Sendable {
+    let urlString: String
+    let contentType: UTType
+
+    init?(urlString: String) {
+        guard urlString.hasPrefix("data:"), urlString.firstIndex(of: ",") != nil else {
+            return nil
+        }
+        self.urlString = urlString
+        self.contentType = Self.contentType(for: urlString)
+    }
+
+    func originalImageData() throws -> Data {
+        guard let data = ChatDataImageLoadState.rawData(from: urlString), !data.isEmpty else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        return data
+    }
+
+    static var transferRepresentation: some TransferRepresentation {
+        DataRepresentation(exportedContentType: .png) { try $0.originalImageData() }
+            .exportingCondition { $0.contentType == .png }
+        DataRepresentation(exportedContentType: .jpeg) { try $0.originalImageData() }
+            .exportingCondition { $0.contentType == .jpeg }
+        DataRepresentation(exportedContentType: .webP) { try $0.originalImageData() }
+            .exportingCondition { $0.contentType == .webP }
+        DataRepresentation(exportedContentType: .gif) { try $0.originalImageData() }
+            .exportingCondition { $0.contentType == .gif }
+        DataRepresentation(exportedContentType: .image) { try $0.originalImageData() }
+    }
+
+    private static func contentType(for urlString: String) -> UTType {
+        guard let comma = urlString.firstIndex(of: ",") else { return .image }
+        let header = urlString[..<comma]
+        if let semi = header.firstIndex(of: ";") {
+            let mime = String(header[header.index(header.startIndex, offsetBy: 5)..<semi]).lowercased()
+            if let resolved = UTType(mimeType: mime), resolved.conforms(to: .image) {
+                return resolved
+            }
+        }
+        return .image
+    }
+}
 
 struct ChatGeneratedImagePreview: View {
+    static let previewPixelLimit = 2400
+
     let urlString: String
+    private let placeholderImage: UIImage?
     @Environment(\.dismiss) private var dismiss
-    @State private var dataImageState: ChatDataImageLoadState = .loading
+    @State private var displayImageState: ChatDataImageLoadState = .loading
     @State private var dragOffset: CGFloat = 0
 
     init(urlString: String, image: UIImage?) {
         self.urlString = urlString
-        _dataImageState = State(initialValue: image.map(ChatDataImageLoadState.success) ?? .loading)
+        self.placeholderImage = image
     }
 
     private var isDataURL: Bool { urlString.hasPrefix("data:") }
     private var url: URL? { IOSImageGenerationRepository.resolvedImageURL(from: urlString) }
 
+    static func shareItem(for urlString: String) -> ChatGeneratedImageShareItem? {
+        if urlString.hasPrefix("data:") {
+            guard let payload = ChatGeneratedImageSharePayload(urlString: urlString) else { return nil }
+            return .data(payload)
+        }
+        guard let resolvedURL = IOSImageGenerationRepository.resolvedImageURL(from: urlString) else {
+            return nil
+        }
+        return .url(resolvedURL)
+    }
+
+    static func loadDisplayImage(urlString: String) async -> ChatDataImageLoadState {
+        if urlString.hasPrefix("data:") {
+            return await ChatDataImageLoadState.resolve(
+                urlString: urlString,
+                maxPixelSize: previewPixelLimit
+            )
+        }
+        do {
+            let loaded = try await ChatMediaImageLoader.shared.image(
+                urlString: urlString,
+                pixelLimit: previewPixelLimit
+            )
+            return .success(loaded)
+        } catch {
+            return .failure
+        }
+    }
+
+    private var activePreviewUIImage: UIImage? {
+        if case .success(let highRes) = displayImageState {
+            return highRes
+        }
+        return placeholderImage
+    }
+
     var body: some View {
-        let resolvedURL = isDataURL ? nil : url
         ZStack(alignment: .topTrailing) {
             Color.black
                 .ignoresSafeArea()
 
-            imageContent(resolvedURL: resolvedURL)
+            imageContent
                 .padding(.horizontal, 12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .offset(y: dragOffset)
@@ -46,7 +136,7 @@ struct ChatGeneratedImagePreview: View {
                 )
 
             HStack(spacing: 12) {
-                previewShareButton(resolvedURL: resolvedURL)
+                previewShareButton
 
                 Button {
                     dismiss()
@@ -61,30 +151,39 @@ struct ChatGeneratedImagePreview: View {
             .padding(.trailing, 12)
         }
         .task(id: urlString) {
-            guard isDataURL else { return }
-            if case .success = dataImageState { return }
-            dataImageState = .loading
-            let resolved = await ChatDataImageLoadState.resolve(urlString: urlString)
+            displayImageState = .loading
+            let resolved = await Self.loadDisplayImage(urlString: urlString)
             guard !Task.isCancelled else { return }
-            dataImageState = resolved
+            displayImageState = resolved
         }
     }
 
     @ViewBuilder
-    private func previewShareButton(resolvedURL: URL?) -> some View {
-        if case .success(let image) = dataImageState {
-            let sharedImage = Image(uiImage: image)
-            ShareLink(item: sharedImage, preview: SharePreview("生成的图片", image: sharedImage)) {
-                previewControlLabel(systemImage: "square.and.arrow.up")
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("分享图片")
-        } else if let resolvedURL {
+    private var previewShareButton: some View {
+        switch Self.shareItem(for: urlString) {
+        case .url(let resolvedURL):
             ShareLink(item: resolvedURL) {
                 previewControlLabel(systemImage: "square.and.arrow.up")
             }
             .buttonStyle(.plain)
             .accessibilityLabel("分享图片")
+        case .data(let payload):
+            if let previewImage = activePreviewUIImage {
+                let previewThumbnail = Image(uiImage: previewImage)
+                ShareLink(item: payload, preview: SharePreview("生成的图片", image: previewThumbnail)) {
+                    previewControlLabel(systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("分享图片")
+            } else {
+                ShareLink(item: payload, preview: SharePreview("生成的图片")) {
+                    previewControlLabel(systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("分享图片")
+            }
+        case nil:
+            EmptyView()
         }
     }
 
@@ -99,40 +198,22 @@ struct ChatGeneratedImagePreview: View {
     }
 
     @ViewBuilder
-    private func imageContent(resolvedURL: URL?) -> some View {
-        if isDataURL {
-            switch dataImageState {
-            case .success(let decodedDataImage):
-                Image(uiImage: decodedDataImage)
+    private var imageContent: some View {
+        switch displayImageState {
+        case .success(let highResImage):
+            Image(uiImage: highResImage)
+                .resizable()
+                .scaledToFit()
+        case .loading:
+            if let placeholderImage {
+                Image(uiImage: placeholderImage)
                     .resizable()
                     .scaledToFit()
-            case .loading:
+            } else {
                 ProgressView()
                     .tint(.white)
-            case .failure:
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(.white)
             }
-        } else if let resolvedURL {
-            AsyncImage(url: resolvedURL) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .scaledToFit()
-                case .failure:
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 28, weight: .semibold))
-                        .foregroundStyle(.white)
-                case .empty:
-                    ProgressView()
-                        .tint(.white)
-                @unknown default:
-                    EmptyView()
-                }
-            }
-        } else {
+        case .failure:
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 28, weight: .semibold))
                 .foregroundStyle(.white)

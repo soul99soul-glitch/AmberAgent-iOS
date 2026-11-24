@@ -16,6 +16,29 @@ final class IOSMiniAppChatMessageFactoryTests: XCTestCase {
         ))
     }
 
+    func testMightContainMiniAppZeroCopyUTF8ScanMatchesLegacyCaseInsensitiveSemantics() {
+        let cases: [(String, Bool)] = [
+            ("", false),
+            ("<htm", false),
+            ("普通中文与 Emoji 🚀 不含小应用标记", false),
+            (#"{"title":"计时","description":"缺 html 字段"}"#, false),
+            (#"{"TITLE":"大写字段名不命中","DESCRIPTION":"desc","HTML":"x"}"#, false),
+            (#"前缀""html""title""description"后缀"#, true),
+            ("<<HTML lang=\"zh\"><body>hi</body></html>", true),
+            ("<!DoCtYpE hTmL><html></html>", true),
+            ("前缀说明\n<!DOCTYPE HTML>\n<body>ok</body>", true),
+            ("前缀说明\n<HtMl><body>ok</body></HtMl>", true),
+            ("<!doctype xml><root/>", false),
+        ]
+        for (sample, expected) in cases {
+            XCTAssertEqual(
+                IOSMiniAppChatMessageFactory.mightContainMiniApp(sample),
+                expected,
+                "Unexpected detection result for sample: \(sample)"
+            )
+        }
+    }
+
     func testAssistantCandidateSkipsTrailingNoticeAndStaysInCurrentTurn() {
         let priorPayload = UIMessage(
             id: KotlinUuid.companion.random(),

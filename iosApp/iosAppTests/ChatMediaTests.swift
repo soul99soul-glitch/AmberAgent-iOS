@@ -1,5 +1,8 @@
-import XCTest
+import ImageIO
+import os
 import SwiftUI
+import UniformTypeIdentifiers
+import XCTest
 @preconcurrency import Shared
 @testable import iosApp
 
@@ -419,4 +422,141 @@ final class ChatMediaTests: XCTestCase {
     }
 
     private static func dataURL(_ data: Data) -> String { "data:image/png;base64," + data.base64EncodedString() }
+
+    func testImageIODownsampleRespectsMaxPixelSizePreservesEXIFOrientationAndAlpha() throws {
+        // 1) EXIF orientation = 6 (90° CW): raw 400x200 landscape buffer with red left half
+        //    becomes 200x400 portrait after transform, then downsampled to 100x200 (<= 200px).
+        let rawSize = CGSize(width: 400, height: 200)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let rawImage = UIGraphicsImageRenderer(size: rawSize, format: format).image { ctx in
+            UIColor.red.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 200, height: 200))
+            UIColor.blue.setFill()
+            ctx.fill(CGRect(x: 200, y: 0, width: 200, height: 200))
+        }
+        let cgRaw = try XCTUnwrap(rawImage.cgImage)
+        let orientedData = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(orientedData, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, cgRaw, [
+            kCGImagePropertyOrientation: CGImagePropertyOrientation.right.rawValue,
+        ] as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+
+        let downsampledJPEG = try XCTUnwrap(
+            ChatImageEncoder.downsampledImage(from: orientedData as Data, maxPixelSize: 200)
+        )
+        let downsampledCG = try XCTUnwrap(downsampledJPEG.cgImage)
+        XCTAssertEqual(downsampledCG.width, 100)
+        XCTAssertEqual(downsampledCG.height, 200)
+        XCTAssertEqual(downsampledJPEG.imageOrientation, .up)
+        // After 90° CW rotation, the red half (originally left) moves to the top half.
+        let topPixel = try XCTUnwrap(Self.rgbaPixel(in: downsampledCG, x: 50, y: 20))
+        let bottomPixel = try XCTUnwrap(Self.rgbaPixel(in: downsampledCG, x: 50, y: 180))
+        XCTAssertGreaterThan(topPixel.r, 180)
+        XCTAssertLessThan(topPixel.b, 80)
+        XCTAssertGreaterThan(bottomPixel.b, 180)
+        XCTAssertLessThan(bottomPixel.r, 80)
+
+        // 2) Transparent PNG preserves alpha channel without flattening to JPEG.
+        let alphaFormat = UIGraphicsImageRendererFormat()
+        alphaFormat.scale = 1
+        alphaFormat.opaque = false
+        let alphaPNG = UIGraphicsImageRenderer(size: CGSize(width: 600, height: 400), format: alphaFormat).pngData { ctx in
+            ctx.cgContext.clear(CGRect(x: 0, y: 0, width: 300, height: 400))
+            UIColor.systemTeal.setFill()
+            ctx.fill(CGRect(x: 300, y: 0, width: 300, height: 400))
+        }
+        let downsampledPNG = try XCTUnwrap(
+            ChatImageEncoder.downsampledImage(from: alphaPNG, maxPixelSize: 300)
+        )
+        let pngCG = try XCTUnwrap(downsampledPNG.cgImage)
+        XCTAssertEqual(pngCG.width, 300)
+        XCTAssertEqual(pngCG.height, 200)
+        let clearPixel = try XCTUnwrap(Self.rgbaPixel(in: pngCG, x: 50, y: 100))
+        let opaquePixel = try XCTUnwrap(Self.rgbaPixel(in: pngCG, x: 250, y: 100))
+        XCTAssertEqual(clearPixel.a, 0)
+        XCTAssertEqual(opaquePixel.a, 255)
+    }
+
+    func testDataImageLoaderBucketsByMaxPixelSizeAndPreviewSharePreservesOriginalDimensions() async throws {
+        let originalData = Self.imageData(size: CGSize(width: 2048, height: 1536))
+        let dataURL = Self.dataURL(originalData)
+
+        let decodeCounter = OSAllocatedUnfairLock(initialState: 0)
+        let loader = ChatDataImageLoader(onDecode: {
+            decodeCounter.withLock { $0 += 1 }
+        })
+
+        guard case .success(let tileImage) = await loader.resolve(
+            urlString: dataURL,
+            maxPixelSize: ChatGeneratedImageTile.tilePixelLimit
+        ) else {
+            return XCTFail("Expected tile downsampled decode to succeed")
+        }
+        XCTAssertEqual(tileImage.cgImage?.width, 1200)
+        XCTAssertEqual(tileImage.cgImage?.height, 900)
+
+        guard case .success(let previewImage) = await loader.resolve(
+            urlString: dataURL,
+            maxPixelSize: ChatGeneratedImagePreview.previewPixelLimit
+        ) else {
+            return XCTFail("Expected preview high-res decode to succeed")
+        }
+        XCTAssertEqual(previewImage.cgImage?.width, 2048)
+        XCTAssertEqual(previewImage.cgImage?.height, 1536)
+        XCTAssertEqual(decodeCounter.withLock { $0 }, 2, "Distinct maxPixelSize buckets must cache independently")
+
+        // Second lookup on the same bucket hits memory cache without re-decoding.
+        guard case .success = await loader.resolve(
+            urlString: dataURL,
+            maxPixelSize: ChatGeneratedImageTile.tilePixelLimit
+        ) else {
+            return XCTFail("Expected cached tile lookup to succeed")
+        }
+        XCTAssertEqual(decodeCounter.withLock { $0 }, 2)
+
+        // Preview display loader & ShareLink payload must preserve original full dimensions.
+        guard case .success(let displayImage) = await ChatGeneratedImagePreview.loadDisplayImage(urlString: dataURL) else {
+            return XCTFail("Expected preview display load to succeed")
+        }
+        XCTAssertEqual(displayImage.cgImage?.width, 2048)
+        XCTAssertEqual(displayImage.cgImage?.height, 1536)
+
+        guard case .data(let payload) = ChatGeneratedImagePreview.shareItem(for: dataURL) else {
+            return XCTFail("Expected data URL share item to produce lossless data payload")
+        }
+        let exportedData = try await payload.exported(as: payload.contentType)
+        XCTAssertEqual(exportedData, originalData)
+        let exportedImage = try XCTUnwrap(UIImage(data: exportedData)?.cgImage)
+        XCTAssertEqual(exportedImage.width, 2048)
+        XCTAssertEqual(exportedImage.height, 1536)
+
+        // File URL share item must return the original file URL directly.
+        let tempFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("generated-share-\(UUID().uuidString).png")
+        try originalData.write(to: tempFile)
+        defer { try? FileManager.default.removeItem(at: tempFile) }
+        guard case .url(let sharedURL) = ChatGeneratedImagePreview.shareItem(for: tempFile.absoluteString) else {
+            return XCTFail("Expected file URL share item to share original URL")
+        }
+        XCTAssertEqual(sharedURL.standardizedFileURL, tempFile.standardizedFileURL)
+    }
+
+    private static func rgbaPixel(in image: CGImage, x: Int, y: Int) -> (r: UInt8, g: UInt8, b: UInt8, a: UInt8)? {
+        guard x >= 0, y >= 0, x < image.width, y < image.height else { return nil }
+        var bytes = [UInt8](repeating: 0, count: 4)
+        guard let context = CGContext(
+            data: &bytes,
+            width: 1,
+            height: 1,
+            bitsPerComponent: 8,
+            bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.draw(image, in: CGRect(x: -x, y: -(image.height - 1 - y), width: image.width, height: image.height))
+        return (bytes[0], bytes[1], bytes[2], bytes[3])
+    }
 }

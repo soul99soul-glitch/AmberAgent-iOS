@@ -173,16 +173,26 @@ private enum IOSPersonalContextImageEncoder {
         guard !sourceData.isEmpty, sourceData.count <= IOSPersonalContextFileStore.maxFileBytes else {
             throw IOSPersonalContextPickerError.mediaTooLarge
         }
-        return try await Task.detached(priority: .userInitiated) {
-            guard let image = UIImage(data: sourceData),
-                  let data = ChatImageEncoder.sendJPEGData(image) else {
-                throw IOSPersonalContextPickerError.loadFailed
-            }
-            return data
-        }.value
+        guard let data = await ChatImageEncoder.decodeJPEGOffMain(from: sourceData) else {
+            throw IOSPersonalContextPickerError.loadFailed
+        }
+        return data
     }
 
     static func jpegData(contentsOf url: URL) async throws -> Data {
+        let fileSize = try await Task.detached(priority: .userInitiated) {
+            let values = try url.resourceValues(forKeys: [.fileSizeKey])
+            return values.fileSize
+        }.value
+        if let fileSize {
+            guard fileSize > 0, fileSize <= IOSPersonalContextFileStore.maxFileBytes else {
+                throw IOSPersonalContextPickerError.mediaTooLarge
+            }
+            guard let data = await ChatImageEncoder.decodeJPEGOffMain(contentsOf: url) else {
+                throw IOSPersonalContextPickerError.loadFailed
+            }
+            return data
+        }
         let sourceData = try await Task.detached(priority: .userInitiated) {
             try Data(contentsOf: url)
         }.value

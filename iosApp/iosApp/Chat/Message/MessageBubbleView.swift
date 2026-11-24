@@ -359,7 +359,7 @@ private final class MessageBubbleOuterLayoutTracker {
         hasOuterMediaOrNonTextParts: Bool,
         parts: [UIMessagePart],
         isLiveStreaming: Bool,
-        isMiniAppStreamingCard: (String, Bool) -> Bool,
+        miniAppStreamingTextPartIndices: Set<Int>,
         displayTextProvider: (UIMessagePart.Text, Int) -> String,
         awaitingSegmentedFirstBlock: Bool,
         isAssistantContinuation: Bool,
@@ -392,7 +392,7 @@ private final class MessageBubbleOuterLayoutTracker {
             guard let textPart = part as? UIMessagePart.Text, !textPart.text.isEmpty else {
                 continue
             }
-            if partIndex >= 64 || isMiniAppStreamingCard(textPart.text, isLiveStreaming) {
+            if partIndex >= 64 || miniAppStreamingTextPartIndices.contains(partIndex) {
                 lastSignature = nil
                 return true
             }
@@ -550,6 +550,8 @@ private struct MessageBubbleStatefulContent: View {
     private func markOuterRowDirtyIfNeeded(
         messageHexID: String,
         isSubAgentResult: Bool,
+        isLiveStream: Bool,
+        miniAppStreamingTextPartIndices: Set<Int>,
         awaitingSegmentedFirstBlock: Bool
     ) {
         let hasMediaTurnTools = assistantTurn?.progress?.tools.contains(where: ChatTaskStreamGrouping.isMediaBearing) == true
@@ -559,8 +561,8 @@ private struct MessageBubbleStatefulContent: View {
             canUseGraphHost: timelineGrowth != nil && !isUser && !isSubAgentResult,
             hasOuterMediaOrNonTextParts: hasOuterMediaOrNonTextParts,
             parts: message.parts,
-            isLiveStreaming: isGenerating && isLastMessage,
-            isMiniAppStreamingCard: Self.shouldRenderMiniAppStreamingCard,
+            isLiveStreaming: isLiveStream,
+            miniAppStreamingTextPartIndices: miniAppStreamingTextPartIndices,
             displayTextProvider: { part, index in displayText(for: part, at: index) },
             awaitingSegmentedFirstBlock: awaitingSegmentedFirstBlock,
             isAssistantContinuation: isAssistantContinuation,
@@ -579,15 +581,38 @@ private struct MessageBubbleStatefulContent: View {
         }
     }
 
+    private func computeMiniAppStreamingTextPartIndices(
+        isLiveStream: Bool,
+        isSubAgentResult: Bool
+    ) -> Set<Int> {
+        guard !isUser, !isSubAgentResult, isLiveStream else { return [] }
+        var matched: Set<Int> = []
+        for (index, part) in message.parts.enumerated() {
+            if let textPart = part as? UIMessagePart.Text,
+               !textPart.text.isEmpty,
+               IOSMiniAppChatMessageFactory.mightContainMiniApp(textPart.text) {
+                matched.insert(index)
+            }
+        }
+        return matched
+    }
+
     var body: some View {
         let messageHexID = message.id.toHexDashString()
         let isSubAgentResult = ChatMessageProjector.isSubAgentResult(message)
+        let isLiveStream = isGenerating && isLastMessage
+        let miniAppStreamingTextPartIndices = computeMiniAppStreamingTextPartIndices(
+            isLiveStream: isLiveStream,
+            isSubAgentResult: isSubAgentResult
+        )
         let awaitingSegmentedFirstBlock = (!isUser && !isSubAgentResult)
             ? isAwaitingSegmentedFirstBlock(messageHexID: messageHexID)
             : false
         let _ = markOuterRowDirtyIfNeeded(
             messageHexID: messageHexID,
             isSubAgentResult: isSubAgentResult,
+            isLiveStream: isLiveStream,
+            miniAppStreamingTextPartIndices: miniAppStreamingTextPartIndices,
             awaitingSegmentedFirstBlock: awaitingSegmentedFirstBlock
         )
         #if DEBUG
@@ -615,7 +640,10 @@ private struct MessageBubbleStatefulContent: View {
                             .accessibilityIdentifier("chat.mailbox.source")
                     }
                     variantSwitcher
-                    messagePartsWithAnchorHighlight
+                    messagePartsWithAnchorHighlight(
+                        isLiveStream: isLiveStream,
+                        miniAppStreamingTextPartIndices: miniAppStreamingTextPartIndices
+                    )
                     if let part = message.parts.compactMap({ $0 as? UIMessagePart.Text }).first,
                        let receipt = IosToolOutputJsonBridge.shared.metadataString(part: part, key: "chat_followup_state") {
                         Text(receipt == "queued" ? "已收到 · 待当前步骤结束后生效" :
@@ -627,7 +655,7 @@ private struct MessageBubbleStatefulContent: View {
                 .chatUserSendEntrance(key: mailboxSender == nil ? "local-user:\(messageHexID)" : nil)
             } else {
                 let animateSegmentedHeader = IOSChatRenderPreferences.shared.isSegmentedReplyDelivery
-                    && isGenerating && isLastMessage && !reduceMotion
+                    && isLiveStream && !reduceMotion
                 ChatAssistantStack {
                     if !awaitingSegmentedFirstBlock,
                        (!isAssistantContinuation || variantInfo?.hasMultipleVariants == true) {
@@ -644,7 +672,10 @@ private struct MessageBubbleStatefulContent: View {
                     if !awaitingSegmentedFirstBlock {
                         variantSwitcher
                     }
-                    messagePartsWithAnchorHighlight
+                    messagePartsWithAnchorHighlight(
+                        isLiveStream: isLiveStream,
+                        miniAppStreamingTextPartIndices: miniAppStreamingTextPartIndices
+                    )
                     if !awaitingSegmentedFirstBlock {
                         annotationsBlock
                     }
@@ -883,12 +914,21 @@ private struct MessageBubbleStatefulContent: View {
     // MARK: - Subviews
 
     @ViewBuilder
-    private var messageParts: some View {
+    private func messageParts(
+        isLiveStream: Bool,
+        miniAppStreamingTextPartIndices: Set<Int>
+    ) -> some View {
         Group {
             if !isUser {
-                assistantTaskGroupedRows
+                assistantTaskGroupedRows(
+                    isLiveStream: isLiveStream,
+                    miniAppStreamingTextPartIndices: miniAppStreamingTextPartIndices
+                )
             } else {
-                messagePartRows
+                messagePartRows(
+                    isLiveStream: isLiveStream,
+                    miniAppStreamingTextPartIndices: miniAppStreamingTextPartIndices
+                )
             }
         }
         .sheet(item: $toolDetailTarget) { target in
@@ -915,7 +955,10 @@ private struct MessageBubbleStatefulContent: View {
     }
 
     @ViewBuilder
-    private var assistantTaskGroupedRows: some View {
+    private func assistantTaskGroupedRows(
+        isLiveStream: Bool,
+        miniAppStreamingTextPartIndices: Set<Int>
+    ) -> some View {
         let messageID = ChatMessageProjector.messageId(for: message)
         let currentTools = message.parts.compactMap { $0 as? UIMessagePart.Tool } +
             (assistantTurn?.progress?.tools ?? [])
@@ -926,17 +969,14 @@ private struct MessageBubbleStatefulContent: View {
         let segments = ChatTaskStreamGrouping.segments(
             for: message,
             messageID: messageID,
-            isGeneratingTail: isGenerating && isLastMessage,
+            isGeneratingTail: isLiveStream,
             stepCache: taskStepCache,
             usesTurnProgress: true
         )
         ForEach(segments) { segment in
             switch segment {
             case .text(_, let partIndex, let textPart):
-                if Self.shouldRenderMiniAppStreamingCard(
-                    textPart.text,
-                    isLiveStream: isGenerating && isLastMessage
-                ) {
+                if miniAppStreamingTextPartIndices.contains(partIndex) {
                     ChatMiniAppStreamingCard(
                         text: textPart.text,
                         isGenerating: true
@@ -1037,7 +1077,14 @@ private struct MessageBubbleStatefulContent: View {
                 )
             }
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: message.parts.map(Self.partAnimationKey).joined(separator: "|"))
+        .animation(
+            reduceMotion ? nil : .easeInOut(duration: 0.28),
+            value: Self.partsAnimationKey(
+                for: message.parts,
+                isLiveStream: isLiveStream,
+                miniAppStreamingTextPartIndices: miniAppStreamingTextPartIndices
+            )
+        )
     }
 
     @ViewBuilder
@@ -1139,7 +1186,10 @@ private struct MessageBubbleStatefulContent: View {
     }
 
     @ViewBuilder
-    private var messagePartRows: some View {
+    private func messagePartRows(
+        isLiveStream: Bool,
+        miniAppStreamingTextPartIndices: Set<Int>
+    ) -> some View {
         ForEach(Array(message.parts.enumerated()), id: \.offset) { partIndex, part in
             if let textPart = part as? UIMessagePart.Text, !textPart.text.isEmpty {
                 if isUser {
@@ -1155,10 +1205,7 @@ private struct MessageBubbleStatefulContent: View {
                             ChatUserBubble.bubbleShape
                         )
                         .contextMenu { messageActions }
-                } else if Self.shouldRenderMiniAppStreamingCard(
-                    textPart.text,
-                    isLiveStream: isGenerating && isLastMessage
-                ) {
+                } else if miniAppStreamingTextPartIndices.contains(partIndex) {
                     // Only hijack the live stream. Idle HTML/markdown stays readable text
                     // unless apply already replaced it with UIMessagePart.MiniApp.
                     ChatMiniAppStreamingCard(
@@ -1321,11 +1368,24 @@ private struct MessageBubbleStatefulContent: View {
                 }
             }
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: message.parts.map(Self.partAnimationKey).joined(separator: "|"))
+        .animation(
+            reduceMotion ? nil : .easeInOut(duration: 0.28),
+            value: Self.partsAnimationKey(
+                for: message.parts,
+                isLiveStream: isLiveStream,
+                miniAppStreamingTextPartIndices: miniAppStreamingTextPartIndices
+            )
+        )
     }
 
-    private var messagePartsWithAnchorHighlight: some View {
-        messageParts
+    private func messagePartsWithAnchorHighlight(
+        isLiveStream: Bool,
+        miniAppStreamingTextPartIndices: Set<Int>
+    ) -> some View {
+        messageParts(
+            isLiveStream: isLiveStream,
+            miniAppStreamingTextPartIndices: miniAppStreamingTextPartIndices
+        )
             .overlay {
                 if chatMessageAnchorHighlighted {
                     Group {
@@ -1397,13 +1457,27 @@ private struct MessageBubbleStatefulContent: View {
             .first { $0.toolCallId == toolCallId }
     }
 
-    /// Streaming MiniApp card is live-only: same shape as apply's "in-flight" window,
-    /// without inventing a second turn-context gate in the bubble.
-    private static func shouldRenderMiniAppStreamingCard(_ text: String, isLiveStream: Bool) -> Bool {
-        isLiveStream && IOSMiniAppChatMessageFactory.mightContainMiniApp(text)
+    private static func partsAnimationKey(
+        for parts: [UIMessagePart],
+        isLiveStream: Bool,
+        miniAppStreamingTextPartIndices: Set<Int>
+    ) -> String {
+        parts.enumerated().map { index, part in
+            partAnimationKey(
+                part,
+                partIndex: index,
+                isLiveStream: isLiveStream,
+                miniAppStreamingTextPartIndices: miniAppStreamingTextPartIndices
+            )
+        }.joined(separator: "|")
     }
 
-    private static func partAnimationKey(_ part: UIMessagePart) -> String {
+    private static func partAnimationKey(
+        _ part: UIMessagePart,
+        partIndex: Int,
+        isLiveStream: Bool,
+        miniAppStreamingTextPartIndices: Set<Int>
+    ) -> String {
         if let tool = part as? UIMessagePart.Tool {
             let imageCount = tool.output.compactMap { $0 as? UIMessagePart.Image }.count
             return "tool:\(tool.toolCallId):\(tool.output.isEmpty):\(imageCount)"
@@ -1411,8 +1485,9 @@ private struct MessageBubbleStatefulContent: View {
         if let miniApp = part as? UIMessagePart.MiniApp {
             return "mini_app:\(miniApp.appId):\(miniApp.version):\(miniApp.htmlHash ?? "")"
         }
-        if let text = part as? UIMessagePart.Text,
-           IOSMiniAppChatMessageFactory.mightContainMiniApp(text.text) {
+        if isLiveStream,
+           let text = part as? UIMessagePart.Text,
+           miniAppStreamingTextPartIndices.contains(partIndex) {
             // Coarse key so streaming length growth does not thrash every token.
             return "mini_app_stream:\(text.text.count / 64)"
         }
