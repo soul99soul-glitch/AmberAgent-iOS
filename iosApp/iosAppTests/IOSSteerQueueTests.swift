@@ -58,9 +58,9 @@ final class IOSSteerQueueTests: XCTestCase {
         return last
     }
 
-    // MARK: - 1. 生成中 send → 入队（不直接发）
+    // MARK: - Live submission and durability
 
-    func testSendDuringGenerationEnqueuesInsteadOfSending() async throws {
+    func testSendDuringGenerationImmediatelyDisplaysUserAndClearsComposer() async throws {
         let base = makeTempDirectory("SteerQueueEnqueue")
         defer { try? FileManager.default.removeItem(at: base) }
         let store = makeConversationStore(directory: base)
@@ -555,6 +555,22 @@ final class IOSSteerQueueTests: XCTestCase {
         let persisted = await reloadedStore.messages(for: id) ?? []
         XCTAssertEqual(persisted.map(\.id), [committedID])
         XCTAssertTrue(IOSSteerQueueStore(directoryURL: queueDirectory).load(conversationId: id).isEmpty)
+    }
+
+    func testPreviousSlotCannotCommitInterjectionAfterContinuationRebindsIt() async {
+        let directory = makeTempDirectory("ReboundSteer")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = makeConversationStore(directory: directory)
+        await store.newConversation()
+        let model = makeViewModel(conversationStore: store, queueDirectory: directory)
+        let entry = IOSSteerQueueEntry(id: UUID().uuidString, text: "换个方向", createdAt: Date(), targetRunId: "original")
+        let state = model.currentRun.state
+        state.steerQueue = [entry]
+        state.steerQueue[0].targetRunId = "continuation"
+
+        let drained = await model.commitSteerQueueEntries([entry], state: state)
+        XCTAssertTrue(drained.isEmpty)
+        XCTAssertEqual(state.steerQueue.first?.targetRunId, "continuation")
     }
 
     func testSteerCommitKeepsMessagesEnqueuedWhileSaveIsSuspended() async throws {

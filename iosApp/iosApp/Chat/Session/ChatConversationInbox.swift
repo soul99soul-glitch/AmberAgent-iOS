@@ -85,8 +85,10 @@ extension ChatViewModel {
         while state.isCommittingSteerQueue {
             await withCheckedContinuation { state.steerCommitWaiters.append($0) }
         }
-        let receivedIDs = Set(state.steerQueue.filter { $0.status == .received }.map(\.id))
-        let entries = entries.filter { receivedIDs.contains($0.id) }
+        // A terminal continuation can rebind pending input while another slot is saving.
+        let entries = entries.filter { entry in
+            state.steerQueue.contains { $0.id == entry.id && $0.targetRunId == entry.targetRunId && $0.status == .received }
+        }
         guard !Task.isCancelled, state.pendingAssistantRegeneration == nil, !entries.isEmpty else { return [] }
         state.isCommittingSteerQueue = true
         defer {
