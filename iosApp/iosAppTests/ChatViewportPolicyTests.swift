@@ -125,4 +125,38 @@ final class ChatViewportPolicyTests: XCTestCase {
             "浏览历史时必须关闭 .sizeChanges 底锚，防止键盘弹起/收起改高度时拽回底部。"
         )
     }
+
+    func testScrollGeometryMessageSyncGateSkipsFarHistoryAndPreservesNearBottomResume() {
+        XCTAssertFalse(
+            NativeChatTimelineView.shouldSyncMessagesOnScrollGeometryChange(
+                viewportChanged: false,
+                driverPausedForUser: true,
+                isMeasuredNearBottom: false
+            ),
+            "远离底部浏览历史且视口状态未变时，不得逐帧桥接全消息集合。"
+        )
+        XCTAssertTrue(
+            NativeChatTimelineView.shouldSyncMessagesOnScrollGeometryChange(
+                viewportChanged: false,
+                driverPausedForUser: true,
+                isMeasuredNearBottom: true
+            ),
+            "用户暂停后滚回底部附近时必须允许恢复跟随，且不依赖 isGenerationActive。"
+        )
+        XCTAssertTrue(
+            NativeChatTimelineView.shouldSyncMessagesOnScrollGeometryChange(
+                viewportChanged: true,
+                driverPausedForUser: true,
+                isMeasuredNearBottom: false
+            ),
+            "视口状态真正变化（例如进入/离开底部或跨越远底阈值）时必须同步。"
+        )
+        XCTAssertFalse(
+            NativeChatTimelineView.shouldSyncMessagesOnScrollGeometryChange(
+                viewportChanged: false,
+                driverPausedForUser: false,
+                isMeasuredNearBottom: true
+            )
+        )
+    }
 }

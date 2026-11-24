@@ -21,6 +21,18 @@ extension ChatView {
         )
     }
 
+    static func resolvedIsAtEmptyEpisodeBoundary(
+        conversationId: String?,
+        messages: [UIMessage],
+        episodeStore: ChatEpisodeStore = .shared
+    ) -> Bool {
+        !episodeStore.episodes(for: conversationId).isEmpty
+            && episodeStore.isAtEmptyBoundary(
+                conversationId: conversationId,
+                messages: messages
+            )
+    }
+
     func refreshChatListSummary(resetTitleSeed: Bool = false) {
         let messages = viewModel.messages
         var next = chatListSummary
@@ -42,7 +54,20 @@ extension ChatView {
         let taskCounts = taskCountCache.counts(messages: messages, isGenerationActive: viewModel.isGenerationActive)
         next.inChatActiveTaskCount = taskCounts.active
         next.inChatNeedsAttentionCount = taskCounts.needsAttention
-        if resetTitleSeed || next.firstUserTitleSeed == nil {
+        let episodeRevision = ChatEpisodeStore.shared.mutationRevision
+        let nextIsAtEmptyEpisodeBoundary = Self.resolvedIsAtEmptyEpisodeBoundary(
+            conversationId: currentConversationIdString,
+            messages: messages
+        )
+        let episodeBoundaryChanged = nextIsAtEmptyEpisodeBoundary != isAtEmptyEpisodeBoundary
+            || episodeRevision != lastEpisodeMutationRevision
+        if nextIsAtEmptyEpisodeBoundary != isAtEmptyEpisodeBoundary {
+            isAtEmptyEpisodeBoundary = nextIsAtEmptyEpisodeBoundary
+        }
+        if episodeRevision != lastEpisodeMutationRevision {
+            lastEpisodeMutationRevision = episodeRevision
+        }
+        if resetTitleSeed || next.firstUserTitleSeed == nil || episodeBoundaryChanged {
             let activeMessages = ChatEpisodeStore.shared.unsealedNonSystemMessages(
                 for: currentConversationIdString,
                 in: messages
@@ -154,12 +179,6 @@ extension ChatView {
             return "\(resolvedSoulName) · 云端"
         }
         _ = conversationStore.currentRevision
-        _ = ChatEpisodeStore.shared.mutationRevision
-        let isAtEmptyEpisodeBoundary = !ChatEpisodeStore.shared.episodes(for: currentConversationIdString).isEmpty
-            && ChatEpisodeStore.shared.isAtEmptyBoundary(
-                conversationId: currentConversationIdString,
-                messages: viewModel.messages
-            )
         if !isAtEmptyEpisodeBoundary {
             let storedTitle = conversationStore.currentConversation?.title
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

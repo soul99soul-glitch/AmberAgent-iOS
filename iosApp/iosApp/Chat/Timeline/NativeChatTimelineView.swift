@@ -384,7 +384,11 @@ struct NativeChatTimelineView: View {
                     publishViewportState(nextViewportState)
                     // Actual visibility and signal changes have their own update paths.
                     // Pixel-by-pixel bottom tracking must not bridge/copy all messages.
-                    if viewportChanged || scrollDriver.isPausedForUser {
+                    if Self.shouldSyncMessagesOnScrollGeometryChange(
+                        viewportChanged: viewportChanged,
+                        driverPausedForUser: scrollDriver.isPausedForUser,
+                        isMeasuredNearBottom: isNativeMeasuredNearBottom(geometry)
+                    ) {
                         let latestMessages = messagesProvider()
                         unfreezeVisibleLiveTailIfNeeded(messages: latestMessages, viewportState: nextViewportState)
                         resumeNativeBottomFollowFromGeometryIfNeeded(geometry: geometry,
@@ -572,6 +576,16 @@ struct NativeChatTimelineView: View {
         followGeneration: Bool, viewportState: ChatViewportState, driverPausedForUser: Bool
     ) -> Bool {
         followGeneration && viewportState.isAtBottom && !viewportState.followPaused && !driverPausedForUser
+    }
+
+    /// 历史滚动门控：仅在视口状态确实变化，或用户暂停跟随且已接近底部时同步消息并尝试恢复跟随。
+    /// 不按 `isGenerationActive` 门控，确保空闲状态下用户上滑后再滑回底部仍能恢复跟随与隐藏回底键。
+    static func shouldSyncMessagesOnScrollGeometryChange(
+        viewportChanged: Bool,
+        driverPausedForUser: Bool,
+        isMeasuredNearBottom: Bool
+    ) -> Bool {
+        viewportChanged || (driverPausedForUser && isMeasuredNearBottom)
     }
 
     private func handleTimelineTapToDismiss() {

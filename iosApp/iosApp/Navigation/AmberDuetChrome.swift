@@ -54,6 +54,64 @@ enum AmberHandoffExecutionTarget: String, CaseIterable, Identifiable {
     }
 }
 
+struct AmberDuetTaskBadgeView: View, Equatable {
+    let activeTaskCount: Int
+    let needsAttentionCount: Int
+    let gateway: MacGatewayStore
+    let subAgentStore: IOSSubAgentActivityStore?
+
+    @MainActor
+    init(
+        activeTaskCount: Int = 0,
+        needsAttentionCount: Int = 0,
+        gateway: MacGatewayStore = .shared,
+        subAgentStore: IOSSubAgentActivityStore? = nil
+    ) {
+        self.activeTaskCount = activeTaskCount
+        self.needsAttentionCount = needsAttentionCount
+        self.gateway = gateway
+        self.subAgentStore = subAgentStore
+    }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.activeTaskCount == rhs.activeTaskCount
+            && lhs.needsAttentionCount == rhs.needsAttentionCount
+            && lhs.gateway === rhs.gateway
+            && lhs.subAgentStore === rhs.subAgentStore
+    }
+
+    private var resolvedCounts: AmberUnifiedTaskBuilder.BadgeCounts {
+        if let subAgentStore {
+            return AmberUnifiedTaskBuilder.badgeCounts(
+                gateway: gateway,
+                subAgentStore: subAgentStore
+            )
+        }
+        return AmberUnifiedTaskBuilder.BadgeCounts(
+            active: activeTaskCount,
+            needsAttention: needsAttentionCount
+        )
+    }
+
+    var body: some View {
+        let _ = ChatRenderProbe.record("duet-task-badge-body")
+        let counts = resolvedCounts
+        let total = counts.total
+        if total > 0 {
+            Text("\(total)")
+                .font(.system(size: 10, weight: .bold))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(
+                    counts.needsAttention > 0 ? AmberTheme.accentRed : AmberTheme.accent,
+                    in: Capsule(style: .continuous)
+                )
+        }
+    }
+}
+
 struct AmberDuetBottomSwitcher: View {
     var selectedTab: AmberDuetModeTab = .chat
     var activeTaskCount: Int = 0
@@ -73,27 +131,6 @@ struct AmberDuetBottomSwitcher: View {
     @State private var tabFrames: [AmberDuetModeTab: CGRect] = [:]
     @State private var dragLocationX: CGFloat? = nil
     @State private var dragVelocityX: CGFloat = 0
-
-    private var resolvedTaskCounts: (active: Int, needsAttention: Int) {
-        if let subAgentStore {
-            let groups = AmberUnifiedTaskBuilder.buildTasks(
-                gateway: gateway,
-                subAgentStore: subAgentStore,
-                hubStore: hubStore ?? .shared
-            )
-            return (groups.activeCount, groups.needsAttention.count)
-        }
-        return (activeTaskCount, needsAttentionCount)
-    }
-
-    private var badgeCount: Int {
-        let counts = resolvedTaskCounts
-        return counts.needsAttention + counts.active
-    }
-
-    private var badgeColor: Color {
-        resolvedTaskCounts.needsAttention > 0 ? AmberTheme.accentRed : AmberTheme.accent
-    }
 
     var body: some View {
         let _ = ChatRenderProbe.record("duet-chrome-body")
@@ -132,15 +169,11 @@ struct AmberDuetBottomSwitcher: View {
     }
 
     private var modeSegmentedTrack: some View {
-        let counts = resolvedTaskCounts
-        let tasksBadgeCount = counts.needsAttention + counts.active
-        let tasksBadgeColor = counts.needsAttention > 0 ? AmberTheme.accentRed : AmberTheme.accent
-        return HStack(spacing: 2) {
+        HStack(spacing: 2) {
             modeButton(
                 tab: .chat,
                 isSelected: selectedTab == .chat,
-                badgeCount: 0,
-                badgeColor: AmberTheme.accent
+                showsTaskBadge: false
             ) {
                 if let onSelectTab {
                     onSelectTab(.chat)
@@ -150,8 +183,7 @@ struct AmberDuetBottomSwitcher: View {
             modeButton(
                 tab: .tasks,
                 isSelected: selectedTab == .tasks,
-                badgeCount: tasksBadgeCount,
-                badgeColor: tasksBadgeColor
+                showsTaskBadge: true
             ) {
                 if let onSelectTab {
                     onSelectTab(selectedTab == .tasks ? .chat : .tasks)
@@ -163,8 +195,7 @@ struct AmberDuetBottomSwitcher: View {
             modeButton(
                 tab: .hubs,
                 isSelected: selectedTab == .hubs,
-                badgeCount: 0,
-                badgeColor: AmberTheme.accent
+                showsTaskBadge: false
             ) {
                 if let onSelectTab {
                     onSelectTab(selectedTab == .hubs ? .chat : .hubs)
@@ -295,8 +326,7 @@ struct AmberDuetBottomSwitcher: View {
     private func modeButton(
         tab: AmberDuetModeTab,
         isSelected: Bool,
-        badgeCount: Int,
-        badgeColor: Color,
+        showsTaskBadge: Bool,
         action: @escaping () -> Void
     ) -> some View {
         let deformation = scrubLensDeformation(for: tab, isSelected: isSelected)
@@ -306,14 +336,14 @@ struct AmberDuetBottomSwitcher: View {
                     .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
                     .lineLimit(1)
 
-                if badgeCount > 0 {
-                    Text("\(badgeCount)")
-                        .font(.system(size: 10, weight: .bold))
-                        .monospacedDigit()
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(badgeColor, in: Capsule(style: .continuous))
+                if showsTaskBadge {
+                    AmberDuetTaskBadgeView(
+                        activeTaskCount: activeTaskCount,
+                        needsAttentionCount: needsAttentionCount,
+                        gateway: gateway,
+                        subAgentStore: subAgentStore
+                    )
+                    .equatable()
                 }
             }
             .fixedSize(horizontal: true, vertical: false)

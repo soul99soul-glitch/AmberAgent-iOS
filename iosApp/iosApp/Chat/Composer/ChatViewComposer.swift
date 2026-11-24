@@ -652,23 +652,6 @@ extension ChatView {
         sendEnabled(for: viewModel.inputText)
     }
 
-    var duetActiveTaskCount: Int {
-        unifiedTaskGroups.activeCount
-    }
-
-    var duetNeedsAttentionCount: Int {
-        unifiedTaskGroups.needsAttention.count
-    }
-
-    /// The panel's own aggregation, so the badge and the list can never disagree.
-    var unifiedTaskGroups: AmberUnifiedTaskBuilder.Groups {
-        AmberUnifiedTaskBuilder.buildTasks(
-            gateway: MacGatewayStore.shared,
-            subAgentStore: activityStore,
-            hubStore: AmberHubStore.shared
-        )
-    }
-
     func currentConversationTaskSegments() -> [ChatTaskRunSegment] {
         taskCountCache.taskSegments(messages: viewModel.messages, isGenerationActive: viewModel.isGenerationActive)
     }

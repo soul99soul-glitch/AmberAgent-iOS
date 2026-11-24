@@ -36,6 +36,8 @@ struct ChatView: View {
     @State var islandHoldToken = 0
     @State var composerInputController = ComposerInputController()
     @State var chatListSummary = ChatListSummarySnapshot()
+    @State var isAtEmptyEpisodeBoundary = false
+    @State var lastEpisodeMutationRevision: UInt64 = 0
     @State var taskCountCache = ChatTaskCountCache()
     @State var artifactShelf = ChatArtifactShelfState()
     /// 产物架索引的正文图片与生成式 UI 解析缓存；引用类型，命中与淘汰不触发视图刷新。
@@ -118,6 +120,10 @@ struct ChatView: View {
                 .opacity(composerState.activeDuetTab == .chat ? 1 : 0)
                 .allowsHitTesting(composerState.activeDuetTab == .chat)
             }
+            .environment(
+                \.amberIsUnderlyingSheetPresented,
+                isAnyFloatingSheetPresented || composerState.activeDuetTab != .chat
+            )
 
             // 冷启动：会话历史还没读上来时先顶上与最终页同构的中性骨架，
             // 不先闪欢迎空态再被真实消息替换。顶栏与输入区照常渲染，
@@ -941,6 +947,8 @@ struct ChatView: View {
             return
         }
         if viewModel.startNewEpisode() {
+            refreshChatListSummary(resetTitleSeed: true)
+            syncIslandPresentation()
             viewportState.followPaused = false
             scrollToBottomSource = .button
             scrollToBottomTrigger &+= 1

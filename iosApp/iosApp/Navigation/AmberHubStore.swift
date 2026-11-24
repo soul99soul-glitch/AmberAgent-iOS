@@ -788,6 +788,358 @@ enum AmberUnifiedTaskBuilder {
         var activeCount: Int { running.count + scheduled.count }
     }
 
+    struct BadgeCounts: Equatable, Sendable {
+        var active: Int = 0
+        var needsAttention: Int = 0
+
+        var total: Int { needsAttention + active }
+
+        mutating func record(_ phase: AmberUnifiedTaskPhase) {
+            switch phase {
+            case .needsAttention:
+                needsAttention += 1
+            case .running, .scheduled:
+                active += 1
+            case .completed, .timedOutOrFailedTerminal, .cancelled:
+                break
+            }
+        }
+    }
+
+    private struct CloudDialogueEventIndex {
+        var directEventsByWorkItemId: [String: [MacGatewayCloudDialogueEvent]] = [:]
+        var firstTopicUserTextByTopicId: [String: String] = [:]
+
+        init(events: [MacGatewayCloudDialogueEvent]) {
+            for event in events {
+                if let workItemId = event.workItemId, !workItemId.isEmpty {
+                    directEventsByWorkItemId[workItemId, default: []].append(event)
+                }
+                if event.kind == .userMessage,
+                   !event.topicId.isEmpty,
+                   firstTopicUserTextByTopicId[event.topicId] == nil {
+                    firstTopicUserTextByTopicId[event.topicId] = event.text
+                }
+            }
+        }
+    }
+
+    /// Lightweight decision check matching `extractDeliverableSummary(from:).needsDecision`
+    /// without Markdown line splitting, bullet extraction, or headline truncation.
+    private static func textNeedsDecision(_ raw: String?) -> Bool {
+        guard let raw else { return false }
+        let initialTrimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !initialTrimmed.isEmpty,
+              let trimmedRaw = userFacingResultMarkdown(from: initialTrimmed) else {
+            return false
+        }
+        return structuredDecision(in: initialTrimmed) ?? containsDecisionMarker(trimmedRaw)
+    }
+
+    private static func needsDecisionLazy(metadata: [String: String], fallback: () -> Bool) -> Bool {
+        for key in ["needs_decision", "needs_user_decision"] {
+            if let value = metadata[key]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+                if value == "false" { return false }
+                if value == "true" { return true }
+            }
+        }
+        if ["decision_prompt", "checkpoint"].contains(where: {
+            metadata[$0]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }) {
+            return true
+        }
+        return fallback()
+    }
+
+    private static func cloudTaskPhase(
+        needsSubmissionRetry: Bool,
+        state: MacGatewayCloudWorkState?,
+        needsDecision: () -> Bool
+    ) -> AmberUnifiedTaskPhase {
+        if needsSubmissionRetry { return .needsAttention }
+        if state == .failed { return .needsAttention }
+        if state == .cancelled { return .cancelled }
+        if state == .waiting || needsDecision() { return .needsAttention }
+        if state == .completed { return .completed }
+        return .running
+    }
+
+    private static func cloudDialoguePhase(
+        outcome: MacGatewayCloudDialogueOutcome?,
+        isStopRequested: Bool,
+        needsDecision: () -> Bool
+    ) -> AmberUnifiedTaskPhase {
+        switch outcome {
+        case .completed:
+            return needsDecision() ? .needsAttention : .completed
+        case .blocked, .failed:
+            return .needsAttention
+        case .cancelled:
+            return .cancelled
+        case .unknown, nil:
+            if isStopRequested { return .running }
+            return needsDecision() ? .needsAttention : .running
+        }
+    }
+
+    private static func subAgentPhase(
+        item: IOSSubAgentActivity,
+        retryable: Bool,
+        hasDecisionCheckpoint: () -> Bool
+    ) -> AmberUnifiedTaskPhase {
+        switch item.status {
+        case .queued, .running:
+            return hasDecisionCheckpoint() ? .needsAttention : .running
+        case .approvalRequired, .interrupted:
+            return .needsAttention
+        case .completed:
+            return hasDecisionCheckpoint() ? .needsAttention : .completed
+        case .failed:
+            return retryable ? .needsAttention : .timedOutOrFailedTerminal
+        case .timedOut:
+            return .timedOutOrFailedTerminal
+        case .cancelled:
+            return .cancelled
+        }
+    }
+
+    private static func advancedTaskPhase(
+        status: IOSAdvancedTaskStatus,
+        isRetryableInTaskBoard: Bool,
+        interruptionReason: String?,
+        hasDecisionCheckpoint: () -> Bool
+    ) -> AmberUnifiedTaskPhase {
+        switch status {
+        case .queued, .running:
+            return hasDecisionCheckpoint() ? .needsAttention : .running
+        case .approvalRequired:
+            return .needsAttention
+        case .interrupted:
+            if (isRetryableInTaskBoard && interruptionReason != "process_terminated") || hasDecisionCheckpoint() {
+                return .needsAttention
+            }
+            return .timedOutOrFailedTerminal
+        case .completed:
+            return hasDecisionCheckpoint() ? .needsAttention : .completed
+        case .failed:
+            return isRetryableInTaskBoard ? .needsAttention : .timedOutOrFailedTerminal
+        case .timedOut:
+            return .timedOutOrFailedTerminal
+        case .cancelled:
+            return .cancelled
+        }
+    }
+
+    private static func wakeTaskPhase(
+        task: IOSWakeTask,
+        hasDecisionCheckpoint: () -> Bool
+    ) -> AmberUnifiedTaskPhase {
+        switch task.status {
+        case .scheduled:
+            return .scheduled
+        case .running:
+            return hasDecisionCheckpoint() ? .needsAttention : .running
+        case .completed:
+            return hasDecisionCheckpoint() ? .needsAttention : .completed
+        case .failed:
+            return .timedOutOrFailedTerminal
+        case .cancelled:
+            return .cancelled
+        case .interrupted:
+            return .needsAttention
+        }
+    }
+
+    private static func schedulePhase(running: Bool, enabled: Bool) -> AmberUnifiedTaskPhase {
+        running ? .running : (enabled ? .scheduled : .cancelled)
+    }
+
+    private static func boardItemPhase(
+        item: MacGatewayBoardItem,
+        needsDecision: () -> Bool
+    ) -> AmberUnifiedTaskPhase {
+        switch item.column {
+        case .needsYou:
+            return .needsAttention
+        case .running:
+            return needsDecision() ? .needsAttention : .running
+        case .scheduled:
+            return .scheduled
+        case .done:
+            if item.failed { return .timedOutOrFailedTerminal }
+            return needsDecision() ? .needsAttention : .completed
+        }
+    }
+
+    @MainActor
+    static func badgeCounts(
+        gateway: MacGatewayStore,
+        subAgentStore: IOSSubAgentActivityStore,
+        taskStore: IOSAdvancedTaskStore = .shared,
+        wakeStore: IOSWakeTaskStore = .shared
+    ) -> BadgeCounts {
+        ChatRenderProbe.record("task-badge-counts")
+        return ChatRenderProbe.measureUs("us:task-badge-counts") {
+            badgeCountsUnprobed(
+                gateway: gateway,
+                subAgentStore: subAgentStore,
+                taskStore: taskStore,
+                wakeStore: wakeStore
+            )
+        }
+    }
+
+    @MainActor
+    private static func badgeCountsUnprobed(
+        gateway: MacGatewayStore,
+        subAgentStore: IOSSubAgentActivityStore,
+        taskStore: IOSAdvancedTaskStore,
+        wakeStore: IOSWakeTaskStore
+    ) -> BadgeCounts {
+        var counts = BadgeCounts()
+        var seenIdentities = Set<String>()
+
+        // 1. Cloud work items (/v2/work-items).
+        for record in gateway.cloudTasks {
+            let identity = record.workItemId.map { "cloud-work:\(record.gatewayId):\($0)" }
+                ?? "cloud-request:\(record.gatewayId):\(record.deviceId):\(record.requestId)"
+            guard seenIdentities.insert(identity).inserted else { continue }
+            let phase = Self.cloudTaskPhase(
+                needsSubmissionRetry: record.needsSubmissionRetry,
+                state: record.state
+            ) {
+                let rawResult = record.detail?.resultMarkdown
+                let progressText = record.effectiveWorkItem?.progress
+                return Self.structuredDecision(in: rawResult)
+                    ?? (Self.textNeedsDecision(rawResult ?? progressText) || Self.textNeedsDecision(progressText))
+            }
+            counts.record(phase)
+        }
+
+        // 1b. Cloud & Mac dialogue delegated WorkItems (/v2/dialogue/*).
+        let remoteSlots: [MacGatewayStore] = [gateway] + (gateway.macSlot?.connection != nil ? [gateway.macSlot!] : [])
+        for slot in remoteSlots {
+            let isMacSlot = slot !== gateway && slot.endpointRole == .mac
+            let gatewayScope = slot.connection?.gatewayId ?? (isMacSlot ? "mac-unpaired" : "unpaired")
+            var latestResultEventByWorkItemId: [String: MacGatewayCloudDialogueEvent]? = nil
+
+            func latestResultEvent(for workItemId: String) -> MacGatewayCloudDialogueEvent? {
+                if latestResultEventByWorkItemId == nil {
+                    var index: [String: MacGatewayCloudDialogueEvent] = [:]
+                    for event in slot.cloudDialogueEvents {
+                        guard let wid = event.workItemId, !wid.isEmpty,
+                              event.kind == .taskResult
+                                || (event.kind == .assistantReply && !event.isUpfrontAcknowledgement) else {
+                            continue
+                        }
+                        index[wid] = event
+                    }
+                    latestResultEventByWorkItemId = index
+                }
+                return latestResultEventByWorkItemId?[workItemId]
+            }
+
+            for (key, progress) in slot.cloudDialogueProgressByWorkItem {
+                let workItemId = progress.workItemId.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !key.hasPrefix("topic:"), !workItemId.isEmpty, !workItemId.hasPrefix("topic:") else { continue }
+                guard seenIdentities.insert("\(slot.endpointRole.rawValue)-work:\(gatewayScope):\(workItemId)").inserted else { continue }
+                let phase = Self.cloudDialoguePhase(
+                    outcome: progress.outcome,
+                    isStopRequested: progress.isStopRequested
+                ) {
+                    let latestText = latestResultEvent(for: workItemId).map {
+                        IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope(
+                            slot.cloudDialogueDisplayText(for: $0)
+                        )
+                    }
+                    let statusText = IOSSubAgentOutputProjection
+                        .sanitizeAssistantDisplayTextIfEnvelope(progress.statusLine)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    return Self.textNeedsDecision(latestText ?? (statusText.isEmpty ? nil : statusText))
+                }
+                counts.record(phase)
+            }
+        }
+
+        // 2. Local background orchestration runs.
+        for item in subAgentStore.items {
+            guard seenIdentities.insert("subagent:\(item.id)").inserted else { continue }
+            let backingRecord = subAgentStore.taskRecord(for: item)
+            let phase = Self.subAgentPhase(
+                item: item,
+                retryable: backingRecord?.retryable == true
+            ) {
+                let outcome = backingRecord.flatMap { $0.resultSummary.isEmpty ? nil : $0.resultSummary }
+                    ?? backingRecord.flatMap { $0.logTail.isEmpty ? nil : $0.logTail }
+                return Self.needsDecisionLazy(metadata: backingRecord?.metadata ?? [:]) {
+                    Self.structuredDecision(in: outcome)
+                        ?? (Self.textNeedsDecision(outcome ?? item.statusDetail) || Self.textNeedsDecision(item.statusDetail))
+                }
+            }
+            counts.record(phase)
+        }
+
+        // 3. Other durable background executions owned by IOSAdvancedTaskStore.
+        for record in taskStore.tasks
+        where record.kind != .subAgent && record.kind != .toolApproval {
+            guard seenIdentities.insert("exec:\(record.id)").inserted else { continue }
+            let isRetryableInTaskBoard = record.retryable && record.kind != .modelCouncil
+            let phase = Self.advancedTaskPhase(
+                status: record.status,
+                isRetryableInTaskBoard: isRetryableInTaskBoard,
+                interruptionReason: record.metadata["interruption_reason"]
+            ) {
+                guard record.kind != .modelCouncil else { return false }
+                let outcome = record.resultSummary.isEmpty
+                    ? (record.logTail.isEmpty ? nil : record.logTail)
+                    : record.resultSummary
+                return Self.needsDecisionLazy(metadata: record.metadata) {
+                    Self.textNeedsDecision(outcome)
+                }
+            }
+            counts.record(phase)
+        }
+
+        // 4. iOS-local scheduled and event-driven monitoring work.
+        for task in wakeStore.tasks {
+            guard seenIdentities.insert("wake:\(task.id)").inserted else { continue }
+            let phase = Self.wakeTaskPhase(task: task) {
+                Self.textNeedsDecision(task.resultText ?? task.lastMessage)
+            }
+            counts.record(phase)
+        }
+
+        // 5 & 6. Gateway-owned schedules and board runs across paired Cloud + Mac slots.
+        for slot in remoteSlots {
+            let isMacSlot = slot !== gateway && slot.endpointRole == .mac
+            let schedulePrefix = isMacSlot ? "mac-schedule" : "schedule"
+            let boardPrefix = isMacSlot ? "mac-board" : "board"
+
+            for schedule in slot.schedules ?? [] {
+                let scheduleItemId = "\(schedulePrefix):\(schedule.id)"
+                guard seenIdentities.insert(scheduleItemId).inserted else { continue }
+                counts.record(Self.schedulePhase(running: schedule.running, enabled: schedule.enabled))
+            }
+
+            let knownScheduleIds = Set((slot.schedules ?? []).map(\.id))
+            for boardItem in slot.boardItems {
+                if boardItem.kind == .schedule {
+                    let scheduleId = boardItem.scheduleId
+                        ?? (boardItem.id.hasPrefix("schedule:") ? String(boardItem.id.dropFirst("schedule:".count)) : nil)
+                    if let scheduleId, knownScheduleIds.contains(scheduleId) { continue }
+                }
+                let boardItemId = "\(boardPrefix):\(boardItem.id)"
+                guard seenIdentities.insert(boardItemId).inserted else { continue }
+                let phase = Self.boardItemPhase(item: boardItem) {
+                    Self.textNeedsDecision(boardItem.detail)
+                }
+                counts.record(phase)
+            }
+        }
+
+        return counts
+    }
+
     @MainActor
     static func buildTasks(
         gateway: MacGatewayStore,
@@ -835,7 +1187,11 @@ enum AmberUnifiedTaskBuilder {
             let isAwaitingDecision = record.state == .waiting
                 || (Self.structuredDecision(in: rawResult) ?? (summary.needsDecision || progressDecision.needsDecision))
 
-            let phase: AmberUnifiedTaskPhase
+            let phase = Self.cloudTaskPhase(
+                needsSubmissionRetry: record.needsSubmissionRetry,
+                state: record.state,
+                needsDecision: { isAwaitingDecision }
+            )
             let statusText: String
             let subtitle: String
             var actionTitle: String? = nil
@@ -843,13 +1199,11 @@ enum AmberUnifiedTaskBuilder {
             var quickActions: [AmberTaskQuickDecision] = []
 
             if record.needsSubmissionRetry {
-                phase = .needsAttention
                 statusText = "提交未完成"
                 subtitle = (record.lastError ?? "网络超时，请求 ID 已保留") + " · 云端"
                 actionTitle = "重试"
                 quickActions = Self.failureQuickActions(primaryTitle: "重试")
             } else if record.state == .failed {
-                phase = .needsAttention
                 statusText = "执行失败"
                 let reason = Self.compactReason(record.detail?.failure ?? record.lastError ?? "云端执行异常")
                 subtitle = "\(reason) · 云端"
@@ -857,7 +1211,6 @@ enum AmberUnifiedTaskBuilder {
                 actionTitle = suggested
                 quickActions = Self.failureQuickActions(primaryTitle: suggested)
             } else if isAwaitingDecision && record.state != .cancelled {
-                phase = .needsAttention
                 statusText = "等我拍板"
                 decisionPrompt = summary.decisionPrompt
                     ?? progressDecision.decisionPrompt
@@ -872,11 +1225,9 @@ enum AmberUnifiedTaskBuilder {
                 actionTitle = "拍板继续"
                 quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
             } else if record.state == .cancelled {
-                phase = .cancelled
                 statusText = "已取消"
                 subtitle = "云端后台 · 已取消"
             } else if record.state == .completed {
-                phase = .completed
                 statusText = "已完成"
                 if let headline = summary.headline, !headline.isEmpty {
                     subtitle = headline
@@ -884,15 +1235,12 @@ enum AmberUnifiedTaskBuilder {
                     subtitle = "云端后台 · 已完成"
                 }
             } else if gateway.busyCloudTaskIds.contains(record.requestId) {
-                phase = .running
                 statusText = "停止请求中"
                 subtitle = "云端后台 · 正在等待服务端确认"
             } else if record.state == .queued {
-                phase = .running
                 statusText = "已受理"
                 subtitle = "云端后台 · 已受理待启动"
             } else {
-                phase = .running
                 statusText = "运行中"
                 if let progress = progressText, !progress.isEmpty {
                     subtitle = "云端后台 · \(progress)"
@@ -933,18 +1281,17 @@ enum AmberUnifiedTaskBuilder {
             let slotOriginLabel = isMacSlot ? "Mac 对话" : "云端对话"
             let idPrefix = isMacSlot ? "mac-dialogue" : "cloud-dialogue"
             let gatewayScope = slot.connection?.gatewayId ?? (isMacSlot ? "mac-unpaired" : "unpaired")
+            guard !slot.cloudDialogueProgressByWorkItem.isEmpty else { continue }
+            let eventIndex = CloudDialogueEventIndex(events: slot.cloudDialogueEvents)
             for key in slot.cloudDialogueProgressByWorkItem.keys.sorted() {
                 guard let progress = slot.cloudDialogueProgressByWorkItem[key] else { continue }
                 let workItemId = progress.workItemId.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !key.hasPrefix("topic:"), !workItemId.isEmpty, !workItemId.hasPrefix("topic:") else { continue }
                 guard seenIdentities.insert("\(slot.endpointRole.rawValue)-work:\(gatewayScope):\(workItemId)").inserted else { continue }
 
-                let directEvents = slot.cloudDialogueEvents.filter { $0.workItemId == workItemId }
-                let topicUserEvents = progress.topicId.isEmpty
-                    ? []
-                    : slot.cloudDialogueEvents.filter { $0.topicId == progress.topicId && $0.kind == .userMessage }
+                let directEvents = eventIndex.directEventsByWorkItemId[workItemId] ?? []
                 let rawTitleSource = directEvents.first(where: { $0.kind == .userMessage })?.text
-                    ?? topicUserEvents.first?.text
+                    ?? (progress.topicId.isEmpty ? nil : eventIndex.firstTopicUserTextByTopicId[progress.topicId])
                 let cleanUserLine = rawTitleSource
                     .map { IOSContextCompactionFidelity.redactCredentials($0) }?
                     .components(separatedBy: .newlines)
@@ -973,7 +1320,11 @@ enum AmberUnifiedTaskBuilder {
                     from: sanitizedResult ?? (sanitizedStatus.isEmpty ? nil : sanitizedStatus)
                 )
 
-                let phase: AmberUnifiedTaskPhase
+                let phase = Self.cloudDialoguePhase(
+                    outcome: progress.outcome,
+                    isStopRequested: progress.isStopRequested,
+                    needsDecision: { summary.needsDecision }
+                )
                 let statusText: String
                 let subtitle: String
                 var actionTitle: String? = nil
@@ -983,19 +1334,16 @@ enum AmberUnifiedTaskBuilder {
                 switch progress.outcome {
                 case .completed:
                     if summary.needsDecision {
-                        phase = .needsAttention
                         statusText = "等我拍板"
                         decisionPrompt = summary.decisionPrompt ?? summary.headline ?? "前序阶段已完成，等待拍板"
                         subtitle = "\(summary.headline ?? "前序阶段已就绪") · \(slotOriginLabel)"
                         actionTitle = "拍板继续"
                         quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
                     } else {
-                        phase = .completed
                         statusText = "已完成"
                         subtitle = summary.headline ?? (sanitizedStatus.isEmpty ? "\(slotOriginLabel) · 已完成" : sanitizedStatus)
                     }
                 case .blocked:
-                    phase = .needsAttention
                     statusText = "等我拍板"
                     decisionPrompt = summary.decisionPrompt
                         ?? summary.headline
@@ -1005,7 +1353,6 @@ enum AmberUnifiedTaskBuilder {
                     actionTitle = "拍板继续"
                     quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
                 case .failed:
-                    phase = .needsAttention
                     statusText = "执行失败"
                     let reason = Self.compactReason(sanitizedStatus.isEmpty ? (sanitizedResult ?? "\(slot.endpointRole.displayName)执行异常") : sanitizedStatus)
                     subtitle = "\(reason) · \(slotOriginLabel)"
@@ -1013,23 +1360,19 @@ enum AmberUnifiedTaskBuilder {
                     actionTitle = suggested
                     quickActions = Self.failureQuickActions(primaryTitle: suggested)
                 case .cancelled:
-                    phase = .cancelled
                     statusText = "已取消"
                     subtitle = "\(slotOriginLabel) · 已停止"
                 case .unknown, nil:
                     if progress.isStopRequested {
-                        phase = .running
                         statusText = "停止请求中"
                         subtitle = "\(slotOriginLabel) · 已请求停止"
                     } else if summary.needsDecision {
-                        phase = .needsAttention
                         statusText = "等我拍板"
                         decisionPrompt = summary.decisionPrompt ?? summary.headline ?? "前序阶段已完成，等待拍板"
                         subtitle = "\(summary.headline ?? "前序阶段已就绪") · \(slotOriginLabel)"
                         actionTitle = "拍板继续"
                         quickActions = Self.decisionQuickActions(decisionPrompt: decisionPrompt)
                     } else {
-                        phase = .running
                         statusText = "运行中"
                         subtitle = sanitizedStatus.isEmpty ? "\(slotOriginLabel) · 执行中" : "\(slotOriginLabel) · \(sanitizedStatus)"
                     }
@@ -1090,7 +1433,11 @@ enum AmberUnifiedTaskBuilder {
                 fallback: Self.structuredDecision(in: outcome) ?? (summary.needsDecision || detailSummary.needsDecision)
             )
 
-            let phase: AmberUnifiedTaskPhase
+            let phase = Self.subAgentPhase(
+                item: item,
+                retryable: backingRecord?.retryable == true,
+                hasDecisionCheckpoint: { hasDecisionCheckpoint }
+            )
             let statusText: String
             var actionTitle: String? = nil
             var decisionPrompt: String? = nil
@@ -1099,24 +1446,19 @@ enum AmberUnifiedTaskBuilder {
             switch item.status {
             case .queued:
                 if hasDecisionCheckpoint {
-                    phase = .needsAttention
                     statusText = "等我拍板"
                     actionTitle = "拍板继续"
                 } else {
-                    phase = .running
                     statusText = "已受理"
                 }
             case .running:
                 if hasDecisionCheckpoint {
-                    phase = .needsAttention
                     statusText = "等我拍板"
                     actionTitle = "拍板继续"
                 } else {
-                    phase = .running
                     statusText = "运行中"
                 }
             case .approvalRequired:
-                phase = .needsAttention
                 if hasDecisionCheckpoint {
                     statusText = "等我拍板"
                     actionTitle = "拍板继续"
@@ -1126,35 +1468,28 @@ enum AmberUnifiedTaskBuilder {
                     quickActions = Self.approvalQuickActions()
                 }
             case .interrupted:
-                phase = .needsAttention
                 statusText = "等我拍板"
                 actionTitle = "拍板继续"
             case .completed:
                 if hasDecisionCheckpoint {
-                    phase = .needsAttention
                     statusText = "等我拍板"
                     actionTitle = "拍板继续"
                 } else {
-                    phase = .completed
                     statusText = "已完成"
                 }
             case .failed:
                 if backingRecord?.retryable == true {
-                    phase = .needsAttention
                     statusText = "执行失败"
                     actionTitle = "重试"
                     quickActions = Self.failureQuickActions(primaryTitle: "重试")
                 } else {
-                    phase = .timedOutOrFailedTerminal
                     statusText = "执行失败"
                     actionTitle = "重试"
                 }
             case .timedOut:
-                phase = .timedOutOrFailedTerminal
                 statusText = item.statusTitle
                 actionTitle = "重试"
             case .cancelled:
-                phase = .cancelled
                 statusText = "已取消"
             }
 
@@ -1242,7 +1577,12 @@ enum AmberUnifiedTaskBuilder {
             )
             let isRetryableInTaskBoard = record.retryable && record.kind != .modelCouncil
 
-            let phase: AmberUnifiedTaskPhase
+            let phase = Self.advancedTaskPhase(
+                status: record.status,
+                isRetryableInTaskBoard: isRetryableInTaskBoard,
+                interruptionReason: record.metadata["interruption_reason"],
+                hasDecisionCheckpoint: { hasDecisionCheckpoint }
+            )
             let statusText: String
             var actionTitle: String? = isRetryableInTaskBoard ? "重试" : nil
             var decisionPrompt: String? = nil
@@ -1251,15 +1591,12 @@ enum AmberUnifiedTaskBuilder {
             switch record.status {
             case .queued, .running:
                 if hasDecisionCheckpoint {
-                    phase = .needsAttention
                     statusText = "等我拍板"
                     actionTitle = "拍板继续"
                 } else {
-                    phase = .running
                     statusText = record.status.title
                 }
             case .approvalRequired:
-                phase = .needsAttention
                 if hasDecisionCheckpoint {
                     statusText = "等我拍板"
                     actionTitle = "拍板继续"
@@ -1270,41 +1607,33 @@ enum AmberUnifiedTaskBuilder {
                 }
             case .interrupted:
                 if hasDecisionCheckpoint || (isRetryableInTaskBoard && record.metadata["interruption_reason"] != "process_terminated") {
-                    phase = .needsAttention
                     statusText = "等我拍板"
                     actionTitle = "拍板继续"
                 } else {
-                    phase = .timedOutOrFailedTerminal
                     statusText = record.status.title
                     actionTitle = nil
                 }
             case .completed:
                 if hasDecisionCheckpoint {
-                    phase = .needsAttention
                     statusText = "等我拍板"
                     actionTitle = "拍板继续"
                 } else {
-                    phase = .completed
                     statusText = "已完成"
                     actionTitle = nil
                 }
             case .failed:
                 if isRetryableInTaskBoard {
-                    phase = .needsAttention
                     statusText = "执行失败"
                     actionTitle = "重试"
                     quickActions = Self.failureQuickActions(primaryTitle: "重试")
                 } else {
-                    phase = .timedOutOrFailedTerminal
                     statusText = "执行失败"
                     actionTitle = nil
                 }
             case .timedOut:
-                phase = .timedOutOrFailedTerminal
                 statusText = record.status.title
                 actionTitle = nil
             case .cancelled:
-                phase = .cancelled
                 statusText = "已取消"
                 actionTitle = nil
             }
@@ -1365,7 +1694,10 @@ enum AmberUnifiedTaskBuilder {
             let summary = Self.extractDeliverableSummary(from: task.resultText ?? task.lastMessage)
             let hasDecisionCheckpoint = summary.needsDecision
 
-            let phase: AmberUnifiedTaskPhase
+            let phase = Self.wakeTaskPhase(
+                task: task,
+                hasDecisionCheckpoint: { hasDecisionCheckpoint }
+            )
             let statusText: String
             var actionTitle: String? = nil
             var decisionPrompt: String? = nil
@@ -1373,35 +1705,27 @@ enum AmberUnifiedTaskBuilder {
 
             switch task.status {
             case .scheduled:
-                phase = .scheduled
                 statusText = task.status.title
             case .running:
                 if hasDecisionCheckpoint {
-                    phase = .needsAttention
                     statusText = "等我拍板"
                     actionTitle = "拍板继续"
                 } else {
-                    phase = .running
                     statusText = task.status.title
                 }
             case .completed:
                 if hasDecisionCheckpoint {
-                    phase = .needsAttention
                     statusText = "等我拍板"
                     actionTitle = "拍板继续"
                 } else {
-                    phase = .completed
                     statusText = "已完成"
                 }
             case .failed:
-                phase = .timedOutOrFailedTerminal
                 statusText = "执行失败"
                 actionTitle = "重试"
             case .cancelled:
-                phase = .cancelled
                 statusText = "已取消"
             case .interrupted:
-                phase = .needsAttention
                 statusText = "等我拍板"
                 actionTitle = hasDecisionCheckpoint ? "拍板继续" : "重新安排"
             }
@@ -1463,8 +1787,7 @@ enum AmberUnifiedTaskBuilder {
             let slotLabel = slot.endpointRole.displayName
 
             for schedule in slot.schedules ?? [] {
-                let phase: AmberUnifiedTaskPhase = schedule.running ? .running
-                    : (schedule.enabled ? .scheduled : .cancelled)
+                let phase = Self.schedulePhase(running: schedule.running, enabled: schedule.enabled)
                 let summary = Self.extractDeliverableSummary(from: schedule.lastStatus)
                 let scheduleItemId = "\(schedulePrefix):\(schedule.id)"
                 guard seenIdentities.insert(scheduleItemId).inserted else { continue }
@@ -1502,20 +1825,7 @@ enum AmberUnifiedTaskBuilder {
                 let boardItemId = "\(boardPrefix):\(boardItem.id)"
                 guard seenIdentities.insert(boardItemId).inserted else { continue }
                 let summary = Self.extractDeliverableSummary(from: boardItem.detail)
-                let phase: AmberUnifiedTaskPhase
-                switch boardItem.column {
-                case .needsYou: phase = .needsAttention
-                case .running: phase = summary.needsDecision ? .needsAttention : .running
-                case .scheduled: phase = .scheduled
-                case .done:
-                    if boardItem.failed {
-                        phase = .timedOutOrFailedTerminal
-                    } else if summary.needsDecision {
-                        phase = .needsAttention
-                    } else {
-                        phase = .completed
-                    }
-                }
+                let phase = Self.boardItemPhase(item: boardItem, needsDecision: { summary.needsDecision })
                 let statusText: String
                 var decisionPrompt: String? = nil
                 var quickActions: [AmberTaskQuickDecision] = []

@@ -1935,4 +1935,215 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             "独立记忆 Hub 的副标题不得被全局未绑定任务污染"
         )
     }
+
+    @MainActor
+    func testBadgeCountsMatchBuildTasksAcrossAllSourcesWithoutMarkdownParsing() throws {
+        try withTaskProjectionStores { gateway, tasks, activity, _, hub in
+            let wakeDir = FileManager.default.temporaryDirectory.appendingPathComponent("BadgeCountsWake.\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: wakeDir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: wakeDir) }
+            let wake = IOSWakeTaskStore(fileURL: wakeDir.appendingPathComponent("wake.json"))
+            let now = Date()
+            // 1. Cloud tasks: running, waiting(needsAttention), failed(needsAttention), completed(needsDecision), cancelled, duplicate
+            let runningWork = MacGatewayCloudWorkItem(id: "cw-run", agentId: "main", title: "云端运行",
+                state: .working, progress: "执行中", updatedAtMs: 1_800_000_000_001)
+            let completedDecisionWork = MacGatewayCloudWorkItem(id: "cw-dec", agentId: "main", title: "云端拍板",
+                state: .completed, progress: "完成阶段1", updatedAtMs: 1_800_000_000_002)
+            let cancelledWork = MacGatewayCloudWorkItem(id: "cw-can", agentId: "main", title: "云端取消",
+                state: .cancelled, progress: "[待拍板] 已取消不应计入", updatedAtMs: 1_800_000_000_003)
+            let doneWork = MacGatewayCloudWorkItem(id: "cw-done", agentId: "main", title: "云端完成",
+                state: .completed, progress: "无需拍板", updatedAtMs: 1_800_000_000_004)
+            gateway.cloudTasks = [
+                MacGatewayCloudTaskRecord(gatewayId: "gw-1", deviceId: "dev-1",
+                    request: .init(requestId: "r-run", text: "run", title: "云端运行"),
+                    workItemId: runningWork.id,
+                    detail: .init(workItem: runningWork, brief: "run", sessionArchived: false, resultMarkdown: nil),
+                    createdAt: now, updatedAt: now),
+                MacGatewayCloudTaskRecord(gatewayId: "gw-1", deviceId: "dev-1",
+                    request: .init(requestId: "r-run-dup", text: "run", title: "云端运行重复"),
+                    workItemId: runningWork.id,
+                    detail: .init(workItem: runningWork, brief: "run", sessionArchived: false, resultMarkdown: nil),
+                    createdAt: now, updatedAt: now),
+                MacGatewayCloudTaskRecord(gatewayId: "gw-1", deviceId: "dev-1",
+                    request: .init(requestId: "r-dec", text: "dec", title: "云端拍板"),
+                    workItemId: completedDecisionWork.id,
+                    detail: .init(workItem: completedDecisionWork, brief: "dec", sessionArchived: true,
+                                  resultMarkdown: "# 结论\n- 要点一\n[待拍板] 是否发布？"),
+                    createdAt: now, updatedAt: now),
+                MacGatewayCloudTaskRecord(gatewayId: "gw-1", deviceId: "dev-1",
+                    request: .init(requestId: "r-can", text: "can", title: "云端取消"),
+                    workItemId: cancelledWork.id,
+                    detail: .init(workItem: cancelledWork, brief: "can", sessionArchived: true, resultMarkdown: "[待拍板] 忽略"),
+                    createdAt: now, updatedAt: now),
+                MacGatewayCloudTaskRecord(gatewayId: "gw-1", deviceId: "dev-1",
+                    request: .init(requestId: "r-done", text: "done", title: "云端完成"),
+                    workItemId: doneWork.id,
+                    detail: .init(workItem: doneWork, brief: "done", sessionArchived: true, resultMarkdown: "已完成，无需你拍板。"),
+                    createdAt: now, updatedAt: now)
+            ]
+
+            // 1b. Cloud dialogue events (also exercises O(W+E) indexing + topic user title fallback)
+            let page = MacGatewayCloudDialogueEventsPage(
+                items: [
+                    MacGatewayCloudDialogueEvent(
+                        seq: 1, id: "e1", kind: .userMessage, role: "user",
+                        text: "检查新发布包", topicId: "topic-rel", workItemId: nil, outcome: nil, soulRevision: nil
+                    ),
+                    MacGatewayCloudDialogueEvent(
+                        seq: 2, id: "e2", kind: .processEvent, role: "assistant",
+                        text: "正在分析", topicId: "topic-rel", workItemId: "dlg-run", outcome: nil, soulRevision: nil
+                    ),
+                    MacGatewayCloudDialogueEvent(
+                        seq: 3, id: "e3", kind: .taskResult, role: "assistant",
+                        text: "[待拍板] 请确认是否切流？", topicId: "topic-rel", workItemId: "dlg-dec", outcome: .completed, soulRevision: nil
+                    ),
+                    MacGatewayCloudDialogueEvent(
+                        seq: 4, id: "e4", kind: .taskResult, role: "assistant",
+                        text: "已全部完成", topicId: "topic-rel", workItemId: "dlg-done", outcome: .completed, soulRevision: nil
+                    )
+                ],
+                nextCursor: 4,
+                soulRevision: nil
+            )
+            gateway.ingestCloudDialogueEventsPage(page, requestedAfter: 0)
+
+            // 2. Local SubAgent + 3. AdvancedTask + 4. WakeTask
+            let subRun = tasks.startTask(id: "sub-run", kind: .subAgent, title: "子代理运行", objective: "跑测")
+            let subApproval = tasks.startTask(id: "sub-app", kind: .subAgent, title: "子代理审批", objective: "确认")
+            _ = tasks.updateTask(id: subApproval.id, status: .approvalRequired)
+            activity.reconcile([
+                try XCTUnwrap(IOSSubAgentActivityStore.activity(subRun)),
+                try XCTUnwrap(IOSSubAgentActivityStore.activity(try XCTUnwrap(tasks.task(id: subApproval.id))))
+            ])
+
+            let execFail = tasks.startTask(id: "exec-fail", kind: .remoteCommand, title: "远程失败", objective: "SSH")
+            _ = tasks.updateTask(id: execFail.id, status: .failed, error: "超时", retryable: true)
+            let councilFail = tasks.startTask(id: "council-fail", kind: .modelCouncil, title: "议会失败", objective: "讨论")
+            _ = tasks.updateTask(id: councilFail.id, status: .failed, error: "空回复", retryable: true)
+
+            _ = try wake.schedule(
+                conversationID: UUID().uuidString.lowercased(), sourceRunID: "run-1",
+                origin: IOSWakeOrigin(userMessageID: "m1", userText: "定时检查"),
+                title: "定时检查", prompt: "检查", fireAt: now.addingTimeInterval(3600),
+                event: nil, requiresForeground: false, requestID: "w1"
+            )
+
+            let prevProbe = ChatRenderProbe.enabled
+            ChatRenderProbe.enabled = true
+            ChatRenderProbe.reset()
+            defer { ChatRenderProbe.enabled = prevProbe }
+
+            let badge = AmberUnifiedTaskBuilder.badgeCounts(
+                gateway: gateway,
+                subAgentStore: activity,
+                taskStore: tasks,
+                wakeStore: wake
+            )
+            let summaryParsesDuringBadge = ChatRenderProbe.counts["task-summary-parse"]?.values.reduce(0, +) ?? 0
+            XCTAssertEqual(summaryParsesDuringBadge, 0, "轻量角标计数不得触发 Markdown 摘要抽取")
+
+            let groups = AmberUnifiedTaskBuilder.buildTasks(
+                gateway: gateway,
+                subAgentStore: activity,
+                taskStore: tasks,
+                wakeStore: wake,
+                hubStore: hub
+            )
+            XCTAssertEqual(badge.active, groups.activeCount, "角标 active 数必须与任务面板 running+scheduled 100% 一致")
+            XCTAssertEqual(badge.needsAttention, groups.needsAttention.count, "角标 needsAttention 数必须与任务面板等你处理组 100% 一致")
+            XCTAssertEqual(badge.total, groups.activeCount + groups.needsAttention.count)
+
+            let dlgRunItem = try XCTUnwrap(groups.running.first { $0.id == "cloud-dialogue:dlg-run" })
+            XCTAssertEqual(dlgRunItem.title, "检查新发布包", "O(W+E) topic 索引应回退命中同 topic 首条 userMessage 作为标题")
+        }
+    }
+
+    @MainActor
+    func testBottomSwitcherTaskBadgeViewIsolatesParentRedrawsFromTaskBuilder() async throws {
+        try await withTaskProjectionStoresAsync { gateway, tasks, activity, _, _ in
+            struct DragHarness: View {
+                var dragTick: Int
+                let gateway: MacGatewayStore
+                let activity: IOSSubAgentActivityStore
+
+                var body: some View {
+                    HStack {
+                        Text("\(dragTick)")
+                        AmberDuetTaskBadgeView(
+                            gateway: gateway,
+                            subAgentStore: activity
+                        )
+                        .equatable()
+                    }
+                }
+            }
+
+            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+            let window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: 320, height: 80)
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+
+            let host = UIHostingController(rootView: DragHarness(dragTick: 0, gateway: gateway, activity: activity))
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(80))
+
+            let prevProbe = ChatRenderProbe.enabled
+            ChatRenderProbe.enabled = true
+            ChatRenderProbe.reset()
+            defer { ChatRenderProbe.enabled = prevProbe }
+
+            // 模拟底栏拖动逐帧触发父视图 body 重算
+            for tick in 1...8 {
+                host.rootView = DragHarness(dragTick: tick, gateway: gateway, activity: activity)
+                host.view.setNeedsLayout()
+                host.view.layoutIfNeeded()
+                try await Task.sleep(for: .milliseconds(16))
+            }
+
+            let taskBuilderCalls = ChatRenderProbe.counts["task-builder"]?.values.reduce(0, +) ?? 0
+            let badgeBodyCallsDuringDrag = ChatRenderProbe.counts["duet-task-badge-body"]?.values.reduce(0, +) ?? 0
+            XCTAssertEqual(taskBuilderCalls, 0, "底栏拖动期间不得触发 AmberUnifiedTaskBuilder.buildTasks")
+            XCTAssertEqual(badgeBodyCallsDuringDrag, 0, "无关拖动重绘不得导致独立角标叶子 View 重算")
+
+            // 任务状态真正变化时，叶子 View 必须响应 @Observable 变更并重算
+            let running = tasks.startTask(id: "badge-live-1", kind: .subAgent, title: "后台任务", objective: "执行")
+            activity.reconcile([try XCTUnwrap(IOSSubAgentActivityStore.activity(running))])
+            try await Task.sleep(for: .milliseconds(100))
+            window.layoutIfNeeded()
+
+            let badgeBodyCallsAfterMutation = ChatRenderProbe.counts["duet-task-badge-body"]?.values.reduce(0, +) ?? 0
+            XCTAssertGreaterThan(badgeBodyCallsAfterMutation, 0, "任务状态变化时独立角标叶子 View 必须正常刷新")
+            XCTAssertEqual(
+                ChatRenderProbe.counts["task-builder"]?.values.reduce(0, +) ?? 0,
+                0,
+                "角标刷新应走轻量 badgeCounts，而非完整 buildTasks"
+            )
+        }
+    }
+
+    private func withTaskProjectionStoresAsync(
+        _ body: (MacGatewayStore, IOSAdvancedTaskStore, IOSSubAgentActivityStore, IOSWakeTaskStore, AmberHubStore) async throws -> Void
+    ) async throws {
+        let suite = "TaskOwnershipAsync.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let tasks = IOSAdvancedTaskStore(userDefaults: defaults)
+        let activity = IOSSubAgentActivityStore(tasks: tasks, defaults: defaults, loadRuns: { [] })
+        try await body(
+            MacGatewayStore(defaults: defaults),
+            tasks,
+            activity,
+            IOSWakeTaskStore(fileURL: directory.appendingPathComponent("wake.json")),
+            AmberHubStore(defaults: defaults)
+        )
+    }
 }

@@ -448,6 +448,73 @@ final class ChatEpisodeTests: XCTestCase {
         }
     }
 
+    func testEmptyEpisodeBoundarySnapshotResolutionAndBodyMessageIsolation() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("EpisodeBoundarySnapshot-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = ChatEpisodeStore(baseDirectoryURL: tempDir)
+        let convId = UUID().uuidString.lowercased()
+
+        let u1 = UIMessage.companion.user(prompt: "旧话题：讨论架构方案")
+        let a1 = UIMessage.companion.assistant(prompt: "已记录旧话题要点。")
+        XCTAssertFalse(
+            ChatView.resolvedIsAtEmptyEpisodeBoundary(
+                conversationId: convId,
+                messages: [u1, a1],
+                episodeStore: store
+            ),
+            "无 Episode 的会话不应被判为空边界"
+        )
+
+        _ = store.sealCurrentEpisodeIfNeeded(
+            conversationId: convId,
+            messages: [u1, a1],
+            reason: .manualNewTopic,
+            nowMillis: 1_730_680_000_000
+        )
+        XCTAssertTrue(
+            ChatView.resolvedIsAtEmptyEpisodeBoundary(
+                conversationId: convId,
+                messages: [u1, a1],
+                episodeStore: store
+            ),
+            "刚点新话题封存后应处于空 Episode 边界，顶栏标题切回 Hub/默认名"
+        )
+
+        let u2 = UIMessage.companion.user(prompt: "新话题第一条消息")
+        XCTAssertFalse(
+            ChatView.resolvedIsAtEmptyEpisodeBoundary(
+                conversationId: convId,
+                messages: [u1, a1, u2],
+                episodeStore: store
+            ),
+            "新话题首条消息发送后必须退出空 Episode 边界，顶栏恢复展示话题标题"
+        )
+
+        let freshConvId = UUID().uuidString.lowercased()
+        XCTAssertFalse(
+            ChatView.resolvedIsAtEmptyEpisodeBoundary(
+                conversationId: freshConvId,
+                messages: [],
+                episodeStore: store
+            ),
+            "新建空会话不应处于空 Episode 边界"
+        )
+
+        // 静态防回归：conversationTitleForIsland 不得读取 viewModel.messages，切断 ChatView.body 订阅泄漏。
+        let signalsURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("iosApp/Chat/Presentation/ChatViewScreenSignals.swift")
+        let source = try String(contentsOf: signalsURL, encoding: .utf8)
+        let titleRange = try XCTUnwrap(source.range(of: "var conversationTitleForIsland: String"))
+        let nextDeclRange = try XCTUnwrap(source.range(of: "func compactIslandText", range: titleRange.upperBound..<source.endIndex))
+        let titleBody = String(source[titleRange.lowerBound..<nextDeclRange.lowerBound])
+        XCTAssertFalse(
+            titleBody.contains("viewModel.messages"),
+            "conversationTitleForIsland 禁止直接读取 viewModel.messages，否则有 Episode 会话在流式期间会导致 ChatView.body 每拍重算"
+        )
+    }
+
     // MARK: - Test Fixture
 
     private struct Fixture {
