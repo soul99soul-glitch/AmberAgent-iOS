@@ -101,6 +101,7 @@ async function playGeneration(selector, reduceMotion) {
   return true;
 }
 
+window.__amberGenerationSettled = () => active?.finished;
 window.__amberGenerationCancel = cancelGeneration;
 window.__amberGenerationPlay = (selector, reduceMotion) => {
   return playGeneration(selector, reduceMotion).catch(error => {

@@ -161,6 +161,10 @@ actor ChatMediaImageLoader {
         cache.totalCostLimit = 32 * 1024 * 1024
     }
 
+    func clearMemoryCache() {
+        cache.removeAllObjects()
+    }
+
     func image(urlString: String, pixelLimit: Int) async throws -> UIImage {
         try Task.checkCancellation()
         let key = "image:\(SHA256.hash(data: Data(urlString.utf8)).description):\(pixelLimit)"

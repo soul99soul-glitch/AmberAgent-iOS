@@ -19,6 +19,7 @@ struct IOSGenerativeWidgetCard: View {
 
     @State private var sheet: IOSGenerativeWidgetSheetTarget?
     @State private var measuredHeight: CGFloat = widgetMinHeight
+    @State private var previewVisible = false
     @State private var svgDocument: IOSGenerativeWidgetSVGDocument?
     @State private var isExportingSVG = false
     @State private var svgExportError: IOSGenerativeWidgetSVGExportError?
@@ -172,12 +173,18 @@ struct IOSGenerativeWidgetCard: View {
                     isStreaming: isStreaming && widget.renderer != IOSGuizangHtmlDeckValidator.renderer,
                     complete: widget.complete,
                     reduceMotion: reduceMotion,
+                    presentation: .inline(visible: previewVisible && sheet == nil,
+                                          streaming: isStreaming && !widget.complete && sheet == nil),
                     onTap: {
                         guard canOpenExpanded else { return }
                         sheet = .widget(widget, sanitized.html, settings)
                     }
                 )
                 .frame(height: measuredHeight)
+                .onGeometryChange(for: Bool.self) { proxy in
+                    guard let viewport = proxy.bounds(of: .scrollView(axis: .vertical)) else { return true }
+                    return viewport.intersects(CGRect(origin: .zero, size: proxy.size))
+                } action: { previewVisible = $0 }
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             } else {
                 IOSGenerativeWidgetLoadingView()
@@ -469,7 +476,8 @@ private struct IOSGenerativeWidgetExpandedSheet: View {
                         maxHeight: 1_600,
                         interactive: true,
                         fillContainer: true,
-                        height: $measuredHeight
+                        height: $measuredHeight,
+                        presentation: .expanded
                     )
                 }
             }
@@ -576,7 +584,7 @@ struct IOSGenerativeWidgetLoadingView: View {
 }
 
 @MainActor
-private struct IOSSafeGenerativeWidgetWebView: UIViewRepresentable {
+private struct IOSSafeGenerativeWidgetWebView: IOSWidgetWebContent {
     let html: String
     let minHeight: CGFloat
     let maxHeight: CGFloat
@@ -586,9 +594,14 @@ private struct IOSSafeGenerativeWidgetWebView: UIViewRepresentable {
     var isStreaming = false
     var complete = true
     var reduceMotion = false
+    var presentation: IOSWidgetWebPresentation = .unmanaged
     var onTap: (() -> Void)?
+    var snapshotHTML: String? { html }
+    var snapshotHeight: CGFloat? { height }
+    func openPreview() { onTap?() }
+    func isRevealing(_ coordinator: Coordinator) -> Bool { coordinator.isRevealing }
 
-    func makeCoordinator() -> Coordinator {
+    func makeCoordinator(onRender: @escaping () -> Void) -> Coordinator {
         Coordinator(
             minHeight: minHeight,
             maxHeight: maxHeight,
@@ -598,17 +611,17 @@ private struct IOSSafeGenerativeWidgetWebView: UIViewRepresentable {
                     height = clamped
                 }
             },
-            onTap: onTap
+            onTap: onTap, onRender: onRender
         )
     }
 
-    func makeUIView(context: Context) -> WKWebView {
+    func makeWebView(coordinator: Coordinator) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         let userContent = WKUserContentController()
         IOSUIGenerationMotion.install(in: userContent)
-        userContent.add(context.coordinator, name: "amberWidget")
+        userContent.add(coordinator, name: "amberWidget")
         config.userContentController = userContent
 
         let webView = WKWebView(frame: .zero, configuration: config)
@@ -617,25 +630,24 @@ private struct IOSSafeGenerativeWidgetWebView: UIViewRepresentable {
         webView.scrollView.backgroundColor = .clear
         webView.scrollView.isScrollEnabled = interactive || fillContainer
         webView.scrollView.bounces = interactive || fillContainer
-        webView.navigationDelegate = context.coordinator
-        context.coordinator.attach(webView: webView)
+        webView.navigationDelegate = coordinator
+        coordinator.attach(webView: webView)
         webView.loadHTMLString(receiverHTML(interactive: interactive, fillContainer: fillContainer), baseURL: URL(string: "https://amberagent.widget.local/"))
         return webView
     }
 
-    func updateUIView(_ webView: WKWebView, context: Context) {
-        context.coordinator.minHeight = minHeight
-        context.coordinator.maxHeight = maxHeight
-        context.coordinator.onTap = onTap
-        context.coordinator.push(html: stableStreamingHTML(html) ?? html,
-                                 isStreaming: isStreaming, complete: complete, reduceMotion: reduceMotion)
+    func updateWebView(_ webView: WKWebView, coordinator: Coordinator) {
+        coordinator.minHeight = minHeight
+        coordinator.maxHeight = maxHeight
+        coordinator.onTap = onTap
+        coordinator.push(html: stableStreamingHTML(html) ?? html,
+                         isStreaming: isStreaming, complete: complete, reduceMotion: reduceMotion)
     }
 
-    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+    static func dismantleWebView(_ webView: WKWebView, coordinator: Coordinator) {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "amberWidget")
         webView.navigationDelegate = nil
         webView.stopLoading()
-        webView.loadHTMLString("", baseURL: nil)
         coordinator.close()
     }
 
@@ -645,8 +657,11 @@ private struct IOSSafeGenerativeWidgetWebView: UIViewRepresentable {
         var maxHeight: CGFloat
         var onResize: (CGFloat) -> Void
         var onTap: (() -> Void)?
+        let onRender: () -> Void
         private weak var webView: WKWebView?
         private var latestHTML: String = ""
+        private var revision = 0
+        var isRevealing: Bool { revealInFlight || (pendingReveal && pendingPush != nil) }
         private var pendingPush: DispatchWorkItem?
         private var revealState = IOSUIGenerationRevealState()
         private var pendingReveal = false
@@ -654,11 +669,12 @@ private struct IOSSafeGenerativeWidgetWebView: UIViewRepresentable {
         private var reduceMotion = false
         private var documentReady = false
 
-        init(minHeight: CGFloat, maxHeight: CGFloat, onResize: @escaping (CGFloat) -> Void, onTap: (() -> Void)?) {
+        init(minHeight: CGFloat, maxHeight: CGFloat, onResize: @escaping (CGFloat) -> Void, onTap: (() -> Void)?, onRender: @escaping () -> Void) {
             self.minHeight = minHeight
             self.maxHeight = maxHeight
             self.onResize = onResize
             self.onTap = onTap
+            self.onRender = onRender
         }
 
         func attach(webView: WKWebView) {
@@ -679,6 +695,7 @@ private struct IOSSafeGenerativeWidgetWebView: UIViewRepresentable {
             self.reduceMotion = reduceMotion
             guard html != latestHTML || reveal else { return }
             latestHTML = html
+            revision += 1
             pendingPush?.cancel()
             let work = DispatchWorkItem { [weak self] in
                 self?.flushLatestHTML()
@@ -691,26 +708,35 @@ private struct IOSSafeGenerativeWidgetWebView: UIViewRepresentable {
             pendingPush = nil
             guard documentReady, let webView, !latestHTML.isEmpty else { return }
             webView.evaluateJavaScript(
-                "window.__amberWidgetSetHtml && window.__amberWidgetSetHtml(\(jsStringLiteral(latestHTML)));"
+                "window.__amberWidgetSetHtml && window.__amberWidgetSetHtml(\(jsStringLiteral(latestHTML)), \(revision));"
             )
             if pendingReveal, !revealInFlight {
                 revealInFlight = true
-                IOSUIGenerationMotion.play(in: webView, selector: "#root", reduceMotion: reduceMotion) { [weak self] consumed in
-                    self?.revealInFlight = false
-                    if consumed { self?.pendingReveal = false }
+                IOSUIGenerationMotion.play(in: webView, selector: "#root", reduceMotion: reduceMotion) { [weak self, weak webView] consumed in
+                    guard let self, let webView, self.webView === webView else { return }
+                    if consumed { pendingReveal = false }
+                    // The play callback fires when the animation starts. Keep its live
+                    // surface until the overlay has actually left the document.
+                    webView.callAsyncJavaScript("await window.__amberGenerationSettled?.();",
+                                                arguments: [:], in: nil, in: .page) { [weak self] _ in
+                        self?.revealInFlight = false
+                        IOSWidgetPreviewPool.shared.reconcile()
+                    }
                 }
             }
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard let body = message.body as? [String: Any],
+            guard let webView, message.webView === webView, let body = message.body as? [String: Any],
                   let type = body["type"] as? String else {
                 return
             }
             switch type {
             case "resize":
-                if let number = body["height"] as? NSNumber {
+                if (body["revision"] as? NSNumber)?.intValue == revision,
+                   let number = body["height"] as? NSNumber {
                     onResize(CGFloat(number.doubleValue))
+                    onRender()
                 }
             case "tap":
                 onTap?()
@@ -752,7 +778,7 @@ private struct IOSSafeGenerativeWidgetWebView: UIViewRepresentable {
 }
 
 @MainActor
-private struct IOSRichSandboxWebView: UIViewRepresentable {
+private struct IOSRichSandboxWebView: IOSWidgetWebContent {
     let renderer: String
     let specJson: String
     let maxHeight: CGFloat
@@ -760,38 +786,37 @@ private struct IOSRichSandboxWebView: UIViewRepresentable {
 
     @State private var height: CGFloat = 520
 
-    func makeCoordinator() -> Coordinator {
+    func makeCoordinator(onRender: @escaping () -> Void) -> Coordinator {
         Coordinator(renderer: renderer, specJson: specJson, maxHeight: maxHeight)
     }
 
-    func makeUIView(context: Context) -> WKWebView {
+    func makeWebView(coordinator: Coordinator) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         let userContent = WKUserContentController()
-        userContent.add(context.coordinator, name: "amberWidget")
+        userContent.add(coordinator, name: "amberWidget")
         config.userContentController = userContent
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isOpaque = false
         webView.backgroundColor = .clear
-        webView.navigationDelegate = context.coordinator
+        webView.navigationDelegate = coordinator
         webView.scrollView.bounces = renderer != "slides"
         webView.scrollView.isScrollEnabled = renderer != "slides"
-        context.coordinator.attach(webView: webView)
-        context.coordinator.loadSandbox(in: webView)
+        coordinator.attach(webView: webView)
+        coordinator.loadSandbox(in: webView)
         return webView
     }
 
-    func updateUIView(_ webView: WKWebView, context: Context) {
-        context.coordinator.specJson = specJson
-        context.coordinator.render(in: webView)
+    func updateWebView(_ webView: WKWebView, coordinator: Coordinator) {
+        coordinator.specJson = specJson
+        coordinator.render(in: webView)
     }
 
-    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+    static func dismantleWebView(_ webView: WKWebView, coordinator: Coordinator) {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "amberWidget")
         webView.navigationDelegate = nil
         webView.stopLoading()
-        webView.loadHTMLString("", baseURL: nil)
         coordinator.close()
     }
 
@@ -893,17 +918,17 @@ private struct IOSRichSandboxWebView: UIViewRepresentable {
 }
 
 @MainActor
-private struct IOSFullHTMLDeckWebView: UIViewRepresentable {
+private struct IOSFullHTMLDeckWebView: IOSWidgetWebContent {
     let specJson: String
     let generationRevealRequested: Bool
     let reduceMotion: Bool
     let onGenerationRevealConsumed: () -> Void
 
-    func makeCoordinator() -> Coordinator {
+    func makeCoordinator(onRender: @escaping () -> Void) -> Coordinator {
         Coordinator(specJson: specJson, onGenerationRevealConsumed: onGenerationRevealConsumed)
     }
 
-    func makeUIView(context: Context) -> WKWebView {
+    func makeWebView(coordinator: Coordinator) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
@@ -914,26 +939,25 @@ private struct IOSFullHTMLDeckWebView: UIViewRepresentable {
         )
         IOSUIGenerationMotion.install(in: config.userContentController)
         let webView = WKWebView(frame: .zero, configuration: config)
-        webView.navigationDelegate = context.coordinator
+        webView.navigationDelegate = coordinator
         webView.scrollView.bounces = false
-        context.coordinator.attach(webView: webView)
-        context.coordinator.load(in: webView)
+        coordinator.attach(webView: webView)
+        coordinator.load(in: webView)
         return webView
     }
 
-    func updateUIView(_ webView: WKWebView, context: Context) {
-        context.coordinator.specJson = specJson
-        context.coordinator.generationRevealRequested = generationRevealRequested
-        context.coordinator.reduceMotion = reduceMotion
+    func updateWebView(_ webView: WKWebView, coordinator: Coordinator) {
+        coordinator.specJson = specJson
+        coordinator.generationRevealRequested = generationRevealRequested
+        coordinator.reduceMotion = reduceMotion
         if reduceMotion { IOSUIGenerationMotion.cancel(in: webView) }
-        context.coordinator.playGenerationRevealIfNeeded(in: webView)
+        coordinator.playGenerationRevealIfNeeded(in: webView)
     }
 
-    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+    static func dismantleWebView(_ webView: WKWebView, coordinator: Coordinator) {
         IOSUIGenerationMotion.cancel(in: webView)
         webView.navigationDelegate = nil
         webView.stopLoading()
-        webView.loadHTMLString("", baseURL: nil)
         coordinator.close()
     }
 
@@ -1184,15 +1208,17 @@ private func receiverHTML(interactive: Bool, fillContainer: Bool) -> String {
     (function(){
       var root=document.getElementById('root');
       var timer=null;
+      var revision=0;
       function post(payload){
         try{ window.webkit.messageHandlers.amberWidget.postMessage(payload); }catch(e){}
       }
       function report(){
         if(timer) clearTimeout(timer);
         timer=setTimeout(function(){
+          if(!root.hasChildNodes()) return;
           var rect=root.getBoundingClientRect();
           var height=Math.ceil(Math.max(rect.height, root.scrollHeight, document.body.scrollHeight, 1));
-          post({type:'resize',height:height});
+          post({type:'resize',height:height,revision:revision});
         }, 40);
       }
       function clampSvgOverflow(){
@@ -1223,7 +1249,8 @@ private func receiverHTML(interactive: Bool, fillContainer: Bool) -> String {
           if(svgs[i].pauseAnimations){ svgs[i].pauseAnimations(); svgs[i].setCurrentTime(0); }
         }
       }
-      window.__amberWidgetSetHtml=function(html){
+      window.__amberWidgetSetHtml=function(html, version){
+        revision=version;
         if(root.innerHTML!==html){
           if(window.__amberGenerationCancel) window.__amberGenerationCancel();
           root.innerHTML=html; clampSvgOverflow(); applyMotionPreference();

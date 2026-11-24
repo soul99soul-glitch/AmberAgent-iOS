@@ -18,6 +18,7 @@ struct AppShell: View {
     @State private var chatViewModel: ChatViewModel
     @State private var conversationActivityCenter: ConversationActivityCenter
     @State private var councilChatViewModel: CouncilChatViewModel
+    @State private var memoryPressureCoordinator: IOSMemoryPressureCoordinator?
     @State private var storeCoordinator = IOSStoreCoordinator()
     @State private var rootRouter = RouterPath()
     @State private var pendingAgentActivityTarget: AgentActivityDeepLink.Target?
@@ -186,6 +187,16 @@ struct AppShell: View {
             Task { await openPendingAppDeepLinkIfReady() }
         }
         .onAppear {
+            if memoryPressureCoordinator == nil {
+                memoryPressureCoordinator = IOSMemoryPressureCoordinator(
+                    conversationStore: conversationStore,
+                    sessionStore: localToolExecutor.webMountController.sessionStore
+                ) { [chatViewModel, councilChatViewModel] in
+                    chatViewModel.runRegistry.activeMarkdownMessageIDs
+                        .union(IOSChatBackgroundGenerationCoordinator.shared.activeMarkdownMessageIDs)
+                        .union(councilChatViewModel.messages.filter(\.isStreamingMarkdown).map(\.markdownRenderCacheNamespace))
+                }
+            }
             IOSDeepLinkInbox.shared.installHandler { url in
                 enqueueAppURL(url)
             }

@@ -590,6 +590,13 @@ final class IOSChatBackgroundGenerationCoordinator {
         activeJobs.count
     }
 
+    var activeMarkdownMessageIDs: Set<String> {
+        Set(activeJobs.values.compactMap { job in
+            guard let tail = job.messagesSnapshot.lastMessage, tail.role == .assistant else { return nil }
+            return ChatMessageProjector.messageId(for: tail)
+        })
+    }
+
     var activeSubAgentJobCount: Int {
         activeJobs.values.filter { $0.subAgentTimeoutSeconds != nil }.count
     }

@@ -48,6 +48,10 @@ final class ChatCompletionFeedback: Equatable {
         _runID
     }
 
+    var drainingMessageIDs: Set<String> {
+        Set(runs.values.compactMap { $0.pending?.messageID })
+    }
+
     func runID(forMessageID messageID: String?) -> String? {
         guard let messageID,
               let mappedRunID = messageRunIDs[messageID],

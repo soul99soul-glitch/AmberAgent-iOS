@@ -39,6 +39,10 @@ actor ChatDataImageLoader {
         cache.totalCostLimit = costLimit
     }
 
+    func clearMemoryCache() {
+        cache.removeAllObjects()
+    }
+
     func resolve(urlString: String, maxPixelSize: Int? = nil) async -> ChatDataImageLoadState {
         guard !Task.isCancelled else { return .failure }
         let normalizedPixelSize = maxPixelSize.flatMap { $0 > 0 ? $0 : nil }

@@ -125,7 +125,7 @@ final class IOSMiniAppRepository {
         self.directory = root.appendingPathComponent("miniapps", isDirectory: true)
         self.fileURL = directory.appendingPathComponent("miniapps.json", isDirectory: false)
         self.encoder = JSONEncoder()
-        self.encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        self.encoder.outputFormatting = [.sortedKeys]
         self.decoder = JSONDecoder()
         reload()
     }

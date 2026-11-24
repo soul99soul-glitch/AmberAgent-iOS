@@ -214,6 +214,7 @@ final class IOSWebMountSessionStore {
     private(set) var currentSessionId: String
     private(set) var recordsRevision: UInt64 = 0
     @ObservationIgnored private var runtimes: [String: IOSWebMountRuntimeServicing] = [:]
+    @ObservationIgnored private var toolUseCounts: [String: Int] = [:]
     @ObservationIgnored private var metadata: [String: IOSWebMountSessionMetadata] = [:]
     @ObservationIgnored private let runtimeFactory: () -> IOSWebMountRuntimeServicing
     @ObservationIgnored private let restoredRuntimeFactory: ((String) -> IOSWebMountRuntimeServicing)?
@@ -623,11 +624,43 @@ final class IOSWebMountSessionStore {
         persistSessions()
     }
 
+    func beginToolUse(sessionId: String) {
+        toolUseCounts[sessionId, default: 0] += 1
+    }
+
+    func endToolUse(sessionId: String) {
+        guard let count = toolUseCounts[sessionId] else { return }
+        toolUseCounts[sessionId] = count > 1 ? count - 1 : nil
+    }
+
+    func reclaimIdleWebViews() {
+        let now = nowMillis()
+        var changed = false
+        for (id, runtime) in runtimes {
+            guard var item = metadata[id], item.backend == .local,
+                  effectiveControlOwner(item, now: now) == .none, toolUseCounts[id] == nil,
+                  let browser = runtime as? IOSWebMountWKRuntime,
+                  let snapshot = browser.reclaimablePageSnapshot else { continue }
+            let replacement = restoredRuntimeFactory?(id) ?? IOSWebMountWKRuntime(sessionId: id)
+            guard replacement.snapshot.sessionId == id else { continue }
+            item.lastTitle = IOSWebMountRedactor.redactedText(snapshot.title ?? "").nilIfBlank ?? item.lastTitle
+            item.redactedURL = snapshot.currentURL ?? snapshot.requestedURL ?? item.redactedURL
+            item.needsReopen = item.needsReopen || snapshot.status != .idle || item.redactedURL != nil
+            metadata[id] = item
+            browser.closeSession()
+            // Keep the logical session (including the current local tab) and its metadata.
+            // The replacement owns no WebKit view or page until the session is used again.
+            runtimes[id] = replacement
+            changed = true
+        }
+        if changed { persistSessions() }
+    }
+
     func expireInactiveSessions(nowMillis explicitNow: Int64? = nil) {
         let now = explicitNow ?? nowMillis()
         normalizeExpiredAgentLeases(now: now)
         let expired = metadata.compactMap { sessionId, item -> String? in
-            guard runtimes[sessionId] != nil,
+            guard runtimes[sessionId] != nil, toolUseCounts[sessionId] == nil,
                   !item.persistentOptIn,
                   effectiveControlOwner(item, now: now) != .user,
                   now - item.lastActivityMillis >= Self.ephemeralTTLMillis else { return nil }
@@ -661,7 +694,7 @@ final class IOSWebMountSessionStore {
         })
         let candidate = runtimes.keys
             .filter { sessionId in
-                guard let item = metadata[sessionId],
+                guard let item = metadata[sessionId], toolUseCounts[sessionId] == nil,
                       !item.persistentOptIn,
                       effectiveControlOwner(item, now: now) == .none else { return false }
                 if item.backend == .local, localSessionIds.count <= 1 { return false }

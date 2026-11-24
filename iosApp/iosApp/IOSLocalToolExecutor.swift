@@ -156,7 +156,7 @@ final class IOSLocalToolExecutor {
     private let documentStore: DocumentAccessStore
     private let systemPermissionCoordinator: IOSSystemPermissionCoordinator
     private let runtime: IOSToolRuntime
-    private let webMountController: IOSWebMountController
+    let webMountController: IOSWebMountController
     private let workspaceStore: IOSWorkspaceStore
     private let settingsStore: SettingsStore?
     let terminalRuntime: IOSTerminalRuntime

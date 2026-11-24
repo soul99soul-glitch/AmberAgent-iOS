@@ -130,7 +130,12 @@ enum AmberPersonaImageGenerationRoute: Equatable, Sendable {
 @MainActor
 @Observable
 final class AmberPersonaStore {
-    static let shared = AmberPersonaStore()
+    private(set) static weak var loadedShared: AmberPersonaStore?
+    static let shared: AmberPersonaStore = {
+        let store = AmberPersonaStore()
+        loadedShared = store
+        return store
+    }()
 
     var preset: AmberPersonaPreset {
         didSet {
@@ -495,6 +500,10 @@ final class AmberPersonaStore {
         try? fileManager.removeItem(at: url)
         referenceItems.removeAll { $0.id == id }
         persistReferences()
+    }
+
+    func clearReferenceImageCache() {
+        referenceImageCache.removeAll()
     }
 
     func loadReferenceImage(for item: AmberPersonaReferenceItem) -> UIImage? {

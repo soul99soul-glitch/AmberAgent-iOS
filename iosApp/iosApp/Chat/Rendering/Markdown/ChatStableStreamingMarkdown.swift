@@ -38,6 +38,10 @@ final class ChatSegmentedBubbleReadiness {
 }
 
 struct ChatStableStreamingMarkdownView: View {
+    @MainActor static func clearMemoryCache(preservingMessageIDs ids: Set<String>) {
+        ChatStableStreamingMarkdownController.clearMemoryCache(preservingMessageIDs: ids)
+    }
+
     @Environment(\.chatStreamingTailCoordinator) private var tailCoordinator
     @Environment(\.markdownSegmentedBlockEntrance) private var segmentedBlockEntrance
     @Environment(\.markdownLayoutInvalidationID) private var layoutInvalidationID
@@ -140,6 +144,26 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
     private static let identityCacheLimit = 256
     private static var visualConfigHashCache: [SwiftStreamingMarkdown.MarkdownRenderConfig: Int] = [:]
     private static let lightTraitCollection = UITraitCollection(userInterfaceStyle: .light)
+
+    static func clearMemoryCache(preservingMessageIDs ids: Set<String>) {
+        // Block identities extend the message namespace with colon-delimited part/segment IDs.
+        // Keep both lookup paths, so a live row can remount with its exact rendered prefix.
+        let namespaces = Set(ids.map { $0.lowercased() })
+        identityCache = identityCache.filter { key, _ in
+            guard !namespaces.isEmpty else { return false }
+            let identity = key.identity.lowercased()
+            return namespaces.contains(identity) || identity.indices.contains { index in
+                identity[index] == ":" && namespaces.contains(String(identity[..<index]))
+            }
+        }
+        identityCacheOrder.removeAll { identityCache[$0] == nil }
+        let protected = Set(identityCache.values.map {
+            RenderableCacheKey(text: $0.text, signature: $0.signature)
+        })
+        renderableCache = renderableCache.filter { protected.contains($0.key) }
+        renderableCacheOrder.removeAll { renderableCache[$0] == nil }
+        visualConfigHashCache.removeAll()
+    }
 
     @Published private(set) var revision = 0
     let tailSink = SwiftStreamingMarkdown.MarkdownStreamingTailSink()
@@ -739,10 +763,7 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
     }
 
     static func resetRenderableCacheForTesting() {
-        renderableCache.removeAll()
-        renderableCacheOrder.removeAll()
-        identityCache.removeAll()
-        identityCacheOrder.removeAll()
+        clearMemoryCache(preservingMessageIDs: [])
     }
 
     static func storeRenderableForTesting(

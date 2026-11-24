@@ -27,7 +27,7 @@ private final class AmberMarkdownParseResultBox {
     }
 }
 
-private final class AmberMarkdownAstCache: @unchecked Sendable {
+final class AmberMarkdownAstCache: @unchecked Sendable {
     static let shared = AmberMarkdownAstCache()
 
     private let cache = NSCache<NSString, AmberMarkdownParseResultBox>()
@@ -36,7 +36,11 @@ private final class AmberMarkdownAstCache: @unchecked Sendable {
         cache.countLimit = 200
     }
 
-    func result(for markdown: String) -> AmberMarkdownParseResult {
+    func clearMemoryCache() {
+        cache.removeAllObjects()
+    }
+
+    fileprivate func result(for markdown: String) -> AmberMarkdownParseResult {
         let key = markdown as NSString
         if let cached = cache.object(forKey: key) {
             return cached.value

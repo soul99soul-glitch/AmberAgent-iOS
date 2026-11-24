@@ -271,6 +271,12 @@ final class IOSWebMountController {
         if let limitFailure = Self.webMountInputLimitFailure(toolName: toolName, args: args) {
             return limitFailure
         }
+        // A read-only tool need not hold a control lease. DNS and visual/model work
+        // can also suspend before binding the lease, or run beyond its expiry.
+        let sessionId = (args["session_id"] as? String)?.nilIfBlank ?? sessionStore.currentSessionId
+        let usesPage = toolName == "wm_open" || Self.localSessionPolicyToolNames.contains(toolName)
+        if usesPage { sessionStore.beginToolUse(sessionId: sessionId) }
+        defer { if usesPage { sessionStore.endToolUse(sessionId: sessionId) } }
         do {
             if !Self.desktopRoutingExemptToolNames.contains(toolName),
                let sessionId = (args["session_id"] as? String)?.nilIfBlank,
@@ -809,6 +815,9 @@ final class IOSWebMountController {
                 context: context,
                 requiresControl: true
             )
+            let sessionId = runtime.snapshot.sessionId
+            sessionStore.beginToolUse(sessionId: sessionId)
+            defer { sessionStore.endToolUse(sessionId: sessionId) }
             let method = toolName.removingPrefix("wm_")
             let selector = (args["target"] as? String)?.nilIfBlank
                 ?? (args["selector"] as? String)?.nilIfBlank

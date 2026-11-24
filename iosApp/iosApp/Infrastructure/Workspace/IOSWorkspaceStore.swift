@@ -173,7 +173,7 @@ final class IOSWorkspaceStore: Equatable {
         self.filesDirectory = rootDirectory.appendingPathComponent("files", isDirectory: true)
         self.artifactsDirectory = rootDirectory.appendingPathComponent("artifacts", isDirectory: true)
         self.stateURL = rootDirectory.appendingPathComponent("workspace.json", isDirectory: false)
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.outputFormatting = [.sortedKeys]
         reload()
     }
 

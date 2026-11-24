@@ -130,6 +130,21 @@ final class ChatConversationRunRegistry {
 
     var allRuns: [ChatConversationRun] { Array(runs.values) }
 
+    var activeMarkdownMessageIDs: Set<String> {
+        var ids = Set<String>()
+        for run in runs.values {
+            let state = run.state
+            ids.formUnion(state.completionFeedback.drainingMessageIDs)
+            ids.formUnion(state.liveTaskMessageIds)
+            ids.formUnion(state.liveTaskTailMessageIds)
+            if state.isLoading || run.hasActiveOrQueuedTask,
+               let tail = state.untrackedMessages.last, tail.role == .assistant {
+                ids.insert(ChatMessageProjector.messageId(for: tail))
+            }
+        }
+        return ids
+    }
+
     var activeForegroundRunCount: Int {
         runs.values.reduce(0) { count, run in
             count + run.allActiveHosts.count

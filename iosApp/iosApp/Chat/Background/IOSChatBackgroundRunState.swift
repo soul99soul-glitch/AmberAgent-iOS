@@ -305,6 +305,10 @@ final class IOSChatBackgroundMessagesSnapshot: @unchecked Sendable {
         return combined
     }
 
+    var lastMessage: UIMessage? {
+        lock.withLock { materializedMessages?.last ?? pendingSuffix.last ?? pendingPrefix.last }
+    }
+
     func replace(with messages: [UIMessage]) {
         lock.lock()
         materializedMessages = messages

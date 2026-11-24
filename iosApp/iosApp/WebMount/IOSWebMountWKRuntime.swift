@@ -102,6 +102,15 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         approvedMainFrameDestination = nil
     }
 
+    var reclaimablePageSnapshot: IOSWebMountRuntimeSnapshot? {
+        guard let view = webViewStorage, browserPresentationHosts.isEmpty, view.window == nil,
+              !view.isLoading, pendingLoad == nil, snapshot.status != .loading else { return nil }
+        // WebKit can deliver or change a document title after the navigation delegate's didFinish.
+        var page = snapshot
+        page.title = view.title?.nilIfBlank ?? page.title
+        return page
+    }
+
     func closeSession() {
         isClosed = true
         setUserBrowsingEnabled(false)

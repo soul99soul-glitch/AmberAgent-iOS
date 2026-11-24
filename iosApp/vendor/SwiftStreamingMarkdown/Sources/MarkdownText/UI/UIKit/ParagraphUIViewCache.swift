@@ -5,7 +5,11 @@
 
 import UIKit
 
-class ParagraphUIViewCache {
+public final class ParagraphUIViewCache {
+  @MainActor public static func clearRecycledViews() {
+    shared.$cachedViews.mutate { $0.removeAll() }
+  }
+
   @WithLock
   private var cachedViews: [ParagraphUIView] = []
   private let maxCacheSize = 50 // Limit cache size
