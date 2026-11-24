@@ -848,41 +848,6 @@ private struct SnapshotMiniAvatar: View {
     }
 }
 
-struct AgentSoulCard: View {
-    let title: String
-    let text: String
-    var isPlaceholder: Bool = false
-    var onEdit: (() -> Void)?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(title)
-                    .font(.system(size: 14.5, weight: .bold))
-                    .foregroundStyle(AgentEmbodimentPalette.ink)
-                Spacer(minLength: 4)
-                if let onEdit {
-                    Button(IOSAppLocalization.string("编辑", defaultValue: "编辑"), action: onEdit)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(AgentEmbodimentPalette.accent)
-                        .buttonStyle(.plain)
-                }
-            }
-            Text(text)
-                .font(.system(size: 13.5))
-                .foregroundStyle(isPlaceholder ? AgentEmbodimentPalette.inkMuted : AgentEmbodimentPalette.ink)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(AgentEmbodimentPalette.cardBg))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(AgentEmbodimentPalette.cardStroke, lineWidth: 1)
-        }
-    }
-}
-
 struct AgentSoulEditorSheet: View {
     let store: AgentSoulStore
     @Environment(\.dismiss) private var dismiss
