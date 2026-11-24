@@ -1127,6 +1127,95 @@ extension MacGatewayStore {
         }
     }
 
+    /// Active (non-terminal) workItemIds eligible for composer follow-up or stop in the current cloud main dialogue.
+    /// Excludes provisional `topic:` keys, stop-requested or outcome-unknown items, and unified-timeline delegations
+    /// belonging to other conversations.
+    var activeCloudDialogueTargetWorkItemIds: [String] {
+        var ordered: [String] = []
+        var seen = Set<String>()
+        for id in activeCloudDialogueWorkItemIds where seen.insert(id).inserted {
+            ordered.append(id)
+        }
+        for progress in cloudDialogueProgressByWorkItem.values.sorted(by: { $0.lastEventSeq > $1.lastEventSeq }) {
+            let id = progress.workItemId
+            if progress.isLive, seen.insert(id).inserted {
+                ordered.append(id)
+            }
+        }
+        let activeConversationId = Self.nonEmptyTrimmed(cloudDialogueConversationId)
+        return ordered.filter { id in
+            guard cloudDialogueWorkItemAcceptsInput(id) else { return false }
+            if let activeConversationId,
+               let workItemConvId = Self.nonEmptyTrimmed(conversationId(forWorkItemId: id)),
+               workItemConvId.caseInsensitiveCompare(activeConversationId) != .orderedSame {
+                return false
+            }
+            let relatedMainSubmissions = cloudDialogueSubmissions.filter { submission in
+                submission.kind == .mainMessage && (
+                    submission.workItemId == id || submission.receipt?.workItemIds.contains(id) == true
+                )
+            }
+            if !relatedMainSubmissions.isEmpty,
+               relatedMainSubmissions.allSatisfy(\.isUnifiedDelegation) {
+                return false
+            }
+            return true
+        }
+    }
+
+    /// Read-only check for whether a cloud work item is still active and accepts follow-up/stop actions.
+    func cloudDialogueWorkItemAcceptsInput(_ workItemId: String) -> Bool {
+        let trimmed = workItemId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("topic:") else { return false }
+        if let progress = cloudDialogueProgressByWorkItem[trimmed] {
+            guard progress.isLive,
+                  !progress.isStopRequested,
+                  !progress.isOutcomeUnknown,
+                  progress.outcomeUnknownResolution == nil else {
+                return false
+            }
+        }
+        if let task = cloudTasks.first(where: { $0.workItemId == trimmed }), task.isTerminal {
+            return false
+        }
+        return true
+    }
+
+    /// Read-only compact display title for a cloud work item shown in the composer follow-up bar.
+    func cloudDialogueWorkItemDisplayTitle(for workItemId: String, maxLength: Int = 24) -> String {
+        let progress = cloudDialogueProgressByWorkItem[workItemId]
+        let taskTitle = cloudTasks.first(where: { $0.workItemId == workItemId })?.effectiveWorkItem?.title
+        let submissionText = cloudDialogueSubmissions.first(where: { submission in
+            submission.kind == .mainMessage && (
+                submission.workItemId == workItemId ||
+                submission.receipt?.workItemIds.contains(workItemId) == true ||
+                (progress.map { !$0.topicId.isEmpty && submission.receipt?.topicId == $0.topicId } == true)
+            )
+        })?.text
+        let userEventText = cloudDialogueEvents.last(where: { event in
+            event.kind == .userMessage && (
+                event.workItemId == workItemId ||
+                (progress.map { !$0.topicId.isEmpty && event.topicId == $0.topicId } == true)
+            )
+        })?.text
+        let stopLabel = localized("已请求停止")
+        let progressLine = progress.flatMap { prog -> String? in
+            let trimmed = prog.statusLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (!trimmed.isEmpty && trimmed != stopLabel) ? trimmed : nil
+        }
+        let raw = Self.nonEmptyTrimmed(taskTitle)
+            ?? Self.nonEmptyTrimmed(submissionText)
+            ?? Self.nonEmptyTrimmed(userEventText)
+            ?? progressLine
+            ?? workItemId
+        let singleLine = raw
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard singleLine.count > maxLength, maxLength > 1 else { return singleLine }
+        return String(singleLine.prefix(maxLength - 1)) + "…"
+    }
+
     /// Resolves the foreground send entrance key (`"cloud-user:<requestId>"`) for a merged cloud user/followup event
     /// so an in-flight optimistic bubble hands off seamlessly to the durable event row without double-animating or snapping.
     func cloudUserSendEntranceKey(for event: MacGatewayCloudDialogueEvent) -> String? {
@@ -2053,7 +2142,9 @@ extension MacGatewayStore {
             applyReceipt(receipt)
             if !isUnifiedDelegation, selectedCloudDialogueWorkItemId == nil,
                (receipt.conversationId ?? request.conversationId) == cloudDialogueConversationId,
-               let firstWorkItem = receipt.workItemIds.first {
+               receipt.workItemIds.count == 1,
+               let firstWorkItem = receipt.workItemIds.first,
+               activeCloudDialogueTargetWorkItemIds == [firstWorkItem] {
                 selectedCloudDialogueWorkItemId = firstWorkItem
             }
             persistCloudDialogueState()

@@ -32,9 +32,49 @@ struct ChatComposerLocalState {
     var isSubmittingCloudDialogue = false
     var cloudDialogueErrorMessage: String?
     var cloudDialogueTaskNotice: String?
+    var cloudDialogueBypassedAutoTargetWorkItemId: String?
     var activeCloudDialogueRequestId = UUID().uuidString.lowercased()
     var lastCloudDialogueFingerprint: String?
     var cloudDialogueSubmitGeneration = 0
+
+    struct CloudDialogueComposerTarget: Equatable {
+        var workItemId: String
+        var isAutoSelected: Bool
+    }
+
+    /// Resolves the effective cloud dialogue follow-up / stop target:
+    /// 1. Explicit selection wins while that work item still accepts input.
+    /// 2. Otherwise, when exactly 1 active work item exists and it wasn't explicitly bypassed
+    ///    ("改为新消息" or rejected as terminal/cancelled), default to it.
+    /// 3. When 0 or >= 2 active work items exist without an explicit selection, return nil (new message).
+    func resolvedCloudDialogueTarget(
+        explicitSelectedWorkItemId: String?,
+        activeWorkItemIds: [String],
+        explicitSelectionAcceptsInput: Bool = true
+    ) -> CloudDialogueComposerTarget? {
+        if let explicit = explicitSelectedWorkItemId?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !explicit.isEmpty,
+           activeWorkItemIds.contains(explicit) || explicitSelectionAcceptsInput {
+            return CloudDialogueComposerTarget(workItemId: explicit, isAutoSelected: false)
+        }
+        guard activeWorkItemIds.count == 1,
+              let soleId = activeWorkItemIds.first,
+              soleId != cloudDialogueBypassedAutoTargetWorkItemId else {
+            return nil
+        }
+        return CloudDialogueComposerTarget(workItemId: soleId, isAutoSelected: true)
+    }
+
+    mutating func switchCloudDialogueToNewMessage(
+        currentTargetWorkItemId: String?,
+        selectedWorkItemId: inout String?
+    ) {
+        if let target = currentTargetWorkItemId ?? selectedWorkItemId {
+            cloudDialogueBypassedAutoTargetWorkItemId = target
+        }
+        selectedWorkItemId = nil
+        cloudDialogueErrorMessage = nil
+    }
 
     // Plan 2: Unified Main-Timeline 3-Way Execution Target (本机 / 云端 / Mac) & Targeted Follow-up
     var unifiedMacFollowupWorkItemId: String? = nil
@@ -82,6 +122,7 @@ struct ChatComposerLocalState {
         submittedText: String,
         submittedTargetWorkItemId: String?,
         submittedFingerprint: String,
+        isSubmittedTargetStillActive: Bool = true,
         currentInputText: inout String,
         selectedWorkItemId: inout String?,
         result: Result<MacGatewayCloudDialogueReceipt, Error>
@@ -90,11 +131,33 @@ struct ChatComposerLocalState {
             isSubmittingCloudDialogue = false
         }
         switch result {
-        case .success:
+        case .success(let receipt):
+            if receipt.state == .cancelled {
+                let currentFingerprint = Self.cloudDialogueFingerprint(
+                    text: currentInputText,
+                    targetWorkItemId: selectedWorkItemId
+                )
+                if generation == cloudDialogueSubmitGeneration && currentFingerprint == submittedFingerprint {
+                    cloudDialogueErrorMessage = "补充未被接收：原任务已结束。"
+                    cloudDialogueTaskNotice = "草稿已保留；再次发送将作为新的云端请求。"
+                    if let submittedTargetWorkItemId {
+                        cloudDialogueBypassedAutoTargetWorkItemId = submittedTargetWorkItemId
+                    }
+                    selectedWorkItemId = nil
+                    activeCloudDialogueRequestId = UUID().uuidString.lowercased()
+                    lastCloudDialogueFingerprint = nil
+                } else if let submittedTargetWorkItemId, selectedWorkItemId == submittedTargetWorkItemId {
+                    cloudDialogueBypassedAutoTargetWorkItemId = submittedTargetWorkItemId
+                    selectedWorkItemId = nil
+                }
+                return
+            }
             if currentInputText == submittedText {
                 currentInputText = ""
             }
-            if selectedWorkItemId == submittedTargetWorkItemId {
+            if submittedTargetWorkItemId != nil,
+               selectedWorkItemId == submittedTargetWorkItemId,
+               !isSubmittedTargetStillActive {
                 selectedWorkItemId = nil
             }
             if lastCloudDialogueFingerprint == submittedFingerprint {
@@ -111,6 +174,9 @@ struct ChatComposerLocalState {
                 if case MacGatewayError.conflict("task_terminal") = error {
                     cloudDialogueErrorMessage = "补充未被接收：原任务已结束。"
                     cloudDialogueTaskNotice = "草稿已保留；再次发送将作为新的云端请求。"
+                    if let submittedTargetWorkItemId {
+                        cloudDialogueBypassedAutoTargetWorkItemId = submittedTargetWorkItemId
+                    }
                     selectedWorkItemId = nil
                 } else {
                     cloudDialogueErrorMessage = error.localizedDescription

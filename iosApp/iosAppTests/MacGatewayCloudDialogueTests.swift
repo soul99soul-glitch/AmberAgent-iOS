@@ -2000,4 +2000,301 @@ extension MacGatewayCloudDialogueTests {
         #expect(store.cloudDialogueProgressByWorkItem.isEmpty)
         #expect(store.cloudDialogueLastError != nil)
     }
+
+    @Test @MainActor func cloudComposerAutoTargetsSoleActiveWorkItemKeepsSelectionWhileLiveAndSupportsNewMessageSwitch() async throws {
+        let suite = "CloudAutoTarget-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let store = MacGatewayStore(defaults: defaults)
+        var composer = ChatComposerLocalState()
+
+        // 0 active work items -> new message mode
+        #expect(store.activeCloudDialogueTargetWorkItemIds.isEmpty)
+        #expect(ChatView.resolvedCloudDialogueTarget(composerState: composer, store: store) == nil)
+
+        // Exactly 1 active work item -> defaults to follow-up target with display title
+        store.cloudDialogueEvents.append(
+            MacGatewayCloudDialogueEvent(
+                seq: 1, id: "u-sole", kind: .userMessage, role: "user",
+                text: "整理本周发布清单与风险项", topicId: "topic-sole", workItemId: "work:sole"
+            )
+        )
+        store.cloudDialogueProgressByWorkItem["work:sole"] = .init(
+            workItemId: "work:sole", topicId: "topic-sole",
+            statusLine: "正在分析发布项", processEventCount: 1, lastEventSeq: 2, outcome: nil
+        )
+        // Provisional topic: keys, terminal items, and other-conversation unified delegations must not pollute active targets.
+        store.cloudDialogueProgressByWorkItem["topic:provisional"] = .init(
+            workItemId: "topic:provisional", topicId: "provisional",
+            statusLine: "路由中", processEventCount: 1, lastEventSeq: 3, outcome: nil
+        )
+        store.cloudDialogueProgressByWorkItem["work:done"] = .init(
+            workItemId: "work:done", topicId: "topic-done",
+            statusLine: "已完成", processEventCount: 2, lastEventSeq: 4, outcome: .completed
+        )
+        store.cloudDialogueSubmissions.append(
+            MacGatewayCloudDialoguePersistedSubmission(
+                gatewayId: "gw", deviceId: "dev", kind: .mainMessage,
+                requestId: UUID().uuidString.lowercased(), workItemId: "work:unified-other",
+                text: "本机会话委派", receipt: nil, lastError: nil, updatedAt: Date(),
+                conversationId: "local-conv-1", isUnifiedDelegation: true
+            )
+        )
+        store.cloudDialogueProgressByWorkItem["work:unified-other"] = .init(
+            workItemId: "work:unified-other", topicId: "topic-unified",
+            statusLine: "执行中", processEventCount: 1, lastEventSeq: 5, outcome: nil,
+            conversationId: "local-conv-1"
+        )
+
+        #expect(store.activeCloudDialogueTargetWorkItemIds == ["work:sole"])
+        #expect(store.cloudDialogueWorkItemDisplayTitle(for: "work:sole") == "整理本周发布清单与风险项")
+        let soleTarget = try #require(ChatView.resolvedCloudDialogueTarget(composerState: composer, store: store))
+        #expect(soleTarget == .init(workItemId: "work:sole", isAutoSelected: true))
+
+        // Sending a follow-up while the target remains live clears draft and keeps the selected target intact.
+        var draft = "补上灰度回滚步骤"
+        var selectedTarget: String? = soleTarget.workItemId
+        let send1 = composer.beginCloudDialogueSubmit(text: draft, targetWorkItemId: selectedTarget)
+        let receivedReceipt = MacGatewayCloudDialogueReceipt(
+            eventId: "ev-f1", requestId: send1.requestId, topicId: "topic-sole",
+            workItemIds: ["work:sole"], state: .received, replayed: false
+        )
+        composer.finishCloudDialogueSubmit(
+            generation: send1.generation,
+            submittedText: draft,
+            submittedTargetWorkItemId: "work:sole",
+            submittedFingerprint: send1.fingerprint,
+            isSubmittedTargetStillActive: store.cloudDialogueWorkItemAcceptsInput("work:sole"),
+            currentInputText: &draft,
+            selectedWorkItemId: &selectedTarget,
+            result: .success(receivedReceipt)
+        )
+        #expect(draft.isEmpty)
+        #expect(selectedTarget == "work:sole", "Active follow-up target must stay selected after send succeeds")
+
+        // One-tap "改为新消息" clears the selection and bypasses auto-targeting for this work item.
+        store.selectedCloudDialogueWorkItemId = "work:sole"
+        var storeSelected = store.selectedCloudDialogueWorkItemId
+        composer.switchCloudDialogueToNewMessage(currentTargetWorkItemId: "work:sole", selectedWorkItemId: &storeSelected)
+        store.selectedCloudDialogueWorkItemId = storeSelected
+        #expect(store.selectedCloudDialogueWorkItemId == nil)
+        #expect(ChatView.resolvedCloudDialogueTarget(composerState: composer, store: store) == nil)
+
+        // When >= 2 active work items exist without explicit selection, never auto-target.
+        composer.cloudDialogueBypassedAutoTargetWorkItemId = nil
+        store.cloudDialogueProgressByWorkItem["work:second"] = .init(
+            workItemId: "work:second", topicId: "topic-second",
+            statusLine: "并行分析中", processEventCount: 1, lastEventSeq: 6, outcome: nil
+        )
+        #expect(store.activeCloudDialogueTargetWorkItemIds.count == 2)
+        #expect(ChatView.resolvedCloudDialogueTarget(composerState: composer, store: store) == nil)
+
+        // Explicit selection still wins when >= 2 active work items exist, and persists across live sends.
+        store.selectedCloudDialogueWorkItemId = "work:second"
+        let explicitTarget = try #require(ChatView.resolvedCloudDialogueTarget(composerState: composer, store: store))
+        #expect(explicitTarget == .init(workItemId: "work:second", isAutoSelected: false))
+
+        // When the earlier sole task ends and only a new sole task remains, auto-targeting engages again.
+        store.selectedCloudDialogueWorkItemId = nil
+        composer.cloudDialogueBypassedAutoTargetWorkItemId = "work:sole"
+        store.cloudDialogueProgressByWorkItem["work:sole"]?.outcome = .completed
+        #expect(store.activeCloudDialogueTargetWorkItemIds == ["work:second"])
+        let reboundTarget = try #require(ChatView.resolvedCloudDialogueTarget(composerState: composer, store: store))
+        #expect(reboundTarget == .init(workItemId: "work:second", isAutoSelected: true))
+
+        // If a target finishes before the submit callback returns, selection clears cleanly.
+        var closingDraft = "最后一句补充"
+        var closingSelected: String? = "work:second"
+        let send2 = composer.beginCloudDialogueSubmit(text: closingDraft, targetWorkItemId: closingSelected)
+        store.cloudDialogueProgressByWorkItem["work:second"]?.outcome = .completed
+        let receipt2 = MacGatewayCloudDialogueReceipt(
+            eventId: "ev-f2", requestId: send2.requestId, topicId: "topic-second",
+            workItemIds: ["work:second"], state: .consumed, replayed: false
+        )
+        composer.finishCloudDialogueSubmit(
+            generation: send2.generation,
+            submittedText: closingDraft,
+            submittedTargetWorkItemId: "work:second",
+            submittedFingerprint: send2.fingerprint,
+            isSubmittedTargetStillActive: store.cloudDialogueWorkItemAcceptsInput("work:second"),
+            currentInputText: &closingDraft,
+            selectedWorkItemId: &closingSelected,
+            result: .success(receipt2)
+        )
+        #expect(closingDraft.isEmpty)
+        #expect(closingSelected == nil, "Target that became terminal during send must be cleared")
+    }
+
+    @Test @MainActor func cancelledFollowupReceiptPreservesDraftClearsTargetShowsNoticeAndIgnoresStaleCancelledResult() {
+        var composer = ChatComposerLocalState()
+        var draft = "把接口超时改成 30 秒"
+        var target: String? = "work:ended-200"
+
+        let attempt = composer.beginCloudDialogueSubmit(text: draft, targetWorkItemId: target)
+        let cancelledReceipt = MacGatewayCloudDialogueReceipt(
+            eventId: "ev-cancelled", requestId: attempt.requestId, topicId: "topic-ended",
+            workItemIds: ["work:ended-200"], state: .cancelled, replayed: false
+        )
+        composer.finishCloudDialogueSubmit(
+            generation: attempt.generation,
+            submittedText: draft,
+            submittedTargetWorkItemId: target,
+            submittedFingerprint: attempt.fingerprint,
+            isSubmittedTargetStillActive: true,
+            currentInputText: &draft,
+            selectedWorkItemId: &target,
+            result: .success(cancelledReceipt)
+        )
+
+        #expect(draft == "把接口超时改成 30 秒", "HTTP 200 cancelled receipt must preserve the user's draft")
+        #expect(target == nil, "Cancelled follow-up receipt must clear the stale target")
+        #expect(!composer.isSubmittingCloudDialogue)
+        #expect(composer.cloudDialogueErrorMessage?.contains("未被接收") == true)
+        #expect(composer.cloudDialogueTaskNotice?.contains("草稿已保留") == true)
+        #expect(
+            composer.resolvedCloudDialogueTarget(
+                explicitSelectedWorkItemId: target,
+                activeWorkItemIds: ["work:ended-200"]
+            ) == nil,
+            "Rejected work item must not be immediately re-selected before polling settles it"
+        )
+
+        // Resending as a new message generates a fresh requestId.
+        let retryAsNew = composer.beginCloudDialogueSubmit(text: draft, targetWorkItemId: nil)
+        #expect(retryAsNew.requestId != attempt.requestId)
+
+        // Stale cancelled receipt for an old target must not disturb a newly edited draft or newly chosen target.
+        var freshComposer = ChatComposerLocalState()
+        var liveDraft = "旧补充"
+        var liveTarget: String? = "work:1"
+        let staleSend = freshComposer.beginCloudDialogueSubmit(text: liveDraft, targetWorkItemId: liveTarget)
+        liveDraft = "用户改写的新草稿"
+        liveTarget = "work:2"
+        let staleCancelled = MacGatewayCloudDialogueReceipt(
+            eventId: "ev-stale-cancel", requestId: staleSend.requestId, topicId: "topic-1",
+            workItemIds: ["work:1"], state: .cancelled, replayed: false
+        )
+        freshComposer.finishCloudDialogueSubmit(
+            generation: staleSend.generation,
+            submittedText: "旧补充",
+            submittedTargetWorkItemId: "work:1",
+            submittedFingerprint: staleSend.fingerprint,
+            currentInputText: &liveDraft,
+            selectedWorkItemId: &liveTarget,
+            result: .success(staleCancelled)
+        )
+        #expect(liveDraft == "用户改写的新草稿")
+        #expect(liveTarget == "work:2")
+        #expect(freshComposer.cloudDialogueErrorMessage == nil)
+        #expect(freshComposer.cloudDialogueTaskNotice == nil)
+    }
+
+    @Test @MainActor func cloudComposerStopButtonMatrixAndIdempotentStopTrigger() async throws {
+        // Pure stop-mode visibility matrix
+        #expect(ChatView.cloudComposerSendButtonIsStopMode(
+            hasTrimmedInput: false, activeTargetWorkItemId: "work:1", isSubmittingCloudDialogue: false
+        ))
+        #expect(!ChatView.cloudComposerSendButtonIsStopMode(
+            hasTrimmedInput: true, activeTargetWorkItemId: "work:1", isSubmittingCloudDialogue: false
+        ))
+        #expect(!ChatView.cloudComposerSendButtonIsStopMode(
+            hasTrimmedInput: false, activeTargetWorkItemId: nil, isSubmittingCloudDialogue: false
+        ))
+        #expect(!ChatView.cloudComposerSendButtonIsStopMode(
+            hasTrimmedInput: false, activeTargetWorkItemId: "   ", isSubmittingCloudDialogue: false
+        ))
+        #expect(!ChatView.cloudComposerSendButtonIsStopMode(
+            hasTrimmedInput: false, activeTargetWorkItemId: "work:1", isSubmittingCloudDialogue: true
+        ))
+
+        let suite = "CloudComposerStop-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let connection = MacGatewayConnection(
+            gatewayId: "gw-stop", name: "Amber Cloud", addrs: ["cloud.example"],
+            port: 443, fingerprint: "fp-stop", deviceId: "dev-stop"
+        )
+        actor StopPathRecorder {
+            private(set) var paths: [String] = []
+            func append(_ path: String) { paths.append(path) }
+        }
+        let stopRecorder = StopPathRecorder()
+        let client = MacGatewayClient(
+            addrs: ["cloud.example"], port: 443, fingerprint: "fp-stop", token: "tok-stop",
+            transport: { request, _ in
+                let url = try #require(request.url)
+                let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: nil)!
+                if request.httpMethod == "POST", url.path.hasSuffix("/stop") {
+                    await stopRecorder.append(url.path)
+                    #expect(request.value(forHTTPHeaderField: "X-Amber-Dialogue-Version") == "1")
+                    let body = try JSONDecoder().decode(MacGatewayCloudDialogueStopRequest.self, from: request.httpBody ?? Data())
+                    let receipt = MacGatewayCloudDialogueReceipt(
+                        eventId: "ev-stop", requestId: body.requestId, topicId: "topic-stop",
+                        workItemIds: ["work:stop-1"], state: .received, replayed: false
+                    )
+                    return (try JSONEncoder().encode(receipt), response)
+                }
+                return (Data(#"{"items":[],"nextCursor":0}"#.utf8), response)
+            }
+        )
+        let store = MacGatewayStore(defaults: defaults)
+        store.configureForTesting(connection: connection, client: client)
+        store.isCloudMainDialogueSelected = true
+        defer { store.stopCloudDialoguePolling() }
+
+        var composer = ChatComposerLocalState()
+
+        // >= 2 active work items without explicit selection -> stop button hidden and trigger is a no-op
+        store.cloudDialogueProgressByWorkItem["work:stop-1"] = .init(
+            workItemId: "work:stop-1", topicId: "topic-stop",
+            statusLine: "执行步骤 1", processEventCount: 1, lastEventSeq: 1, outcome: nil
+        )
+        store.cloudDialogueProgressByWorkItem["work:stop-2"] = .init(
+            workItemId: "work:stop-2", topicId: "topic-stop-2",
+            statusLine: "执行步骤 2", processEventCount: 1, lastEventSeq: 2, outcome: nil
+        )
+        #expect(ChatView.cloudComposerStopTargetWorkItemId(
+            hasTrimmedInput: false, isSubmittingCloudDialogue: false, composerState: composer, store: store
+        ) == nil)
+        let multiStopResult = await ChatView.triggerCloudComposerStop(
+            hasTrimmedInput: false, isSubmittingCloudDialogue: false, composerState: composer, store: store
+        )
+        #expect(multiStopResult == nil)
+        #expect(await stopRecorder.paths.isEmpty)
+
+        // Non-empty input with an explicit active target -> shows send button, not stop button
+        store.selectedCloudDialogueWorkItemId = "work:stop-1"
+        #expect(ChatView.cloudComposerStopTargetWorkItemId(
+            hasTrimmedInput: true, isSubmittingCloudDialogue: false, composerState: composer, store: store
+        ) == nil)
+
+        // Switching to "改为新消息" on a sole active work item hides the stop button too
+        store.cloudDialogueProgressByWorkItem["work:stop-2"]?.outcome = .completed
+        store.selectedCloudDialogueWorkItemId = nil
+        #expect(ChatView.cloudComposerStopTargetWorkItemId(
+            hasTrimmedInput: false, isSubmittingCloudDialogue: false, composerState: composer, store: store
+        ) == "work:stop-1")
+        var selected = store.selectedCloudDialogueWorkItemId
+        composer.switchCloudDialogueToNewMessage(currentTargetWorkItemId: "work:stop-1", selectedWorkItemId: &selected)
+        #expect(ChatView.cloudComposerStopTargetWorkItemId(
+            hasTrimmedInput: false, isSubmittingCloudDialogue: false, composerState: composer, store: store
+        ) == nil)
+
+        // Clear bypass -> sole active target re-engages stop button and invokes idempotent persisted stopCloudWorkItem
+        composer.cloudDialogueBypassedAutoTargetWorkItemId = nil
+        let stopResult = try #require(await ChatView.triggerCloudComposerStop(
+            hasTrimmedInput: false, isSubmittingCloudDialogue: false, composerState: composer, store: store
+        ))
+        let stopReceipt = try stopResult.get()
+        #expect(stopReceipt.workItemIds == ["work:stop-1"])
+        #expect(await stopRecorder.paths == ["/v2/work-items/work:stop-1/stop"])
+        #expect(store.cloudDialogueSubmissions.contains { $0.kind == .stopWorkItem && $0.workItemId == "work:stop-1" })
+        #expect(store.cloudDialogueProgressByWorkItem["work:stop-1"]?.isStopRequested == true)
+        #expect(store.cloudDialogueProgressByWorkItem["work:stop-1"]?.displaySingleLine == "已请求停止")
+        #expect(ChatView.cloudComposerStopTargetWorkItemId(
+            hasTrimmedInput: false, isSubmittingCloudDialogue: false, composerState: composer, store: store
+        ) == nil, "Already stop-requested work item must leave stop mode immediately")
+    }
 }

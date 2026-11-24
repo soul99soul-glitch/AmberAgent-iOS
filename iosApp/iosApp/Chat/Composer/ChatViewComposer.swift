@@ -345,33 +345,55 @@ extension ChatView {
                                     .padding(.horizontal, 4)
                             }
 
-                            if isCloudMainDialogueActive,
-                               MacGatewayStore.shared.selectedCloudDialogueWorkItemId != nil,
+                            if let cloudTarget = effectiveCloudDialogueTarget,
                                !collapsesComposerForDuetPanel {
-                                HStack(spacing: 6) {
+                                let targetTitle = MacGatewayStore.shared.cloudDialogueWorkItemDisplayTitle(for: cloudTarget.workItemId)
+                                HStack(spacing: 8) {
                                     Image(systemName: "arrow.turn.down.right")
                                         .font(.caption.weight(.bold))
                                         .foregroundStyle(AmberTheme.accent)
-                                    Text(composerState.isSubmittingCloudDialogue ? "正在发送补充…" : "待补充 · 输入后点发送（尚未发送）")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(AmberTheme.foreground)
-                                        .lineLimit(1)
-                                    Spacer()
+                                    Text(
+                                        composerState.isSubmittingCloudDialogue
+                                            ? "正在补充到「\(targetTitle)」…"
+                                            : "补充到「\(targetTitle)」"
+                                    )
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(AmberTheme.foreground)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                    Spacer(minLength: 4)
                                     Button {
-                                        MacGatewayStore.shared.selectedCloudDialogueWorkItemId = nil
+                                        var selectedId = MacGatewayStore.shared.selectedCloudDialogueWorkItemId
+                                        composerState.switchCloudDialogueToNewMessage(
+                                            currentTargetWorkItemId: cloudTarget.workItemId,
+                                            selectedWorkItemId: &selectedId
+                                        )
+                                        if MacGatewayStore.shared.selectedCloudDialogueWorkItemId != selectedId {
+                                            MacGatewayStore.shared.selectedCloudDialogueWorkItemId = selectedId
+                                        }
                                     } label: {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundStyle(AmberTheme.muted)
+                                        Text("改为新消息")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(AmberTheme.accent)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
+                                    .accessibilityIdentifier("chat.composer.cloudSwitchToNewMessage")
                                 }
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 7)
                                 .background(AmberTheme.surface, in: Capsule(style: .continuous))
+                                .overlay {
+                                    Capsule(style: .continuous)
+                                        .stroke(AmberTheme.accent.opacity(0.28), lineWidth: 0.75)
+                                }
+                                .accessibilityIdentifier("chat.composer.cloudFollowupBar.\(cloudTarget.workItemId)")
                             }
 
                             if isCloudMainDialogueActive,
-                               MacGatewayStore.shared.selectedCloudDialogueWorkItemId == nil,
+                               effectiveCloudDialogueTarget == nil,
                                let notice = composerState.cloudDialogueTaskNotice,
                                !collapsesComposerForDuetPanel {
                                 Text(verbatim: notice)
@@ -403,6 +425,7 @@ extension ChatView {
                                 isRunActive: isCurrentConversationRunActive,
                                 isCloudMainDialogueActive: isCloudMainDialogueActive || isUnifiedMacDelegationTargeted,
                                 isSubmittingCloudDialogue: composerState.isSubmittingCloudDialogue,
+                                cloudStopTargetWorkItemId: isCloudMainDialogueActive ? effectiveCloudDialogueTargetWorkItemId : nil,
                                 collapsesComposerForDuetPanel: collapsesComposerForDuetPanel,
                                 inputPlaceholder: inputPlaceholder,
                                 isInputFocused: inputFocusBinding,
@@ -413,7 +436,9 @@ extension ChatView {
                                 },
                                 onSendMessage: sendComposerMessage,
                                 onStopGeneration: {
-                                    if viewModel.isRecognizingImages {
+                                    if isCloudMainDialogueActive {
+                                        stopActiveCloudWorkItemFromComposer()
+                                    } else if viewModel.isRecognizingImages {
                                         viewModel.cancelVisionRecognition()
                                     } else {
                                         viewModel.cancelGeneration()
@@ -670,6 +695,9 @@ extension ChatView {
             }
             if MacGatewayStore.shared.connection != nil {
                 let acceptsInput = MacGatewayStore.shared.prepareCloudDialogueTaskInput(workItemId: workItemId)
+                if acceptsInput {
+                    composerState.cloudDialogueBypassedAutoTargetWorkItemId = nil
+                }
                 MacGatewayStore.shared.setCloudMainDialogueSelected(true)
                 composerState.activeDuetTab = .chat
                 composerState.isInputFocused = true
@@ -694,6 +722,32 @@ extension ChatView {
 
     var isCloudMainDialogueActive: Bool {
         MacGatewayStore.shared.connection != nil && MacGatewayStore.shared.isCloudMainDialogueSelected
+    }
+
+    var effectiveCloudDialogueTarget: ChatComposerLocalState.CloudDialogueComposerTarget? {
+        guard isCloudMainDialogueActive else { return nil }
+        return Self.resolvedCloudDialogueTarget(
+            composerState: composerState,
+            store: MacGatewayStore.shared
+        )
+    }
+
+    var effectiveCloudDialogueTargetWorkItemId: String? {
+        effectiveCloudDialogueTarget?.workItemId
+    }
+
+    @MainActor
+    static func resolvedCloudDialogueTarget(
+        composerState: ChatComposerLocalState,
+        store: MacGatewayStore
+    ) -> ChatComposerLocalState.CloudDialogueComposerTarget? {
+        let explicitId = store.selectedCloudDialogueWorkItemId
+        let explicitAcceptsInput = explicitId.map { store.cloudDialogueWorkItemAcceptsInput($0) } ?? false
+        return composerState.resolvedCloudDialogueTarget(
+            explicitSelectedWorkItemId: explicitId,
+            activeWorkItemIds: store.activeCloudDialogueTargetWorkItemIds,
+            explicitSelectionAcceptsInput: explicitAcceptsInput
+        )
     }
 
     var effectiveExecutionTarget: AmberComposerExecutionTarget {
@@ -796,7 +850,9 @@ extension ChatView {
 
     private func sendCloudDialogueFromComposer(text: String) {
         let store = MacGatewayStore.shared
-        let targetWorkItemId = store.selectedCloudDialogueWorkItemId
+        let resolvedTarget = effectiveCloudDialogueTarget
+        let targetWorkItemId = resolvedTarget?.workItemId
+        let wasAutoSelected = resolvedTarget?.isAutoSelected == true
         let submission = composerState.beginCloudDialogueSubmit(
             text: text,
             targetWorkItemId: targetWorkItemId
@@ -819,12 +875,17 @@ extension ChatView {
                 )
             }
             var currentDraft = composerInputController.currentText() ?? viewModel.inputText
-            var selectedWorkItemId = store.selectedCloudDialogueWorkItemId
+            let currentEffectiveTargetId = effectiveCloudDialogueTargetWorkItemId
+            var selectedWorkItemId = store.selectedCloudDialogueWorkItemId ?? currentEffectiveTargetId
+            let isSubmittedTargetStillActive = targetWorkItemId.map {
+                store.cloudDialogueWorkItemAcceptsInput($0)
+            } ?? false
             composerState.finishCloudDialogueSubmit(
                 generation: submission.generation,
                 submittedText: text,
                 submittedTargetWorkItemId: targetWorkItemId,
                 submittedFingerprint: submission.fingerprint,
+                isSubmittedTargetStillActive: isSubmittedTargetStillActive,
                 currentInputText: &currentDraft,
                 selectedWorkItemId: &selectedWorkItemId,
                 result: result
@@ -832,16 +893,81 @@ extension ChatView {
             if viewModel.inputText != currentDraft {
                 viewModel.inputText = currentDraft
             }
-            if store.selectedCloudDialogueWorkItemId != selectedWorkItemId {
+            if selectedWorkItemId == nil {
+                if store.selectedCloudDialogueWorkItemId != nil {
+                    store.selectedCloudDialogueWorkItemId = nil
+                }
+            } else if !wasAutoSelected, store.selectedCloudDialogueWorkItemId != selectedWorkItemId {
                 store.selectedCloudDialogueWorkItemId = selectedWorkItemId
             }
-            if case .success = result {
-                composerState.cloudDialogueTaskNotice = nil
-                viewModel.suggestionMessageSubmitted(text)
+            if case .success(let receipt) = result {
+                if receipt.state != .cancelled {
+                    composerState.cloudDialogueTaskNotice = nil
+                    viewModel.suggestionMessageSubmitted(text)
+                }
                 _ = await store.pollCloudDialogueEvents()
                 viewModel.refreshCloudSuggestions(gateway: store)
             }
         }
+    }
+
+    private func stopActiveCloudWorkItemFromComposer() {
+        let store = MacGatewayStore.shared
+        let committedText = composerInputController.currentText() ?? viewModel.inputText
+        let hasTrimmedInput = !committedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard let targetWorkItemId = Self.cloudComposerStopTargetWorkItemId(
+            hasTrimmedInput: hasTrimmedInput,
+            isSubmittingCloudDialogue: composerState.isSubmittingCloudDialogue,
+            composerState: composerState,
+            store: store
+        ) else {
+            return
+        }
+        composerState.cloudDialogueErrorMessage = nil
+        composerState.cloudDialogueTaskNotice = nil
+        Task { @MainActor in
+            let result = await store.stopCloudWorkItem(workItemId: targetWorkItemId)
+            if case .failure(let error) = result {
+                composerState.cloudDialogueErrorMessage = store.cloudDialogueFriendlyErrorMessage(for: error)
+            }
+        }
+    }
+
+    @MainActor
+    static func cloudComposerStopTargetWorkItemId(
+        hasTrimmedInput: Bool,
+        isSubmittingCloudDialogue: Bool,
+        composerState: ChatComposerLocalState,
+        store: MacGatewayStore
+    ) -> String? {
+        let candidate = resolvedCloudDialogueTarget(composerState: composerState, store: store)?.workItemId
+        guard cloudComposerSendButtonIsStopMode(
+            hasTrimmedInput: hasTrimmedInput,
+            activeTargetWorkItemId: candidate,
+            isSubmittingCloudDialogue: isSubmittingCloudDialogue
+        ) else {
+            return nil
+        }
+        return candidate
+    }
+
+    @MainActor
+    @discardableResult
+    static func triggerCloudComposerStop(
+        hasTrimmedInput: Bool,
+        isSubmittingCloudDialogue: Bool,
+        composerState: ChatComposerLocalState,
+        store: MacGatewayStore
+    ) async -> Result<MacGatewayCloudDialogueReceipt, Error>? {
+        guard let workItemId = cloudComposerStopTargetWorkItemId(
+            hasTrimmedInput: hasTrimmedInput,
+            isSubmittingCloudDialogue: isSubmittingCloudDialogue,
+            composerState: composerState,
+            store: store
+        ) else {
+            return nil
+        }
+        return await store.stopCloudWorkItem(workItemId: workItemId)
     }
 
     private func openComposerModelSheet() {
@@ -872,9 +998,9 @@ extension ChatView {
             return IOSAppLocalization.string(placeholderKey, defaultValue: placeholderKey)
         }
         if isCloudMainDialogueActive {
-            let cloudKey = MacGatewayStore.shared.selectedCloudDialogueWorkItemId == nil
+            let cloudKey = effectiveCloudDialogueTarget == nil
                 ? "发消息给云端真身..."
-                : "向选中云端任务追加补充说明..."
+                : "向当前云端任务追加补充说明..."
             return IOSAppLocalization.string(cloudKey, defaultValue: cloudKey)
         }
         let key: String = switch configurationIssue {
@@ -946,6 +1072,19 @@ extension ChatView {
         guard isRunActive || isRecognizingImages else { return false }
         if isRecognizingImages { return true }
         return !hasSendableContent || !sendEnabled
+    }
+
+    static func cloudComposerSendButtonIsStopMode(
+        hasTrimmedInput: Bool,
+        activeTargetWorkItemId: String?,
+        isSubmittingCloudDialogue: Bool
+    ) -> Bool {
+        guard !hasTrimmedInput, !isSubmittingCloudDialogue else { return false }
+        guard let id = activeTargetWorkItemId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !id.isEmpty else {
+            return false
+        }
+        return true
     }
 
     private var hasComposerSendableContent: Bool {
@@ -1119,6 +1258,7 @@ private struct ChatComposerInputDockRow: View {
     let isRunActive: Bool
     let isCloudMainDialogueActive: Bool
     let isSubmittingCloudDialogue: Bool
+    let cloudStopTargetWorkItemId: String?
     let collapsesComposerForDuetPanel: Bool
     let inputPlaceholder: String
     @Binding var isInputFocused: Bool
@@ -1139,7 +1279,11 @@ private struct ChatComposerInputDockRow: View {
             ? (trimmedNonEmpty && !isSubmittingCloudDialogue)
             : (viewModel.composerSendBlockReason(for: currentInputText) == nil)
         let isStopMode = isCloudMainDialogueActive
-            ? false
+            ? ChatView.cloudComposerSendButtonIsStopMode(
+                hasTrimmedInput: trimmedNonEmpty,
+                activeTargetWorkItemId: cloudStopTargetWorkItemId,
+                isSubmittingCloudDialogue: isSubmittingCloudDialogue
+            )
             : ChatView.composerSendButtonIsStopMode(
                 isRunActive: isRunActive,
                 isRecognizingImages: viewModel.isRecognizingImages,
