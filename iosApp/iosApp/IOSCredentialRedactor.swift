@@ -47,6 +47,53 @@ enum IOSCredentialRedactor {
               let object = try? JSONSerialization.jsonObject(with: data, options: []) else {
             return jsonString
         }
+        return rehydratedJSON(object, original: jsonString, loadCredential: loadCredential)
+    }
+
+    /// Older installations stored provider and search keys by ID. Prefer those refs,
+    /// falling back to the generic path in the same credential walk as headers and bodies.
+    static func decodeSettings<Snapshot>(
+        _ json: String,
+        loadCredential: (String) -> String?,
+        decode: (String) throws -> Snapshot
+    ) throws -> (snapshot: Snapshot, hasPlaintextAPIKey: Bool) {
+        guard let data = json.data(using: .utf8),
+              var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return (try decode(json), false)
+        }
+        var hasPlaintext = false
+        for group in ["providers", "searchServices"] {
+            guard var rows = root[group] as? [[String: Any]] else { continue }
+            for index in rows.indices {
+                guard let key = rows[index]["apiKey"] as? String, !key.isEmpty else { continue }
+                guard key == mask else {
+                    hasPlaintext = true
+                    continue
+                }
+                guard let id = rows[index]["id"] as? String else { continue }
+                let ref = group == "providers"
+                    ? IOSCredentialSideTable.providerApiKey(providerId: id.lowercased())
+                    : IOSCredentialSideTable.searchServiceApiKey(serviceId: id.lowercased())
+                if let value = loadCredential(ref) { rows[index]["apiKey"] = value }
+            }
+            root[group] = rows
+        }
+        let hydrated = rehydratedJSON(root, original: json) { path in
+            loadCredential(IOSCredentialSideTable.settingsPath(path))
+        }
+        do {
+            return (try decode(hydrated), hasPlaintext)
+        } catch {
+            // Keep the usable configuration and typed API keys if an incompatible generic
+            // Keychain value prevents decoding, matching the legacy two-stage load.
+            let typed = try JSONSerialization.data(withJSONObject: root)
+            return (try decode(String(decoding: typed, as: UTF8.self)), hasPlaintext)
+        }
+    }
+
+    private static func rehydratedJSON(
+        _ object: Any, original jsonString: String, loadCredential: (String) -> String?
+    ) -> String {
         let hydrated = rehydrateValue(object, path: "root", loadCredential: loadCredential)
         guard let result = try? JSONSerialization.data(withJSONObject: hydrated, options: []) else {
             return jsonString

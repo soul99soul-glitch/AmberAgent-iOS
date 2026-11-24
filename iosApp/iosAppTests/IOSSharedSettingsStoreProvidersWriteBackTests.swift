@@ -48,6 +48,35 @@ final class IOSSharedSettingsStoreProvidersWriteBackTests: XCTestCase {
         XCTAssertEqual(credentials.loadApiKey(), "old-scalar-key")
     }
 
+    func testColdSettingsLoadPrefersTypedKeyAndFallsBackToTheGenericCredentialPath() throws {
+        let suite = "CredentialStartup-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let credentials = FailingSettingsCredentials()
+        let store = IOSSharedSettingsStore(
+            userDefaults: defaults, loadCredential: credentials.load,
+            storeCredential: credentials.store, deleteCredential: credentials.delete
+        )
+        let provider = IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "Legacy", apiKey: "generic-value", baseUrl: "https://example.com/v1",
+            modelName: "Model", modelId: "model"
+        )
+        store.addProvider(provider)
+        let typed = IOSCredentialSideTable.providerApiKey(providerId: provider.id.description())
+        var values = credentials.values
+        values[typed] = "typed-value"
+        func reload() -> String? {
+            let reloaded = IOSSharedSettingsStore(
+                userDefaults: defaults, loadCredential: { values[$0] },
+                storeCredential: credentials.store, deleteCredential: credentials.delete
+            )
+            return (reloaded.snapshot.providers.first { $0.id == provider.id } as? ProviderSetting.OpenAI)?.apiKey
+        }
+        XCTAssertEqual(reload(), "typed-value")
+        values.removeValue(forKey: typed)
+        XCTAssertEqual(reload(), "generic-value")
+    }
+
     func testFailedCredentialUpdateKeepsSnapshotAndPersistedSettings() throws {
         let suite = "CredentialFailure-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

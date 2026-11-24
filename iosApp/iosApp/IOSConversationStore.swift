@@ -179,7 +179,21 @@ final class IOSConversationStore {
 
     // MARK: - Private
 
+    // App Intents and background entry points can create another Swift store in the
+    // same process. Share the disk owner (and its operation mutex) for the app directory.
+    private static let appDirectory: URL = {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        var directory = documents.appendingPathComponent("conversations")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? directory.setResourceValues(values)
+        return directory
+    }()
+    private static let appStorage = JsonConversationStorage(baseDir: ConversationFile(path: appDirectory.path))
     let storage: JsonConversationStorage
+    @ObservationIgnored private var indexMaintenanceTask: Task<Void, Never>?
     private let listPreviewsFileURL: URL
     private let listIconsFileURL: URL
     private let subagentConversationIDsProvider: () async throws -> Set<String>
@@ -214,36 +228,19 @@ final class IOSConversationStore {
     ) {
         // Documents/conversations/ —— iOS Documents 目录会被 iTunes 文件共享暴露，
         // 第一版可接受（便于调试）；后续如要隐藏可换 Application Support。
-        let baseDirPath: String
-        let previewsURL: URL
-        let iconsURL: URL
-        if let baseDirectory {
-            baseDirPath = baseDirectory.path
-            previewsURL = baseDirectory.appendingPathComponent("list-previews.json")
-            iconsURL = baseDirectory.appendingPathComponent("list-icons.json")
-        } else {
-            let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-                ?? URL(fileURLWithPath: NSTemporaryDirectory())
-            let conversations = documents.appendingPathComponent("conversations")
-            try? FileManager.default.createDirectory(at: conversations, withIntermediateDirectories: true)
-            var resourceValues = URLResourceValues()
-            resourceValues.isExcludedFromBackup = true
-            var privateConversations = conversations
-            try? privateConversations.setResourceValues(resourceValues)
-            baseDirPath = conversations.path
-            previewsURL = conversations.appendingPathComponent("list-previews.json")
-            iconsURL = conversations.appendingPathComponent("list-icons.json")
-        }
-        let baseDir = ConversationFile(path: baseDirPath)
-        self.storage = JsonConversationStorage(baseDir: baseDir)
+        let directory = baseDirectory ?? Self.appDirectory
+        let previewsURL = directory.appendingPathComponent("list-previews.json")
+        let iconsURL = directory.appendingPathComponent("list-icons.json")
+        self.storage = baseDirectory.map { JsonConversationStorage(baseDir: ConversationFile(path: $0.path)) }
+            ?? Self.appStorage
         self.artifactStore = IOSConversationArtifactStore(
-            fileURL: URL(fileURLWithPath: baseDirPath).appendingPathComponent("artifact-shelf.json")
+            fileURL: directory.appendingPathComponent("artifact-shelf.json")
         )
         self.recapStore = IOSConversationRecapStore(
-            fileURL: URL(fileURLWithPath: baseDirPath).appendingPathComponent("conversation-recaps.json")
+            fileURL: directory.appendingPathComponent("conversation-recaps.json")
         )
         self.intelligentUIStateStore = IOSIntelligentUIStateStore(
-            fileURL: URL(fileURLWithPath: baseDirPath).appendingPathComponent("task-ui-drafts.json")
+            fileURL: directory.appendingPathComponent("task-ui-drafts.json")
         )
         self.listPreviewsFileURL = previewsURL
         self.listIconsFileURL = iconsURL
@@ -309,20 +306,49 @@ final class IOSConversationStore {
         didLoadSummaries = false
         isBootstrapped = false
         defer { isBootstrapped = true }
-        listPreviewsByConversationId = Self.loadListPreviews(from: listPreviewsFileURL)
-        listIconsByConversationId = Self.loadListPreviews(from: listIconsFileURL)
+        let selectionRevision = conversationSwitchedRevision
+        let selectionUnchanged = { self.conversationSwitchedRevision == selectionRevision }
         _ = await loadSummaryProjectionIfNeeded()
-        guard didLoadSummaries else { return }
+        guard didLoadSummaries, selectionUnchanged() else { return }
 
-        if let mostRecent = summaries.first {
-            // summaries 已按 updateAt 倒序，第一条即最近。
-            _ = await selectConversationIfAvailable(
-                id: mostRecent.id,
-                allowDuringImport: allowNewConversationDuringImport
-            )
-        } else {
-            await newConversation(allowDuringImport: allowNewConversationDuringImport)
+        if let first = summaries.first,
+           await selectConversationIfAvailable(
+               id: first.id, commitIf: selectionUnchanged, allowDuringImport: allowNewConversationDuringImport
+           ) {
+            _ = scheduleIndexMaintenance()
+            return
         }
+
+        // An empty or dangling index can be the result of an interrupted canonical write.
+        // Resolve that ambiguity before creating the user's first durable conversation.
+        await scheduleIndexMaintenance().value
+        guard didLoadSummaries, selectionUnchanged() else { return }
+        for candidate in summaries {
+            if await selectConversationIfAvailable(
+                id: candidate.id, commitIf: selectionUnchanged, allowDuringImport: allowNewConversationDuringImport
+            ) { return }
+            guard selectionUnchanged() else { return }
+        }
+        await newConversation(commitIf: selectionUnchanged, allowDuringImport: allowNewConversationDuringImport)
+    }
+
+    private func scheduleIndexMaintenance() -> Task<Void, Never> {
+        if let indexMaintenanceTask { return indexMaintenanceTask }
+        let task = Task(priority: .background) { [weak self] in
+            guard let self else { return }
+            do {
+                if try await storage.reconcileIndex().boolValue { await refreshSummaries() }
+            } catch {
+                publishIOError(operation: "核对会话索引", detail: "\(error)")
+            }
+        }
+        indexMaintenanceTask = task
+        return task
+    }
+
+    func clearMemoryCache() async {
+        do { try await storage.clearMemoryCache() }
+        catch { publishIOError(operation: "释放会话缓存", detail: "\(error)") }
     }
 
     /// 首页 meta 交错用的浓缩预览；无则返回空串。

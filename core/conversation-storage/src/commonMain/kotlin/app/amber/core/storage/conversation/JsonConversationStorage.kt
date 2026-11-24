@@ -1,5 +1,6 @@
 package app.amber.core.storage.conversation
 
+import app.amber.ai.ui.UIMessagePart
 import app.amber.core.agent.utils.JsonInstant
 import app.amber.core.model.Conversation
 import app.amber.core.model.ConversationMemoryMode
@@ -53,7 +54,14 @@ class JsonConversationStorage(
      */
     private val conversationCache = LinkedHashMap<String, ConversationCacheEntry>()
     private val blobCodec = ConversationBlobCodec(baseDir)
-    private var didSweepOrphanBlobs = false
+    private var cachedIndex: CachedIndex? = null
+    private var indexWriteFailed = false
+    private var needsStartupReconciliation = false
+
+    /** For consumers that must discover interrupted writes before their first listing. */
+    constructor(baseDir: ConversationFile, reconcileOnFirstList: Boolean) : this(baseDir) {
+        needsStartupReconciliation = reconcileOnFirstList
+    }
 
     internal var beforeUpdateMetadataSaveForTesting: (suspend () -> Unit)? = null
     internal var beforeSummaryDecodeForTesting: (() -> Unit)? = null
@@ -67,37 +75,38 @@ class JsonConversationStorage(
 
     @Throws(Throwable::class)
     override suspend fun listSummaries(): List<ConversationSummary> = operationMutex.withLock {
-        // File IO and JSON decoding are synchronous in ConversationFile/serialization.
-        // Keep the mutex across the dispatcher hop so summary reads cannot overlap
-        // writes or observe a partially replaced conversation file.
+        if (needsStartupReconciliation) reconcileIndexLocked()
         withContext(Dispatchers.Default) {
-            ensureBaseDir()
-            if (!didSweepOrphanBlobs) {
-                didSweepOrphanBlobs = true
-                runCatching {
-                    blobCodec.sweepOrphanDirectories(
-                        nowEpochSeconds = Clock.System.now().epochSeconds,
-                        minAgeSeconds = ORPHAN_BLOB_DIRECTORY_MIN_AGE_SECONDS,
-                    )
-                }
-            }
-            val cached = readIndex()
-            if (cached != null) {
-                // index.json is a derived cache. A delete can remove the conversation
-                // file before an index write fails, so never surface entries without
-                // a backing file and repair that stale cache opportunistically.
-                val repaired = readConversationFileSummaries()
-                if (repaired.size != cached.size ||
-                    repaired.associateBy { it.id } != cached.associateBy { it.id }
-                ) {
-                    runCatching { writeIndex(repaired) }
-                }
-                return@withContext orderSummaries(repaired)
-            }
-            // index 损坏或缺失：从 {id}.json 扫描重建。
-            val rebuilt = rebuildIndex()
-            orderSummaries(rebuilt)
+            readIndex() ?: rebuildIndex()
         }
+    }
+
+    /** Check the derived index against canonical files and reclaim unowned blob directories. */
+    @Throws(Throwable::class)
+    suspend fun reconcileIndex(): Boolean = operationMutex.withLock { reconcileIndexLocked() }
+
+    private suspend fun reconcileIndexLocked(): Boolean = withContext(conversationMaintenanceDispatcher) {
+        ensureBaseDir()
+        val current = readIndex()
+        val recovered = readConversationFileSummaries()
+        val changed = current == null || current.size != recovered.size ||
+            current.toSet() != recovered.toSet()
+        if (changed) persistIndex(orderSummaries(recovered))
+        blobCodec.sweepOrphanDirectories(
+            nowEpochSeconds = Clock.System.now().epochSeconds,
+            minAgeSeconds = ORPHAN_BLOB_DIRECTORY_MIN_AGE_SECONDS,
+        )
+        needsStartupReconciliation = false
+        changed
+    }
+
+    @Throws(Throwable::class)
+    suspend fun clearMemoryCache() = operationMutex.withLock {
+        conversationCache.clear()
+        // Placeholder recovery belongs to the storage owner, independent of cached snapshots.
+        summaryCache.clear()
+        didLoadSummaryCache = false
+        cachedIndex = null
     }
 
     @Throws(Throwable::class)
@@ -117,8 +126,7 @@ class JsonConversationStorage(
         if (before != null) {
             conversationCache[file.path]?.takeIf { it.version == before }?.let {
                 // LinkedHashMap insertion order is the recency order for this tiny LRU.
-                conversationCache.remove(file.path)
-                conversationCache[file.path] = it
+                putCacheEntry(file.path, it)
                 return it.conversation
             }
         } else {
@@ -159,10 +167,12 @@ class JsonConversationStorage(
         // LinkedHashMap insertion order is the recency order for this tiny LRU.
         conversationCache.remove(path)
         conversationCache[path] = entry
-        while (conversationCache.size > MAX_CONVERSATION_CACHE_ENTRIES) {
-            conversationCache.entries.iterator().next().let { eldest ->
-                conversationCache.remove(eldest.key)
-            }
+        val entryLimit = if (entry.estimatedBytes > LARGE_CONVERSATION_BYTES) 1 else MAX_CONVERSATION_CACHE_ENTRIES
+        var bytes = conversationCache.values.sumOf { it.estimatedBytes }
+        val entries = conversationCache.entries.iterator()
+        while (conversationCache.size > 1 && (conversationCache.size > entryLimit || bytes > MAX_CONVERSATION_CACHE_BYTES)) {
+            bytes -= entries.next().value.estimatedBytes
+            entries.remove()
         }
     }
 
@@ -370,8 +380,11 @@ class JsonConversationStorage(
     @Throws(Throwable::class)
     override suspend fun deleteConversation(id: Uuid) = operationMutex.withLock {
         ensureBaseDir()
-        conversationFile(id).delete()
-        conversationCache.remove(conversationFile(id).path)
+        val file = conversationFile(id)
+        if (!file.delete() && file.exists()) {
+            throw ConversationStorageException("Failed to delete conversation: ${file.path}")
+        }
+        conversationCache.remove(file.path)
         // JSON first, so no surviving document can reference a deleted blob. A leftover
         // directory is only wasted space and is pruned by any later save of this id.
         runCatching { blobCodec.deleteAll(id) }
@@ -427,46 +440,57 @@ class JsonConversationStorage(
 
     // ---- 内部：index 维护 ----
 
+    private data class CachedIndex(val version: ConversationFileVersion, val summaries: List<ConversationSummary>)
+
     private fun readIndex(): List<ConversationSummary>? {
-        val text = indexFile.readText() ?: return null
-        return runCatching {
-            JsonInstant.decodeFromString<List<ConversationSummary>>(text)
-        }.getOrNull()
+        if (indexWriteFailed) return null
+        val file = indexFile
+        val version = file.fileVersion()
+        if (version != null) cachedIndex?.takeIf { it.version == version }?.let { return it.summaries }
+        val text = file.readText() ?: return null
+        val summaries = runCatching {
+            orderSummaries(JsonInstant.decodeFromString<List<ConversationSummary>>(text))
+        }.getOrNull() ?: return null
+        if (version != null && version == file.fileVersion()) cachedIndex = CachedIndex(version, summaries)
+        return summaries
     }
 
-    private fun writeIndex(summaries: List<ConversationSummary>) {
-        val text = runCatching {
-            SUMMARY_STORAGE_JSON.encodeToString(summaries)
-        }.getOrElse {
-            throw ConversationStorageException("Failed to encode conversation index", it)
-        }
-        indexFile.writeText(text)
+    private fun persistIndex(summaries: List<ConversationSummary>) {
+        // A failed derived write leaves the old index on disk. Recover from canonical files
+        // on the next read, even if memory pressure has since cleared all cached snapshots.
+        val file = indexFile
+        indexWriteFailed = runCatching { file.writeText(SUMMARY_STORAGE_JSON.encodeToString(summaries)) }.isFailure
+        cachedIndex = if (indexWriteFailed) null else file.fileVersion()?.let { CachedIndex(it, summaries) }
     }
 
     private fun upsertIndex(summary: ConversationSummary) {
-        val current = readIndex().orEmpty()
-        val without = current.filterNot { it.id == summary.id }
-        writeIndex(without + summary)
+        val current = readIndex()
+        if (current == null) {
+            rebuildIndex()
+            return
+        }
+        val previous = current.indexOfFirst { it.id == summary.id }
+        if (previous >= 0 && current[previous] == summary) return
+        val updated = current.toMutableList()
+        if (previous >= 0) updated.removeAt(previous)
+        val insertion = updated.indexOfFirst { SUMMARY_ORDER.compare(summary, it) < 0 }
+        updated.add(if (insertion < 0) updated.size else insertion, summary)
+        persistIndex(updated)
     }
 
     private fun removeFromIndex(id: Uuid) {
-        val current = readIndex().orEmpty()
-        val without = current.filterNot { it.id == id }
-        if (without.size != current.size) {
-            writeIndex(without)
+        val current = readIndex()
+        if (current == null) {
+            rebuildIndex()
+            return
         }
+        val updated = current.filterNot { it.id == id }
+        if (updated.size != current.size) persistIndex(updated)
     }
 
-    /**
-     * 扫描 baseDir 下所有 {id}.json，逐个 load 出 Conversation 取摘要。
-     * 用于 index 损坏/首次迁移恢复。会顺带把重建结果落盘，避免下次再扫。
-     */
-    private suspend fun rebuildIndex(): List<ConversationSummary> {
-        val summaries = readConversationFileSummaries()
-        // Canonical files remain readable even if this derived cache cannot be repaired.
-        // Match the valid-but-stale index path in listSummaries.
-        if (summaries.isNotEmpty()) runCatching { writeIndex(summaries) }
-        return summaries
+    private fun rebuildIndex(): List<ConversationSummary> {
+        ensureBaseDir()
+        return orderSummaries(readConversationFileSummaries()).also(::persistIndex)
     }
 
     private fun readConversationFileSummaries(): List<ConversationSummary> {
@@ -537,15 +561,20 @@ class JsonConversationStorage(
         val blobRefs: BlobRefMemo,
         /** Blob names the JSON at [version] references; the only candidates for pruning. */
         val diskRefs: Set<String>,
-    )
+    ) {
+        // Kotlin String.length is a UTF-16 code-unit count. Include every variant and nested
+        // tool result, especially resolved image URLs that are much larger than their disk refs.
+        val estimatedBytes = 2L * conversation.messageNodes.sumOf { node ->
+            node.messages.sumOf { message ->
+                (message.translation?.length ?: 0).toLong() + message.parts.sumOf { it.payloadChars() }
+            }
+        }
+    }
 
     // ---- 排序：置顶优先，再按 updateAt 倒序 ----
 
     private fun orderSummaries(summaries: List<ConversationSummary>): List<ConversationSummary> =
-        summaries.sortedWith(
-            compareByDescending<ConversationSummary> { it.isPinned }
-                .thenByDescending { it.updateAt }
-        )
+        summaries.sortedWith(SUMMARY_ORDER)
 
     // ---- 路径助手 ----
 
@@ -561,8 +590,22 @@ class JsonConversationStorage(
     private companion object {
         const val INDEX_FILENAME = "index.json"
         const val SUMMARY_CACHE_FILENAME = "summary-cache-v1.cache"
-        const val MAX_CONVERSATION_CACHE_ENTRIES = 2
+        val SUMMARY_ORDER = compareByDescending<ConversationSummary> { it.isPinned }.thenByDescending { it.updateAt }
+        const val MAX_CONVERSATION_CACHE_ENTRIES = 4
+        const val MAX_CONVERSATION_CACHE_BYTES = 24L * 1024 * 1024
+        const val LARGE_CONVERSATION_BYTES = 16L * 1024 * 1024
         /** Blob directories without a conversation are only reclaimed once this old. */
         const val ORPHAN_BLOB_DIRECTORY_MIN_AGE_SECONDS = 30L * 60L
     }
+}
+
+private fun UIMessagePart.payloadChars(): Long = when (this) {
+    is UIMessagePart.Text -> text.length.toLong()
+    is UIMessagePart.Reasoning -> reasoning.length.toLong()
+    is UIMessagePart.Image -> url.length.toLong()
+    is UIMessagePart.Video -> url.length.toLong()
+    is UIMessagePart.Audio -> url.length.toLong() + fileName.length
+    is UIMessagePart.Document -> url.length.toLong() + fileName.length
+    is UIMessagePart.MiniApp -> title.length.toLong() + description.length
+    is UIMessagePart.Tool -> input.length.toLong() + output.sumOf { it.payloadChars() }
 }

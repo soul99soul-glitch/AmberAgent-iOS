@@ -1,5 +1,6 @@
 package app.amber.core.storage.conversation
 
+import kotlin.coroutines.CoroutineContext
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ObjCObjectVar
@@ -13,11 +14,23 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Runnable
 import platform.CoreCrypto.CC_SHA256
 import platform.CoreCrypto.CC_SHA256_DIGEST_LENGTH
 import platform.Foundation.NSData
 import platform.Foundation.NSError
+import platform.Foundation.NSFileManager
+import platform.Foundation.NSString
+import platform.Foundation.NSUTF8StringEncoding
+import platform.Foundation.create
 import platform.Foundation.dataWithContentsOfFile
+import platform.Foundation.stringByDeletingLastPathComponent
+import platform.Foundation.stringWithContentsOfFile
+import platform.Foundation.writeToFile
+import platform.darwin.DISPATCH_QUEUE_PRIORITY_BACKGROUND
+import platform.darwin.dispatch_async
+import platform.darwin.dispatch_get_global_queue
 import platform.posix.EINTR
 import platform.posix.O_CREAT
 import platform.posix.O_TRUNC
@@ -26,16 +39,9 @@ import platform.posix.close
 import platform.posix.errno
 import platform.posix.fsync
 import platform.posix.memcpy
-import platform.posix.unlink
-import platform.Foundation.NSFileManager
-import platform.Foundation.NSString
-import platform.Foundation.NSUTF8StringEncoding
-import platform.Foundation.create
-import platform.Foundation.stringByDeletingLastPathComponent
-import platform.Foundation.stringWithContentsOfFile
-import platform.Foundation.writeToFile
-import platform.posix.stat
 import platform.posix.rename
+import platform.posix.stat
+import platform.posix.unlink
 
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
 actual class ConversationFile actual constructor(actual val path: String) {
@@ -212,5 +218,11 @@ internal actual fun sha256Hex(bytes: ByteArray): String = memScoped {
         for (i in 0 until CC_SHA256_DIGEST_LENGTH) {
             append(digest[i].toInt().toString(16).padStart(2, '0'))
         }
+    }
+}
+
+internal actual val conversationMaintenanceDispatcher: CoroutineDispatcher = object : CoroutineDispatcher() {
+    override fun dispatch(context: CoroutineContext, block: Runnable) {
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND.toLong(), 0u)) { block.run() }
     }
 }

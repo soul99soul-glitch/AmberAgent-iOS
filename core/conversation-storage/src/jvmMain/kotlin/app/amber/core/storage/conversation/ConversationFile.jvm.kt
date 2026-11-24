@@ -1,5 +1,7 @@
 package app.amber.core.storage.conversation
 
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -126,3 +128,5 @@ internal actual fun ConversationFile.listChildNames(): List<String> =
 internal actual fun sha256Hex(bytes: ByteArray): String =
     java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
         .joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+
+internal actual val conversationMaintenanceDispatcher: CoroutineDispatcher = Dispatchers.IO

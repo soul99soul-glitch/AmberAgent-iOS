@@ -31,9 +31,9 @@ class ConversationSummaryStartupTest {
             }
             // The legacy index is valid, as on an existing installation.
             baseDir.child("index.json").writeText(JsonInstant.encodeToString(expected))
-            val migration = measureTimedValue { JsonConversationStorage(baseDir).listSummaries() }
-            assertEquals(expected.toSet(), migration.value.toSet())
-            println("SUMMARY_STARTUP sessions=500 messages=40000 bytes=${directory.listFiles()!!.sumOf { it.length() }} migrationMs=${migration.duration.inWholeMilliseconds}")
+            val firstListing = measureTimedValue { JsonConversationStorage(baseDir).listSummaries() }
+            assertEquals(expected.toSet(), firstListing.value.toSet())
+            println("SUMMARY_STARTUP sessions=500 messages=40000 bytes=${directory.listFiles()!!.sumOf { it.length() }} firstListingMs=${firstListing.duration.inWholeMilliseconds}")
 
             val decodeCounts = List(3) { iteration ->
                 // A new owner models a new app process; no in-memory cache can survive.

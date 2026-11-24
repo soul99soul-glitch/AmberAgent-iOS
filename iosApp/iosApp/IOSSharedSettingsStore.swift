@@ -157,28 +157,11 @@ final class IOSSharedSettingsStore {
         } else {
             self.jevSettings = IOSJevSettings()
         }
-        if let json = defaults.string(forKey: fullSettingsJsonKey),
-           let decoded = try? Self.decodeSettings(json) {
-            self.snapshot = decoded
-        } else {
-            self.snapshot = IosSettingsDefaults.shared.defaultSeededSettings()
+        let stored = defaults.string(forKey: fullSettingsJsonKey).flatMap {
+            try? IOSCredentialRedactor.decodeSettings($0, loadCredential: loadCredential, decode: Self.decodeSettings)
         }
+        self.snapshot = stored?.snapshot ?? IosSettingsDefaults.shared.defaultSeededSettings()
         searchProviderMirror = defaults.array(forKey: searchProvidersKey) as? [[String: String]] ?? []
-        // Scheme B rehydration: the persisted JSON is redacted (provider apiKeys
-        // are the mask sentinel). Rehydrate the real apiKeys from the Keychain
-        // side-table so the in-memory snapshot carries usable credentials. Also
-        // Detect legacy plaintext here; restoreSnapshot moves all credentials
-        // together before replacing the persisted JSON with its masked form.
-        let migratedProviderPlaintext = Self.rehydrateProviderApiKeys(into: &self.snapshot, load: loadCredential)
-        let migratedSearchPlaintext = Self.rehydrateSearchServiceApiKeys(into: &self.snapshot, load: loadCredential)
-        let hydratedJson = IOSCredentialRedactor.rehydrate(
-            IosSettingsJsonBridge.shared.encode(settings: self.snapshot)
-        ) { path in
-            self.loadCredential(IOSCredentialSideTable.settingsPath(path))
-        }
-        if let hydrated = try? Self.decodeSettings(hydratedJson) {
-            self.snapshot = hydrated
-        }
         // iOS identity: introduce as "Amber" and don't claim to run on Android.
         // Applied on every load (idempotent) so persisted snapshots are rebranded too.
         let soulBeforeRebrand = self.snapshot.agentRuntime.agentSoulMarkdown
@@ -190,31 +173,9 @@ final class IOSSharedSettingsStore {
         let beforeReasoningMigration = self.snapshot
         self.snapshot = IosSettingsMutations.shared.migrateLegacyCodexGpt6Reasoning(settings: self.snapshot)
         let reasoningMigrated = self.snapshot !== beforeReasoningMigration
-        if migratedProviderPlaintext || migratedSearchPlaintext || soulMigratedFromFactory || reasoningMigrated {
-            restoreSnapshot(self.snapshot)
+        if stored?.hasPlaintextAPIKey == true || soulMigratedFromFactory || reasoningMigrated {
+            persistRuntimeSettings(self.snapshot)
         }
-    }
-
-    /// Rehydrates provider apiKeys in a snapshot from the Keychain side-table
-    /// (scheme B). Masked values are replaced with the real key; non-empty non-
-    /// mask values flag a pending plaintext migration for restoreSnapshot.
-    private static func rehydrateProviderApiKeys(into snapshot: inout Settings, load: (String) -> String?) -> Bool {
-        var migratedPlaintext = false
-        for provider in snapshot.providers {
-            let providerId = provider.id.description() as String
-            let current = apiKey(of: provider)
-            if current == IOSCredentialRedactor.mask {
-                // Redacted on disk → rehydrate real key from Keychain.
-                if let real = load(IOSCredentialSideTable.providerApiKey(providerId: providerId)) {
-                    snapshot = IosSettingsMutations.shared.updateProviderApiKey(settings: snapshot, providerId: providerId, apiKey: real)
-                }
-            } else if !current.isEmpty {
-                // Pre-redactor plaintext still in the JSON → migrate to side-table
-                // and immediately rewrite persisted JSON through restoreSnapshot.
-                migratedPlaintext = true
-            }
-        }
-        return migratedPlaintext
     }
 
     /// Reads the apiKey from a provider by sealed type.
@@ -223,30 +184,6 @@ final class IOSSharedSettingsStore {
         if let claude = provider as? ProviderSetting.Claude { return claude.apiKey }
         if let google = provider as? ProviderSetting.Google { return google.apiKey }
         return ""
-    }
-
-    private static func rehydrateSearchServiceApiKeys(into snapshot: inout Settings, load: (String) -> String?) -> Bool {
-        var migratedPlaintext = false
-        for service in snapshot.searchServices {
-            let serviceId = service.id.description()
-            let current = searchApiKey(of: service)
-            if current == IOSCredentialRedactor.mask {
-                // Search-service credentials follow the same scheme-B invariant
-                // as chat providers: UserDefaults may contain only the mask,
-                // while the real key is restored from the side-table before the
-                // snapshot is used or persisted again.
-                if let real = load(IOSCredentialSideTable.searchServiceApiKey(serviceId: serviceId)) {
-                    snapshot = IosSettingsMutations.shared.updateSearchServiceApiKey(
-                        settings: snapshot,
-                        id: serviceId,
-                        apiKey: real
-                    )
-                }
-            } else if !current.isEmpty {
-                migratedPlaintext = true
-            }
-        }
-        return migratedPlaintext
     }
 
     private static func searchApiKey(of service: SearchServiceOptions) -> String {
@@ -270,17 +207,15 @@ final class IOSSharedSettingsStore {
 
     @discardableResult
     func restoreSnapshot(_ settings: Settings) -> Bool {
-        var runtimeSettings = settings
-        _ = Self.rehydrateProviderApiKeys(into: &runtimeSettings, load: loadCredential)
-        _ = Self.rehydrateSearchServiceApiKeys(into: &runtimeSettings, load: loadCredential)
-        let runtimeJson = IOSCredentialRedactor.rehydrate(
-            IosSettingsJsonBridge.shared.encode(settings: runtimeSettings)
-        ) { path in
-            self.loadCredential(IOSCredentialSideTable.settingsPath(path))
-        }
-        if let decoded = try? Self.decodeSettings(runtimeJson) {
-            runtimeSettings = decoded
-        }
+        let runtime = try? IOSCredentialRedactor.decodeSettings(
+            IosSettingsJsonBridge.shared.encode(settings: settings),
+            loadCredential: loadCredential, decode: Self.decodeSettings
+        )
+        return persistRuntimeSettings(runtime?.snapshot ?? settings)
+    }
+
+    @discardableResult
+    private func persistRuntimeSettings(_ runtimeSettings: Settings) -> Bool {
         let previous = Self.credentialValues(in: snapshot)
         let proposed = Self.credentialValues(in: runtimeSettings)
         var written: [(key: String, previous: String?)] = []

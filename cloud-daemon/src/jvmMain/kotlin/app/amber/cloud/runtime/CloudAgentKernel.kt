@@ -410,6 +410,7 @@ class CloudAgentKernel(
 
     suspend fun recoverColdStartConversations() {
         vault.wipeAllPendingToolArgs()
+        conversationStorage.reconcileIndex()
         val summaries = conversationStorage.listSummaries()
         for (summary in summaries) {
             val conv = conversationStorage.loadConversation(summary.id) ?: continue

@@ -544,7 +544,9 @@ object DesktopProviderBridge {
 
 /** macOS stores canonical KMP documents; the envelope is only a Swift display projection. */
 class DesktopConversationRepository(directory: String) {
-    private val storage by lazy { JsonConversationStorage(ConversationFile(directory)) }
+    private val storage by lazy {
+        JsonConversationStorage(ConversationFile(directory), reconcileOnFirstList = true)
+    }
 
     @Throws(Throwable::class)
     suspend fun listSummaries(): String = withContext(Dispatchers.Default) {

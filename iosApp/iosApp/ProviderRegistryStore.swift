@@ -153,10 +153,11 @@ final class ProviderRegistryStore {
         }
 
         // Ensure the selected row is both present and usable by the current chat chain.
+        let activeBaseURL = settingsStore.baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         if let selected = selectedProvider, canSelect(selected) {
             selectedProviderId = Self.id(of: selected)
         } else if let match = providers.first(where: {
-            canSelect($0) && Self.baseURL(of: $0).trimmingCharacters(in: .whitespacesAndNewlines) == settingsStore.baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            Self.baseURL(of: $0).trimmingCharacters(in: .whitespacesAndNewlines) == activeBaseURL && canSelect($0)
         }) {
             selectedProviderId = Self.id(of: match)
             defaults.set(selectedProviderId, forKey: selectedKey)

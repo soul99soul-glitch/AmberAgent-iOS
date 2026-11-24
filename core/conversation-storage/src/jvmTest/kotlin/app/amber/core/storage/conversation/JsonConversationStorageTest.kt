@@ -41,7 +41,7 @@ class JsonConversationStorageTest {
 
     @AfterTest
     fun teardown() {
-        tempDir.delete()
+        File(tempDir.path).deleteRecursively()
     }
 
     @Test
@@ -114,6 +114,78 @@ class JsonConversationStorageTest {
     }
 
     @Test
+    fun snapshotCacheUsesFourSlotsAndPromotesRecentlyLoadedEntries() = runTest {
+        val conversations = List(5) { sampleConversation(id = Uuid.random()) }
+        conversations.take(4).forEach { storage.saveConversation(it) }
+        var decodes = 0
+        storage.beforeConversationDecodeForTesting = { decodes++ }
+        storage.loadConversation(conversations[0].id)
+        storage.saveConversation(conversations[4])
+        for (index in listOf(0, 2, 3, 4)) storage.loadConversation(conversations[index].id)
+        assertEquals(0, decodes)
+        storage.loadConversation(conversations[1].id)
+        assertEquals(1, decodes)
+        storage.clearMemoryCache()
+        storage.loadConversation(conversations[1].id)
+        assertEquals(2, decodes)
+    }
+
+    @Test
+    fun cacheEvictsByPayloadBytesBeforeReachingItsCountLimit() = runTest {
+        val conversations = List(3) {
+            sampleConversation(id = Uuid.random(), userText = "x".repeat(5 * 1024 * 1024))
+        }
+        conversations.forEach { storage.saveConversation(it) }
+        var decodes = 0
+        storage.beforeConversationDecodeForTesting = { decodes++ }
+        storage.loadConversation(conversations[1].id)
+        storage.loadConversation(conversations[2].id)
+        assertEquals(0, decodes)
+        storage.loadConversation(conversations[0].id)
+        assertEquals(1, decodes, "Three 10 MiB UTF-16 payloads exceed the 24 MiB budget")
+    }
+
+    @Test
+    fun aSingleEntryOverBudgetStaysCachedForTheNextSave() = runTest {
+        val large = sampleConversation(id = Uuid.random(), userText = "x".repeat(13 * 1024 * 1024))
+        storage.saveConversation(large)
+        var decodes = 0
+        storage.beforeConversationDecodeForTesting = { decodes++ }
+        storage.loadConversation(large.id)
+        storage.saveConversation(large)
+        assertEquals(0, decodes)
+    }
+
+    @Test
+    fun reconciliationAndWritesByAnotherOwnerRefreshTheWarmIndex() = runTest {
+        val first = sampleConversation(id = Uuid.random(), title = "first")
+        storage.saveConversation(first)
+        val other = JsonConversationStorage(tempDir)
+        assertEquals(listOf(first.toSummary()), other.listSummaries())
+        val second = sampleConversation(id = Uuid.random(), title = "second")
+        storage.saveConversation(second)
+        other.updateMetadata(first.id, title = "renamed", isPinned = true)
+        assertEquals(listOf("renamed", "second"), storage.listSummaries().map { it.title })
+        val reads = storage.listSummaries()
+        assertSame(reads, storage.listSummaries())
+        other.deleteConversation(second.id)
+        assertEquals(listOf("renamed"), storage.listSummaries().map { it.title })
+    }
+
+    @Test
+    fun firstListingCanRecoverInterruptedWritesOnceForSynchronousStartupConsumers() = runTest {
+        val conversation = sampleConversation(id = Uuid.random(), title = "recovered")
+        storage.saveConversation(conversation)
+        tempDir.child("index.json").writeText("[]")
+        val reopened = JsonConversationStorage(tempDir, reconcileOnFirstList = true)
+        assertEquals(listOf(conversation.toSummary()), reopened.listSummaries())
+        assertTrue(tempDir.child("${conversation.id}.json").delete())
+        assertEquals(listOf(conversation.toSummary()), reopened.listSummaries())
+        assertTrue(reopened.reconcileIndex())
+        assertTrue(reopened.listSummaries().isEmpty())
+    }
+
+    @Test
     fun derivedIndexWriteFailureDoesNotFailCanonicalConversationSave() = runTest {
         tempDir.child("index.json").mkdirs()
         val conversation = sampleConversation(
@@ -127,6 +199,28 @@ class JsonConversationStorageTest {
         val loaded = storage.loadConversation(conversation.id)
         assertNotNull(loaded)
         assertEquals("persisted despite index failure", loaded.currentMessages.single().toText())
+    }
+
+    @Test
+    fun failedDerivedWriteCannotResurrectAnOldIndexAfterMemoryPressure() = runTest {
+        val original = sampleConversation(id = Uuid.random())
+        val added = sampleConversation(id = Uuid.random())
+        storage.saveConversation(original)
+        val index = tempDir.child("index.json")
+        val stale = index.readText()!!
+        assertTrue(index.delete())
+        assertTrue(index.mkdirs())
+        val blocker = index.child("keep")
+        blocker.writeText("A nonempty directory blocks both atomic and fallback replacement")
+        storage.saveConversation(added)
+        assertTrue(blocker.delete(), "the failed write must leave the obstruction intact")
+        assertTrue(index.delete())
+        index.writeText(stale)
+        storage.clearMemoryCache()
+
+        val expected = setOf(original.id, added.id)
+        assertEquals(expected, storage.listSummaries().map { it.id }.toSet())
+        assertEquals(expected, JsonConversationStorage(tempDir).listSummaries().map { it.id }.toSet())
     }
 
     @Test
@@ -328,19 +422,21 @@ class JsonConversationStorageTest {
         storage.saveConversation(sampleConversation(id = idA, title = "A"))
         storage.saveConversation(sampleConversation(id = idB, title = "B"))
 
+        storage.reconcileIndex()
         var decodeCount = 0
         storage.beforeSummaryDecodeForTesting = { decodeCount += 1 }
-        storage.listSummaries()
-        assertEquals(2, decodeCount)
         assertEquals(2, storage.listSummaries().size)
-        assertEquals(2, decodeCount, "未变化的会话文件不应再次解码")
+        assertFalse(storage.reconcileIndex())
+        assertEquals(0, decodeCount, "未变化的会话文件不应再次解码")
 
         tempDir.child("${idA}.json").writeText(
             JsonInstant.encodeToString(sampleConversation(id = idA, title = "A changed"))
         )
 
+        assertEquals("A", storage.listSummaries().single { it.id == idA }.title)
+        assertTrue(storage.reconcileIndex())
         val summaries = storage.listSummaries()
-        assertEquals(3, decodeCount, "只修改一个会话时只应重新解码一个文件")
+        assertEquals(1, decodeCount, "只修改一个会话时只应重新解码一个文件")
         assertEquals("A changed", summaries.single { it.id == idA }.title)
     }
 
@@ -350,7 +446,7 @@ class JsonConversationStorageTest {
         val removed = sampleConversation(id = Uuid.random())
         val retained = sampleConversation(id = Uuid.random(), title = "retained")
         listOf(changed, removed, retained).forEach { storage.saveConversation(it) }
-        storage.listSummaries()
+        storage.reconcileIndex()
 
         val file = File(tempDir.child("${changed.id}.json").path)
         val modified = Files.getLastModifiedTime(file.toPath())
@@ -366,6 +462,8 @@ class JsonConversationStorageTest {
         val reopened = JsonConversationStorage(tempDir)
         var decoded = 0
         reopened.beforeSummaryDecodeForTesting = { decoded++ }
+        assertEquals(setOf(changed.id, removed.id, retained.id), reopened.listSummaries().map { it.id }.toSet())
+        assertTrue(reopened.reconcileIndex())
         val summaries = reopened.listSummaries()
         assertEquals(setOf("edited", "retained", "added"), summaries.map { it.title }.toSet())
         assertEquals(2, decoded, "只读变化及新增的正文，不读未变会话和旁路元数据")
@@ -627,6 +725,8 @@ class JsonConversationStorageTest {
         Files.setLastModifiedTime(file.toPath(), modified)
         assertEquals(size, file.length())
 
+        assertEquals("cached title", storage.listSummaries().single().title)
+        assertTrue(storage.reconcileIndex())
         val summaries = storage.listSummaries()
         val persistedIndex = JsonInstant.decodeFromString<List<ConversationSummary>>(
             tempDir.child("index.json").readText()!!
@@ -649,6 +749,8 @@ class JsonConversationStorageTest {
             JsonInstant.encodeToString(sampleConversation(id = orphanId, title = "orphan"))
         )
 
+        assertEquals(setOf(retainedId, staleId), storage.listSummaries().map { it.id }.toSet())
+        assertTrue(storage.reconcileIndex())
         assertEquals(
             setOf(retainedId, orphanId),
             storage.listSummaries().mapTo(mutableSetOf()) { it.id },

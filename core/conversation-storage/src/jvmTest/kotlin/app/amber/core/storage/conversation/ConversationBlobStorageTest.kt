@@ -121,6 +121,24 @@ class ConversationBlobStorageTest {
     }
 
     @Test
+    fun resolvedLargeImageEvictsOlderSnapshotsEvenBelowTheCombinedBudget() = runTest {
+        val small = conversation(Uuid.random(), listOf(UIMessagePart.Text("small")))
+        val image = "data:image/png;base64," + "A".repeat(9 * 1024 * 1024)
+        val large = conversation(Uuid.random(), listOf(screenshotTool("large", image)))
+        storage.saveConversation(large)
+        assertTrue(File(root, "${large.id}.json").length() < 4096)
+        storage.clearMemoryCache()
+        storage.saveConversation(small)
+        var decodes = 0
+        storage.beforeConversationDecodeForTesting = { decodes++ }
+        assertEquals(image, allImageUrls(storage.loadConversation(large.id)!!).single())
+        storage.saveConversation(large)
+        assertEquals(1, decodes, "the latest 18 MiB snapshot and its blob memo survive")
+        storage.loadConversation(small.id)
+        assertEquals(2, decodes, "the 16 MiB cutoff evicts even a tiny older snapshot")
+    }
+
+    @Test
     fun identicalImagesShareOneBlobAcrossPartsAndSaves() = runTest {
         val id = Uuid.random()
         val shot = pngDataUrl(3)
@@ -429,7 +447,10 @@ class ConversationBlobStorageTest {
         val orphanStaged = File(root, "$stagedId.blobs").apply { mkdirs(); setLastModified(old) }
         File(root, "$stagedId.batch.backup").writeText("{}")
 
-        JsonConversationStorage(dir).listSummaries()
+        val reopened = JsonConversationStorage(dir)
+        reopened.listSummaries()
+        assertTrue(orphanOld.exists(), "listing the index must not sweep blob directories")
+        reopened.reconcileIndex()
 
         assertFalse(orphanOld.exists(), "old directory without a conversation is reclaimed")
         assertTrue(orphanYoung.exists(), "recent directory may belong to an in-flight write")

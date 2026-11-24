@@ -1,5 +1,7 @@
 package app.amber.core.storage.conversation
 
+import kotlinx.coroutines.CoroutineDispatcher
+
 /**
  * 平台抽象文件句柄，供 [JsonConversationStorage] 做 per-file JSON 持久化。
  *
@@ -83,3 +85,6 @@ internal expect fun ConversationFile.listChildNames(): List<String>
 
 /** Lowercase hex SHA-256 of [bytes]. */
 internal expect fun sha256Hex(bytes: ByteArray): String
+
+/** Canonical directory scans run at background priority on Apple platforms. */
+internal expect val conversationMaintenanceDispatcher: CoroutineDispatcher

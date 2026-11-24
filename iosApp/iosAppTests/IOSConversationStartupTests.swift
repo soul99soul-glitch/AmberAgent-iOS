@@ -4,6 +4,41 @@ import XCTest
 
 @MainActor
 final class IOSConversationStartupTests: XCTestCase {
+    func testEmptyIndexRecoversCanonicalHistoryBeforeCreatingAConversation() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let seed = IOSConversationStore(baseDirectory: directory)
+        await seed.bootstrap()
+        await seed.saveCurrent(messages: [UIMessage.companion.user(prompt: "recover me")])
+        let recovered = try XCTUnwrap(seed.currentConversation?.id)
+        try Data("[]".utf8).write(to: directory.appendingPathComponent("index.json"), options: .atomic)
+
+        let store = IOSConversationStore(baseDirectory: directory)
+        await store.bootstrap()
+        XCTAssertEqual(store.currentConversation?.id, recovered)
+        XCTAssertEqual(store.allSummaries.map(\.id), [recovered])
+        let persisted = try await store.storage.listSummaries()
+        XCTAssertEqual(persisted.count, 1)
+    }
+
+    func testMissingFirstDocumentSelectsSurvivingHistory() async throws {
+        let directory = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let seed = IOSConversationStore(baseDirectory: directory)
+        await seed.bootstrap()
+        await seed.saveCurrent(messages: [UIMessage.companion.user(prompt: "survives")])
+        let survivor = try XCTUnwrap(seed.currentConversation?.id)
+        await seed.newConversation()
+        let missing = try XCTUnwrap(seed.currentConversation?.id)
+        await seed.togglePin(id: missing)
+        try FileManager.default.removeItem(at: directory.appendingPathComponent("\(missing.toHexDashString()).json"))
+
+        let store = IOSConversationStore(baseDirectory: directory)
+        await store.bootstrap()
+        XCTAssertEqual(store.currentConversation?.id, survivor)
+        XCTAssertEqual(store.allSummaries.map(\.id), [survivor])
+    }
+
     func testColdHomeImageResumeDoesNotLoadOrdinaryHistory() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -159,7 +194,8 @@ final class IOSConversationStartupTests: XCTestCase {
         }
         // Establish the current persisted summary index before measuring a
         // fresh process's normal startup; migration cost is tested in KMP.
-        await seed.bootstrap()
+        _ = try await seed.storage.reconcileIndex()
+        await seed.refreshSummaries()
         XCTAssertEqual(seed.summaries.count, count)
     }
 
