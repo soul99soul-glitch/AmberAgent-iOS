@@ -140,7 +140,7 @@ final class ChatStreamingRevealPacerTests: XCTestCase {
 
     func testPlainStreamingProseUsesDirectAppendInsteadOfPerTickMarkdownReparse() async throws {
         let initialPrefix = "直接追加验证："
-        let prose = initialPrefix + String(repeating: "这是一段连续纯文本流式输出，期间没有任何块级或行内语法切换。", count: 6) + "收尾完成"
+        let prose = initialPrefix + String(repeating: "这是一段连续纯文本流式输出，期间没有任何块级或行内语法切换。", count: 20) + "收尾完成"
         let stream = Stream(text: initialPrefix)
         let host = UIHostingController(rootView: Fixture(stream: stream))
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -169,6 +169,12 @@ final class ChatStreamingRevealPacerTests: XCTestCase {
         let ticks = counts["pacer-tick"]?.values.reduce(0, +) ?? 0
         let directAppends = counts["pacer-direct-append"]?.values.reduce(0, +) ?? 0
         let mdSchedules = counts["md-schedule"]?.values.reduce(0, +) ?? 0
+        let metrics = "utf16=\(prose.utf16.count) pacer-direct-append=\(directAppends) pacer-tick=\(ticks) md-schedule=\(mdSchedules)"
+        let attachment = XCTAttachment(string: metrics)
+        attachment.name = "long-prose-pacer-counts"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        print("[PERF-PACER] \(metrics)")
         XCTAssertGreaterThan(ticks, 20)
         XCTAssertGreaterThan(directAppends, ticks / 2, "纯文本吐字应主要由直接追加承载")
         XCTAssertLessThanOrEqual(mdSchedules, ticks / 3, "纯文本吐字仅在折行或收尾时同步前缀，不应每拍触发 Markdown 重解析（实际 md-schedule=\(mdSchedules), ticks=\(ticks)）")

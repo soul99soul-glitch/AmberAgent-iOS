@@ -2,6 +2,7 @@ import XCTest
 import Combine
 import SwiftUI
 import CoreText
+import iosMath
 import Shared
 @testable import SwiftStreamingMarkdown
 @testable import iosApp
@@ -142,6 +143,82 @@ final class ChatMarkdownRenderingTests: ChatMessageProjectionTestCase {
         """
         let multiline = try XCTUnwrap(Self.firstNode(ofType: .mathBlock, in: Self.astNodes(for: multilineMarkdown)))
         XCTAssertEqual(AmberMarkdownMath.blockLatex(from: multiline, source: multilineMarkdown), "a^2 + b^2 = c^2")
+    }
+
+    func testBlockMathReusesParsedFormulaAndWidthMeasurements() throws {
+        final class CountingLabel: MTMathUILabel {
+            var fitCalls = 0
+            override func sizeToFit() {
+                fitCalls += 1
+                super.sizeToFit()
+            }
+        }
+
+        let formula = BlockMathView(latex: #"\frac{a}{b}"#, color: .primary, pointSize: 18)
+        let label = CountingLabel()
+        let coordinator = formula.makeCoordinator()
+        var environment = EnvironmentValues()
+        environment.colorScheme = .light
+        coordinator.update(formula, label: label, environment: environment)
+        let originalList = try XCTUnwrap(label.mathList)
+        let lightColor = label.textColor
+        let reference = MTMathUILabel()
+        reference.displayErrorInline = false
+        reference.textColor = UIColor(Color.primary)
+        reference.fontSize = 18
+        reference.latex = #"\frac{a}{b}"#
+        reference.sizeToFit()
+        let expected = CGSize(width: ceil(reference.bounds.width), height: ceil(reference.bounds.height) + 1)
+
+        for _ in 0..<8 {
+            coordinator.update(formula, label: label, environment: environment)
+            XCTAssertEqual(coordinator.sizeThatFits(formula, label: label, width: 320.1), expected)
+        }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 2
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: expected, format: format)
+        func render(_ mathLabel: MTMathUILabel?) -> UIImage {
+            let bounds = CGRect(origin: .zero, size: expected)
+            mathLabel?.bounds = bounds
+            mathLabel?.setNeedsLayout()
+            mathLabel?.layoutIfNeeded()
+            return renderer.image { context in
+                UIColor.white.setFill()
+                context.fill(bounds)
+                mathLabel?.layer.render(in: context.cgContext)
+            }
+        }
+        UITraitCollection(userInterfaceStyle: .light).performAsCurrent {
+            let rendered = render(label)
+            XCTAssertNotEqual(rendered.pngData(), render(nil).pngData(), "公式必须实际绘出字形")
+            XCTAssertEqual(rendered.pngData(), render(reference).pngData(), "新旧标签必须绘出相同的分式")
+            let attachment = XCTAttachment(image: rendered)
+            attachment.name = "block-math-fraction"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+
+        environment.colorScheme = .dark
+        coordinator.update(formula, label: label, environment: environment)
+        XCTAssertNotEqual(label.textColor, lightColor)
+        XCTAssertIdentical(label.mathList, originalList)
+        XCTAssertEqual(coordinator.sizeThatFits(formula, label: label, width: 320.8), expected)
+        XCTAssertEqual(label.fitCalls, 1)
+        XCTAssertEqual(coordinator.sizeThatFits(formula, label: label, width: nil), expected)
+        XCTAssertEqual(coordinator.sizeThatFits(formula, label: label, width: 320), expected)
+        XCTAssertEqual(label.fitCalls, 2, "宽度提议交替时，已有测量应能复用")
+
+        let enlarged = BlockMathView(latex: #"\frac{a}{b}"#, color: .primary, pointSize: 32)
+        let enlargedSize = coordinator.sizeThatFits(enlarged, label: label, width: 320)
+        XCTAssertIdentical(label.mathList, originalList)
+        XCTAssertGreaterThan(enlargedSize.height, expected.height)
+        let replacement = BlockMathView(latex: "x", color: .primary, pointSize: 32)
+        let shortSize = coordinator.sizeThatFits(replacement, label: label, width: 320)
+        XCTAssertNotIdentical(label.mathList, originalList)
+        XCTAssertLessThan(shortSize.height, enlargedSize.height)
+        XCTAssertEqual(label.fitCalls, 4)
     }
 
     func testKnownGap_B3b_inlineMathRendersAsLiteralText() throws {
