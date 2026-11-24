@@ -68,6 +68,11 @@ final class IOSChatBackgroundRunState: @unchecked Sendable {
     private var speedClock = ChatGenerationSpeedClock()
     private var presentationStage: AgentActivityStage = .preparing
     private var lastProgressRefreshAt: Date?
+    private var lastVisibleProgressAt: Date?
+    var interjectionProgress: (stage: AgentActivityStage, updatedAt: Date?) {
+        lock.withLock { (presentationStage, lastVisibleProgressAt) }
+    }
+
     private var phoneProgressText = ""
     private var phoneProgressReasoning = ""
     private var reportedPhoneToolResults: Set<String> = []
@@ -177,6 +182,7 @@ final class IOSChatBackgroundRunState: @unchecked Sendable {
             return nil
         }
         presentationStage = next
+        lastVisibleProgressAt = Date()
         return next
     }
 
@@ -193,6 +199,7 @@ final class IOSChatBackgroundRunState: @unchecked Sendable {
     func noteVisibleDelta(at date: Date = Date()) -> Bool {
         lock.lock()
         defer { lock.unlock() }
+        lastVisibleProgressAt = date
         speedClock.noteVisibleDelta(at: date)
         if let lastProgressRefreshAt,
            date.timeIntervalSince(lastProgressRefreshAt) < AgentActivityLifecyclePolicy.progressRefreshInterval {

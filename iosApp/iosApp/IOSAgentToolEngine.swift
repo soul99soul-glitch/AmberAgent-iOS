@@ -1,6 +1,66 @@
 import Foundation
 @preconcurrency import Shared
 
+/// One signal per task slot. A revision covers the gap between draining input and
+/// installing a provider cancellation handler. Tools only read the revision.
+public final class IOSLiveInterjectionSignal: @unchecked Sendable {
+    private let lock = NSLock()
+    private var generation = 0
+    private var cancelProvider: (@Sendable () -> Void)?
+    var revision: Int { lock.withLock { generation } }
+    @TaskLocal static var toolPlanIsStale: (@Sendable () -> Bool)?
+
+    func signal() {
+        let cancel = lock.withLock {
+            generation &+= 1
+            let current = cancelProvider
+            cancelProvider = nil
+            return current
+        }
+        cancel?()
+    }
+
+    struct Superseded: Error {}
+
+    func stream(at revision: Int, operation: @escaping @Sendable () async throws -> MessageChunk) async throws -> MessageChunk {
+        let (results, completion) = AsyncThrowingStream<MessageChunk, Error>.makeStream()
+        let provider = Task {
+            do {
+                try Task.checkCancellation()
+                guard self.revision == revision else { throw Superseded() }
+                completion.yield(try await operation())
+                completion.finish()
+            } catch { completion.finish(throwing: error) }
+        }
+        let cancel: @Sendable () -> Void = {
+            provider.cancel()
+            completion.finish(throwing: Superseded())
+        }
+        let installed = lock.withLock {
+            guard generation == revision else { return false }
+            cancelProvider = cancel
+            return true
+        }
+        defer {
+            lock.withLock { if generation == revision { cancelProvider = nil } }
+            provider.cancel()
+        }
+        guard installed else { throw Superseded() }
+        do {
+            for try await chunk in results {
+                try Task.checkCancellation()
+                guard self.revision == revision else { throw Superseded() }
+                return chunk
+            }
+            throw CancellationError()
+        } catch {
+            try Task.checkCancellation()
+            if self.revision != revision { throw Superseded() }
+            throw error
+        }
+    }
+}
+
 /// Runs one cancellable model/tool loop at a time. The run owns its transcript,
 /// tool-loop guard and current executor registry; provider steps and batches
 /// receive only the state needed for that round.
@@ -189,11 +249,13 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         refreshToolExposure: (@MainActor @Sendable () async -> Void)? = nil,
         mailboxDrain: (@Sendable () async -> IOSMailboxDrainResult)? = nil,
         drainSteer: (@Sendable () async -> [UIMessage])? = nil,
+        interjections: IOSLiveInterjectionSignal? = nil,
         prepareRequestMessages: (@Sendable ([UIMessage]) async throws -> [UIMessage])? = nil,
         sortPendingToolCalls: (@Sendable ([UIMessagePart.Tool]) -> [UIMessagePart.Tool])? = nil,
         preemptToolBatch: (@Sendable ([UIMessagePart.Tool]) async -> String?)? = nil,
         resolveUnexposedToolCall: (@Sendable (UIMessagePart.Tool) async -> [UIMessagePart]?)? = nil,
         onAssistantTurnStarted: (@MainActor @Sendable () async -> Void)? = nil,
+        onAssistantTurnSuperseded: (@MainActor @Sendable () -> Void)? = nil,
         onAssistantTurnCompleted: (@Sendable ([UIMessage]) async -> Bool)? = nil,
         onAssistantProgressPlan: (@MainActor @Sendable ([String]) async -> Void)? = nil,
         onToolExecutionStarted: (@MainActor @Sendable (String, String) async -> Void)? = nil,
@@ -213,11 +275,13 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             refreshToolExposure: refreshToolExposure,
             mailboxDrain: mailboxDrain,
             drainSteer: drainSteer,
+            interjections: interjections,
             prepareRequestMessages: prepareRequestMessages,
             sortPendingToolCalls: sortPendingToolCalls,
             preemptToolBatch: preemptToolBatch,
             resolveUnexposedToolCall: resolveUnexposedToolCall,
             onAssistantTurnStarted: onAssistantTurnStarted,
+            onAssistantTurnSuperseded: onAssistantTurnSuperseded,
             onAssistantTurnCompleted: onAssistantTurnCompleted,
             onAssistantProgressPlan: onAssistantProgressPlan,
             onToolExecutionStarted: onToolExecutionStarted,
@@ -285,11 +349,13 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         refreshToolExposure: (@MainActor @Sendable () async -> Void)?,
         mailboxDrain: (@Sendable () async -> IOSMailboxDrainResult)?,
         drainSteer: (@Sendable () async -> [UIMessage])?,
+        interjections: IOSLiveInterjectionSignal?,
         prepareRequestMessages: (@Sendable ([UIMessage]) async throws -> [UIMessage])?,
         sortPendingToolCalls: (@Sendable ([UIMessagePart.Tool]) -> [UIMessagePart.Tool])?,
         preemptToolBatch: (@Sendable ([UIMessagePart.Tool]) async -> String?)?,
         resolveUnexposedToolCall: (@Sendable (UIMessagePart.Tool) async -> [UIMessagePart]?)?,
         onAssistantTurnStarted: (@MainActor @Sendable () async -> Void)?,
+        onAssistantTurnSuperseded: (@MainActor @Sendable () -> Void)?,
         onAssistantTurnCompleted: (@Sendable ([UIMessage]) async -> Bool)?,
         onAssistantProgressPlan: (@MainActor @Sendable ([String]) async -> Void)?,
         onToolExecutionStarted: (@MainActor @Sendable (String, String) async -> Void)?,
@@ -324,13 +390,21 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         // real waste and a correctness hazard. Pre-execution does not consume
         // the `steps` budget: it is finishing work the prior (foreground) run
         // already started, not a fresh reasoning round.
+        let entryRevision = interjections?.revision ?? 0
+        let hasPendingTools = interjections != nil && working.contains { message in
+            message.role == .assistant && message.getTools().contains { $0.output.isEmpty }
+        }
+        let pendingInput = hasPendingTools ? await drainSteer?() ?? [] : []
+        let hadPendingInput = !pendingInput.isEmpty
         let preExistingResult = await batchExecutor.executePreExistingPendingTools(
             in: working,
             loopGuard: &loopGuard,
+            planIsStale: interjections.map { signal in { @Sendable in hadPendingInput || signal.revision != entryRevision } },
             onToolExecutionStarted: onToolExecutionStarted,
             onPartialMessagesUpdated: onToolBatchProgress
         )
         working = preExistingResult.messages
+        working.append(contentsOf: Self.uniqueMailboxMessages(pendingInput, excluding: working))
         onMessagesUpdated?(working)
         if let durabilityFailure = preExistingResult.durabilityFailureMessage {
             return IOSAgentToolEngineResult(
@@ -386,6 +460,15 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         }
 
         while steps < configuration.maxSteps {
+            let revision = interjections?.revision ?? 0
+            if interjections != nil, let drainSteer {
+                let updates = await drainSteer()
+                if !updates.isEmpty {
+                    working.append(contentsOf: Self.uniqueMailboxMessages(updates, excluding: working))
+                    onMessagesUpdated?(working)
+                }
+            }
+            let priorCitationIDs = interjections == nil ? nil : citationTracker?.citationIds
             let isRouterRound = configuration.fastFirstReasoning && steps == 0 && !configuration.resumesWorker
             let chunk: MessageChunk
             let cancelledBeforeProvider: Bool
@@ -500,15 +583,28 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                     textCallback = onAssistantText
                     snapshotCallback = onAssistantMessageSnapshot
                 }
-                chunk = try await providerStep.streamStep(
-                    request: preparedRequest,
-                    messages: requestMessages,
-                    citationTracker: citationTracker,
-                    onAssistantStage: onAssistantStage,
-                    onAssistantText: textCallback,
-                    onAssistantReasoning: onAssistantReasoning,
-                    onAssistantMessageSnapshot: snapshotCallback
-                )
+                let stream: @Sendable () async throws -> MessageChunk = { [providerStep, requestMessages] in
+                    try await providerStep.streamStep(
+                        request: preparedRequest, messages: requestMessages, citationTracker: citationTracker,
+                        onAssistantStage: onAssistantStage, onAssistantText: textCallback,
+                        onAssistantReasoning: onAssistantReasoning, onAssistantMessageSnapshot: snapshotCallback
+                    )
+                }
+                if let interjections {
+                    chunk = try await interjections.stream(at: revision, operation: stream)
+                } else {
+                    chunk = try await stream()
+                }
+            } catch is IOSLiveInterjectionSignal.Superseded {
+                await onAssistantTurnSuperseded?()
+                if let priorCitationIDs { citationTracker?.discardAttempt(restoring: priorCitationIDs) }
+                onMessagesUpdated?(working)
+                // Retire any durable response cursor as well as the UI's provisional draft.
+                if let onAssistantTurnCompleted, !(await onAssistantTurnCompleted(working)) {
+                    return IOSAgentToolEngineResult(messages: working, stepsExecuted: steps, pendingApproval: nil,
+                        hitStepLimit: false, durabilityFailureMessage: "superseded response checkpoint write failed")
+                }
+                continue
             } catch let failure as StreamStepFailure {
                 let cancelled = failure.underlying is CancellationError || Task.isCancelled
                 if let assistant = failure.assistant {
@@ -722,6 +818,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 isUserInitiated: false,
                 loopGuard: &loopGuard,
                 resolveUnexposedToolCall: resolveUnexposedToolCall,
+                planIsStale: interjections.map { signal in { @Sendable in signal.revision != revision } },
                 onToolExecutionStarted: onToolExecutionStarted,
                 baseMessages: working,
                 onPartialMessagesUpdated: onToolBatchProgress
@@ -840,7 +937,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             // P0-2 hook: steer drain 与 mailbox 同点、紧随其后——顺序对齐前台
             // CGC 的轮边界消费（先 mailbox 后 steer）。drained steer 消息折入
             // 下一轮 upload；不传 = 零影响（SubAgent/Novel 现状）。
-            if let drainSteer,
+            if interjections == nil, let drainSteer,
                !batchResult.guardStopped,
                steps + 1 < configuration.maxSteps {
                 let steered = await drainSteer()

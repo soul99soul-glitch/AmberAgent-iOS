@@ -164,14 +164,6 @@ extension ChatView {
                 }
 
                 VStack(spacing: collapsesComposerForDuetPanel ? 0 : 8) {
-                        // P1-a: 排队条与整行 dock 同宽（右缘对齐发送键），空队列零占位。
-                        if !viewModel.steerQueue.isEmpty && !collapsesComposerForDuetPanel {
-                            ChatSteerQueueStrip(
-                                entries: viewModel.steerQueue,
-                                onRemove: { viewModel.removeSteerMessage(id: $0) }
-                            )
-                        }
-
                         // Inline Argon Panels (02 Tasks / 03 Hubs) when composer input is collapsed
                         if collapsesComposerForDuetPanel {
                             let availableHeight = chatSize.height > 0 ? chatSize.height : 778

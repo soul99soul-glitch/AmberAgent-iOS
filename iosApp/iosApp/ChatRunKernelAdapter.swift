@@ -61,6 +61,7 @@ final class ChatRunKernelAdapter {
         var onToolOutcomeUnknown: (IOSToolOutcomeUnknownSignal) -> Void = { _ in }
         /// B2 流式投影:引擎回调的 MainActor 转递(取消后一律忽略)。
         var onAssistantTurnStarted: () -> Void = {}
+        var onAssistantTurnSuperseded: () -> Void = {}
         var onAssistantTurnCompleted: ([UIMessage]) -> Bool = { _ in true }
         var onAssistantProgressPlan: ([String]) -> Void = { _ in }
         var onToolExecutionStarted: (String, String) -> Void = { _, _ in }
@@ -109,6 +110,7 @@ final class ChatRunKernelAdapter {
         /// 首轮头 steer 消费(CG-C startStreaming :2141 同款位置)之后的轮边界
         /// 消费由引擎 drainSteer 钩子承担。闭包按调用序消费队列,与 CGC 的
         /// drain 序号对齐:#1 = 首轮头(适配器),#2 = 工具循环边界(引擎)。
+        var interjections: IOSLiveInterjectionSignal? = nil
         let drainSteer: (@Sendable () async -> [UIMessage])?
         /// 轮边界 mailbox 消费(引擎钩子,先于 drainSteer——序同 CG-C
         /// nextRoundMessagesAfterMailboxAndSteerConsumption :3701-3702)。
@@ -155,6 +157,7 @@ final class ChatRunKernelAdapter {
 
     /// 引擎段的驱动子任务——Host 取消手势的取消点(只取消引擎段,适配器自身
     /// 任务保持存活以完成收口)。
+    private var hasProvisionalSnapshot = false
     private var driverTask: Task<IOSAgentToolEngineResult, Never>?
     /// 审批后的执行不在引擎 driver 内，仍由同一 run 持有取消权。
     private var approvalExecutionTask: Task<ApprovalResolution, Never>?
@@ -217,7 +220,7 @@ final class ChatRunKernelAdapter {
         if let mailboxDrain = request.mailboxDrain {
             initial.append(contentsOf: (await mailboxDrain()).values)
         }
-        if let drainSteer = request.drainSteer {
+        if request.interjections == nil, let drainSteer = request.drainSteer {
             initial.append(contentsOf: await drainSteer())
         }
         working = initial
@@ -338,6 +341,7 @@ final class ChatRunKernelAdapter {
                     refreshToolExposure: refreshToolExposure,
                     mailboxDrain: request.mailboxDrain,
                     drainSteer: request.drainSteer,
+                    interjections: request.interjections,
                     prepareRequestMessages: { messages in
                         // G7 预算耗尽收尾提示(CG-C :3684 静态同款,upload-only:
                         // 引擎 working 保持权威,提示只进本轮上传)。budget.usedCount
@@ -411,12 +415,14 @@ final class ChatRunKernelAdapter {
                         self.isExecutingTool = false
                         self.callbacks.onAssistantTurnStarted()
                     },
+                    onAssistantTurnSuperseded: { [weak self] in self?.callbacks.onAssistantTurnSuperseded() },
                     onAssistantTurnCompleted: { [weak self] messages in
                         let box = UncheckedMessagesBox(messages)
                         return await MainActor.run {
                             guard let self, !self.isStoppedByHost else { return false }
                             self.lastAppliedSnapshotSeq = self.snapshotSeq
-                            if self.working != box.value {
+                            if self.working != box.value || self.hasProvisionalSnapshot {
+                                self.hasProvisionalSnapshot = false
                                 self.working = box.value
                                 self.callbacks.onMessagesUpdated(box.value)
                             }
@@ -493,6 +499,7 @@ final class ChatRunKernelAdapter {
                                   self.durabilityFailureMessage == nil,
                                   seq > self.lastAppliedSnapshotSeq else { return }
                             self.lastAppliedSnapshotSeq = seq
+                            self.hasProvisionalSnapshot = true
                             self.callbacks.onAssistantMessageSnapshot(box.value)
                         }
                     },
@@ -526,6 +533,7 @@ final class ChatRunKernelAdapter {
                                   self.durabilityFailureMessage == nil,
                                   seq > self.lastAppliedSnapshotSeq else { return }
                             self.lastAppliedSnapshotSeq = seq
+                            self.hasProvisionalSnapshot = false
                             self.working = box.value
                             self.callbacks.onMessagesUpdated(box.value)
                         }

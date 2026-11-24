@@ -105,6 +105,7 @@ struct AppShell: View {
         )
         self._chatViewModel = State(initialValue: chatViewModel)
         self._councilChatViewModel = State(initialValue: councilChatViewModel)
+        IOSChatBackgroundGenerationCoordinator.shared.interjectionOwner = chatViewModel
         IOSChatBackgroundGenerationCoordinator.shared.configure(
             conversationStore: conversationStore,
             toolRuntime: backgroundToolRuntime,

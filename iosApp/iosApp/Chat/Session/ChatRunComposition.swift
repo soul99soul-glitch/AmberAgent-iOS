@@ -296,6 +296,7 @@ extension ChatViewModel {
                         conversationId: conversationId, baseline: baseline, completed: completed
                     )
                 },
+                interjections: taskSlot?.interjections,
                 drainSteerQueue: { [weak self] conversationId in
                     guard let self else { return [] }
                     if let taskSlot {

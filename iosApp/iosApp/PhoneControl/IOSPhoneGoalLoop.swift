@@ -43,6 +43,7 @@ final class IOSPhoneGoalLoop {
         case completed
         case completionAlreadySatisfied = "completion_already_satisfied"
         case invalidRequest = "invalid_request"
+        case userRedirected = "user_redirected"
         case taskStopped = "task_stopped"
         case configurationChanged = "configuration_changed"
         case timeBudgetExhausted = "time_budget_exhausted"
@@ -252,7 +253,7 @@ final class IOSPhoneGoalLoop {
                 guard listed, !Self.hasAlert(observation) else { return [] }
                 return Self.resolveCandidates(request.actions, in: observation, excluding: executed).diagnostics
             } ?? []
-            var value = Result(status: status, reason: reason, reasonCode: code,
+            var value = Result(status: status, reason: code == .userRedirected ? "用户已调整要求，剩余动作交回主模型。" : reason, reasonCode: code,
                                candidateDiagnostics: diagnostics, metrics: metrics, steps: steps, observation: current,
                                verification: verification, needsScreenshot: screenshot, unknownProblem: unknown)
             value.withheldFinalActions = withheld
@@ -262,6 +263,7 @@ final class IOSPhoneGoalLoop {
             return value
         }
         func stopCode() -> ReasonCode? {
+            if IOSLiveInterjectionSignal.toolPlanIsStale?() == true { return .userRedirected }
             guard !Task.isCancelled && deps.isCurrent() else { return .taskStopped }
             guard deps.configurationRevision() == configurationRevision else { return .configurationChanged }
             return deps.now().timeIntervalSince(started) >= Self.timeBudgetSeconds ? .timeBudgetExhausted : nil
@@ -563,6 +565,7 @@ final class IOSPhoneGoalLoop {
         var goalVerification: IOSPhoneGoalVerificationResult?
 
         func stopCode() -> ReasonCode? {
+            if IOSLiveInterjectionSignal.toolPlanIsStale?() == true { return .userRedirected }
             guard !Task.isCancelled, deps.isCurrent() else { return .taskStopped }
             guard deps.configurationRevision() == revision else { return .configurationChanged }
             guard deps.mode() != .off else { return .modeOff }
@@ -572,7 +575,7 @@ final class IOSPhoneGoalLoop {
                     unknown: PhoneControlProblem? = nil) -> Result {
             metrics.totalMs = max(0, deps.now().timeIntervalSince(started) * 1_000)
             return Result(status: unknown != nil ? .unknown : (code == .completed ? .completed : .handback),
-                reason: message, reasonCode: code, candidateDiagnostics: current == nil ? [] : diagnostics,
+                reason: code == .userRedirected ? "用户已调整要求，剩余动作交回主模型。" : message, reasonCode: code, candidateDiagnostics: current == nil ? [] : diagnostics,
                 metrics: metrics, steps: receipts, observation: current, verification: goalVerification,
                 needsScreenshot: screenshot, unknownProblem: unknown,
                 verifiedStepCount: verifiedSteps, stepVerification: stepVerification)

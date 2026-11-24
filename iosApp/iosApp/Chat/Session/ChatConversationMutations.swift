@@ -54,40 +54,11 @@ extension ChatViewModel {
                 configurationError = "所选任务已结束，请重新选择任务或发送为新需求。"
                 return false
             }
-            let route = ChatInboundTurnTriage.route(text: text,
-                hasAttachments: hasImages || pendingSelectedFilePreview != nil,
-                hasExplicitTarget: selectedFollowupRunId != nil)
-            if handleInboundControl(route, text: text) { return true }
-            if route != .independent {
-                if hasImages, pendingImages.count > Self.maxImagesPerMessage {
-                    selectedFileContextError = "一次最多发送 \(Self.maxImagesPerMessage) 张图片"
-                    return false
-                }
-                let target = focusedActiveTask
-                guard enqueueSteerMessage(text: prompt, targetRunId: target?.runId) else { return false }
-                if route == .ambiguous, let target,
-                   sharedSettings.jevSettings.effectiveMode(for: .subagentIntent) != .off,
-                   let entry = currentRun.state.steerQueue.last {
-                    let state = currentRun.state
-                    state.routingEntryIds.insert(entry.id)
-                    Task { @MainActor [weak self] in
-                        let resolved = await ChatInboundTurnTriage.resolve(text: prompt,
-                            taskText: target.baselineMessages.last(where: { $0.role == MessageRole.user })?.toText() ?? "",
-                            runId: target.runId)
-                        state.routingEntryIds.remove(entry.id)
-                        guard let self, let index = state.steerQueue.firstIndex(where: { $0.id == entry.id }),
-                              state.steerQueue[index].status == .received else { return }
-                        if resolved == .independent, self.isCurrentConversation(state.conversationId) {
-                            self.projectQueuedEntry(entry, receipt: "applied", state: state)
-                            state.steerQueue.remove(at: index)
-                            self.inboxIO.persistQueue(state.steerQueue, for: state.conversationId)
-                            self.generateResponse(inputDigest: chatInputDigest(for: prompt),
-                                conversationId: state.conversationId, anchorUserMessageId: entry.messageId)
-                        }
-                    }
-                }
-                return true
+            if hasImages, pendingImages.count > Self.maxImagesPerMessage {
+                selectedFileContextError = "一次最多发送 \(Self.maxImagesPerMessage) 张图片"
+                return false
             }
+            return sendLiveInterjection(text: prompt)
         }
         // 空闲发送：按模型视觉能力判断（对齐安卓 ImageAttachmentValidator）：
         // ready→直接发；fallback→先用视觉模型识别成文字再发；blocked→拦下提示，绝不静默丢弃。

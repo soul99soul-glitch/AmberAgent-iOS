@@ -1010,6 +1010,18 @@ final class IOSPhoneGoalLoopTests: XCTestCase {
         XCTAssertEqual(fixture.settleCount, 0)
     }
 
+    func testRedirectAfterAtomicActionReturnsReceiptWithoutDispatchingNextStep() async {
+        let fixture = Fixture(sequenceScreens())
+        let signal = IOSLiveInterjectionSignal()
+        fixture.onAct = { signal.signal() }
+        let result = await IOSLiveInterjectionSignal.$toolPlanIsStale.withValue({ signal.revision != 0 }) {
+            await fixture.loop().run(sequenceRequest())
+        }
+        XCTAssertEqual(result.reasonCode, .userRedirected)
+        XCTAssertEqual(result.steps, ["s0/a0: completed"])
+        XCTAssertEqual(fixture.actions.count, 1)
+    }
+
     func testSequenceStopsAfterReceiptWhenOwnerOrConfigurationChanges() async {
         for revokeOwner in [true, false] {
             let fixture = Fixture(sequenceScreens())

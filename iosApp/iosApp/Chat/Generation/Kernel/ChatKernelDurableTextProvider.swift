@@ -80,38 +80,40 @@ final class ChatKernelDurableTextProvider: IOSAgentTextProvider, IOSAgentStreami
                 onChunk: onChunk,
                 onCheckpoint: { [weak self] responseId, sequenceNumber in
                     guard let self else { return }
-                    self.lock.lock()
-                    self.hasCheckpoint = true
-                    self.lock.unlock()
+                    guard self.lock.withLock({
+                        guard self.requestToken == token else { return false }
+                        self.hasCheckpoint = true
+                        return true
+                    }) else { return }
                     self.onCheckpoint(responseId, sequenceNumber.int64Value, token)
                 },
                 onComplete: { [weak self] in
-                    self?.clearActiveJob()
+                    self?.clearActiveJob(token: token)
                     onComplete()
                 },
                 onDisconnected: { [weak self] error in
                     guard let self else { return }
                     self.lock.lock()
-                    let canDetach = self.hasCheckpoint
+                    let canDetach = self.requestToken == token && self.hasCheckpoint
                     self.lock.unlock()
                     if canDetach {
                         self.onDurableDisconnect(error.message ?? String(describing: error), token)
                     } else {
-                        self.clearActiveJob()
+                        self.clearActiveJob(token: token)
                         onError(KotlinThrowable(message: error.message ?? String(describing: error)))
                     }
                 },
                 onFailure: { [weak self] error in
-                    self?.clearActiveJob()
+                    self?.clearActiveJob(token: token)
                     onError(KotlinThrowable(message: error.message ?? String(describing: error)))
                 }
             )
             lock.lock()
-            activeJob = job
+            if requestToken == token { activeJob = job }
             lock.unlock()
             return job
         } catch {
-            clearActiveJob()
+            clearActiveJob(token: token)
             onError(KotlinThrowable(message: (error as NSError).localizedDescription))
             return nil
         }
@@ -151,11 +153,12 @@ final class ChatKernelDurableTextProvider: IOSAgentTextProvider, IOSAgentStreami
         onError?(KotlinThrowable(message: message))
     }
 
-    private func clearActiveJob() {
-        lock.lock()
-        activeJob = nil
-        activeOnError = nil
-        lock.unlock()
+    private func clearActiveJob(token: UUID) {
+        lock.withLock {
+            guard requestToken == token else { return }
+            activeJob = nil
+            activeOnError = nil
+        }
     }
 
     private static func usesBackgroundResponses(_ provider: ProviderSetting.OpenAI) -> Bool {

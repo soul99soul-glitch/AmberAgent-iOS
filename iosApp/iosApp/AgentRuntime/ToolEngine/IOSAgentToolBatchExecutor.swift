@@ -50,6 +50,7 @@ struct IOSAgentToolBatchExecutor {
     func executePreExistingPendingTools(
         in messages: [UIMessage],
         loopGuard: inout IOSToolLoopGuard,
+        planIsStale: (@Sendable () -> Bool)? = nil,
         onToolExecutionStarted: (@MainActor @Sendable (String, String) async -> Void)?,
         onPartialMessagesUpdated: (@Sendable ([UIMessage]) async -> Void)? = nil
     ) async -> PreExistingExecutionResult {
@@ -79,6 +80,7 @@ struct IOSAgentToolBatchExecutor {
             executable,
             isUserInitiated: false,
             loopGuard: &loopGuard,
+            planIsStale: planIsStale,
             onToolExecutionStarted: onToolExecutionStarted,
             baseMessages: messages,
             onPartialMessagesUpdated: onPartialMessagesUpdated
@@ -122,6 +124,7 @@ struct IOSAgentToolBatchExecutor {
         isUserInitiated: Bool,
         loopGuard: inout IOSToolLoopGuard,
         resolveUnexposedToolCall: (@Sendable (UIMessagePart.Tool) async -> [UIMessagePart]?)? = nil,
+        planIsStale: (@Sendable () -> Bool)? = nil,
         onToolExecutionStarted: (@MainActor @Sendable (String, String) async -> Void)?,
         baseMessages: [UIMessage]? = nil,
         onPartialMessagesUpdated: (@Sendable ([UIMessage]) async -> Void)? = nil
@@ -137,7 +140,7 @@ struct IOSAgentToolBatchExecutor {
                 lastFlushedCount = outputs.count
                 await onPartialMessagesUpdated(applyToolOutputs(outputs, to: baseMessages))
             }
-            if requiresReplan {
+            if requiresReplan || planIsStale?() == true {
                 // These calls were planned before the human changed the state.
                 // Fill them before any exposure, guard, or ledger hook can run.
                 outputs.append((tool, [UIMessagePart.Text(
@@ -298,11 +301,12 @@ struct IOSAgentToolBatchExecutor {
                     toolOutcomeUnknown: nil
                 )
             }
-            if let executor {
-                result = await executor.execute(
-                    tool: tool,
-                    isUserInitiated: isUserInitiated
-                )
+            if planIsStale?() == true {
+                result = .replanRequired([UIMessagePart.Text(text: toolReplanRequiredJSON(toolName: tool.toolName), metadata: nil)])
+            } else if let executor {
+                result = await IOSLiveInterjectionSignal.$toolPlanIsStale.withValue(planIsStale) {
+                    await executor.execute(tool: tool, isUserInitiated: isUserInitiated)
+                }
             } else {
                 result = .failed("[engine] no executor registered for tool `\(tool.toolName)`")
             }
@@ -505,7 +509,7 @@ struct IOSAgentToolBatchExecutor {
     }
 
     private func toolReplanRequiredJSON(toolName: String) -> String {
-        "{\"ok\":false,\"outcome\":\"not_sent\",\"reason_code\":\"replan_required\",\"tool\":\"\(sanitized(toolName))\",\"message\":\"The previous tool requires replanning; use its latest result before sending another action.\"}"
+        "{\"ok\":false,\"outcome\":\"not_sent\",\"reason_code\":\"replan_required\",\"tool\":\"\(sanitized(toolName))\",\"message\":\"Plan superseded. Replan with the latest tool result and user input before sending another action.\"}"
     }
 
     /// Structured error for a tool call whose `input` failed `parseInputStrict()`

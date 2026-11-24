@@ -7,12 +7,16 @@ import UIKit
 final class ChatInboundTurnTriageTests: XCTestCase {
 
     private final class ImmediateAuxiliaryProvider: IOSAgentTextProvider, @unchecked Sendable {
+        private let makeReply: @Sendable (String) async -> String?
+        init(_ makeReply: @escaping @Sendable (String) async -> String? = { _ in nil }) { self.makeReply = makeReply }
         func generateText(
             providerSetting: ProviderSetting,
             messages: [UIMessage],
             params: TextGenerationParams
         ) async throws -> MessageChunk {
-            IOSChatForegroundFixtures.chunk(with: nil)
+            let prompt = messages.last?.toText() ?? ""
+            let result = prompt.hasPrefix("Classify the user's live interjection") ? await makeReply(prompt) : nil
+            return IOSChatForegroundFixtures.chunk(with: result.map(IOSChatForegroundFixtures.assistantText))
         }
     }
 
@@ -154,7 +158,8 @@ final class ChatInboundTurnTriageTests: XCTestCase {
         defaults: UserDefaults,
         sharedSettings: IOSSharedSettingsStore,
         store: IOSConversationStore,
-        steerQueueStore: IOSSteerQueueStore
+        steerQueueStore: IOSSteerQueueStore,
+        auxiliary: any IOSAgentTextProvider = ImmediateAuxiliaryProvider()
     ) -> ChatViewModel {
         let dbPath = FileManager.default.temporaryDirectory
             .appendingPathComponent("inbound-triage-\(UUID().uuidString).db")
@@ -168,7 +173,7 @@ final class ChatInboundTurnTriageTests: XCTestCase {
             sharedSettings: sharedSettings,
             searchTransport: IOSForegroundNoopSearchTransport(),
             autoGenerateResponses: true,
-            auxiliaryTextProvider: ImmediateAuxiliaryProvider(),
+            auxiliaryTextProvider: auxiliary,
             steerQueueStore: steerQueueStore,
             agentRuntimeDao: db.agentRuntimeDao()
         )
@@ -228,7 +233,7 @@ final class ChatInboundTurnTriageTests: XCTestCase {
     }
 
     // (a) 生成中询问进度不新开 LLM 任务，而是基于真实焦点任务状态直接作答
-    func testStatusQueryDuringActiveGenerationProducesLocalSummaryWithoutNewLLMTask() async throws {
+    func testNaturalStatusQueryUsesOneGroundedAuxReplyAndLeavesWorkerUntouched() async throws {
         let (store, directory) = try makeStore()
         let steerDir = directory.appendingPathComponent("steer", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -243,7 +248,13 @@ final class ChatInboundTurnTriageTests: XCTestCase {
             defaults: defaults,
             sharedSettings: sharedSettings,
             store: store,
-            steerQueueStore: IOSSteerQueueStore(directoryURL: steerDir)
+            steerQueueStore: IOSSteerQueueStore(directoryURL: steerDir),
+            auxiliary: ImmediateAuxiliaryProvider { prompt in
+                XCTAssertTrue(prompt.contains("TASK_A"))
+                XCTAssertTrue(prompt.contains("正在检索财报原文"))
+                XCTAssertTrue(prompt.contains("怎么了"))
+                return #"{"route":"status_reply","reply":"正在检索财报原文，等这一步返回结果。"}"#
+            }
         )
         viewModel.kernelTextProviderOverrideForTesting = provider
         viewModel.reloadFromStore()
@@ -257,10 +268,14 @@ final class ChatInboundTurnTriageTests: XCTestCase {
         slot.activeToolTitle = "正在检索财报原文"
         slot.activityStage = .runningTool
 
-        viewModel.inputText = "现在进展到哪一步了？"
+        viewModel.inputText = "怎么了"
         XCTAssertTrue(viewModel.sendMessage())
 
-        try await Task.sleep(nanoseconds: 120_000_000)
+        XCTAssertTrue(viewModel.inputText.isEmpty)
+        await viewModel.currentRun.state.routingTail?.value
+        let settledSidecar = await waitForCondition { viewModel.steerQueue.isEmpty }
+        XCTAssertTrue(settledSidecar)
+        XCTAssertFalse(slot.currentTranscript.contains { $0.toText().contains("怎么了") || $0.toText().contains("等这一步") })
         XCTAssertEqual(provider.totalCalls, 1, "纯状态查询不得触发第二次主模型调用")
         XCTAssertEqual(viewModel.currentRun.orderedSlots.count, 1, "纯状态查询不得新开并发槽位")
         XCTAssertTrue(
@@ -318,11 +333,10 @@ final class ChatInboundTurnTriageTests: XCTestCase {
         }
         XCTAssertEqual(matchingOnSend.count, 1, "发送当帧应立即可见唯一一条补充气泡")
         let initialBubbleId = ChatMessageProjector.messageId(for: try XCTUnwrap(matchingOnSend.first))
-        XCTAssertEqual(followupReceiptState(of: try XCTUnwrap(matchingOnSend.first)), "queued")
+        XCTAssertNil(followupReceiptState(of: try XCTUnwrap(matchingOnSend.first)))
         XCTAssertEqual(viewModel.currentRun.orderedSlots.count, 1, "单槽位默认补充不应盲开第 2 个任务槽位")
 
-        // 放行第一轮工具，到达第二轮推理边界时消费补充
-        provider.release("A_ROUND1")
+        // The first provider attempt is still gated; only preemption can start round two.
         let enteredRound2 = await waitForCondition { provider.callCount(for: "A") == 2 }
         XCTAssertTrue(enteredRound2)
 
@@ -347,6 +361,52 @@ final class ChatInboundTurnTriageTests: XCTestCase {
             viewModel.messages.filter { $0.role == MessageRole.user && $0.toText().contains(supplement) }.count,
             1
         )
+    }
+
+    func testImplicitIndependentRequestStartsOwnSlotWhileOriginalProviderIsBlocked() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        await store.bootstrap()
+        let defaults = makeDefaults()
+        let provider = InspectableLoopProvider(gatedKeys: ["A", "B"])
+        defer { provider.release("A"); provider.release("B") }
+        let model = makeViewModel(defaults: defaults, sharedSettings: makeSharedSettings(defaults: defaults), store: store,
+            steerQueueStore: IOSSteerQueueStore(directoryURL: directory),
+            auxiliary: ImmediateAuxiliaryProvider { _ in
+                #"{"route":"independent_new_task","reply":"我单独核对行程。"}"#
+            })
+        model.kernelTextProviderOverrideForTesting = provider
+        model.reloadFromStore()
+        model.inputText = "TASK_A 整理报告"
+        XCTAssertTrue(model.sendMessage())
+        let first = await waitForCondition { provider.callCount(for: "A") == 1 }
+        XCTAssertTrue(first)
+        model.inputText = "TASK_B 帮我核对明天的行程"
+        XCTAssertTrue(model.sendMessage())
+        let both = await waitForCondition { provider.callCount(for: "B") == 1 }
+        XCTAssertTrue(both)
+        XCTAssertEqual(model.activeTaskRunIdsForCurrentConversation.count, 2)
+        XCTAssertEqual(model.messages.filter { $0.toText() == "我单独核对行程。" }.count, 1)
+        XCTAssertEqual(provider.records(for: "B").last?.messages.last(where: { $0.role == .user })?.toText(), "TASK_B 帮我核对明天的行程")
+        provider.release("A"); provider.release("B")
+        let finished = await waitForCondition { !model.isGenerationActive }
+        XCTAssertTrue(finished)
+    }
+
+    func testUnresponsiveAuxiliaryReturnsGroundedFallbackAtDeadline() async {
+        let context = ChatInboundTurnTriage(text: "卡住了吗", attachments: false, originalRequest: "查报告",
+            stage: "正在检索", stageName: "searching", tool: "读取原文", reasoning: nil, elapsed: 12, recentNote: nil)
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        let start = ContinuousClock.now
+        let decision = await context.resolve {
+            for await _ in gate { break }
+            return nil
+        }
+        release.finish()
+        XCTAssertLessThan(start.duration(to: .now), .seconds(3))
+        XCTAssertEqual(decision.route, .status)
+        XCTAssertTrue(decision.reply.contains("读取原文"))
+        XCTAssertTrue(decision.reply.contains("12"))
     }
 
     // (c) 并发打满时发送停止指令不会排队等槽位，而是立即作用于活跃任务
@@ -577,81 +637,39 @@ final class ChatInboundTurnTriageTests: XCTestCase {
         XCTAssertTrue(queue.load(conversationId: id).isEmpty)
     }
 
-    func testFollowupDuringFinalNonToolTurnAutoContinuesInsteadOfMarkingNotApplied() async throws {
+    func testFollowupClassifiedAfterFinalCommitStartsExactlyOneContinuation() async throws {
         let (store, directory) = try makeStore()
-        let steerDir = directory.appendingPathComponent("steer", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         await store.bootstrap()
-
         let defaults = makeDefaults()
-        let sharedSettings = makeSharedSettings(defaults: defaults)
-        let provider = InspectableLoopProvider(gatedKeys: ["A", "B"])
-        defer { provider.release("A"); provider.release("B") }
-
-        let viewModel = makeViewModel(
-            defaults: defaults,
-            sharedSettings: sharedSettings,
-            store: store,
-            steerQueueStore: IOSSteerQueueStore(directoryURL: steerDir)
-        )
-        viewModel.kernelTextProviderOverrideForTesting = provider
-        viewModel.reloadFromStore()
-
-        viewModel.inputText = "TASK_A：生成无工具终态总结"
-        XCTAssertTrue(viewModel.sendMessage())
-        let startedA = await waitForCondition { provider.callCount(for: "A") == 1 }
-        XCTAssertTrue(startedA)
-        let runIdA = try XCTUnwrap(viewModel.focusedActiveTask?.runId)
-
-        viewModel.inputText = "补充第一点：附上风险提示"
-        XCTAssertTrue(viewModel.sendMessage())
-        viewModel.inputText = "补充第二点：附上回滚步骤"
-        XCTAssertTrue(viewModel.sendMessage())
-        XCTAssertEqual(viewModel.steerQueue.count, 2)
-
-        // 同时发起一个并行独立任务 B，验证 A 终态自动续答不会受并行任务干扰且回复锚定在 TASK_B 之前。
-        viewModel.inputText = "独立问题：TASK_B：并行查询"
-        XCTAssertTrue(viewModel.sendMessage())
-        let startedB = await waitForCondition { provider.callCount(for: "B") == 1 }
-        XCTAssertTrue(startedB)
-
+        let provider = InspectableLoopProvider(gatedKeys: ["A"])
+        let (gate, release) = AsyncStream<Void>.makeStream()
+        let model = makeViewModel(defaults: defaults, sharedSettings: makeSharedSettings(defaults: defaults),
+            store: store, steerQueueStore: IOSSteerQueueStore(directoryURL: directory),
+            auxiliary: ImmediateAuxiliaryProvider { prompt in
+                guard prompt.contains("Classify the user's live interjection") else { return nil }
+                for await _ in gate { break }
+                return #"{"route":"steer_active","reply":"接下来会补上风险提示。"}"#
+            })
+        model.kernelTextProviderOverrideForTesting = provider
+        model.reloadFromStore()
+        model.inputText = "TASK_A：生成总结"
+        XCTAssertTrue(model.sendMessage())
+        let started = await waitForCondition { provider.callCount(for: "A") == 1 }
+        XCTAssertTrue(started)
+        model.inputText = "补充风险提示"
+        XCTAssertTrue(model.sendMessage())
         provider.release("A")
-        let aContinued = await waitForCondition {
-            viewModel.steerQueue.isEmpty && provider.callCount(for: "A") == 2
-        }
-        XCTAssertTrue(aContinued)
-
-        provider.release("B")
-        let allDone = await waitForCondition { !viewModel.isGenerationActive && viewModel.steerQueue.isEmpty }
-        XCTAssertTrue(allDone)
-        XCTAssertEqual(provider.callCount(for: "A"), 2)
-        XCTAssertEqual(provider.callCount(for: "B"), 1)
-
-        let followup1 = try XCTUnwrap(viewModel.messages.first { $0.toText().contains("补充第一点：附上风险提示") })
-        let followup2 = try XCTUnwrap(viewModel.messages.first { $0.toText().contains("补充第二点：附上回滚步骤") })
-        XCTAssertEqual(followupReceiptState(of: followup1), "applied")
-        XCTAssertEqual(followupReceiptState(of: followup2), "applied")
-        XCTAssertEqual(viewModel.taskFollowups(forRunId: runIdA).first?.status, .consumed)
-
-        let recordsA = provider.records(for: "A")
-        XCTAssertEqual(recordsA.count, 2)
-        if recordsA.count == 2 {
-            XCTAssertTrue(recordsA[1].messages.contains { $0.toText().contains("补充第一点：附上风险提示") })
-            XCTAssertTrue(recordsA[1].messages.contains { $0.toText().contains("补充第二点：附上回滚步骤") })
-            XCTAssertFalse(recordsA[1].messages.contains { $0.toText().contains("TASK_B") })
-        }
-
-        let rolesAndSnippets = viewModel.messages.map { "\($0.role.name.lowercased()):\($0.toText())" }
-        XCTAssertEqual(rolesAndSnippets.count, 7)
-        if rolesAndSnippets.count == 7 {
-            XCTAssertTrue(rolesAndSnippets[0].contains("TASK_A"))
-            XCTAssertEqual(rolesAndSnippets[1], "assistant:A 最终结论")
-            XCTAssertTrue(rolesAndSnippets[2].contains("补充第一点：附上风险提示"))
-            XCTAssertTrue(rolesAndSnippets[3].contains("补充第二点：附上回滚步骤"))
-            XCTAssertEqual(rolesAndSnippets[4], "assistant:A 最终结论")
-            XCTAssertTrue(rolesAndSnippets[5].contains("TASK_B"))
-            XCTAssertEqual(rolesAndSnippets[6], "assistant:B 最终结论")
-        }
+        let terminal = await waitForCondition { !model.isGenerationActive }
+        XCTAssertTrue(terminal)
+        XCTAssertEqual(provider.callCount(for: "A"), 1)
+        release.finish()
+        let continued = await waitForCondition { provider.callCount(for: "A") == 2 && !model.isGenerationActive }
+        XCTAssertTrue(continued)
+        XCTAssertTrue(model.steerQueue.isEmpty)
+        XCTAssertEqual(model.messages.filter { $0.toText() == "补充风险提示" }.count, 1)
+        let upload = try XCTUnwrap(provider.records(for: "A").last).messages
+        XCTAssertEqual(upload.filter { $0.toText() == "补充风险提示" }.count, 1)
+        XCTAssertFalse(upload.contains { $0.toText() == "接下来会补上风险提示。" })
     }
-
 }

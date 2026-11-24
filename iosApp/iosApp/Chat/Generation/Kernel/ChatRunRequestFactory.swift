@@ -135,6 +135,7 @@ final class ChatRunRequestFactory {
             routerReasoningName: routerReasoning,
             workerReasoningName: workerReasoning.name,
             maxToolResumeCount: maxToolResumeCount,
+            interjections: bindings.interjections,
             drainSteer: {
                 let boxed = await bindingsBox.drainSteer(conversationBox)
                 return boxed.values

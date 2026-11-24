@@ -424,8 +424,10 @@ extension ChatView {
         }
         let task = viewModel.focusedActiveTask
         let assistant = task?.generatedMessages.last(where: { candidate in
-            candidate.role == .assistant &&
-                chatListSummary.messageIDs.contains(ChatMessageProjector.messageId(for: candidate))
+            guard candidate.role == .assistant else { return false }
+            let id = ChatMessageProjector.messageId(for: candidate)
+            // A live assistant can be spliced before the next structural summary refresh.
+            return viewModel.currentRun.state.liveTaskTailMessageIds.contains(id) || chatListSummary.messageIDs.contains(id)
         })
         guard let rawAnchor = (showsTaskFailure && task == nil ? failureMessageID : nil)
             ?? assistant.map(ChatMessageProjector.messageId(for:))

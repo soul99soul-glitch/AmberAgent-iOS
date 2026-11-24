@@ -608,6 +608,39 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         XCTAssertLessThan(idxUserB, idxReplyB, "Task B's reply must follow user message B")
     }
 
+    func testStreamingRedirectWithdrawsPartialDraftBeforeNewProviderRound() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        await store.bootstrap()
+        let defaults = makeDefaults()
+        let model = makeViewModel(defaults: defaults, sharedSettings: makeSharedSettings(defaults: defaults), store: store)
+        let provider = ControlledStreamingProvider()
+        model.kernelTextProviderOverrideForTesting = provider
+        model.reloadFromStore()
+        model.inputText = "整理这份报告"
+        XCTAssertTrue(model.sendMessage())
+        let started = await waitForCondition { provider.ready }
+        XCTAssertTrue(started)
+        provider.send(IOSChatForegroundFixtures.assistantText("旧方向的未完成草稿"))
+        let displayed = await waitForCondition { model.messages.contains { $0.toText().contains("旧方向的未完成草稿") } }
+        XCTAssertTrue(displayed)
+        model.inputText = "改成只看成本"
+        XCTAssertTrue(model.sendMessage())
+        let restarted = await waitForCondition { provider.callCount == 2 }
+        XCTAssertTrue(restarted)
+        let ack = try XCTUnwrap(model.messages.first { $0.role == .assistant && $0.toText().contains("只看成本") })
+        XCTAssertFalse(model.messages.contains { $0.toText().contains("旧方向的未完成草稿") })
+        XCTAssertFalse(provider.lastUploadedMessages.contains { $0.id == ack.id || $0.toText().contains("旧方向的未完成草稿") })
+        XCTAssertEqual(provider.lastUploadedMessages.filter { $0.toText() == "改成只看成本" }.count, 1)
+        provider.send(IOSChatForegroundFixtures.assistantText("成本已经核对。"))
+        provider.finish()
+        let completed = await waitForCondition { !model.isGenerationActive }
+        XCTAssertTrue(completed)
+        let texts = model.messages.map { $0.toText() }
+        XCTAssertLessThan(try XCTUnwrap(texts.firstIndex(of: ack.toText())), try XCTUnwrap(texts.firstIndex(of: "成本已经核对。")))
+        XCTAssertEqual(provider.callCount, 2)
+    }
+
     func testExplicitTaskSelectionConsumesFollowupAtReasoningBoundaryAndStopIsolatesTask() async throws {
         let (store, directory) = try makeStore()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -643,16 +676,16 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         viewModel.inputText = "补充A：只看最近24小时"
         XCTAssertTrue(viewModel.sendMessage())
 
-        let initialFollowupsA = viewModel.taskFollowups(forRunId: runIdA)
+        let initialFollowupsA = viewModel.currentRun.state.steerQueue.filter { $0.targetRunId == runIdA }
         XCTAssertEqual(initialFollowupsA.count, 1)
-        XCTAssertEqual(initialFollowupsA.first?.status, .received)
+        XCTAssertEqual(initialFollowupsA.first?.status, .routing)
         XCTAssertFalse(initialFollowupsA.first?.isShownAsExecuted ?? true)
 
         // Also enqueue a follow-up on Task B, then stop Task B before it can consume the follow-up.
         viewModel.selectTaskForFollowup(runId: runIdB)
         viewModel.inputText = "补充B：未消费前就被停止"
         XCTAssertTrue(viewModel.sendMessage())
-        XCTAssertEqual(viewModel.taskFollowups(forRunId: runIdB).first?.status, .received)
+        XCTAssertEqual(viewModel.currentRun.state.steerQueue.last?.status, .routing)
 
         // Stop ONLY Task B: Task B stops and its unconsumed follow-up becomes `.cancelled` (`isShownAsExecuted == false`),
         // while Task A continues!

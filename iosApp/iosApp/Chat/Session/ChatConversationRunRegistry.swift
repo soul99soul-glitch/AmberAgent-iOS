@@ -214,6 +214,7 @@ final class ChatConversationRunRegistry {
             let shouldKeep = run === selected
                 || run.hasActiveOrQueuedTask
                 || run.hasPendingToolApproval
+                || run.state.routingTail != nil
                 || run.state.steerQueueAutoContinueTask != nil
                 || run.state.waitingForChildRunId != nil
                 || !run.state.inputText.isEmpty

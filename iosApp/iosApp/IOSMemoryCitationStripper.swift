@@ -146,7 +146,7 @@ final class IOSMemoryCitationStripper {
 /// 需要跨模块可见（成员保持 internal，仅类声明公开）。
 public final class IOSMemoryCitationTracker: @unchecked Sendable {
     private let lock = NSLock()
-    private let stripper = IOSMemoryCitationStripper()
+    private var stripper = IOSMemoryCitationStripper()
     private let enforcesCitationAllowlist: Bool
     private var allowedCitationIds: Set<Int32> = []
     private var capturedIds: Set<Int32> = []
@@ -173,6 +173,16 @@ public final class IOSMemoryCitationTracker: @unchecked Sendable {
         let remainder = stripper.finish()
         absorbNewCitations()
         return remainder
+    }
+
+    /// An abandoned draft can end mid-tag. Start the next attempt with a fresh
+    /// parser and keep only citations from earlier committed rounds.
+    func discardAttempt(restoring ids: Set<Int32>) {
+        lock.withLock {
+            stripper = IOSMemoryCitationStripper()
+            absorbedCitationCount = 0
+            capturedIds = ids
+        }
     }
 
     /// 已收集的引用记忆 id（JSON body 解析所得；非 JSON body 不产生）。

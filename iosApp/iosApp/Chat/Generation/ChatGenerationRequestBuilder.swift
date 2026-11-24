@@ -11,7 +11,8 @@ extension ChatViewModel {
         inputDigest: String,
         conversationId: KotlinUuid?,
         phoneControlUserInitiated: Bool = false,
-        anchorUserMessageId: String? = nil
+        anchorUserMessageId: String? = nil,
+        allowsConcurrentBackgroundJob: Bool = false
     ) {
         // generateResponse 本身完全同步（kernelRunHost.start 内部再起 Task），
         // 用 begin/defer-end 包住整个函数体即测到主线程被占用的时长。
@@ -27,7 +28,7 @@ extension ChatViewModel {
             return
         }
 #endif
-        if let targetConversationId,
+        if !allowsConcurrentBackgroundJob, let targetConversationId,
            IOSChatBackgroundGenerationCoordinator.shared.hasActiveJob(conversationId: targetConversationId) {
             return
         }

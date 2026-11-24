@@ -7,7 +7,7 @@ import SwiftUI
 
 extension ChatViewModel {
 
-    func enqueueSteerMessage(text: String, targetRunId: String? = nil, consumesComposer: Bool = true) -> Bool {
+    func enqueueSteerMessage(text: String, targetRunId: String? = nil, consumesComposer: Bool = true, routing: Bool = false) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let images = consumesComposer ? pendingImages : []
         let selectedFile = consumesComposer ? pendingSelectedFilePreview : nil
@@ -15,27 +15,24 @@ extension ChatViewModel {
         guard isGenerationActive else { return false }
         let state = currentRun.state
         ensureSteerQueueLoaded(state: state)
-        guard steerQueue.count < IOSSteerQueueStore.maxPendingUserMessages else { return false }
-        state.clearChildResultWait()
+        if !routing { state.clearChildResultWait() }
         let entry = IOSSteerQueueEntry(
             id: UUID().uuidString, text: trimmed, createdAt: Date(),
             images: images.map { IOSSteerQueueImage(dataUrl: $0.dataUrl, previewData: $0.previewData) },
-            selectedFile: selectedFile.map(IOSSteerQueuedFile.init), targetRunId: targetRunId
+            selectedFile: selectedFile.map(IOSSteerQueuedFile.init), targetRunId: targetRunId,
+            status: routing ? .routing : .received
         )
         state.steerQueue.append(entry)
         persistSteerQueue()
         if consumesComposer {
             ChatUserSendEntranceGate.arm("local-user:\(entry.messageId)")
         }
-        projectQueuedEntry(entry, receipt: "queued", state: state, reason: .userAppend)
+        projectQueuedEntry(entry, receipt: routing ? nil : "queued", state: state, reason: .userAppend)
         Task { @MainActor [weak self] in
             guard state.pendingAssistantRegeneration == nil else { return }
             _ = await self?.persistMessages(state: state)
         }
-        if let conversationId = state.conversationId {
-            let center = inboxIO
-            Task { await center.signal(conversationIdHex: conversationId.toHexDashString()) }
-        }
+        if !routing { signalSteer(for: entry, state: state) }
         if consumesComposer {
             inputText = ""
             invalidateSuggestionRequest()
@@ -46,6 +43,16 @@ extension ChatViewModel {
             state.selectedFollowupRunId = nil
         }
         return true
+    }
+
+    func signalSteer(for entry: IOSSteerQueueEntry, state: ChatConversationRunState) {
+        if let target = entry.targetRunId {
+            runRegistry.existingRun(for: state.conversationId)?.slot(forRunId: target)?.interjections.signal()
+            IOSChatBackgroundGenerationCoordinator.shared.interjectionSignal(runId: target)?.signal()
+        }
+        if let id = state.conversationId?.toHexDashString() {
+            Task { await inboxIO.signal(conversationIdHex: id) }
+        }
     }
 
     /// 撤销一条排队消息；同步更新 sidecar（exactly once）。
@@ -74,11 +81,19 @@ extension ChatViewModel {
     ) async -> [UIMessage] {
         // A regenerated answer owns its variant transaction until terminal commit.
         // Inbound user/report messages must not prematurely close that transaction.
-        guard !Task.isCancelled, state.pendingAssistantRegeneration == nil,
-              !entries.isEmpty, !state.isCommittingSteerQueue else { return [] }
+        guard !entries.isEmpty else { return [] }
+        while state.isCommittingSteerQueue {
+            await withCheckedContinuation { state.steerCommitWaiters.append($0) }
+        }
+        let receivedIDs = Set(state.steerQueue.filter { $0.status == .received }.map(\.id))
+        let entries = entries.filter { receivedIDs.contains($0.id) }
+        guard !Task.isCancelled, state.pendingAssistantRegeneration == nil, !entries.isEmpty else { return [] }
         state.isCommittingSteerQueue = true
         defer {
             state.isCommittingSteerQueue = false
+            let waiting = state.steerCommitWaiters
+            state.steerCommitWaiters.removeAll()
+            for waiter in waiting { waiter.resume() }
             let restoreTargets = state.steerQueueRestoreTargetsAfterCommit
             if !restoreTargets.isEmpty {
                 state.steerQueueRestoreTargetsAfterCommit = []
@@ -123,32 +138,18 @@ extension ChatViewModel {
             state.selectedFollowupRunId = nil
         }
         if !autoContinue { state.steerQueueAutoContinueTask?.cancel() }
-        if !completedIds.isEmpty {
-            for index in state.steerQueue.indices where state.steerQueue[index].status == .received {
-                if let target = state.steerQueue[index].targetRunId, completedIds.contains(target) {
-                    state.routingEntryIds.remove(state.steerQueue[index].id)
-                }
-            }
-        }
         guard state.steerQueue.contains(where: { entry in
             entry.status == .received && (entry.targetRunId == nil || entry.targetRunId.map(completedIds.contains) == true)
         }) else { return }
         if autoContinue {
-            guard state.steerQueueAutoContinueTask == nil else {
-                if !completedIds.isEmpty {
-                    var rebound = false
-                    for index in state.steerQueue.indices where state.steerQueue[index].status == .received {
-                        if let target = state.steerQueue[index].targetRunId, completedIds.contains(target) {
-                            state.steerQueue[index].targetRunId = nil
-                            rebound = true
-                        }
-                    }
-                    if rebound { inboxIO.persistQueue(state.steerQueue, for: state.conversationId) }
-                }
-                return
-            }
+            let predecessor = state.steerQueueAutoContinueTask
+            state.terminalContinuationCount += 1
             state.steerQueueAutoContinueTask = Task { @MainActor [weak self] in
-                defer { state.steerQueueAutoContinueTask = nil }
+                await predecessor?.value
+                defer {
+                    state.terminalContinuationCount -= 1
+                    if state.terminalContinuationCount == 0 { state.steerQueueAutoContinueTask = nil }
+                }
                 await self?.sendNextSteerQueueEntry(state: state, completedIds: completedIds)
             }
             return
@@ -170,47 +171,10 @@ extension ChatViewModel {
               !(await commitSteerQueueEntries([entry], state: state)).isEmpty,
               !Task.isCancelled else { return }
         let run = runRegistry.current(for: state.conversationId)
-        var continuationSlot: ChatAsyncTaskSlot?
-        if autoGenerateResponses,
-           !run.orderedSlots.contains(where: { $0.isActiveOrQueued && $0.anchorUserMessageId == entry.messageId }) {
-            if isCurrentConversation(state.conversationId) {
-                generateResponse(
-                    inputDigest: digest,
-                    conversationId: state.conversationId,
-                    anchorUserMessageId: entry.messageId
-                )
-                continuationSlot = run.orderedSlots.last {
-                    $0.isActiveOrQueued && $0.anchorUserMessageId == entry.messageId
-                }
-            } else if let configuration = state.generationConfiguration,
-                      let conversationId = state.conversationId {
-#if DEBUG
-                let overridden = generationActiveOverrideForTesting?(conversationId) == true
-#else
-                let overridden = false
-#endif
-                if !overridden, !IOSChatBackgroundGenerationCoordinator.shared.hasActiveJob(conversationId: conversationId) {
-                    let anchorId = entry.messageId
-                    let baseline = buildTaskBaselineMessages(in: run, anchorUserMessageId: anchorId)
-                    let slot = ChatAsyncTaskSlot(
-                        conversationId: conversationId,
-                        inputDigest: digest,
-                        anchorUserMessageId: anchorId,
-                        phoneControlUserInitiated: false,
-                        providerSetting: configuration.provider,
-                        params: configuration.params,
-                        toolExposureBridge: state.toolExposureBridge,
-                        recipeCatalogSnapshot: configuration.dynamicSnapshot,
-                        baselineMessages: baseline
-                    )
-                    _ = startOrEnqueueTaskSlot(slot, in: run)
-                    continuationSlot = slot
-                }
-            }
-        }
+        let continuationSlot = startInterjectionTask(entry, in: run, digest: digest)
         if !completedIds.isEmpty {
             var didUpdate = false
-            for index in state.steerQueue.indices where state.steerQueue[index].status == .received {
+            for index in state.steerQueue.indices where [.received, .routing].contains(state.steerQueue[index].status) {
                 if let target = state.steerQueue[index].targetRunId, completedIds.contains(target) {
                     state.steerQueue[index].targetRunId = continuationSlot?.runId
                     didUpdate = true
@@ -220,6 +184,52 @@ extension ChatViewModel {
                 inboxIO.persistQueue(state.steerQueue, for: state.conversationId)
             }
         }
+    }
+
+    @discardableResult
+    func startInterjectionTask(_ entry: IOSSteerQueueEntry, in run: ChatConversationRun, digest: String,
+                               phoneControlUserInitiated: Bool = false) -> ChatAsyncTaskSlot? {
+        let state = run.state
+        if autoGenerateResponses,
+           !run.orderedSlots.contains(where: { $0.isActiveOrQueued && $0.anchorUserMessageId == entry.messageId }) {
+            if isCurrentConversation(state.conversationId) {
+                generateResponse(
+                    inputDigest: digest,
+                    conversationId: state.conversationId,
+                    phoneControlUserInitiated: phoneControlUserInitiated,
+                    anchorUserMessageId: entry.messageId,
+                    allowsConcurrentBackgroundJob: true
+                )
+                return run.orderedSlots.last {
+                    $0.isActiveOrQueued && $0.anchorUserMessageId == entry.messageId
+                }
+            } else if let configuration = state.generationConfiguration,
+                      let conversationId = state.conversationId {
+#if DEBUG
+                let overridden = generationActiveOverrideForTesting?(conversationId) == true
+#else
+                let overridden = false
+#endif
+                if !overridden {
+                    let anchorId = entry.messageId
+                    let baseline = buildTaskBaselineMessages(in: run, anchorUserMessageId: anchorId)
+                    let slot = ChatAsyncTaskSlot(
+                        conversationId: conversationId,
+                        inputDigest: digest,
+                        anchorUserMessageId: anchorId,
+                        phoneControlUserInitiated: phoneControlUserInitiated && !state.isOrchestratedChild,
+                        providerSetting: configuration.provider,
+                        params: configuration.params,
+                        toolExposureBridge: state.toolExposureBridge,
+                        recipeCatalogSnapshot: configuration.dynamicSnapshot,
+                        baselineMessages: baseline
+                    )
+                    _ = startOrEnqueueTaskSlot(slot, in: run)
+                    return slot
+                }
+            }
+        }
+        return nil
     }
 
     /// 取消/失败终态：纯文本 leftover 拼回 composer；含附件条目留队防丢媒体。
@@ -243,7 +253,7 @@ extension ChatViewModel {
         }
         var textOnly: [IOSSteerQueueEntry] = []
         let remaining = state.steerQueue.compactMap { entry -> IOSSteerQueueEntry? in
-            guard targetRunIds.contains(entry.targetRunId) else { return entry }
+            guard [.received, .cancelled].contains(entry.status), targetRunIds.contains(entry.targetRunId) else { return entry }
             guard entry.hasAttachments else {
                 textOnly.append(entry)
                 return nil
@@ -326,16 +336,11 @@ extension ChatViewModel {
            !IOSChatBackgroundGenerationCoordinator.shared.hasActiveJob(conversationId: conversationId, excludingRunId: runId) {
             terminalTargets.insert(nil)
         }
-        for entry in state.steerQueue where terminalTargets.contains(entry.targetRunId) {
-            state.routingEntryIds.remove(entry.id)
-        }
         restoreSteerQueueLeftoverToComposer(state: state, targetRunIds: terminalTargets)
         clearResidualQueuedReceipts(in: state, targetRunIds: terminalTargets)
     }
 
-    /// 孤儿排队消息兜底：当会话已无任何真正在跑的前台槽位或后台 job，
-    /// 但 `steerQueue` 仍滞留 `.received` 条目或气泡仍挂着 `receipt == "queued"` 时，
-    /// 清理孤儿 `targetRunId`、将排队消息安全退回输入框并清除残余「待当前步骤结束后生效」提示。
+    /// Recover unconsumed input and close legacy receipt metadata after its owner exits.
     @discardableResult
     func reconcileOrphanSteerQueueIfIdle(state: ChatConversationRunState) -> Bool {
 #if DEBUG
@@ -364,7 +369,6 @@ extension ChatViewModel {
                     state.steerQueue[index].targetRunId = nil
                     didMutateQueue = true
                 }
-                state.routingEntryIds.remove(state.steerQueue[index].id)
             }
             if state.selectedFollowupRunId != nil {
                 state.selectedFollowupRunId = nil

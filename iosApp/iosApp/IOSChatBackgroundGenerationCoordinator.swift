@@ -248,6 +248,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                 )
             }
         )
+        interjectionOwner = chatViewModel
         headlessChatViewModel = chatViewModel
         headlessConversationStore = conversationStore
         headlessSharedSettings = sharedSettings
@@ -306,6 +307,8 @@ final class IOSChatBackgroundGenerationCoordinator {
             )
         }
     }
+
+    weak var interjectionOwner: ChatViewModel?
 
     func configure(
         conversationStore: IOSConversationStore? = nil,
@@ -613,6 +616,19 @@ final class IOSChatBackgroundGenerationCoordinator {
     /// reconciled. Backup restore must wait for that write as well as live jobs.
     var hasPendingConversationWrites: Bool {
         !activeJobs.isEmpty || !activeDetachedResponseTasks.isEmpty || !taskMap().isEmpty
+    }
+
+    func interjectionJob(runId: String) -> (job: IOSChatBackgroundRuntimeJob, state: IOSChatBackgroundRunState?)? {
+        guard let (id, job) = activeJobs.first(where: { $0.value.runId == runId }) else { return nil }
+        return (job, activeRunStates[id])
+    }
+
+    func interjectionSignal(runId: String) -> IOSLiveInterjectionSignal? {
+        activeJobs.values.first { $0.runId == runId }?.interjections
+    }
+
+    func runIds(for conversationId: KotlinUuid?) -> [String] {
+        conversationId.map { jobs(conversationId: $0).values.map(\.runId) } ?? []
     }
 
     func activeRunId(conversationId: KotlinUuid) -> String? {

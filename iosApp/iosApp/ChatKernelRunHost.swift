@@ -1190,6 +1190,11 @@ final class ChatKernelRunHost {
             self.toolOutcomeUnknownSignal = signal
             self.phoneControl.revoke(runID: runId)
         }
+        callbacks.onAssistantTurnSuperseded = { [weak self] in
+            guard let self, self.currentRunId == runId else { return }
+            self.cancelRemoteDurableResponseIfNeeded()
+            self.durableResponseSession?.provider.invalidateCompletedRequest()
+        }
         callbacks.onAssistantTurnCompleted = { [weak self] messages in
             guard let self, self.currentRunId == runId, self.cancelCause == nil else { return false }
             guard let session = self.durableResponseSession, session.hasPersistedOwner,

@@ -71,9 +71,14 @@ final class ChatConversationRunState {
     var selectedFollowupRunId: String?
     var liveTaskMessageIds: Set<String> = []
     var liveTaskTailMessageIds: Set<String> = []
+    /// Timeline-only acknowledgements follow the user even when a slot resplices its transcript.
+    @ObservationIgnored var interjectionReplyIDs: [String: String] = [:]
+    @ObservationIgnored var routingTail: Task<Void, Never>?
     @ObservationIgnored var routingEntryIds: Set<String> = []
     @ObservationIgnored var messagePersistencePendingCount = 0
     @ObservationIgnored var messagePersistenceTail: Task<ChatMessagePersistenceResult, Never>?
+    @ObservationIgnored var terminalContinuationCount = 0
+    @ObservationIgnored var steerCommitWaiters: [CheckedContinuation<Void, Never>] = []
     @ObservationIgnored var isCommittingSteerQueue = false
     @ObservationIgnored var steerQueueRestoreTargetsAfterCommit: Set<String?> = []
     @ObservationIgnored var steerQueueAutoContinueTask: Task<Void, Never>?

@@ -2,18 +2,7 @@ import XCTest
 @preconcurrency import Shared
 @testable import iosApp
 
-/// P1-a: 生成中 steer 消息队列（对齐 Android `ChatService.enqueuePendingUserMessage`
-/// + `ConversationSession` 的 STEER 语义，MAX_PENDING_USER_MESSAGES = 20）。
-///
-/// 契约：
-/// 1. 生成激活期间 composer 发送不再被 `.generationActive` 拦截，改为入队（不直接发）。
-/// 2. 工具循环边界消费：出队全部排队消息 → 真实 user 消息上屏 + 持久化进会话
-///    + 折入下一轮 upload。
-/// 3. 撤销同步删 sidecar 文件条目（exactly once）。
-/// 4. 队列满（20）时发送回到禁用态（`.steerQueueFull`）。
-/// 5. run 成功终态自动发队列头一条；取消/失败才回填 composer（含附件留队）。
-/// 6. sidecar store 往返 + 冷启动（新实例读同一路径）恢复；不同会话不串。
-/// 7. 生成中可带图/选中文件入队；drain 折入 Image parts；旧纯文本 sidecar 仍可读。
+/// The pending-input sidecar survives failures, recovery and terminal handoff.
 @MainActor
 final class IOSSteerQueueTests: XCTestCase {
 
@@ -176,7 +165,7 @@ final class IOSSteerQueueTests: XCTestCase {
 
     // MARK: - 4. 上限
 
-    func testQueueFullRejectsSendWithBlockReason() async throws {
+    func testLiveInputHasNoTwentyMessageCap() async throws {
         let base = makeTempDirectory("SteerQueueFull")
         defer { try? FileManager.default.removeItem(at: base) }
         let store = makeConversationStore(directory: base)
@@ -184,19 +173,14 @@ final class IOSSteerQueueTests: XCTestCase {
         let viewModel = makeViewModel(conversationStore: store, queueDirectory: base)
 
         viewModel.generationActiveOverrideForTesting = { _ in true }
-        for index in 0..<IOSSteerQueueStore.maxPendingUserMessages {
+        for index in 0..<20 {
             viewModel.inputText = "排队消息 \(index)"
             XCTAssertTrue(viewModel.sendMessage())
         }
-        XCTAssertEqual(viewModel.steerQueue.count, IOSSteerQueueStore.maxPendingUserMessages)
-
-        // 满时：发送按钮回到禁用态（block reason），send 拒绝。
-        XCTAssertEqual(
-            viewModel.composerSendBlockReason(for: "再来一条"),
-            .steerQueueFull
-        )
-        XCTAssertFalse(viewModel.sendMessage())
-        XCTAssertEqual(viewModel.steerQueue.count, IOSSteerQueueStore.maxPendingUserMessages)
+        viewModel.inputText = "再来一条"
+        XCTAssertNil(viewModel.composerSendBlockReason(for: viewModel.inputText))
+        XCTAssertTrue(viewModel.sendMessage())
+        XCTAssertEqual(viewModel.steerQueue.count, 21)
     }
 
     // MARK: - 5. run 成功终态 → 自动发下一条；取消/失败 → 回填 composer
@@ -548,7 +532,7 @@ final class IOSSteerQueueTests: XCTestCase {
         try Data().write(to: conversations)
         let failed = await viewModel.drainSteerQueue(conversationId: id)
         XCTAssertTrue(failed.isEmpty)
-        XCTAssertEqual(viewModel.messages.map { $0.toText() }, [entry.text])
+        XCTAssertEqual(viewModel.messages.map { $0.toText() }, [entry.text, "I'll adjust the next step to account for must survive a failed write."])
         XCTAssertEqual(IOSSteerQueueStore(directoryURL: queueDirectory).load(conversationId: id), [entry])
         XCTAssertNotNil(store.lastIOError)
 
@@ -653,7 +637,7 @@ final class IOSSteerQueueTests: XCTestCase {
 
         XCTAssertTrue(viewModel.inputText.isEmpty)
         XCTAssertTrue(viewModel.steerQueue.isEmpty)
-        XCTAssertEqual(viewModel.messages.map { $0.toText() }, ["committed while cancelling"])
+        XCTAssertEqual(viewModel.messages.map { $0.toText() }, ["committed while cancelling", "I'll adjust the next step to account for committed while cancelling."])
         XCTAssertFalse(viewModel.isGenerationActive)
     }
 
@@ -692,9 +676,9 @@ final class IOSSteerQueueTests: XCTestCase {
         XCTAssertEqual(store.currentConversation?.id, newConversationID)
         XCTAssertEqual(viewModel.inputText, "keep this new draft")
         XCTAssertTrue(viewModel.messages.isEmpty)
-        XCTAssertEqual(originalRun.state.messages.map { $0.toText() }, ["belongs to the original conversation"])
+        XCTAssertEqual(originalRun.state.messages.map { $0.toText() }, ["belongs to the original conversation", "I'll adjust the next step to account for belongs to the original conversation."])
         let persisted = await store.messages(for: id)
-        XCTAssertEqual(persisted?.map { $0.toText() }, ["belongs to the original conversation"])
+        XCTAssertEqual(persisted?.map { $0.toText() }, ["belongs to the original conversation", "I'll adjust the next step to account for belongs to the original conversation."])
     }
 
     func testTerminalAutoContinueDoesNotConsumeQueueWhenSaveFails() async throws {
@@ -716,28 +700,8 @@ final class IOSSteerQueueTests: XCTestCase {
         viewModel.handleSteerQueueAtRunTerminal(for: id, autoContinue: true)
         await viewModel.currentRun.state.steerQueueAutoContinueTask?.value
         XCTAssertEqual(viewModel.steerQueue.map(\.text), ["continue only after commit"])
-        XCTAssertEqual(viewModel.messages.map { $0.toText() }, ["continue only after commit"])
+        XCTAssertEqual(viewModel.messages.map { $0.toText() }, ["continue only after commit", "I'll adjust the next step to account for continue only after commit."])
         XCTAssertFalse(viewModel.isGenerationActive)
-    }
-
-    func testQueueRowTitleShowsImageAndFile() {
-        let entry = IOSSteerQueueEntry(
-            id: "row",
-            text: "",
-            createdAt: Date(),
-            images: [IOSSteerQueueImage(dataUrl: "data:image/png;base64,x", previewData: Data("t".utf8))],
-            selectedFile: IOSSteerQueuedFile(SelectedDocumentReadResult(
-                fileName: "brief.pdf",
-                fileType: "application/pdf",
-                totalBytes: 1,
-                bytesRead: 1,
-                characterCount: 1,
-                preview: "x",
-                isTruncated: false,
-                note: nil
-            ))
-        )
-        XCTAssertEqual(ChatSteerQueueStrip.rowTitle(for: entry), "图片 · brief.pdf")
     }
 
     // MARK: - 8. 后台终态清理、僵尸租约不短路与孤儿排队自动解卡

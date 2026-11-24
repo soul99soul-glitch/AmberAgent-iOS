@@ -49,6 +49,7 @@ func amberMailboxMessage(
 }
 
 struct IOSChatBackgroundRuntimeJob {
+    let interjections = IOSLiveInterjectionSignal()
     let runId: String
     let startedAt: Int64
     let inputDigest: String

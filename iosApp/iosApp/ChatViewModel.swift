@@ -10,7 +10,6 @@ import SwiftUI
 enum ChatComposerSendBlockReason: Equatable {
     case emptyInput
     case generationActive
-    case steerQueueFull
     case attachingSelectedFile
     case recognizingImages
     case pendingApproval
@@ -294,9 +293,7 @@ final class ChatViewModel {
 
     // MARK: - Steer 队列（P1-a）
 
-    /// 生成激活期间排队、待折入下一轮模型请求的 user 消息（v1 仅文本 STEER）。
-    /// 队列由各会话状态持有；`ChatRunKernelAdapter` 在工具循环
-    /// 边界经 bindings 消费，不持有第二份队列。非活动会话从持久化恢复。
+    /// Per-conversation durable input while routing or waiting for the target to consume it.
     var steerQueue: [IOSSteerQueueEntry] {
         get { currentRun.state.steerQueue }
         set { currentRun.state.steerQueue = newValue }
@@ -965,15 +962,7 @@ final class ChatViewModel {
             return .generationActive
         }
         if isGenerationActive {
-            // 生成中发送改为入队（含图/附件）；队列满时回到禁用态。
-            let route = ChatInboundTurnTriage.route(text: text,
-                hasAttachments: !pendingImages.isEmpty || pendingSelectedFilePreview != nil,
-                hasExplicitTarget: selectedFollowupRunId != nil)
-            if route == .status { return nil }
-            if case .stop = route { return nil }
-            return steerQueue.count >= IOSSteerQueueStore.maxPendingUserMessages
-                ? .steerQueueFull
-                : nil
+            return nil
         }
         guard !isAttachingSelectedFile else { return .attachingSelectedFile }
         guard !isRecognizingImages else { return .recognizingImages }

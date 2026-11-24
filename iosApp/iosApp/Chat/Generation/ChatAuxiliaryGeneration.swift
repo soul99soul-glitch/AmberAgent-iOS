@@ -159,7 +159,7 @@ extension ChatViewModel {
     }
 
     /// 用辅助模型跑一次单轮文本生成(OpenAIKmpProviderAdapter 内部按服务商类型分发 OpenAI/Claude)。
-    func runAuxModel(model: Model, prompt: String, conversationId: KotlinUuid?) async -> String? {
+    func runAuxModel(model: Model, prompt: String, conversationId: KotlinUuid?, maxTokens: KotlinInt? = nil) async -> String? {
         let snapshot = sharedSettings.snapshot
         guard let provider = ChatProviderConfiguration.provider(
             for: model,
@@ -174,7 +174,7 @@ extension ChatViewModel {
                 model: model.customHeaders,
                 conversationId: conversationId?.toHexDashString()
             ),
-            assistantBodies: assistant.customBodies
+            assistantBodies: assistant.customBodies, maxTokens: maxTokens
         )
         do {
             let chunk = try await auxiliaryTextProvider.generateText(
@@ -191,13 +191,14 @@ extension ChatViewModel {
     static func makeAuxiliaryTextGenerationParams(
         model: Model,
         assistantHeaders: [CustomHeader],
-        assistantBodies: [CustomBody]
+        assistantBodies: [CustomBody],
+        maxTokens: KotlinInt? = nil
     ) -> TextGenerationParams {
         TextGenerationParams(
             model: model,
             temperature: nil,
             topP: nil,
-            maxTokens: nil,
+            maxTokens: maxTokens,
             tools: [],
             reasoningLevel: ReasoningLevel.off,
             customHeaders: assistantHeaders,

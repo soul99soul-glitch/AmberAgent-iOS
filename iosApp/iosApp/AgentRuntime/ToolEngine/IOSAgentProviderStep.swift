@@ -29,12 +29,13 @@ private final class StreamStepState: @unchecked Sendable {
 
     init(accumulator: MessageStreamAccumulator) { self.accumulator = accumulator }
 
-    func append(_ chunk: MessageChunk) -> Bool {
+    func append(_ chunk: MessageChunk, tracker: IOSMemoryCitationTracker?) -> MessageChunk? {
         lock.lock()
         defer { lock.unlock() }
-        guard !resumed, !cancellationRequested else { return false }
-        accumulator.append(chunk: chunk)
-        return true
+        guard !resumed, !cancellationRequested else { return nil }
+        let stripped = tracker?.stripped(chunk) ?? chunk
+        accumulator.append(chunk: stripped)
+        return stripped
     }
 
     func assistantSnapshot() -> UIMessage? {
@@ -433,8 +434,7 @@ struct IOSAgentProviderStep: Sendable {
                             // P2-c: 后台流在进入 accumulator 前剥离 citation 隐藏
                             // 标记（与前台 sink 同语义——所有下游消费者只见到已剥离的
                             // 可见文本；nil → 原样零变化）。
-                            let strippedChunk = citationTracker?.stripped(chunk) ?? chunk
-                            guard state.append(strippedChunk) else { return }
+                            guard let strippedChunk = state.append(chunk, tracker: citationTracker) else { return }
                             let update = state.appendAssistantDelta(
                                 from: strippedChunk,
                                 collectText: collectAssistantText,
@@ -522,8 +522,7 @@ struct IOSAgentProviderStep: Sendable {
             try await IOSGrokWebClient(
                 providerId: IOSGrokWebProviderResolver.providerKey(provider)
             ).streamText(messages: boxed.value, params: params) { chunk in
-                let strippedChunk = citationTracker?.stripped(chunk) ?? chunk
-                guard state.append(strippedChunk) else { return }
+                guard let strippedChunk = state.append(chunk, tracker: citationTracker) else { return }
                 let update = state.appendAssistantDelta(
                     from: strippedChunk,
                     collectText: collectAssistantText,
@@ -601,8 +600,7 @@ struct IOSAgentProviderStep: Sendable {
                 messages: boxed.value,
                 params: params
             ) { chunk in
-                let strippedChunk = citationTracker?.stripped(chunk) ?? chunk
-                guard state.append(strippedChunk) else { return }
+                guard let strippedChunk = state.append(chunk, tracker: citationTracker) else { return }
                 let update = state.appendAssistantDelta(
                     from: strippedChunk,
                     collectText: collectAssistantText,

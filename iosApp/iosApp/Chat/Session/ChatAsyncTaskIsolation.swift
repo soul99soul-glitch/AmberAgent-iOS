@@ -27,6 +27,7 @@ struct ChatLocalTaskFollowup: Identifiable, Equatable, Sendable {
 /// anchor position in `state.messages`; follow-ups live in the conversation queue.
 @MainActor
 final class ChatAsyncTaskSlot {
+    let interjections = IOSLiveInterjectionSignal()
     let slotId: String
     var runId: String
     let conversationId: KotlinUuid?
@@ -341,19 +342,18 @@ extension ChatViewModel {
         let activeRun = runRegistry.existingRun(for: state.conversationId)
         let single = (activeRun?.state === state ? activeRun?.orderedSlots.filter(\.isActiveOrQueued).count ?? 0 : 0) <= 1
         let entries = state.steerQueue.filter {
-            $0.status == .received && !state.routingEntryIds.contains($0.id) &&
+            $0.status == .received &&
             ($0.targetRunId == slot.runId || $0.targetRunId == slot.slotId || ($0.targetRunId == nil && single))
         }
         let drained = await commitSteerQueueEntries(entries, state: state)
         guard !drained.isEmpty else { return [] }
-        spliceTaskTranscript(slot.currentTranscript + drained, for: slot, into: state)
         return drained
     }
 
     func cancelUnconsumedFollowups(for slot: ChatAsyncTaskSlot, state: ChatConversationRunState) {
         var didChange = false
         for index in state.steerQueue.indices {
-            guard state.steerQueue[index].status == .received,
+            guard [.routing, .received].contains(state.steerQueue[index].status),
                   state.steerQueue[index].targetRunId == slot.runId || state.steerQueue[index].targetRunId == slot.slotId else { continue }
             state.steerQueue[index].status = .cancelled
             didChange = true
@@ -401,7 +401,7 @@ extension ChatViewModel {
         }
         return prefixSlice.compactMap { message -> UIMessage? in
             guard !otherLiveIds.contains(ChatMessageProjector.messageId(for: message)),
-                  !run.state.steerQueue.contains(where: { $0.messageId == message.id.toHexDashString() }) else { return nil }
+                  !run.state.steerQueue.contains(where: { $0.status != .consumed && $0.messageId == message.id.toHexDashString() }) else { return nil }
             guard message.role == MessageRole.assistant else { return message }
             // This is a new task's upload snapshot. Keep the timeline and the
             // current task's subsequent tool rounds untouched.
@@ -454,7 +454,17 @@ extension ChatViewModel {
         if let latestProseSig, latestProseSig != previousProseSig {
             slot.recordMeaningfulUserVisibleProgress()
         }
-        let previousOwnedIds = slot.allOwnedMessageIds.union(newGenerated.map { ChatMessageProjector.messageId(for: $0) })
+        var displayed = newGenerated
+        var replyIDs: Set<String> = []
+        if !state.interjectionReplyIDs.isEmpty {
+            for (index, message) in newGenerated.enumerated().reversed() where message.role == .user {
+                guard let id = state.interjectionReplyIDs[message.id.toHexDashString()],
+                      let reply = state.messages.first(where: { $0.id.toHexDashString() == id }) else { continue }
+                displayed.insert(reply, at: index + 1)
+                replyIDs.insert(id)
+            }
+        }
+        let previousOwnedIds = slot.allOwnedMessageIds.union(replyIDs).union(newGenerated.map { ChatMessageProjector.messageId(for: $0) })
         var combined = state.messages
         var firstRemovedIndex: Int?
         if !previousOwnedIds.isEmpty {
@@ -478,7 +488,12 @@ extension ChatViewModel {
            let anchorIdx = combined.firstIndex(where: {
                ChatMessageProjector.messageId(for: $0) == anchorId
            }) {
-            insertionIndex = anchorIdx + 1
+            let next = anchorIdx + 1
+            if combined.indices.contains(next), state.interjectionReplyIDs[anchorId] == combined[next].id.toHexDashString() {
+                insertionIndex = next + 1
+            } else {
+                insertionIndex = next
+            }
         } else if let firstRemovedIndex {
             insertionIndex = min(firstRemovedIndex, combined.count)
         } else {
@@ -486,7 +501,7 @@ extension ChatViewModel {
         }
 
         if !newGenerated.isEmpty {
-            combined.insert(contentsOf: newGenerated, at: insertionIndex)
+            combined.insert(contentsOf: displayed, at: insertionIndex)
         }
 
         if let tailAssistant = newGenerated.last(where: { $0.role == MessageRole.assistant }) {
@@ -500,7 +515,7 @@ extension ChatViewModel {
         slot.currentTranscript = slot.baselineMessages + newGenerated
         slot.lastProvisionalProseSnapshot = nil
         state.messages = combined
-        slot.lastSplicedTailIndex = newGenerated.isEmpty ? nil : insertionIndex + newGenerated.count - 1
+        slot.lastSplicedTailIndex = newGenerated.isEmpty ? nil : insertionIndex + displayed.count - 1
         slot.lastSplicedTailID = newGenerated.last.map(ChatMessageProjector.messageId(for:))
         if let run = runRegistry.existingRun(for: state.conversationId),
            run.state === state {

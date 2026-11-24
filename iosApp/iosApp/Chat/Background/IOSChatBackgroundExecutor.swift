@@ -6,6 +6,16 @@ import UIKit
 
 @MainActor
 extension IOSChatBackgroundGenerationCoordinator {
+    @MainActor
+    private func drainInterjections(for job: IOSChatBackgroundRuntimeJob) async -> IOSMailboxDrainResult {
+        guard let owner = interjectionOwner, let state = owner.runRegistry.run(for: job.conversationId)?.state else {
+            return IOSMailboxDrainResult(values: [])
+        }
+        owner.ensureSteerQueueLoaded(state: state)
+        let entries = state.steerQueue.filter { $0.status == .received && $0.targetRunId == job.runId }
+        return IOSMailboxDrainResult(values: await owner.commitSteerQueueEntries(entries, state: state))
+    }
+
     private func scheduleSubAgentTimeout(
         job: IOSChatBackgroundRuntimeJob,
         execution: IOSChatBackgroundExecution,
@@ -271,6 +281,10 @@ extension IOSChatBackgroundGenerationCoordinator {
                 conversationId: job.conversationId
             )
         }
+        let drainSteer: @Sendable () async -> [UIMessage] = { [weak self] in
+            let drained = await self?.drainInterjections(for: job)
+            return drained?.values ?? []
+        }
         let presentationConsumer = Task { @MainActor in
             for await presentation in presentationEvents.stream {
                 await self.publishRunningPresentation(
@@ -338,6 +352,8 @@ extension IOSChatBackgroundGenerationCoordinator {
                     citationTracker: initialCitationTracker,
                     toolExposureBridge: job.toolExposureBridge,
                     mailboxDrain: mailboxDrain,
+                    drainSteer: drainSteer,
+                    interjections: job.interjections,
                     prepareRequestMessages: initialUploadPreparer,
                     onAssistantTurnStarted: {
                         runState.resetGenerationRound()
@@ -436,6 +452,8 @@ extension IOSChatBackgroundGenerationCoordinator {
                     citationTracker: retryCitationTracker,
                     toolExposureBridge: job.toolExposureBridge,
                     mailboxDrain: mailboxDrain,
+                    drainSteer: drainSteer,
+                    interjections: job.interjections,
                     prepareRequestMessages: uploadPreparer(params: retryParams),
                     onAssistantTurnStarted: {
                         runState.resetGenerationRound()

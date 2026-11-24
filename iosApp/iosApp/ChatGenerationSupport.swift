@@ -144,6 +144,7 @@ struct ChatGenerationBindings {
     var scheduleMemoryExtraction: @MainActor (KotlinUuid, [UIMessage], [UIMessage]) -> Void = { _, _, _ in }
     /// P1-a: 工具循环边界消费 steer 队列——出队全部排队消息（owner 内部负责
     /// 上屏 + 持久化），返回生成的 user 消息供下一轮 upload 折入。空队列零操作。
+    var interjections: IOSLiveInterjectionSignal? = nil
     var drainSteerQueue: @MainActor (KotlinUuid?) async -> [UIMessage] = { _ in [] }
     /// 工具循环/新 run 首轮边界消费 mailbox——先保存稳定信封消息，再确认投递。
     /// owner 内部渲染为带结构头的 user 消息上屏，返回生成的消息供

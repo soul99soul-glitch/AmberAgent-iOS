@@ -32,9 +32,11 @@ final class IOSAgentToolEngineKernelHookTests: XCTestCase {
 
     /// Executor that echoes `ok:<name>` and records invocation order.
     private final class OrderRecordingExecutor: IOSToolExecutor, @unchecked Sendable {
+        var duringExecution: (() -> Void)?
         private(set) var invocations: [String] = []
         func execute(name: String, arguments: String, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
             invocations.append(name)
+            duringExecution?()
             return .filled("{\"ok\":true,\"tool\":\"\(name)\"}")
         }
     }
@@ -384,6 +386,54 @@ final class IOSAgentToolEngineKernelHookTests: XCTestCase {
         XCTAssertTrue(F.toolOutputText(toolCallId: "tc-b", in: result.messages).contains("\"tool\":\"tool_b\""))
         XCTAssertEqual(provider.uploads.count, 2)
         XCTAssertEqual(result.stepsExecuted, 2)
+    }
+
+    func testSteerDuringToolFinishesAtomicActionAndPairsSkippedSiblingsBeforeReplan() async throws {
+        let batch = F.assistantMessage(parts: ["first", "second"].flatMap {
+            makeToolMessage(toolCallId: $0, toolName: $0).parts
+        })
+        let provider = UploadRecordingProvider([batch, F.assistantText("replanned")])
+        let signal = IOSLiveInterjectionSignal()
+        let executor = OrderRecordingExecutor()
+        executor.duringExecution = {
+            signal.signal()
+            XCTAssertFalse(Task.isCancelled)
+            XCTAssertTrue(IOSLiveInterjectionSignal.toolPlanIsStale?() == true)
+        }
+        let engine = IOSAgentToolEngine(provider: provider, executors: ["first": executor, "second": executor])
+        let result = await engine.run(providerSetting: F.makeProviderSetting(), messages: [F.userMessage("start")],
+            params: F.makeParams(toolNames: ["first", "second"]),
+            drainSteer: { signal.revision > 0 ? [F.userMessage("new direction")] : [] }, interjections: signal)
+        XCTAssertEqual(executor.invocations, ["first"])
+        XCTAssertEqual(provider.uploads.count, 2)
+        let upload = try XCTUnwrap(provider.uploads.last)
+        XCTAssertTrue(F.toolOutputText(toolCallId: "first", in: upload).contains("true"))
+        XCTAssertTrue(F.toolOutputText(toolCallId: "second", in: upload).contains("not_sent"))
+        XCTAssertEqual(upload.last?.toText(), "new direction")
+        XCTAssertEqual(result.messages.last?.toText(), "replanned")
+    }
+
+    func testHandoffWithPendingSteerClosesStaleCallsBeforeFirstUpload() async throws {
+        let tool = makeToolMessage(toolCallId: "old-call", toolName: "old-tool")
+        let provider = UploadRecordingProvider([F.assistantText("replanned")])
+        let executor = OrderRecordingExecutor()
+        let engine = IOSAgentToolEngine(provider: provider, executors: ["old-tool": executor])
+        let update = "use the new plan"
+        // The sidecar can predate the restored signal, so its initial revision is zero.
+        let drains = EventRecorder()
+        let result = await engine.run(providerSetting: F.makeProviderSetting(), messages: [F.userMessage("start"), tool],
+            params: F.makeParams(toolNames: ["old-tool"]), drainSteer: {
+                drains.append("drain")
+                return drains.count == 1 ? [F.userMessage(update)] : []
+            },
+            interjections: IOSLiveInterjectionSignal())
+
+        XCTAssertTrue(executor.invocations.isEmpty)
+        let upload = try XCTUnwrap(provider.uploads.first)
+        XCTAssertTrue(F.toolOutputText(toolCallId: "old-call", in: upload).contains("not_sent"))
+        XCTAssertEqual(upload.filter { $0.toText() == update }.count, 1)
+        XCTAssertEqual(upload.last?.toText(), update)
+        XCTAssertEqual(result.messages.last?.toText(), "replanned")
     }
 
     // MARK: - preemptToolBatch
