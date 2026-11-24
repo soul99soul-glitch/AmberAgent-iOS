@@ -109,8 +109,18 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         browserPresentationHosts.removeAll()
         cancelBrowserPresentation()
         for popup in popupWebViews { closePopup(popup) }
-        webViewStorage?.stopLoading()
-        webViewStorage?.isUserInteractionEnabled = false
+        pendingLoadTimeoutTask?.cancel()
+        pendingLoadTimeoutTask = nil
+        urlObservation?.invalidate()
+        urlObservation = nil
+        if let webView = webViewStorage {
+            webView.stopLoading()
+            webView.isUserInteractionEnabled = false
+            webView.navigationDelegate = nil
+            webView.uiDelegate = nil
+            webView.loadHTMLString("", baseURL: nil)
+            webViewStorage = nil
+        }
         snapshot.status = .failed
         snapshot.error = "站点会话已关闭。"
         completePendingLoad()

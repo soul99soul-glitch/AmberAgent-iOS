@@ -661,6 +661,132 @@ final class IOSChatKernelRunHostTests: IOSChatKernelRunHostTestCase {
         XCTAssertTrue(F.toolOutputText(toolCallId: "tc-limited", in: result).contains("上限"))
     }
 
+    // MARK: - 终态破环释放与切会话驱逐
+
+    /// 切会话驱逐终态 run 后，Host / RunState / TaskSlot 弱引用必须全部归 nil，
+    /// 不得误伤待审批或活跃 run，且迟到回调不得通过 current(for:) 复活已驱逐空 run。
+    func testConversationSwitchEvictsTerminalRunAndReleasesHostAndStateWithoutTouchingPendingApproval() async throws {
+        let suite = "IOSChatKernelRunHostTests.RetainCycle.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        let owner = ChatViewModel(
+            settingsStore: SettingsStore(userDefaults: defaults),
+            sharedSettings: IOSSharedSettingsStore(userDefaults: defaults),
+            autoGenerateResponses: false
+        )
+
+        let convA = KotlinUuid.companion.random()
+        let convB = KotlinUuid.companion.random()
+        let convC = KotlinUuid.companion.random()
+        let convD = KotlinUuid.companion.random()
+
+        weak var weakRunA: ChatConversationRun?
+        weak var weakStateA: ChatConversationRunState?
+        weak var weakSlotA: ChatAsyncTaskSlot?
+        weak var weakHostA: ChatKernelRunHost?
+
+        do {
+            let runA = owner.runRegistry.current(for: convA)
+            let userA = F.userMessage("第一会话")
+            runA.state.messages = [userA]
+            let slotA = ChatAsyncTaskSlot(
+                conversationId: convA,
+                inputDigest: "evict-terminal-a",
+                anchorUserMessageId: ChatMessageProjector.messageId(for: userA),
+                phoneControlUserInitiated: false,
+                providerSetting: F.makeProviderSetting(),
+                params: F.makeParams(toolNames: []),
+                toolExposureBridge: nil,
+                recipeCatalogSnapshot: nil,
+                baselineMessages: [userA]
+            )
+            owner.kernelTextProviderOverrideForTesting = HostScriptedProvider(rounds: [textRound("第一会话已完成")])
+            _ = owner.startOrEnqueueTaskSlot(slotA, in: runA)
+            let hostA = try XCTUnwrap(slotA.host)
+            weakRunA = runA
+            weakStateA = runA.state
+            weakSlotA = slotA
+            weakHostA = hostA
+
+            let finishedA = await waitForCondition {
+                slotA.isTerminal && !hostA.isRunning && slotA.host == nil && runA.primaryHost == nil
+            }
+            XCTAssertTrue(finishedA, "终态后应释放 host 强引用并破环")
+            XCTAssertTrue(slotA.baselineMessages.isEmpty)
+            XCTAssertTrue(slotA.generatedMessages.isEmpty)
+            XCTAssertTrue(slotA.currentTranscript.isEmpty)
+            XCTAssertTrue(slotA.terminalHasVisibleProseOrTools)
+        }
+
+        // 启动另一个处于待审批状态的会话 C，确认切会话时不会被误驱逐或误清 host。
+        let runC = owner.runRegistry.current(for: convC)
+        let userC = F.userMessage("待审批会话")
+        runC.state.messages = [userC]
+        let slotC = ChatAsyncTaskSlot(
+            conversationId: convC,
+            inputDigest: "keep-pending-approval-c",
+            anchorUserMessageId: ChatMessageProjector.messageId(for: userC),
+            phoneControlUserInitiated: false,
+            providerSetting: F.makeProviderSetting(),
+            params: F.makeParams(toolNames: ["search_web"]),
+            toolExposureBridge: nil,
+            recipeCatalogSnapshot: nil,
+            baselineMessages: [userC]
+        )
+        owner.kernelTextProviderOverrideForTesting = HostScriptedProvider(rounds: [
+            toolRound("tc-hold", "search_web", #"{"query":"amber"}"#),
+            textRound("审批后完成"),
+        ])
+        _ = owner.startOrEnqueueTaskSlot(slotC, in: runC)
+        let hostC = try XCTUnwrap(slotC.host)
+        defer { hostC.cancel() }
+        let approvalVisible = await waitForCondition {
+            runC.state.pendingSearchApproval != nil && hostC.hasPendingToolApproval
+        }
+        XCTAssertTrue(approvalVisible, "会话 C 应进入工具审批等待态")
+
+        // 切至会话 B 并驱逐已结束会话 A。
+        let runB = owner.runRegistry.current(for: convB)
+        owner.runRegistry.retainActive(keeping: runB)
+
+        let releasedA = await waitForCondition {
+            weakHostA == nil && weakStateA == nil && weakSlotA == nil && weakRunA == nil
+        }
+        XCTAssertTrue(releasedA, "切会话驱逐旧终态 run 后 host/state/slot/run 弱引用必须全部归 nil")
+        XCTAssertNil(owner.runRegistry.existingRun(for: convA))
+
+        // 待审批的会话 C 必须完好保留。
+        XCTAssertTrue(owner.runRegistry.existingRun(for: convC) === runC)
+        XCTAssertTrue(slotC.host === hostC)
+        XCTAssertTrue(hostC.hasPendingToolApproval)
+        XCTAssertFalse(slotC.isTerminal)
+
+        // 已驱逐 run 的迟到回调不得在 runRegistry 中复活空 run。
+        let runD = owner.runRegistry.current(for: convD)
+        let slotD = ChatAsyncTaskSlot(
+            conversationId: convD,
+            inputDigest: "late-callback-d",
+            anchorUserMessageId: nil,
+            phoneControlUserInitiated: false,
+            providerSetting: F.makeProviderSetting(),
+            params: F.makeParams(toolNames: []),
+            toolExposureBridge: nil,
+            recipeCatalogSnapshot: nil,
+            baselineMessages: []
+        )
+        let bindingsD = owner.makeGenerationBindings(state: runD.state, taskSlot: slotD)
+        owner.runRegistry.retainActive(keeping: runB)
+        XCTAssertNil(owner.runRegistry.existingRun(for: convD))
+
+        bindingsD.setIsLoading(false)
+        await bindingsD.onRunTerminal(convD, slotD.runId, .completed, [], [])
+        owner.spliceTaskTranscript([], for: slotD, into: runD.state)
+        XCTAssertNil(owner.runRegistry.existingRun(for: convD), "迟到回调不得通过 current(for:) 复活已驱逐的空 run")
+
+        hostC.cancel()
+        _ = await waitForHostIdle(hostC)
+    }
+
 }
 
 @MainActor

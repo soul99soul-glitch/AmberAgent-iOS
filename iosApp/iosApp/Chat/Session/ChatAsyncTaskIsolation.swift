@@ -22,6 +22,11 @@ struct ChatLocalTaskFollowup: Identifiable, Equatable, Sendable {
     }
 }
 
+struct ChatProvisionalVisibleProseMetric: Equatable {
+    let visibleTextPartCount: Int
+    let lastVisibleUTF16Count: Int
+}
+
 /// Per-task isolation slot within a conversation (`ChatConversationRun`).
 /// Each task owns its own `ChatKernelRunHost`, baseline transcript, generated message IDs,
 /// anchor position in `state.messages`; follow-ups live in the conversation queue.
@@ -39,7 +44,7 @@ final class ChatAsyncTaskSlot {
     let recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?
 
     /// Conversation messages up to `anchorUserMessageId`, excluding in-flight outputs of other concurrent tasks.
-    let baselineMessages: [UIMessage]
+    var baselineMessages: [UIMessage]
     let baselineMessageIds: Set<String>
 
     /// The task's isolated transcript (`baselineMessages + generatedMessages`), read/written by its `ChatKernelRunHost`.
@@ -67,10 +72,15 @@ final class ChatAsyncTaskSlot {
     var lastSyncedVisibleStage: AgentActivityStage?
     var lastSyncedVisibleToolSignature: String?
     var lastSyncedVisibleProseSignature: Int?
+    var lastProvisionalProseSnapshot: (messageId: KotlinUuid, isSegmented: Bool, metric: ChatProvisionalVisibleProseMetric?)?
     var explicitFailureOrStallReason: String?
     var keepaliveMonitorTask: Task<Void, Never>?
     var keepaliveMessages: [UIMessage] = []
     var commentaryCoalescer = ChatTaskCommentaryCoalescer()
+
+    /// Frozen value-type metadata retained on the terminal slot shell after heavy message payloads are released.
+    var terminalHasVisibleProseOrTools: Bool = false
+    var terminalStatusOnlyMessageIds: Set<String> = []
 
     nonisolated static let keepaliveSilenceThresholdSeconds: TimeInterval = 60.0
     nonisolated static let keepaliveDefaultText = "当前步骤仍在处理中，暂时还没有新的结果，一有进展我会立即同步给你。"
@@ -103,6 +113,53 @@ final class ChatAsyncTaskSlot {
         if isTerminal { return false }
         if isQueuedForConcurrencySlot { return true }
         return host?.isRunning == true
+    }
+
+    var hasVisibleProseOrTools: Bool {
+        if terminalHasVisibleProseOrTools { return true }
+        return Self.computeHasVisibleProseOrTools(in: generatedMessages)
+    }
+
+    var statusOnlyMessageIds: Set<String> {
+        if generatedMessages.isEmpty {
+            return terminalStatusOnlyMessageIds
+        }
+        return terminalStatusOnlyMessageIds.union(Self.computeStatusOnlyMessageIds(in: generatedMessages))
+    }
+
+    func releaseTerminalPayloads() {
+        if !generatedMessages.isEmpty {
+            if Self.computeHasVisibleProseOrTools(in: generatedMessages) {
+                terminalHasVisibleProseOrTools = true
+            }
+            terminalStatusOnlyMessageIds.formUnion(Self.computeStatusOnlyMessageIds(in: generatedMessages))
+        }
+        baselineMessages = []
+        currentTranscript = []
+        generatedMessages = []
+        keepaliveMessages = []
+        lastProvisionalProseSnapshot = nil
+    }
+
+    private static func computeHasVisibleProseOrTools(in messages: [UIMessage]) -> Bool {
+        messages.contains { msg in
+            if !msg.getTools().isEmpty { return true }
+            return msg.parts.contains { part in
+                if let textPart = part as? UIMessagePart.Text {
+                    let trimmed = textPart.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return !trimmed.isEmpty && trimmed != ChatViewModel.queuedTaskPlaceholderText
+                }
+                return !(part is UIMessagePart.Reasoning)
+            }
+        }
+    }
+
+    private static func computeStatusOnlyMessageIds(in messages: [UIMessage]) -> Set<String> {
+        Set(
+            messages
+                .filter { NativeTimelineProjector.isGlobalStatusOnly($0) }
+                .map(ChatMessageProjector.messageId(for:))
+        )
     }
 
     init(
@@ -185,17 +242,7 @@ extension ChatViewModel {
             if let selectedId, (oldSlot.runId == selectedId || oldSlot.slotId == selectedId) {
                 continue
             }
-            let hasAnyVisibleProseOrTools = oldSlot.generatedMessages.contains { msg in
-                if !msg.getTools().isEmpty { return true }
-                return msg.parts.contains { part in
-                    if let textPart = part as? UIMessagePart.Text {
-                        let trimmed = textPart.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        return !trimmed.isEmpty && trimmed != Self.queuedTaskPlaceholderText
-                    }
-                    return !(part is UIMessagePart.Reasoning)
-                }
-            }
-            guard !hasAnyVisibleProseOrTools else { continue }
+            guard !oldSlot.hasVisibleProseOrTools else { continue }
             cancelAndRetireSlot(oldSlot, in: run, removeAllGeneratedStubs: true)
         }
     }
@@ -210,6 +257,25 @@ extension ChatViewModel {
             }
         }
         refreshLiveTaskMessageIds(in: run)
+    }
+
+    func scheduleTerminalHostRelease(
+        for slot: ChatAsyncTaskSlot,
+        in run: ChatConversationRun?
+    ) {
+        Task { @MainActor [weak slot, weak run] in
+            guard let slot,
+                  slot.isTerminal,
+                  slot.host?.isRunning != true,
+                  slot.host?.hasPendingToolApproval != true else {
+                return
+            }
+            let releasedHost = slot.host
+            slot.host = nil
+            if let run, let releasedHost, run.primaryHost === releasedHost {
+                run.primaryHost = nil
+            }
+        }
     }
 
     private func cancelAndRetireSlot(
@@ -231,11 +297,7 @@ extension ChatViewModel {
             run.state.messages.removeAll { ChatMessageProjector.messageId(for: $0) == placeholderId }
         }
         if removeAllGeneratedStubs {
-            let statusOnlyIds = Set(
-                slot.generatedMessages
-                    .filter { NativeTimelineProjector.isGlobalStatusOnly($0) }
-                    .map(ChatMessageProjector.messageId(for:))
-            )
+            let statusOnlyIds = slot.statusOnlyMessageIds
             if !statusOnlyIds.isEmpty {
                 run.state.messages.removeAll { statusOnlyIds.contains(ChatMessageProjector.messageId(for: $0)) }
             }
@@ -244,6 +306,8 @@ extension ChatViewModel {
         if let host = slot.host, host.isRunning {
             _ = host.cancel(runId: slot.runId)
         }
+        slot.releaseTerminalPayloads()
+        scheduleTerminalHostRelease(for: slot, in: run)
     }
 
     func isTaskActiveOrQueued(runId: String) -> Bool {
@@ -278,7 +342,8 @@ extension ChatViewModel {
 
     func drainTaskSteerQueue(slot: ChatAsyncTaskSlot, state: ChatConversationRunState) async -> [UIMessage] {
         ensureSteerQueueLoaded(state: state)
-        let single = runRegistry.current(for: state.conversationId).orderedSlots.filter(\.isActiveOrQueued).count <= 1
+        let activeRun = runRegistry.existingRun(for: state.conversationId)
+        let single = (activeRun?.state === state ? activeRun?.orderedSlots.filter(\.isActiveOrQueued).count ?? 0 : 0) <= 1
         let entries = state.steerQueue.filter {
             $0.status == .received && !state.routingEntryIds.contains($0.id) &&
             ($0.targetRunId == slot.runId || $0.targetRunId == slot.slotId || ($0.targetRunId == nil && single))
@@ -437,10 +502,14 @@ extension ChatViewModel {
         slot.generatedMessages = newGenerated
         slot.generatedMessageIds = Set(newGenerated.map { ChatMessageProjector.messageId(for: $0) })
         slot.currentTranscript = slot.baselineMessages + newGenerated
+        slot.lastProvisionalProseSnapshot = nil
         state.messages = combined
         slot.lastSplicedTailIndex = newGenerated.isEmpty ? nil : insertionIndex + newGenerated.count - 1
         slot.lastSplicedTailID = newGenerated.last.map(ChatMessageProjector.messageId(for:))
-        refreshLiveTaskMessageIds(in: runRegistry.current(for: state.conversationId))
+        if let run = runRegistry.existingRun(for: state.conversationId),
+           run.state === state {
+            refreshLiveTaskMessageIds(in: run)
+        }
     }
 
     /// Only provisional stream snapshots enter this path; authoritative snapshots
@@ -459,10 +528,19 @@ extension ChatViewModel {
                 index = state.messages.lastIndex(where: { $0.id == message.id })
             }
             if let index {
-                // Compare only the replaced row: stream deltas must not rescan task history.
-                let previousProseSig = Self.visibleSyncedProseSignature(in: [previous])
-                if let latestProseSig = Self.visibleSyncedProseSignature(in: [message]),
-                   latestProseSig != previousProseSig {
+                // Compare only lightweight tail prose metrics without full-text trimming or SipHash.
+                let isSegmented = IOSChatRenderPreferences.shared.isSegmentedReplyDelivery
+                let previousMetric: ChatProvisionalVisibleProseMetric?
+                if let cached = slot.lastProvisionalProseSnapshot,
+                   cached.messageId == previous.id,
+                   cached.isSegmented == isSegmented {
+                    previousMetric = cached.metric
+                } else {
+                    previousMetric = Self.provisionalVisibleProseMetric(for: previous, isSegmented: isSegmented)
+                }
+                let latestMetric = Self.provisionalVisibleProseMetric(for: message, isSegmented: isSegmented)
+                slot.lastProvisionalProseSnapshot = (message.id, isSegmented, latestMetric)
+                if let latestMetric, latestMetric != previousMetric {
                     slot.recordMeaningfulUserVisibleProgress()
                 }
                 // The aggregate is rebuilt only when an authoritative transcript next arrives.
@@ -616,6 +694,8 @@ extension ChatViewModel {
         if run.state.selectedFollowupRunId == slot.runId || run.state.selectedFollowupRunId == slot.slotId {
             run.state.selectedFollowupRunId = nil
         }
+        slot.releaseTerminalPayloads()
+        scheduleTerminalHostRelease(for: slot, in: run)
         refreshLiveTaskMessageIds(in: run)
         runActivityRevision &+= 1
         dequeueNextPendingTasksIfPossible()
@@ -675,10 +755,14 @@ extension ChatViewModel {
                             }
                         }
                         slot.isTerminal = true
+                        slot.releaseTerminalPayloads()
+                        scheduleTerminalHostRelease(for: slot, in: run)
                         interruptedRunIds.append(runId)
                     } else if let host = slot.host, host.isRunning {
                         host.cancel(cause: .backgroundInterruption)
                         slot.isTerminal = true
+                        slot.releaseTerminalPayloads()
+                        scheduleTerminalHostRelease(for: slot, in: run)
                         interruptedRunIds.append(runId)
                     }
                 }
@@ -768,6 +852,65 @@ extension ChatViewModel {
             runActivityRevision &+= 1
         }
         return keepaliveMsg
+    }
+
+    static func provisionalVisibleProseMetric(
+        for message: UIMessage,
+        isSegmented: Bool = IOSChatRenderPreferences.shared.isSegmentedReplyDelivery
+    ) -> ChatProvisionalVisibleProseMetric? {
+        guard message.role == MessageRole.assistant else { return nil }
+        let isStreamingMsg = message.finishedAt == nil
+        let useSegmented = isSegmented && isStreamingMsg
+        let keepaliveText = ChatAsyncTaskSlot.keepaliveDefaultText
+        let keepaliveUTF16Count = keepaliveText.utf16.count
+        var visibleTextPartCount = 0
+        var lastVisibleUTF16Count = 0
+
+        for part in message.parts {
+            guard let textPart = part as? UIMessagePart.Text else { continue }
+            let text = textPart.text
+            var start = text.startIndex
+            var leadingUTF16 = 0
+            while start < text.endIndex, text[start].isWhitespace {
+                leadingUTF16 += text[start].utf16.count
+                start = text.index(after: start)
+            }
+            guard start < text.endIndex else { continue }
+
+            var end = text.endIndex
+            var trailingUTF16 = 0
+            while end > start {
+                let prev = text.index(before: end)
+                guard text[prev].isWhitespace else { break }
+                trailingUTF16 += text[prev].utf16.count
+                end = prev
+            }
+
+            let trimmedUTF16Count = text.utf16.count - leadingUTF16 - trailingUTF16
+            if trimmedUTF16Count == keepaliveUTF16Count,
+               text[start..<end] == keepaliveText {
+                continue
+            }
+
+            if useSegmented {
+                let committedCount = ChatSegmentedMarkdownCommitPolicy.committedUTF16Count(
+                    in: text,
+                    isStreaming: true
+                )
+                guard committedCount > 0 else { continue }
+                visibleTextPartCount += 1
+                lastVisibleUTF16Count = committedCount
+            } else {
+                visibleTextPartCount += 1
+                lastVisibleUTF16Count = trimmedUTF16Count
+            }
+        }
+
+        guard visibleTextPartCount > 0 else { return nil }
+        return ChatProvisionalVisibleProseMetric(
+            visibleTextPartCount: visibleTextPartCount,
+            lastVisibleUTF16Count: lastVisibleUTF16Count
+        )
     }
 
     static func visibleSyncedProseSignature(in messages: [UIMessage]) -> Int? {

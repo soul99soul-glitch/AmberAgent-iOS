@@ -70,7 +70,20 @@ extension ChatViewModel {
                 setIsLoading: { [weak self] isLoading in
                     if isLoading { state.clearChildResultWait() }
                     if let taskSlot, let self {
-                        let run = self.runRegistry.current(for: state.conversationId)
+                        guard let run = self.runRegistry.existingRun(for: state.conversationId),
+                              run.state === state else {
+                            if !isLoading, taskSlot.host?.isRunning != true {
+                                taskSlot.isQueuedForConcurrencySlot = false
+                                taskSlot.isTerminal = true
+                                taskSlot.keepaliveMonitorTask?.cancel()
+                                taskSlot.keepaliveMonitorTask = nil
+                                taskSlot.releaseTerminalPayloads()
+                                self.scheduleTerminalHostRelease(for: taskSlot, in: nil)
+                                self.dequeueNextPendingTasksIfPossible()
+                            }
+                            state.isLoading = isLoading
+                            return
+                        }
                         if !isLoading, taskSlot.host?.isRunning != true {
                             self.markTaskSlotTerminal(taskSlot, in: run)
                         } else {
@@ -325,7 +338,19 @@ extension ChatViewModel {
                         if terminalStatus != .completed {
                             self.cancelUnconsumedFollowups(for: taskSlot, state: state)
                         }
-                        self.markTaskSlotTerminal(taskSlot, in: self.runRegistry.current(for: state.conversationId))
+                        if let run = self.runRegistry.existingRun(for: state.conversationId),
+                           run.state === state {
+                            self.markTaskSlotTerminal(taskSlot, in: run)
+                        } else {
+                            taskSlot.isQueuedForConcurrencySlot = false
+                            taskSlot.isTerminal = true
+                            taskSlot.keepaliveMonitorTask?.cancel()
+                            taskSlot.keepaliveMonitorTask = nil
+                            taskSlot.releaseTerminalPayloads()
+                            self.runRegistry.removePendingTask(slotId: taskSlot.slotId)
+                            self.scheduleTerminalHostRelease(for: taskSlot, in: nil)
+                            self.dequeueNextPendingTasksIfPossible()
+                        }
                     }
                     self.observeYieldedChildResults(state: state, runId: runId)
                     if let conversationId {

@@ -915,4 +915,29 @@ final class IOSWebMountWKRuntimeTests: IOSWebMountToolTestCase {
         XCTAssertFalse(handoffReason.contains("4111111111111111"))
     }
 
+    func testCloseSessionCancelsPendingLoadAndClearsWebViewResources() async throws {
+        let runtime = IOSWebMountWKRuntime(sessionId: "close-session-cleanup")
+        weak var weakWebView: WKWebView?
+        let pendingLoad: Task<IOSWebMountRuntimeSnapshot, Never>
+        do {
+            let webView = try XCTUnwrap(runtime.webView)
+            weakWebView = webView
+            XCTAssertTrue(webView.navigationDelegate === runtime)
+            XCTAssertTrue(webView.uiDelegate === runtime)
+            let url = try XCTUnwrap(URL(string: "about:blank"))
+            webView.navigationDelegate = nil
+            pendingLoad = Task { await runtime.open(url, timeoutMillis: 5_000) }
+            while runtime.snapshot.status != .loading { await Task.yield() }
+            webView.navigationDelegate = runtime
+            runtime.closeSession()
+        }
+
+        let result = await pendingLoad.value
+        XCTAssertEqual(result.status, .failed)
+        XCTAssertEqual(runtime.snapshot.status, .failed)
+        XCTAssertNil(runtime.webView)
+        XCTAssertNil(weakWebView?.navigationDelegate)
+        XCTAssertNil(weakWebView?.uiDelegate)
+    }
+
 }

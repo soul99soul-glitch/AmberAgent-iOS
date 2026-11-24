@@ -49,6 +49,44 @@ final class ChatConversationRun {
         orderedSlots.contains(where: \.isActiveOrQueued) || primaryHost?.isRunning == true
     }
 
+    var hasPendingToolApproval: Bool {
+        orderedSlots.contains(where: { $0.host?.hasPendingToolApproval == true })
+            || primaryHost?.hasPendingToolApproval == true
+    }
+
+    func releaseAllTerminalResources() {
+        var retainedSlots: [String: ChatAsyncTaskSlot] = [:]
+        var retainedOrder: [String] = []
+        for slot in orderedSlots {
+            let isProtected = slot.isActiveOrQueued
+                || slot.host?.isRunning == true
+                || slot.host?.hasPendingToolApproval == true
+            if isProtected {
+                retainedSlots[slot.slotId] = slot
+                retainedSlots[slot.runId] = slot
+                retainedOrder.append(slot.slotId)
+                continue
+            }
+            slot.isTerminal = true
+            slot.isQueuedForConcurrencySlot = false
+            slot.keepaliveMonitorTask?.cancel()
+            slot.keepaliveMonitorTask = nil
+            slot.releaseTerminalPayloads()
+            let releasedHost = slot.host
+            slot.host = nil
+            if let releasedHost, primaryHost === releasedHost {
+                primaryHost = nil
+            }
+        }
+        taskSlots = retainedSlots
+        taskOrder = retainedOrder
+        if let primaryHost,
+           primaryHost.isRunning != true,
+           primaryHost.hasPendingToolApproval != true {
+            self.primaryHost = nil
+        }
+    }
+
     func registerSlot(_ slot: ChatAsyncTaskSlot) {
         taskSlots[slot.slotId] = slot
         taskSlots[slot.runId] = slot
@@ -106,6 +144,10 @@ final class ChatConversationRunRegistry {
         return run
     }
 
+    func existingRun(for conversationId: KotlinUuid?) -> ChatConversationRun? {
+        runs[conversationId?.toHexDashString() ?? ""]
+    }
+
     func run(for conversationId: KotlinUuid) -> ChatConversationRun? {
         runs[conversationId.toHexDashString()]
     }
@@ -151,10 +193,21 @@ final class ChatConversationRunRegistry {
     }
 
     func retainActive(keeping selected: ChatConversationRun) {
-        runs = runs.filter { _, run in
-            run === selected || run.hasActiveOrQueuedTask
+        var kept: [String: ChatConversationRun] = [:]
+        kept.reserveCapacity(runs.count)
+        for (key, run) in runs {
+            let shouldKeep = run === selected
+                || run.hasActiveOrQueuedTask
+                || run.hasPendingToolApproval
                 || run.state.steerQueueAutoContinueTask != nil
-                || run.state.waitingForChildRunId != nil || !run.state.inputText.isEmpty
+                || run.state.waitingForChildRunId != nil
+                || !run.state.inputText.isEmpty
+            if shouldKeep {
+                kept[key] = run
+            } else {
+                run.releaseAllTerminalResources()
+            }
         }
+        runs = kept
     }
 }
