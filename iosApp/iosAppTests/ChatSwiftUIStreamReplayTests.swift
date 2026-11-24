@@ -236,7 +236,10 @@ final class ChatSwiftUIStreamReplayTests: ChatNativeTimelineReplayTestCase {
         func publishAndMeasure(_ text: String) -> (
             contentGrew: Bool,
             offsetAdvanced: Bool,
-            intermediateOffsetCount: Int,
+            presentationAnchorShift: CGFloat,
+            maxBackjump: CGFloat,
+            finalDistanceToBottom: CGFloat,
+            isAtBottom: Bool,
             offsetDelta: CGFloat,
             p95GapMS: CGFloat,
             maxGapMS: CGFloat
@@ -265,15 +268,20 @@ final class ChatSwiftUIStreamReplayTests: ChatNativeTimelineReplayTestCase {
             let finalPresentationY = ScrollFrameProbe.presentationY(anchor)
             XCTAssertNotNil(initialPresentationY)
             XCTAssertNotNil(finalPresentationY)
-            let intermediateOffsets = Set(probe.samples.dropFirst(sampleStart).compactMap { sample -> Int? in
-                guard let initialPresentationY, let finalPresentationY, let y = sample.presentationAnchorY,
-                      y < initialPresentationY - 0.5, y > finalPresentationY + 0.5 else { return nil }
-                return Int((y * 10).rounded())
-            })
+            let windowSamples = Array(probe.samples.dropFirst(sampleStart))
+            let maxBackjump = zip(windowSamples, windowSamples.dropFirst()).reduce(CGFloat.zero) { current, pair in
+                max(current, pair.0.contentOffsetY - pair.1.contentOffsetY)
+            }
+            let visibleBottom = finalOffsetY + scrollView.bounds.height - scrollView.adjustedContentInset.bottom
+            let finalDistanceToBottom = max(0, finalContentHeight - visibleBottom)
+            let presentationAnchorShift = (initialPresentationY ?? 0) - (finalPresentationY ?? 0)
             return (
                 contentGrew: finalContentHeight > initialContentHeight + 1,
                 offsetAdvanced: advanced && finalOffsetY > initialOffsetY + 1,
-                intermediateOffsetCount: intermediateOffsets.count,
+                presentationAnchorShift: presentationAnchorShift,
+                maxBackjump: maxBackjump,
+                finalDistanceToBottom: finalDistanceToBottom,
+                isAtBottom: fixture.model.latestViewport.isAtBottom,
                 offsetDelta: finalOffsetY - initialOffsetY,
                 p95GapMS: percentile(
                     gapProbe.gaps.dropFirst(gapStart).map { CGFloat($0 * 1_000) },
@@ -286,15 +294,28 @@ final class ChatSwiftUIStreamReplayTests: ChatNativeTimelineReplayTestCase {
         let firstLine = publishAndMeasure("第一行。")
         let secondLine = publishAndMeasure("第一行。\n\n第二行。")
 
+        // c82804e2 将流式增长改为同布局事务同步锁底（.sizeChanges + syncBottomLockDuringLayoutIfNeeded），
+        // 移除了会把气泡底边推入输入框再弹回的正向平移 CABasicAnimation；
+        // 因此不再产生旧平移动画的中间帧，新契约验证：真实增长 + 锚点上移 + 无反向回跳 + 稳定贴底 + 帧率达标。
         for (label, result) in [("第一行", firstLine), ("第二行", secondLine)] {
             XCTAssertTrue(result.contentGrew, "\(label)必须产生真实 contentHeight 增长")
             XCTAssertTrue(result.offsetAdvanced, "\(label)必须从首次增长就推进底部")
-            XCTAssertGreaterThanOrEqual(
-                result.intermediateOffsetCount,
-                2,
-                "\(label)不能一次跳到新底部：delta=\(result.offsetDelta), " +
-                    "intermediate=\(result.intermediateOffsetCount)"
+            XCTAssertGreaterThan(
+                result.presentationAnchorShift,
+                1,
+                "\(label)增长后历史锚点必须在呈现层随内容上移：delta=\(result.offsetDelta), shift=\(result.presentationAnchorShift)"
             )
+            XCTAssertLessThan(
+                result.maxBackjump,
+                1,
+                "\(label)单周期同步钉底不能引入反向回跳：maxBackjump=\(result.maxBackjump)"
+            )
+            XCTAssertLessThanOrEqual(
+                result.finalDistanceToBottom,
+                ChatLayout.bottomStickThreshold,
+                "\(label)增长后必须保持贴底：distance=\(result.finalDistanceToBottom)"
+            )
+            XCTAssertTrue(result.isAtBottom, "\(label)增长后视口状态必须保持贴底")
             XCTAssertLessThanOrEqual(
                 result.p95GapMS,
                 40,

@@ -1187,8 +1187,15 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
 
     final class SizedView: UIView {
         var height: CGFloat = 0
+        var onMovedToWindowWithPendingHeight: (() -> Void)?
         override var intrinsicContentSize: CGSize {
             CGSize(width: UIView.noIntrinsicMetric, height: height)
+        }
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window != nil, height > 0, abs(bounds.height - height) > 0.5 {
+                onMovedToWindowWithPendingHeight?()
+            }
         }
     }
 
@@ -1200,6 +1207,7 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
         private var lastEnvKey: HostEnvironmentKey
         private var measuredWidth: CGFloat?
         private var hasMeasured = false
+        private var pendingHeightVerificationScheduled = false
         private var sizedView: SizedView { view as! SizedView }
 
         init(
@@ -1222,7 +1230,13 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
         deinit { ChatRenderProbe.record("graph-host-released") }
-        override func loadView() { view = SizedView() }
+        override func loadView() {
+            let sized = SizedView()
+            sized.onMovedToWindowWithPendingHeight = { [weak self] in
+                self?.notifyOuterHeightInvalidation()
+            }
+            view = sized
+        }
         override func viewDidLoad() {
             super.viewDidLoad()
             view.backgroundColor = .clear
@@ -1234,6 +1248,32 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
             super.viewDidLayoutSubviews()
             host.view.frame = view.bounds
         }
+        private func notifyOuterHeightInvalidation() {
+            if !messageID.isEmpty {
+                ChatTimelineRowLayoutInvalidation.markRowDirty(messageID)
+            }
+            if let width = measuredWidth, width > 0 {
+                let targetPreferred = CGSize(width: width, height: sizedView.height)
+                if abs(preferredContentSize.height - targetPreferred.height) > 0.5 ||
+                    abs(preferredContentSize.width - targetPreferred.width) > 0.5 {
+                    preferredContentSize = targetPreferred
+                }
+            }
+            sizedView.invalidateIntrinsicContentSize()
+            sizedView.setNeedsLayout()
+            sizedView.superview?.setNeedsLayout()
+        }
+        private func scheduleHeightSyncVerificationIfNeeded() {
+            guard !pendingHeightVerificationScheduled else { return }
+            pendingHeightVerificationScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.pendingHeightVerificationScheduled = false
+                guard self.sizedView.window != nil,
+                      abs(self.sizedView.bounds.height - self.sizedView.height) > 0.5 else { return }
+                self.notifyOuterHeightInvalidation()
+            }
+        }
         func root(_ content: Content, environment: EnvironmentValues) -> Root {
             var hostedEnvironment = environment
             hostedEnvironment.markdownLayoutInvalidationID = ChatTimelineRowLayoutInvalidation.graphHostContainedID
@@ -1242,11 +1282,8 @@ private struct ChatStreamingGraphHost<Content: View>: UIViewControllerRepresenta
                 guard let self, height.isFinite, height >= 0,
                       abs(sizedView.height - height) > 0.5 else { return }
                 sizedView.height = height
-                if !messageID.isEmpty {
-                    ChatTimelineRowLayoutInvalidation.markRowDirty(messageID)
-                }
-                sizedView.invalidateIntrinsicContentSize()
-                sizedView.setNeedsLayout()
+                notifyOuterHeightInvalidation()
+                scheduleHeightSyncVerificationIfNeeded()
             })
         }
         func shouldUpdate(

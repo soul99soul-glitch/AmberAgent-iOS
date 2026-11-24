@@ -65,6 +65,7 @@ struct NativeChatTimelineView: View {
     @State private var nativeStreamingTailVisibility = ChatSwiftUIStreamingTailVisibilityState()
     @State private var consumedMessageAnchor: ChatMessageAnchor?
     @State private var scheduledMessageAnchor: ChatMessageAnchor?
+    @State private var awaitingMessageAnchorLayout = false
     @State private var imageAccessibilityFocusToolCallID: String?
     @State private var highlightedMessageAnchor: ChatMessageAnchor?
     @State private var islandToolHighlight: ChatIslandToolHighlight?
@@ -233,7 +234,10 @@ struct NativeChatTimelineView: View {
                 }
             }
             .modifier(ChatSizeChangesPinModifier(
-                preservesScrollIdentity: followGeneration && messageAnchor == nil,
+                // 保持与 followGeneration 一致的稳定结构分支：动态设置/清除 messageAnchor
+                // 不得翻转条件分支，否则 SwiftUI 会销毁并重建整个 ScrollView 与已挂载流式块，
+                // 破坏块身份并在重新挂载时把视口拉回底部。
+                preservesScrollIdentity: followGeneration,
                 // 流式贴底与底部键盘高度变化时把底部锚点交给 SwiftUI 自身的 .sizeChanges；
                 // 用户上滑进入历史阅读态时关闭，防止键盘弹起/收起把历史位置强行拉回底部。
                 enabled: Self.shouldPinBottomOnSizeChanges(
@@ -425,6 +429,7 @@ struct NativeChatTimelineView: View {
                 chunkCallbacks.boundary = { _, _, _ in }
                 chunkCallbacks.action = { _ in }
                 historyRevealAnchor = nil
+                awaitingMessageAnchorLayout = false
                 nativeUserScrollActive = false
                 scrollDriver.invalidate()
                 islandToolHighlightTask?.cancel()
@@ -448,7 +453,10 @@ struct NativeChatTimelineView: View {
                 submitNativeScrollIntent(for: newSignal.event, lagAllowance: newSignal.lagAllowance)
                 scrollToMessageAnchorIfAvailable()
             }
-            .onChange(of: messageAnchor) { _, _ in
+            .onChange(of: messageAnchor) { _, newAnchor in
+                if newAnchor == nil {
+                    awaitingMessageAnchorLayout = false
+                }
                 scrollToMessageAnchorIfAvailable()
             }
             .onChange(of: expandedPhoneToolGroupIDs) { _, _ in
@@ -658,6 +666,7 @@ struct NativeChatTimelineView: View {
         }
         if isNativeScrollDriverActive {
             scrollDriver.submit(.userDragBegan)
+            updateGrowthFollowState()
         } else {
             nativeScrollFallbackReplayToken &+= 1
             nativeScrollFallbackShouldReplayBottom = false
@@ -668,7 +677,11 @@ struct NativeChatTimelineView: View {
         }
         // The target must belong to the window that has actually completed layout.
         // A task yield alone does not establish that after revealing older messages.
-        guard isHistoryWindowLaidOut else { return true }
+        guard isHistoryWindowLaidOut else {
+            awaitingMessageAnchorLayout = true
+            return true
+        }
+        awaitingMessageAnchorLayout = false
         scheduledMessageAnchor = request
         Task { @MainActor in
             await Task.yield()
@@ -1284,6 +1297,9 @@ struct NativeChatTimelineView: View {
         guard followGeneration,
               isNativeScrollDriverActive,
               !nativeUserScrollActive,
+              scheduledMessageAnchor == nil,
+              !awaitingMessageAnchorLayout,
+              historyRevealAnchor == nil,
               isGenerationActive || isLoading,
               isNativeMeasuredNearBottom(geometry),
               NativeTimelineScrollReturnPolicy.returnedToBottom(

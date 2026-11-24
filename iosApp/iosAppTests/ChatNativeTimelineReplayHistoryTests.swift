@@ -258,18 +258,60 @@ final class ChatNativeTimelineReplayHistoryTests: ChatNativeTimelineReplayTestCa
                       modelId: nil, usage: nil, translation: nil)
         }
         let user = makeUserMessage("查询资料")
-        fixture.model.messages = [user, assistant(parts)]
+        fixture.model.messages = [user]
         fixture.model.send(.initialLoad)
-        pump(seconds: 0.8)
+        pump(seconds: 0.5)
         let scrollView = try XCTUnwrap(fixture.scrollView)
-        let singleMessageHeight = scrollView.contentSize.height
-        XCTAssertGreaterThan(singleMessageHeight, 132)
+        let userOnlyHeight = scrollView.contentSize.height
+        XCTAssertGreaterThan(userOnlyHeight, 0)
 
-        fixture.model.messages = [user] + parts.map { assistant([$0]) }
+        // 自 031958f6 起，纯思考与非媒体工具归入 isGlobalStatusOnly 隐藏状态行，
+        // 统一由单行动态进度承载；无论合并在单条消息还是拆分为多条内部消息，
+        // 既不得残留隐藏状态空隙，也不得因分段增加额外间距。
+        let singleAssistant = assistant(parts)
+        fixture.model.messages = [user, singleAssistant]
+        fixture.model.send(.branchChange)
+        pump(seconds: 0.8)
+        let singleMessageHeight = scrollView.contentSize.height
+        XCTAssertEqual(singleMessageHeight, userOnlyHeight, accuracy: 1,
+                       "已完成的纯思考/非媒体工具状态行不应在时间线留下额外空隙")
+
+        let splitAssistants = parts.map { assistant([$0]) }
+        fixture.model.messages = [user] + splitAssistants
         fixture.model.send(.branchChange)
         pump(seconds: 0.8)
         XCTAssertEqual(scrollView.contentSize.height, singleMessageHeight, accuracy: 1,
-                       "同一回合的思考和工具胶囊不能因内部消息分段而增加间距")
+                       "同一回合的思考和工具状态不能因内部消息分段而增加间距")
+
+        // 挂载单行动态进度行时，单条消息与多轮分段消息的最终高度仍须完全一致。
+        func makeActivity(anchor: UIMessage) -> ChatTimelineActivity {
+            ChatTimelineActivity(
+                anchorMessageID: anchor.id.toHexDashString(),
+                hasAssistant: true,
+                presentation: .activity(kind: .tool, title: "正在搜索网页", systemImage: "magnifyingglass", tint: .amber),
+                tool: parts.last as? UIMessagePart.Tool,
+                taskSlot: nil,
+                plannedStages: [],
+                stagePlanStartedUptime: nil,
+                liveReasoningSummary: nil,
+                tracksTaskLiveness: false,
+                showsThought: false
+            )
+        }
+        fixture.model.activity = makeActivity(anchor: singleAssistant)
+        fixture.model.messages = [user, singleAssistant]
+        fixture.model.send(.branchChange)
+        pump(seconds: 0.8)
+        let singleWithProgressHeight = scrollView.contentSize.height
+        XCTAssertGreaterThan(singleWithProgressHeight, userOnlyHeight + 20,
+                             "活跃单行动态进度必须真实占位渲染")
+
+        fixture.model.activity = makeActivity(anchor: splitAssistants[0])
+        fixture.model.messages = [user] + splitAssistants
+        fixture.model.send(.branchChange)
+        pump(seconds: 0.8)
+        XCTAssertEqual(scrollView.contentSize.height, singleWithProgressHeight, accuracy: 1,
+                       "带单行动态进度时，同一回合的思考和工具不能因内部消息分段而增加间距")
     }
 
     func testHiddenTaskStatusesDoNotAddTimelineGaps() throws {
@@ -312,8 +354,13 @@ final class ChatNativeTimelineReplayHistoryTests: ChatNativeTimelineReplayTestCa
             in: fixture.host.view, withPrefix: "下一轮工具后的结论"
         ))
         let continuedHeight = scrollView.contentSize.height
-        XCTAssertEqual(continuedHeight - firstHeight, nextParagraph.bounds.height + 8, accuracy: 1,
-                       "续答只增加正文与列表间距，不应重复标题或预留标题空白")
+        // c4a3163f 将 ChatAssistantText 升级为带 ChatLayout.assistantTextPadding(14pt) 内边距的圆角气泡卡片，
+        // 并将 ChatLayout.assistantPartSpacing 从 8pt 调整为 9pt；续答仍不重复渲染 ChatAgentName 标题。
+        let expectedContinuationDelta = nextParagraph.bounds.height +
+            ChatLayout.assistantTextPadding * 2 +
+            ChatLayout.assistantPartSpacing
+        XCTAssertEqual(continuedHeight - firstHeight, expectedContinuationDelta, accuracy: 1,
+                       "续答只增加正文卡片与列表间距，不应重复标题或预留标题空白")
         fixture.model.isGenerationActive = false
         fixture.model.messages[2] = makeAssistantMessage(id: next.id, text: "下一轮工具后的结论", finished: true)
         fixture.model.send(.generationCompleted)

@@ -3,6 +3,7 @@ import Shared
 
 enum ChatLayout {
     static let assistantPartSpacing: CGFloat = 9
+    static let assistantTextPadding: CGFloat = 14
     static let contentHorizontalInset: CGFloat = 18
     static let timelineHorizontalInset: CGFloat = 16
     static let userMaxWidth: CGFloat = 319
@@ -159,7 +160,7 @@ struct ChatAssistantText<Content: View>: View {
             .foregroundStyle(AmberTheme.foreground)
             .lineSpacing(3.2 * boundedScale)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(14)
+            .padding(ChatLayout.assistantTextPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay {

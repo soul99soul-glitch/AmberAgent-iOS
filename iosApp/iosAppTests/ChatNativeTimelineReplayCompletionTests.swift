@@ -395,7 +395,15 @@ final class ChatNativeTimelineReplayCompletionTests: ChatNativeTimelineReplayTes
             fixture.model.send(.streamDelta)
             pump(seconds: 0.048)
         }
-        pump(seconds: 0.6)
+        // 等待 ChatStreamingRevealPacer 以匀速吐字（4 字/16ms）将 finalText 全部排空后再冻结，
+        // 避免在冻结前基线文本尚未吐完，进而让冻结与解冻后的长度断言精准反映离屏追加内容。
+        XCTAssertTrue(pumpUntil(timeout: 6.0) {
+            guard let paragraph = ScrollFrameProbe.streamingParagraph(in: fixture.host.view) else {
+                return false
+            }
+            return ScrollFrameProbe.streamingTextLength(in: paragraph) == finalText.utf16.count
+        }, "冻结前基线正文应完整上屏")
+        pump(seconds: 0.2)
 
         guard let scrollView = fixture.scrollView,
               let markerParagraph = ScrollFrameProbe.streamingParagraph(in: fixture.host.view) else {
@@ -446,7 +454,12 @@ final class ChatNativeTimelineReplayCompletionTests: ChatNativeTimelineReplayTes
             fixture.model.latestViewport.isAtBottom &&
                 !fixture.model.latestViewport.liveRenderingFarFromBottom
         })
-        pump(seconds: 0.8)
+        XCTAssertTrue(pumpUntil(timeout: 4.0) {
+            guard let paragraph = ScrollFrameProbe.streamingParagraph(in: fixture.host.view) else {
+                return false
+            }
+            return (ScrollFrameProbe.streamingTextLength(in: paragraph) ?? 0) > finalText.utf16.count
+        }, "离屏期间下发的追加内容必须在回到视口后可见")
 
         guard let unfrozen = ScrollFrameProbe.streamingParagraph(in: fixture.host.view) else {
             return XCTFail("Expected the live tail paragraph after unfreeze")
@@ -466,6 +479,7 @@ final class ChatNativeTimelineReplayCompletionTests: ChatNativeTimelineReplayTes
         let fixture = makeFixture()
         defer { fixture.tearDown() }
         let id = KotlinUuid.companion.random()
+        let assistantID = id.toHexDashString()
         let instant = KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0)
         var reasoning = String(repeating: "先检查上下文与工具结果，再逐步推演下一步。", count: 600)
         func message(finished: Bool = false) -> UIMessage {
@@ -483,55 +497,64 @@ final class ChatNativeTimelineReplayCompletionTests: ChatNativeTimelineReplayTes
             }
             return nil
         }
+        func thoughtActivity(summary: String) -> ChatTimelineActivity {
+            ChatTimelineActivity(
+                anchorMessageID: assistantID,
+                hasAssistant: true,
+                presentation: .activity(kind: .thinking, title: "正在思考", systemImage: "brain.head.profile", tint: .amber),
+                tool: nil,
+                taskSlot: nil,
+                plannedStages: [],
+                stagePlanStartedUptime: nil,
+                liveReasoningSummary: summary,
+                tracksTaskLiveness: false,
+                showsThought: true
+            )
+        }
+        // 自 7a811653 / 031958f6 起，主时间线不再内联挂载多行 ChatReasoningCard（chat.reasoning.body），
+        // 思考过程收敛为单行动态进度（ChatTimelineActivityRowView），独立 ChatReasoningCard 尾窗由 ChatReasoningCardTests 覆盖。
         fixture.model.messages = longConversation(turns: 8) + [makeUserMessage("请详细思考。"), message()]
         fixture.model.isGenerationActive = true
+        fixture.model.activity = thoughtActivity(summary: "先检查上下文与工具结果")
         fixture.model.send(.streamDelta)
-        XCTAssertTrue(pumpUntil(timeout: 4) { fixture.model.latestViewport.isAtBottom && reasoningView(in: fixture.host.view) != nil })
-        pump(seconds: 0.6)
-        let textView = try XCTUnwrap(reasoningView(in: fixture.host.view))
+        XCTAssertTrue(pumpUntil(timeout: 4) { fixture.model.latestViewport.isAtBottom })
+        pump(seconds: 0.4)
+        XCTAssertNil(reasoningView(in: fixture.host.view),
+                     "主时间线已收敛为单行动态思考进度，不应挂载旧版内联 chat.reasoning.body")
+
         let probe = DisplayLinkGapProbe()
         probe.start()
         let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
-        for _ in 0..<30 {
+        for step in 0..<30 {
             reasoning += "继续核对推理中的每一步。"
             fixture.model.messages[fixture.model.messages.count - 1] = message()
+            fixture.model.activity = thoughtActivity(summary: "第 \(step + 1) 步核对推理")
             fixture.model.send(.streamDelta)
             pump(seconds: 0.048)
         }
         let cpuMs = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start) / 1_000_000
-        pump(seconds: 0.55)
+        pump(seconds: 0.4)
         probe.stop()
-        XCTAssertTrue(reasoningView(in: fixture.host.view) === textView)
-        // `ChatTextWindow`'s stepped slide (ChatTextWindow.step) keeps the live
-        // window up to `step` characters ahead of where a freshly-reconstructed
-        // window over the same source would have slid to — exact equality no
-        // longer holds once omission has started, only "still ends with the
-        // latest tail, still bounded".
-        let freshWindow = ChatTextWindow(reasoning)
-        XCTAssertTrue(
-            textView.text.hasSuffix(freshWindow.text),
-            "尾窗必须仍以最新内容收尾"
-        )
-        XCTAssertLessThanOrEqual(
-            (textView.text as NSString).length,
-            freshWindow.text.utf16.count + ChatTextWindow.step + 64,
-            "尾窗不能无限增长，必须在一个步长内收敛"
-        )
-        XCTAssertEqual(textView.bounds.height, 180, accuracy: 0.5)
+        XCTAssertNil(reasoningView(in: fixture.host.view))
+        XCTAssertTrue(fixture.model.latestViewport.isAtBottom, "长推理流式更新期间视口必须持续贴底")
         let metrics = "[PERF-REASONING-NATIVE] updates=30 CPU=\(cpuMs)ms per-update=\(cpuMs / 30)ms max-frame-gap=\((probe.gaps.max() ?? 0) * 1000)ms"
         print(metrics)
         let attachment = XCTAttachment(string: metrics)
         attachment.name = "native-reasoning-stream-metrics"
         attachment.lifetime = .keepAlways
         add(attachment)
+
         fixture.model.messages[fixture.model.messages.count - 1] = message(finished: true)
+        fixture.model.activity = nil
         fixture.model.isGenerationActive = false
         fixture.model.send(.generationCompleted)
         XCTAssertTrue(pumpUntil(timeout: 4) {
-            reasoningView(in: fixture.host.view) == nil && fixture.model.latestViewport.isAtBottom
+            ScrollFrameProbe.streamingParagraph(in: fixture.host.view) != nil &&
+                reasoningView(in: fixture.host.view) == nil &&
+                fixture.model.latestViewport.isAtBottom
         })
         XCTAssertTrue(try XCTUnwrap(fixture.model.messages.last?.parts.first as? UIMessagePart.Reasoning).reasoning == reasoning,
-            "绘制尾窗不能截断持久化/上下文中的完整思考内容")
+            "单行动态思考进度不能截断持久化/上下文中的完整思考内容")
     }
 
     func testTerminalWithReasoningCollapseSettlesMonotonically() {
@@ -586,8 +609,21 @@ final class ChatNativeTimelineReplayCompletionTests: ChatNativeTimelineReplayTes
             )
         }
 
-        // 流式期：推理进行中（未收口）+ 固定正文前缀回放。
+        // 流式期：思考状态通过单行动态进度（ChatTimelineActivity）展示在时间线中，
+        // 直到终态收口才卸载进度行并真实收缩内容高度（7a811653 / 031958f6 现行生产路径）。
         let baseMessages = fixture.model.messages
+        fixture.model.activity = ChatTimelineActivity(
+            anchorMessageID: assistantID.toHexDashString(),
+            hasAssistant: true,
+            presentation: .activity(kind: .thinking, title: "正在思考", systemImage: "brain.head.profile", tint: .amber),
+            tool: nil,
+            taskSlot: nil,
+            plannedStages: [],
+            stagePlanStartedUptime: nil,
+            liveReasoningSummary: "核对推理依据",
+            tracksTaskLiveness: false,
+            showsThought: true
+        )
         for prefix in iosChatScriptedTextPrefixes(finalText, chunkCount: 16) {
             fixture.model.messages = baseMessages + [assistantMessage(
                 text: prefix,
@@ -598,7 +634,7 @@ final class ChatNativeTimelineReplayCompletionTests: ChatNativeTimelineReplayTes
             pump(seconds: 0.048)
         }
 
-        // stream-closed：全文就位但推理仍未收口（生成最后一刻才停止思考的真实形态），
+        // stream-closed：全文就位但思考进度仍未收口（生成最后一刻才收起进度行的真实形态），
         // 让收起发生在终态采样窗口内，验证收起瞬间视口逐帧钉底。
         let closedTarget = fixture.model.messages.dropLast() + [assistantMessage(reasoningFinished: false, finished: true)]
         fixture.model.messages = Array(closedTarget)
@@ -616,9 +652,10 @@ final class ChatNativeTimelineReplayCompletionTests: ChatNativeTimelineReplayTes
             return ScrollFrameProbe.streamingTextLength(in: paragraph) == finalText.utf16.count
         })
 
-        // 终态：推理 finishedAt 落地 + run 结束 → 推理卡无动画收起（高度收缩）。
+        // 终态：推理 finishedAt 落地 + 单行思考进度卸载 + run 结束 → 真实收缩内容高度。
         let terminal = fixture.model.messages.dropLast() + [assistantMessage(reasoningFinished: true, finished: true)]
         fixture.model.messages = Array(terminal)
+        fixture.model.activity = nil
         fixture.model.isGenerationActive = false
         fixture.model.send(.generationCompleted)
         // 留足窗口让负载下的晚到二 pass 布局落地再采尾段。
