@@ -471,6 +471,43 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
         XCTAssertTrue(metrics.all().contains(where: { $0.outcome == "late" }))
     }
 
+    func testWaitingDoesNotPollAndCallerCancellationLeavesBatchRunning() async {
+        let started = expectation(description: "transport started")
+        let returned = expectation(description: "caller returned before transport release")
+        let finished = expectation(description: "detached batch recorded result")
+        let gate = continuationGate()
+        let transport = JevStubTransport { _ in
+            started.fulfill()
+            await gate.wait()
+            return (self.scorePayload(["t1": 0.9]), self.httpResponse(status: 200))
+        }
+        let settings = makeSettings()
+        let coordinator = IOSJevDecisionCoordinator(deps: .init(
+            client: IOSJevClient(transport: transport), settingsProvider: { settings },
+            apiKeyProvider: { "test-key" }, now: { Date() },
+            metricsStore: { _, _ in finished.fulfill() }
+        ))
+        let (scopes, state, questions, context) = makeDecideCall()
+        let executor = CountingWaitExecutor()
+        let task = Task(executorPreference: executor) {
+            let result = await coordinator.decide(
+                useCase: .toolDiscovery, requiredScopes: scopes, state: state, questions: questions,
+                context: context, waitBudgetMs: 10_000
+            )
+            guard case .skipped(reason: "late") = result else { return XCTFail("cancelled wait must fall back") }
+            returned.fulfill()
+        }
+        await fulfillment(of: [started], timeout: 2)
+        let parked = executor.scheduledJobsAfterSuspension
+        try? await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(executor.scheduledJobsAfterSuspension - parked, 0, "no caller resumes while transport is held")
+        task.cancel()
+        await fulfillment(of: [returned], timeout: 1)
+        XCTAssertFalse(transport.sawCancellation)
+        gate.release()
+        await fulfillment(of: [finished], timeout: 2)
+    }
+
     func testShadowOccupancyDoesNotBlockActive() async {
         var settings = makeSettings(mode: .shadow)
         settings.setMode(.active, for: .memoryRecall)
@@ -500,11 +537,10 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
         let (scopes, state, questions, context) = makeDecideCall()
         var prefixed = questions[0]
         prefixed.id = "single." + prefixed.id
-        let client = IOSJevClient(transport: JevStubTransport { _ in (Data(), self.httpResponse(status: 200)) })
-        let encodedBytes = try client.requestBodyByteCount(.init(
-            endpoint: settings.resolvedEndpoint, apiKey: "test-key", model: settings.activeModelVersion,
-            state: "## toolDiscovery.single\n" + state, questions: [prefixed], style: settings.apiStyle
-        ))
+        let encodedBytes = try IOSJevClient.encodedRequestBody(
+            model: settings.activeModelVersion, state: "## toolDiscovery.single\n" + state,
+            questions: [prefixed], style: settings.apiStyle
+        ).count
         settings.policy.dailyRequestBodyBudgetBytes = encodedBytes
         let box = SettingsBox(settings)
         let gate = continuationGate()
@@ -990,6 +1026,19 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
         )
         XCTAssertTrue(output.contains("requests must be an array"), output)
         XCTAssertEqual(transport.calls, 0)
+    }
+}
+
+/// The serial queue lets the test sample after the caller has finished its current job.
+private final class CountingWaitExecutor: TaskExecutor {
+    private let queue = DispatchQueue(label: "JevTests.wait")
+    private let jobs = JevCallCounter()
+    var scheduledJobsAfterSuspension: Int { queue.sync { jobs.current } }
+
+    func enqueue(_ job: consuming ExecutorJob) {
+        let job = UnownedJob(job)
+        _ = jobs.next()
+        queue.async { job.runSynchronously(on: self.asUnownedTaskExecutor()) }
     }
 }
 

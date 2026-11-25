@@ -424,15 +424,18 @@ final class IOSJevClient {
         }
     }
 
-    /// 与实际出站共用编码，供协调器在并发预算锁内预留精确请求体字节数。
-    func requestBodyByteCount(_ input: RequestInput) throws -> Int {
-        try Self.encodedRequestBody(
-            model: Self.sanitizedModelIdentifier(input.model),
-            state: input.state,
-            questions: input.questions,
-            style: input.style,
-            assets: input.assets
-        ).count
+    /// Keep the wire bytes paired with the input used for headers and answer validation.
+    struct PreparedRequest {
+        fileprivate let input: RequestInput
+        let body: Data
+
+        init(_ input: RequestInput) throws {
+            self.input = input
+            body = try IOSJevClient.encodedRequestBody(
+                model: IOSJevClient.sanitizedModelIdentifier(input.model), state: input.state,
+                questions: input.questions, style: input.style, assets: input.assets
+            )
+        }
     }
 
     /// Shared with callers that fit a bounded batch to the actual wire byte budget.
@@ -559,6 +562,16 @@ final class IOSJevClient {
         deadlineMs: Int? = nil,
         cacheKey: String? = nil
     ) async throws -> IOSJevDecision {
+        try await decide(input, preparedBody: nil, policy: policy, deadlineMs: deadlineMs, cacheKey: cacheKey)
+    }
+
+    func decide(_ request: PreparedRequest, policy: IOSJevPolicy, deadlineMs: Int) async throws -> IOSJevDecision {
+        try await decide(request.input, preparedBody: request.body, policy: policy, deadlineMs: deadlineMs, cacheKey: nil)
+    }
+
+    private func decide(
+        _ input: RequestInput, preparedBody: Data?, policy: IOSJevPolicy, deadlineMs: Int?, cacheKey: String?
+    ) async throws -> IOSJevDecision {
         let apiKey = Self.sanitizedAPIKey(input.apiKey)
         guard !apiKey.isEmpty else { throw IOSJevRequestError.missingKey }
         let model = Self.sanitizedModelIdentifier(input.model)
@@ -581,10 +594,7 @@ final class IOSJevClient {
             return cached
         }
 
-        let bodyData = try Self.encodedRequestBody(
-            model: model, state: input.state, questions: input.questions, style: input.style,
-            assets: input.assets
-        )
+        let bodyData = try preparedBody ?? PreparedRequest(input).body
         let maxRequestBytes = input.assets.isEmpty ? policy.maxRequestBytes : IOSJevPolicy.maxImageRequestBytes
         guard bodyData.count <= maxRequestBytes else {
             throw IOSJevRequestError.requestTooLarge(bytes: bodyData.count)

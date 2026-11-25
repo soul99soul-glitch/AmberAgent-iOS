@@ -1,10 +1,15 @@
+import os
 import XCTest
 @testable import iosApp
 
 final class IOSJevMultimodalCoordinatorTests: XCTestCase {
-    private func settings() -> IOSJevSettings {
+    private func settings(style: IOSJevAPIStyle = .systemone) -> IOSJevSettings {
         var value = IOSJevSettings()
         value.setPinnedModelVersion("jev-1.14.0")
+        if style == .vercelGateway {
+            value.setAPIStyle(style)
+            value.setProviderModel("typesafe-ai/jev-1.14.0")
+        }
         value.setMode(.active, for: .phoneActions)
         value.setScopes([.selectedTaskText, .phoneContent, .phoneScreenshots], for: .phoneActions)
         return value
@@ -74,6 +79,96 @@ final class IOSJevMultimodalCoordinatorTests: XCTestCase {
         XCTAssertEqual(transport.calls, 1)
     }
 
+    func testMergedImageRequestSendsExactlyTheReservedBytesInBothAPIStyles() async throws {
+        for style in [IOSJevAPIStyle.systemone, .vercelGateway] {
+            let snapshot = settings(style: style)
+            let reserved = OSAllocatedUnfairLock(initialState: [Int]())
+            let transport = JevStubTransport { request in
+                let body = try XCTUnwrap(request.httpBody)
+                XCTAssertEqual(reserved.withLock { $0 }, [body.count])
+                XCTAssertEqual(request.url, snapshot.resolvedEndpoint)
+                let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+                let questions = try XCTUnwrap(object["questions"] as? [String: Any])
+                XCTAssertEqual(Set(questions.keys), ["phone.visible", "followup.visible"])
+                let answer: [String: Any] = style == .systemone
+                    ? ["type": "noul", "noul": 1.0] : ["type": "boolean", "probability": 1.0]
+                return (try JSONSerialization.data(withJSONObject: ["answers": questions.mapValues { _ in answer }]),
+                        jevResponse(200))
+            }
+            let coordinator = IOSJevDecisionCoordinator(deps: .init(
+                client: IOSJevClient(transport: transport), settingsProvider: { snapshot },
+                apiKeyProvider: { "fixture-key" }, now: { Date() },
+                didReserveRequestBytes: { bytes in reserved.withLock { $0.append(bytes) } },
+                metricsStore: { _, _ in }
+            ))
+            var followup = part(id: "followup")
+            followup.state = "检查下一步"
+            followup.assets = [:]
+            let parts = [part(), followup]
+            let turn = IOSJevRunContext(turnBudgetKey: "turn", inputHash: "input")
+            let outcomes = await coordinator.decideBatch(parts: parts, context: turn)
+            guard case .applied? = outcomes["phone"], case .applied? = outcomes["followup"] else {
+                return XCTFail("both merged answers must apply for \(style)")
+            }
+            var tight = snapshot
+            tight.policy.dailyRequestBodyBudgetBytes = try XCTUnwrap(transport.lastBody).count - 1
+            let rejected = await self.coordinator(tight, transport).decideBatch(parts: parts, context: turn)
+            guard case .skipped(reason: "budget_exhausted")? = rejected["phone"],
+                  case .skipped(reason: "budget_exhausted")? = rejected["followup"] else {
+                return XCTFail("one byte below the merged body must reject both parts")
+            }
+            XCTAssertEqual(transport.calls, 1)
+        }
+    }
+
+    func testConfigurationChangeRefundsReservedImageBytesWithoutRefundingNewTurn() async throws {
+        var settings = settings()
+        let phone = part()
+        var wireQuestion = phone.questions[0]
+        wireQuestion.id = "phone." + wireQuestion.id
+        let bytes = try IOSJevClient.encodedRequestBody(
+            model: settings.activeModelVersion, state: "## phoneActions.phone\n" + phone.state,
+            questions: [wireQuestion], style: settings.apiStyle, assets: phone.assets
+        ).count
+        settings.policy.dailyRequestBodyBudgetBytes = bytes * 2
+        settings.policy.perTurnRequestBudget = 1
+        let snapshot = settings
+        let firstReserved = expectation(description: "old request reserved")
+        let resumeOld = DispatchSemaphore(value: 0)
+        let reservations = JevCallCounter()
+        let transport = JevStubTransport { try self.response(for: $0) }
+        let coordinator = IOSJevDecisionCoordinator(deps: .init(
+            client: IOSJevClient(transport: transport), settingsProvider: { snapshot },
+            apiKeyProvider: { "fixture-key" }, now: { Date() },
+            didReserveRequestBytes: { count in
+                XCTAssertEqual(count, bytes)
+                if reservations.next() == 1 {
+                    firstReserved.fulfill()
+                    XCTAssertEqual(resumeOld.wait(timeout: .now() + 5), .success)
+                }
+            },
+            metricsStore: { _, _ in }
+        ))
+        let turn = IOSJevRunContext(turnBudgetKey: "turn", inputHash: "input")
+        let old = Task { await coordinator.decideBatch(parts: [phone], context: turn, waitBudgetMs: 8_000) }
+        await fulfillment(of: [firstReserved], timeout: 2)
+        coordinator.beginConfigurationChange()
+        coordinator.endConfigurationChange()
+        let current = await coordinator.decideBatch(parts: [phone], context: turn)
+        resumeOld.signal()
+        let stale = await old.value
+        guard case .applied? = current["phone"], case .skipped(reason: "config_changed")? = stale["phone"] else {
+            return XCTFail("only the new configuration may send")
+        }
+        let sameTurn = await coordinator.decideBatch(parts: [phone], context: turn)
+        guard case .skipped(reason: "budget_exhausted")? = sameTurn["phone"] else {
+            return XCTFail("refund must preserve the new configuration's turn charge")
+        }
+        let next = await coordinator.decideBatch(parts: [phone], context: .init(turnBudgetKey: "next", inputHash: "input"))
+        guard case .applied? = next["phone"] else { return XCTFail("old daily bytes must be refunded in full") }
+        XCTAssertEqual(transport.calls, 2)
+    }
+
     func testImagesNeverUseCallerTextCacheKey() async throws {
         let transport = JevStubTransport { try self.response(for: $0) }
         let coordinator = coordinator(settings(), transport)
@@ -85,14 +180,16 @@ final class IOSJevMultimodalCoordinatorTests: XCTestCase {
     }
 
     func testImageBodyOverImageLimitIsRejectedBeforeNetwork() async {
-        let transport = JevStubTransport { try self.response(for: $0) }
-        let outcomes = await coordinator(settings(), transport).decideBatch(
-            parts: [part(bytes: IOSJevPolicy.maxImageRequestBytes)],
-            context: .init(turnBudgetKey: "turn", inputHash: "input")
-        )
-        guard case .failed(let reason)? = outcomes["phone"] else { return XCTFail("oversize image request must fail") }
-        XCTAssertEqual(reason, "request_too_large")
-        XCTAssertEqual(transport.calls, 0)
+        for style in [IOSJevAPIStyle.systemone, .vercelGateway] {
+            let transport = JevStubTransport { try self.response(for: $0) }
+            let outcomes = await coordinator(settings(style: style), transport).decideBatch(
+                parts: [part(bytes: IOSJevPolicy.maxImageRequestBytes)],
+                context: .init(turnBudgetKey: "turn", inputHash: "input")
+            )
+            guard case .failed(let reason)? = outcomes["phone"] else { return XCTFail("oversize image request must fail") }
+            XCTAssertEqual(reason, "request_too_large")
+            XCTAssertEqual(transport.calls, 0)
+        }
     }
 
     func testVersionUpgradeTestsNewModelAndLeavesPersistenceToSettingsOwner() async throws {

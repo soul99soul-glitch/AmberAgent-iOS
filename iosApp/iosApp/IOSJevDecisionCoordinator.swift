@@ -82,6 +82,7 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         let settingsProvider: @Sendable () -> IOSJevSettings
         let apiKeyProvider: @Sendable () -> String
         let now: @Sendable () -> Date
+        var didReserveRequestBytes: (@Sendable (Int) -> Void)?
         var metricsStore: @Sendable (IOSJevMetricsRecord, Date) -> Void = {
             IOSJevMetricsStore.append($0, now: $1)
         }
@@ -204,19 +205,6 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         case failed(String)
     }
 
-    private final class ResultBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var value: [String: IOSJevDecisionOutcome]?
-        func set(_ result: [String: IOSJevDecisionOutcome]) {
-            lock.lock(); defer { lock.unlock() }
-            value = result
-        }
-        func get() -> [String: IOSJevDecisionOutcome]? {
-            lock.lock(); defer { lock.unlock() }
-            return value
-        }
-    }
-
     private func configurationIsCurrent(_ epoch: Int) -> Bool {
         synchronized { configurationChangeDepth == 0 && configurationEpoch == epoch }
     }
@@ -326,25 +314,26 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             ?? policy.onDemandWaitBudgetMs)
         let waitStarted = Date()
         let waitDeadline = waitStarted.addingTimeInterval(Double(budgetMs) / 1_000)
-        let box = ResultBox()
-        let initialResults = results
-        let submittedParts = prepared
+        let (stream, completion) = AsyncStream<[String: IOSJevDecisionOutcome]>.makeStream()
         // Unstructured work deliberately survives caller wait expiry. A late answer may fill
         // the cache and metrics, but cannot change the already returned local result.
-        Task.detached(priority: .userInitiated) { @Sendable [self, initialResults, submittedParts, settings, context, waitStarted, waitDeadline, box] in
+        Task.detached(priority: .userInitiated) { @Sendable [self, prepared, results] in
             let completed = await self.performBatch(
-                prepared: submittedParts, initial: initialResults, settings: settings,
+                prepared: prepared, initial: results, settings: settings,
                 context: context, epochAtStart: epochAtStart,
                 waitStarted: waitStarted, waitDeadline: waitDeadline
             )
-            box.set(completed)
+            if Date() <= waitDeadline { completion.yield(completed) }
+            completion.finish()
         }
-        while Date() < waitDeadline {
-            if let completed = box.get() { return publishing(completed, parts: parts, epoch: epochAtStart) }
-            if Task.isCancelled { break }
-            try? await Task.sleep(nanoseconds: 5_000_000)
+        let timeout = Task {
+            try await Task.sleep(for: .seconds(waitDeadline.timeIntervalSinceNow))
+            completion.finish()
         }
-        if let completed = box.get(), Date() <= waitDeadline {
+        defer { timeout.cancel() }
+        // Cancelling the caller ends its iterator without cancelling the detached batch.
+        var iterator = stream.makeAsyncIterator()
+        if let completed = await iterator.next() {
             return publishing(completed, parts: parts, epoch: epochAtStart)
         }
         for item in prepared { results[item.part.id] = .skipped(reason: "late") }
@@ -535,20 +524,22 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             }
         }
         let input = IOSJevClient.RequestInput(endpoint: settings.resolvedEndpoint, apiKey: apiKey, model: settings.activeModelVersion, state: state, questions: questions, style: settings.apiStyle, assets: assets)
-        let bodyBytes: Int
+        let request: IOSJevClient.PreparedRequest
         do {
-            bodyBytes = try deps.client.requestBodyByteCount(input)
+            request = try IOSJevClient.PreparedRequest(input)
         } catch {
             return .failed("invalid_request")
         }
         guard state.utf8.count <= settings.policy.maxStateBytes else { return .failed("state_too_large") }
+        let bodyBytes = request.body.count
         let maximumBytes = assets.isEmpty ? settings.policy.maxRequestBytes : IOSJevPolicy.maxImageRequestBytes
         guard bodyBytes <= maximumBytes else { return .failed("request_too_large") }
-        guard let budgetDay = beginBudget(turnKey: context.turnBudgetKey, stateBytes: state.utf8.count, bodyBytes: bodyBytes, policy: settings.policy) else {
+        guard let reservation = beginBudget(turnKey: context.turnBudgetKey, stateBytes: state.utf8.count, bodyBytes: bodyBytes, policy: settings.policy) else {
             return .skipped("budget_exhausted")
         }
+        deps.didReserveRequestBytes?(reservation.bodyBytes)
         guard synchronized({ configurationChangeDepth == 0 && configurationEpoch == epochAtStart }) else {
-            refundBudget(turnKey: context.turnBudgetKey, stateBytes: state.utf8.count, bodyBytes: bodyBytes, budgetDay: budgetDay)
+            refundBudget(reservation)
             return .skipped("config_changed")
         }
         let usesInteractiveDeadline = !assets.isEmpty || chunk.parts.contains(where: {
@@ -557,8 +548,7 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         let deadline = usesInteractiveDeadline ? settings.policy.webActionsDeadlineMs : settings.policy.deadlineMs
         do {
             let decision = try await deps.client.decide(
-                input,
-                policy: settings.policy, deadlineMs: deadline, cacheKey: nil
+                request, policy: settings.policy, deadlineMs: deadline
             )
             finishBudget()
             guard synchronized({ configurationChangeDepth == 0 && configurationEpoch == epochAtStart }),
@@ -570,10 +560,8 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             return .success(decision)
         } catch let error as IOSJevRequestError {
             switch error {
-            case .missingKey, .invalidRequest, .stateTooLarge, .requestTooLarge:
-                refundBudget(turnKey: context.turnBudgetKey, stateBytes: state.utf8.count, bodyBytes: bodyBytes, budgetDay: budgetDay)
-            case .http(let status, _) where status == 451:
-                refundBudget(turnKey: context.turnBudgetKey, stateBytes: state.utf8.count, bodyBytes: bodyBytes, budgetDay: budgetDay)
+            case .missingKey, .invalidRequest, .stateTooLarge, .requestTooLarge, .http(451, _):
+                refundBudget(reservation)
             default:
                 finishBudget()
             }
@@ -656,8 +644,16 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         }
     }
 
-    /// 预算入口：返回 false = 预算耗尽。缓存命中不进入本函数。
-    private func beginBudget(turnKey: String, stateBytes: Int, bodyBytes: Int, policy: IOSJevPolicy) -> Date? {
+    private struct BudgetReservation {
+        let day: Date
+        let epoch: Int
+        let turnKey: String
+        let stateBytes: Int
+        let bodyBytes: Int
+    }
+
+    /// 预留当日字节与当前配置的轮次预算。缓存命中不占预算。
+    private func beginBudget(turnKey: String, stateBytes: Int, bodyBytes: Int, policy: IOSJevPolicy) -> BudgetReservation? {
         synchronized {
             rollDailyLedgerIfNeeded()
             guard dailyLedger.requests + 1 <= policy.dailyRequestBudget,
@@ -676,7 +672,8 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             // 精确编码体积在锁内预留，防止并发请求都越过同一日字节上限。
             dailyLedger.requests += 1
             dailyLedger.requestBodyBytes += bodyBytes
-            return dailyLedger.day
+            return BudgetReservation(day: dailyLedger.day, epoch: configurationEpoch,
+                                     turnKey: turnKey, stateBytes: stateBytes, bodyBytes: bodyBytes)
         }
     }
 
@@ -688,17 +685,17 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
 
     /// 出站前本地拒绝（题数超限/编码失败/state 或请求体超限/缺 Key）时回滚
     /// beginBudget 的预登记：请求未发出、无计费，不应占用轮次与日请求预算。
-    private func refundBudget(turnKey: String, stateBytes: Int, bodyBytes: Int, budgetDay: Date) {
+    private func refundBudget(_ reservation: BudgetReservation) {
         synchronized {
             rollDailyLedgerIfNeeded()
-            if Calendar.current.isDate(dailyLedger.day, inSameDayAs: budgetDay) {
+            if Calendar.current.isDate(dailyLedger.day, inSameDayAs: reservation.day) {
                 dailyLedger.requests = max(dailyLedger.requests - 1, 0)
-                dailyLedger.requestBodyBytes = max(dailyLedger.requestBodyBytes - bodyBytes, 0)
+                dailyLedger.requestBodyBytes = max(dailyLedger.requestBodyBytes - reservation.bodyBytes, 0)
             }
-            if var ledger = turnLedgers[turnKey] {
+            if configurationEpoch == reservation.epoch, var ledger = turnLedgers[reservation.turnKey] {
                 ledger.requests = max(ledger.requests - 1, 0)
-                ledger.stateBytes = max(ledger.stateBytes - stateBytes, 0)
-                turnLedgers[turnKey] = ledger
+                ledger.stateBytes = max(ledger.stateBytes - reservation.stateBytes, 0)
+                turnLedgers[reservation.turnKey] = ledger
             }
         }
     }

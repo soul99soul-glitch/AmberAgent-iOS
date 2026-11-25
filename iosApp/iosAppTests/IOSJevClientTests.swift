@@ -572,8 +572,8 @@ final class IOSJevClientTests: XCTestCase {
             assets: ["image-unique-ref": IOSJevImageAsset(data: image, format: "jpg")]
         )
         input.model = "jev-1.14.0"
-        let reservedBytes = try client.requestBodyByteCount(input)
-        let decision = try await client.decide(input, policy: policy)
+        let prepared = try IOSJevClient.PreparedRequest(input)
+        let decision = try await client.decide(prepared, policy: policy, deadlineMs: policy.deadlineMs)
         let body = try XCTUnwrap(transport.lastBody)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         let assets = try XCTUnwrap(object["assets"] as? [String: [String: Any]])
@@ -585,7 +585,7 @@ final class IOSJevClientTests: XCTestCase {
         XCTAssertEqual(object["state"] as? String, input.state)
         XCTAssertEqual(object["model"] as? String, "jev-1.14.0")
         XCTAssertEqual(decision.requestBytes, body.count)
-        XCTAssertEqual(reservedBytes, body.count, "budget reservation includes the encoded assets")
+        XCTAssertEqual(body, prepared.body)
     }
 
     func testAssetReferencesAcceptOnlyValueLocations() throws {
@@ -654,8 +654,8 @@ final class IOSJevClientTests: XCTestCase {
                 firstReference: .init(data: firstData, format: "jpeg"),
             ]
         )
-        let reservedBytes = try client.requestBodyByteCount(input)
-        let decision = try await client.decide(input, policy: policy)
+        let prepared = try IOSJevClient.PreparedRequest(input)
+        let decision = try await client.decide(prepared, policy: policy, deadlineMs: policy.deadlineMs)
         let body = try XCTUnwrap(transport.lastBody)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         XCTAssertEqual(Set(object.keys), ["stateParts", "questions"])
@@ -668,7 +668,7 @@ final class IOSJevClientTests: XCTestCase {
         XCTAssertEqual(parts[3]["mediaType"] as? String, "image/png")
         XCTAssertEqual(parts[1]["data"] as? [String: String], ["type": "data", "data": firstData.base64EncodedString()])
         XCTAssertEqual(parts[3]["data"] as? [String: String], ["type": "data", "data": secondData.base64EncodedString()])
-        XCTAssertEqual(reservedBytes, body.count)
+        XCTAssertEqual(body, prepared.body)
         XCTAssertEqual(decision.requestBytes, body.count)
         let text = parts.compactMap { $0["text"] as? String }.joined()
         XCTAssertFalse(text.contains(firstReference))
