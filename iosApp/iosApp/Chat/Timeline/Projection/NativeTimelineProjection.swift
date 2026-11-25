@@ -478,6 +478,13 @@ enum NativeTimelineProjector {
                 hasVisibleAssistantInTurn = false
             }
 
+            let resolvedVariant = resolvedVariantInfo(
+                at: index,
+                in: messages,
+                isAssistantContinuation: chatEntry.isAssistantContinuation,
+                variantInfoProvider: variantInfoProvider,
+                factsAt: facts
+            )
             var projected = nativeMessageEntry(
                 for: chatEntry,
                 parts: messageFacts.parts,
@@ -489,7 +496,7 @@ enum NativeTimelineProjector {
                 renderStateRevision: renderStateRevision,
                 reasoningLevelLabel: reasoningLevelLabel,
                 renderStateStore: renderStateStore,
-                variantInfoProvider: variantInfoProvider,
+                variantInfo: resolvedVariant,
                 contentHashProvider: contentHashProvider,
                 liveTaskTailIDs: liveTaskTailIDs
             )
@@ -588,12 +595,16 @@ enum NativeTimelineProjector {
             liveRenderingEnabled: !viewportState.liveRenderingFarFromBottom,
             frozenMarkdownSnapshot: nil
         )
-        let variantInfo = variantInfoProvider(row.index).map {
-            NativeTimelineVariantInfo(
-                variantCount: $0.variantCount,
-                selectedIndex: $0.selectedIndex
-            )
-        }
+        let variantInfo = resolvedVariantInfo(
+            at: row.index,
+            in: messages,
+            isAssistantContinuation: row.isAssistantContinuation,
+            variantInfoProvider: variantInfoProvider,
+            factsAt: { idx in
+                let msg = messages[idx]
+                return factsByObjectID?[ObjectIdentifier(msg)] ?? NativeTimelineMessageFacts(message: msg, index: idx)
+            }
+        )
         let contentHash = frozenStreamingContentHashIfNeeded(row: row, renderState: renderState) ??
             contentHashProvider(row, true)
         let digest = ChatRowDigests.digest(
@@ -763,6 +774,13 @@ enum NativeTimelineProjector {
                 partTokensBody: messageFacts.partTokensBody
             )
             chatEntry.isAssistantContinuation = old.isAssistantContinuation
+            let resolvedVariant = resolvedVariantInfo(
+                at: index,
+                in: messages,
+                isAssistantContinuation: chatEntry.isAssistantContinuation,
+                variantInfoProvider: variantInfoProvider,
+                factsAt: resolvedFacts
+            )
             var entry = nativeMessageEntry(
                 for: chatEntry,
                 parts: messageFacts.parts,
@@ -771,7 +789,7 @@ enum NativeTimelineProjector {
                 displaySettingSignature: displaySettingSignature,
                 generativeUiSettingSignature: generativeUiSettingSignature,
                 renderStateRevision: renderStateRevision, reasoningLevelLabel: reasoningLevelLabel,
-                renderStateStore: renderStateStore, variantInfoProvider: variantInfoProvider,
+                renderStateStore: renderStateStore, variantInfo: resolvedVariant,
                 contentHashProvider: contentHashProvider,
                 liveTaskTailIDs: liveTaskTailIDs
             )
@@ -919,6 +937,13 @@ enum NativeTimelineProjector {
             )
             chatEntry.isAssistantContinuation = entryContinuation
 
+            let resolvedVariant = resolvedVariantInfo(
+                at: index,
+                in: messages,
+                isAssistantContinuation: chatEntry.isAssistantContinuation,
+                variantInfoProvider: variantInfoProvider,
+                factsAt: { orderedFacts[$0] }
+            )
             let projected = nativeMessageEntry(
                 for: chatEntry,
                 parts: messageFacts.parts,
@@ -930,7 +955,7 @@ enum NativeTimelineProjector {
                 renderStateRevision: renderStateRevision,
                 reasoningLevelLabel: reasoningLevelLabel,
                 renderStateStore: renderStateStore,
-                variantInfoProvider: variantInfoProvider,
+                variantInfo: resolvedVariant,
                 contentHashProvider: contentHashProvider,
                 liveTaskTailIDs: liveTaskTailIDs
             )
@@ -992,6 +1017,50 @@ enum NativeTimelineProjector {
         entries.append(nativeEntry(for: .bottomAnchor(id: ChatTimelinePlanner.bottomAnchorID)))
     }
 
+    /// Resolves whether a timeline message row owns a visible multi-variant branch point.
+    ///
+    /// When a multi-step assistant turn is regenerated/overwritten across positions, every
+    /// continuation node in the chain (`isAssistantContinuation == true`) can inherit the same
+    /// `(variantCount, selectedIndex)` signature (e.g. `2/2` on each process screenshot). Only
+    /// the first visible node of that shared chain exposes the branch switcher; trailing
+    /// continuations with the same signature suppress it so they do not repeat `2/2` or split
+    /// automation screenshot batches. Independent branch points keep their switcher.
+    static func resolvedVariantInfo(
+        at index: Int,
+        in messages: [UIMessage],
+        isAssistantContinuation: Bool,
+        variantInfoProvider: (Int) -> IOSConversationStore.VariantInfo?,
+        factsAt: (Int) -> NativeTimelineMessageFacts
+    ) -> NativeTimelineVariantInfo? {
+        guard let raw = variantInfoProvider(index) else { return nil }
+        let candidate = NativeTimelineVariantInfo(
+            variantCount: raw.variantCount,
+            selectedIndex: raw.selectedIndex
+        )
+        guard candidate.hasMultipleVariants, isAssistantContinuation else {
+            return candidate
+        }
+        var cursor = index - 1
+        while cursor >= 0 {
+            let prevFacts = factsAt(cursor)
+            if !prevFacts.isVisibleInTimeline {
+                cursor -= 1
+                continue
+            }
+            if prevFacts.isSubAgentResult || prevFacts.effectiveRole != MessageRole.assistant {
+                break
+            }
+            if !prevFacts.isGlobalStatusOnly,
+               let prevVariant = variantInfoProvider(cursor),
+               prevVariant.variantCount == candidate.variantCount,
+               prevVariant.selectedIndex == candidate.selectedIndex {
+                return nil
+            }
+            cursor -= 1
+        }
+        return candidate
+    }
+
     private static func nativeMessageEntry(
         for message: ChatTimelineMessageEntry,
         parts: [UIMessagePart],
@@ -1003,7 +1072,7 @@ enum NativeTimelineProjector {
         renderStateRevision: UInt64 = 0,
         reasoningLevelLabel: String? = nil,
         renderStateStore: ChatRenderStateStore? = nil,
-        variantInfoProvider: (Int) -> IOSConversationStore.VariantInfo? = { _ in nil },
+        variantInfo: NativeTimelineVariantInfo? = nil,
         contentHashProvider: (ChatMessageRowModel, Bool) -> Int = { _, _ in 0 },
         liveTaskTailIDs: Set<String> = []
     ) -> NativeTimelineEntry {
@@ -1026,12 +1095,6 @@ enum NativeTimelineProjector {
             isLiveRenderingFarFromBottom: viewportState.liveRenderingFarFromBottom,
             isLiveTask: isTaskLive
         ) ?? renderState(for: message, viewportState: viewportState)
-        let variantInfo = variantInfoProvider(message.index).map {
-            NativeTimelineVariantInfo(
-                variantCount: $0.variantCount,
-                selectedIndex: $0.selectedIndex
-            )
-        }
         let contentHash = frozenStreamingContentHashIfNeeded(row: row, renderState: renderState) ??
             contentHashProvider(row, row.isStreaming)
         let digest = ChatRowDigests.digest(
@@ -1087,6 +1150,12 @@ enum NativeTimelineProjector {
         switch entry {
         case let .message(message):
             let facts = NativeTimelineMessageFacts(message: message.message, index: message.index)
+            let variantInfo = variantInfoProvider(message.index).map {
+                NativeTimelineVariantInfo(
+                    variantCount: $0.variantCount,
+                    selectedIndex: $0.selectedIndex
+                )
+            }
             return nativeMessageEntry(
                 for: message,
                 parts: facts.parts,
@@ -1098,7 +1167,7 @@ enum NativeTimelineProjector {
                 renderStateRevision: renderStateRevision,
                 reasoningLevelLabel: reasoningLevelLabel,
                 renderStateStore: renderStateStore,
-                variantInfoProvider: variantInfoProvider,
+                variantInfo: variantInfo,
                 contentHashProvider: contentHashProvider,
                 liveTaskTailIDs: liveTaskTailIDs
             )

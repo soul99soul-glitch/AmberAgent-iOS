@@ -1268,19 +1268,31 @@ final class IOSChatBackgroundGenerationCoordinator {
         )
     }
 
+    static func preservesOutcomeUnknownStaleRecoveryForTesting(
+        runStatus: AgentRunStatus?,
+        transactions: [IOSToolTransactionSnapshot]?
+    ) -> Bool {
+        preservesOutcomeUnknownStaleRecovery(
+            runStatus: runStatus,
+            transactions: transactions
+        )
+    }
+
     static func failedMessagesForTesting(
         displayMessages: [UIMessage],
         preservedGeneratedSuffix: [UIMessage] = [],
         partialAssistantText: String?,
         rawMessage: String,
-        modelId: String
+        modelId: String,
+        formatsAsProviderError: Bool = true
     ) -> [UIMessage] {
         failedMessages(
             displayMessages: displayMessages,
             preservedGeneratedSuffix: preservedGeneratedSuffix,
             partialAssistantText: partialAssistantText,
             rawMessage: rawMessage,
-            modelId: modelId
+            modelId: modelId,
+            formatsAsProviderError: formatsAsProviderError
         )
     }
 

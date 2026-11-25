@@ -156,7 +156,8 @@ extension IOSChatBackgroundGenerationCoordinator {
                             "回复已恢复，但工具阶段未能继续，请重试。",
                             defaultValue: "回复已恢复，但工具阶段未能继续，请重试。"
                         ),
-                        partialAssistantText: nil
+                        partialAssistantText: nil,
+                        formatsAsProviderError: false
                     )
                     guard runState.finalizeTerminal() else { return }
                     if !didSave {
@@ -196,16 +197,18 @@ extension IOSChatBackgroundGenerationCoordinator {
                 return
             }
             guard runState.reserveTerminal() else { return }
+            let hasTransportMessage = !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let didSave = await persistExpirationFailure(
                 job: job,
                 requestId: requestId,
-                rawMessage: message.isEmpty
-                    ? IOSAppLocalization.string(
+                rawMessage: hasTransportMessage
+                    ? message
+                    : IOSAppLocalization.string(
                         "后台回复连接中断，请重试。",
                         defaultValue: "后台回复连接中断，请重试。"
-                    )
-                    : message,
-                partialAssistantText: nil
+                    ),
+                partialAssistantText: nil,
+                formatsAsProviderError: hasTransportMessage
             )
             guard runState.finalizeTerminal() else { return }
             if didSave {

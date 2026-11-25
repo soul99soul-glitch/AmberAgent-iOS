@@ -33,6 +33,7 @@ struct AppShell: View {
     @State private var isOpeningPendingAppDeepLink = false
     @State private var didBootstrapConversations = false
     @State private var didRunStartupRecovery = false
+    @State private var didCompleteStartupRecovery = false
     @State private var didFinalizeStaleBackgroundJobs = false
     @State private var staleBackgroundOutcomeUnknownRunIds = Set<String>()
     @State private var lastMemoryMaintenanceResumeAt: Date?
@@ -360,6 +361,7 @@ struct AppShell: View {
                 IOSChatBackgroundGenerationCoordinator.shared
                     .resumeRecoverableJobsIfNeeded()
             }
+            didCompleteStartupRecovery = true
             finalizeStaleBackgroundJobsIfNeeded()
         } else {
             await conversationStore.bootstrap()
@@ -575,7 +577,7 @@ struct AppShell: View {
     /// 只在本进程首次进入前台时扫一次；系统为真实后台任务唤起 App 时
     /// scene 仍在 background，不会被这里误判成 stale。
     private func finalizeStaleBackgroundJobsIfNeeded() {
-        guard scenePhase == .active, !didFinalizeStaleBackgroundJobs else { return }
+        guard scenePhase == .active, didCompleteStartupRecovery, !didFinalizeStaleBackgroundJobs else { return }
         didFinalizeStaleBackgroundJobs = true
         IOSChatBackgroundGenerationCoordinator.shared.finalizeStalePersistedJobsIfNeeded(
             preservingOutcomeUnknownRunIds: staleBackgroundOutcomeUnknownRunIds

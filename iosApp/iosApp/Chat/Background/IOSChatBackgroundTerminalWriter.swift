@@ -397,7 +397,8 @@ extension IOSChatBackgroundGenerationCoordinator {
         requestId: String,
         rawMessage: String,
         partialAssistantText: String?,
-        terminalReason: String? = nil
+        terminalReason: String? = nil,
+        formatsAsProviderError: Bool = true
     ) async -> Bool {
         await IOSPhoneControlController.shared.stop(runID: job.runId)
         let snapshotMessages = job.messagesSnapshot.messages
@@ -418,7 +419,8 @@ extension IOSChatBackgroundGenerationCoordinator {
             preservedGeneratedSuffix: preservedGeneratedSuffix,
             partialAssistantText: partialAssistantText,
             rawMessage: rawMessage,
-            modelId: job.params.model.modelId
+            modelId: job.params.model.modelId,
+            formatsAsProviderError: formatsAsProviderError
         )
         if job.toolRuntime.hasUnresolvedToolCall(in: finalMessages) {
             finalMessages = job.toolRuntime.messagesByFailingPendingToolCalls(

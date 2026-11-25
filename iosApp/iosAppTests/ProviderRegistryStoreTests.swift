@@ -409,6 +409,15 @@ final class ProviderRegistryStoreTests: XCTestCase {
         let snapshotFailure = ChatViewModel.userFacingGenerationError("request snapshot ledger write failed")
         XCTAssertTrue(snapshotFailure.contains("请求尚未发送"))
         XCTAssertFalse(snapshotFailure.contains("服务商配置"))
+
+        let backgroundStopped = ChatViewModel.userFacingGenerationError("后台生成已停止，可以重试。")
+        XCTAssertEqual(backgroundStopped, "后台生成已停止，可以重试。")
+        XCTAssertFalse(backgroundStopped.contains("请检查服务商配置后重试"))
+        XCTAssertFalse(backgroundStopped.contains("原始错误："))
+
+        let providerFailure = ChatViewModel.userFacingGenerationError("HTTP 500 internal server error")
+        XCTAssertTrue(providerFailure.contains("请求失败。请检查服务商配置后重试。"))
+        XCTAssertTrue(providerFailure.contains("原始错误：HTTP 500 internal server error"))
     }
 
     func testURLSessionConnectionLossIsNotClassifiedFromDigitsInDiagnosticAddresses() {

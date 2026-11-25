@@ -776,8 +776,25 @@ extension ChatViewModel {
     }
     #endif
 
+    static func isLocalBackgroundLifecycleMessage(_ rawMessage: String) -> Bool {
+        let trimmed = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let knownPrefixes = [
+            "后台生成已停止",
+            "后台生成被系统中断",
+            "后台任务包含不能安全自动重放的操作",
+            "后台回复连接中断",
+            "回复已恢复，但工具阶段未能继续",
+            "子代理已达到运行时限",
+        ]
+        return knownPrefixes.contains { trimmed.hasPrefix($0) }
+    }
+
     static func userFacingGenerationError(_ rawMessage: String, modelId: String? = nil) -> String {
         let raw = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isLocalBackgroundLifecycleMessage(raw) {
+            return raw
+        }
         let lowercased = raw.lowercased()
         // NSError diagnostics contain addresses and task IDs whose digits are not HTTP status codes.
         let isURLSessionFailure = lowercased.contains("nsurlerrordomain")

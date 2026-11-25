@@ -107,6 +107,10 @@ extension IOSChatBackgroundGenerationCoordinator {
         }
         if hasOutcomeUnknownEvidence {
             BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: requestId)
+            IOSPhoneControlController.shared.revoke(runID: mappedRunId)
+            let controller = dependencies?.liveActivityController ?? .shared
+            _ = controller.adoptExistingActivity(runId: mappedRunId)
+            await controller.end(runId: mappedRunId, presentation: .failed())
             // 保留 durable run/ledger 给下一轮冷启动对账，只摘除已失效的
             // request owner，避免把不确定副作用改写成普通失败或再次重放。
             finish(runId: mappedRunId, requestId: requestId)
@@ -163,7 +167,8 @@ extension IOSChatBackgroundGenerationCoordinator {
                 "后台生成已停止，可以重试。",
                 defaultValue: "后台生成已停止，可以重试。"
             ),
-            partialAssistantText: nil
+            partialAssistantText: nil,
+            formatsAsProviderError: false
         )
     }
 
@@ -175,16 +180,61 @@ extension IOSChatBackgroundGenerationCoordinator {
         if runStatus == .outcomeUnknown {
             return true
         }
-        guard runStatus == .running || runStatus == .recoveryPending else {
+        guard runStatus == .running
+            || runStatus == .recoveryPending
+            || runStatus == .awaitingPermission else {
             return false
         }
-        guard let transactionStates = await toolLedger.toolTransactions(runId: snapshot.runId)?.map(\.state) else {
+        guard let transactions = await toolLedger.toolTransactions(runId: snapshot.runId) else {
             return nil
         }
-        return Self.preservesOutcomeUnknownStaleRecovery(
+        if Self.preservesOutcomeUnknownStaleRecovery(
             runStatus: runStatus,
-            transactionStates: transactionStates
-        )
+            transactions: transactions
+        ) {
+            return true
+        }
+        let legacyRows: [IOSToolCallLedgerRow]? = await withCheckedContinuation { continuation in
+            db.agentRuntimeDao().listEventsForRun(id: snapshot.runId) { result, error in
+                guard error == nil, let result else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let decoded = result.compactMap {
+                    IOSToolCallLedgerRow.decode(type: $0.type, seq: $0.seq, payload: $0.payload)
+                }
+                continuation.resume(returning: decoded)
+            }
+        }
+        guard let legacyRows else {
+            return nil
+        }
+        let transactionToolCallIds = Set(transactions.map(\.toolCallId))
+        let legacyActions = IOSToolCallRecoveryPlanner.plan(rows: legacyRows) { toolCallId in
+            !transactionToolCallIds.contains(toolCallId)
+        }
+        return legacyActions.values.contains(.markUnknown)
+    }
+
+    static func preservesOutcomeUnknownStaleRecovery(
+        runStatus: AgentRunStatus?,
+        transactions: [IOSToolTransactionSnapshot]?
+    ) -> Bool {
+        if runStatus == .outcomeUnknown {
+            return true
+        }
+        guard runStatus == .running
+            || runStatus == .recoveryPending
+            || runStatus == .awaitingPermission else {
+            return false
+        }
+        // nil means the ledger lookup failed; fail closed so a possible
+        // side-effect attempt is not rewritten as an ordinary stale failure.
+        guard let transactions else { return true }
+        return transactions.contains(where: { transaction in
+            transaction.state == .outcomeUnknown
+                || (transaction.state == .started && transaction.effectClass == .sideEffect)
+        })
     }
 
     static func preservesOutcomeUnknownStaleRecovery(
@@ -194,13 +244,15 @@ extension IOSChatBackgroundGenerationCoordinator {
         if runStatus == .outcomeUnknown {
             return true
         }
-        guard runStatus == .running || runStatus == .recoveryPending else {
+        guard runStatus == .running
+            || runStatus == .recoveryPending
+            || runStatus == .awaitingPermission else {
             return false
         }
         // nil means the ledger lookup failed; fail closed so a possible
         // side-effect attempt is not rewritten as an ordinary stale failure.
         guard let transactionStates else { return true }
-        return transactionStates.contains(.outcomeUnknown)
+        return transactionStates.contains(.outcomeUnknown) || transactionStates.contains(.started)
     }
 
     func resumeRecoverableJob(
@@ -244,7 +296,8 @@ extension IOSChatBackgroundGenerationCoordinator {
                         "后台任务包含不能安全自动重放的操作，请回到会话重试。",
                         defaultValue: "后台任务包含不能安全自动重放的操作，请回到会话重试。"
                     ),
-                    partialAssistantText: nil
+                    partialAssistantText: nil,
+                    formatsAsProviderError: false
                 )
                 return
             }

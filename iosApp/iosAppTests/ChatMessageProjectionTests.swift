@@ -865,4 +865,129 @@ final class ChatMessageProjectionTests: ChatMessageProjectionTestCase {
         XCTAssertEqual(entry?.liveMarkdownRenderingEnabled, false)
         XCTAssertEqual(entry?.frozenMarkdownSnapshot, "冻结快照")
     }
+
+    func testAssistantHeaderPresentationEliminatesDuplicateBadgeAndEmptyContinuationHeader() {
+        let primaryBranchable = MessageBubbleView.assistantHeaderPresentation(
+            isAssistantContinuation: false,
+            hasMultipleVariants: true,
+            canBranch: true
+        )
+        XCTAssertTrue(primaryBranchable.showsHeaderRow)
+        XCTAssertTrue(primaryBranchable.showsAgentName)
+        XCTAssertFalse(primaryBranchable.showsVariantBadge, "variantSwitcher 可见时不再重复显示 variantBadge")
+        XCTAssertTrue(primaryBranchable.showsVariantSwitcher)
+
+        let primaryReadOnly = MessageBubbleView.assistantHeaderPresentation(
+            isAssistantContinuation: false,
+            hasMultipleVariants: true,
+            canBranch: false
+        )
+        XCTAssertTrue(primaryReadOnly.showsHeaderRow)
+        XCTAssertTrue(primaryReadOnly.showsAgentName)
+        XCTAssertTrue(primaryReadOnly.showsVariantBadge, "只读多变体态应保留 variantBadge")
+        XCTAssertFalse(primaryReadOnly.showsVariantSwitcher)
+
+        let continuationBranchable = MessageBubbleView.assistantHeaderPresentation(
+            isAssistantContinuation: true,
+            hasMultipleVariants: true,
+            canBranch: true
+        )
+        XCTAssertFalse(continuationBranchable.showsHeaderRow, "续答无可见 header 内容时不渲染空 HStack")
+        XCTAssertFalse(continuationBranchable.showsAgentName)
+        XCTAssertFalse(continuationBranchable.showsVariantBadge)
+        XCTAssertTrue(continuationBranchable.showsVariantSwitcher)
+
+        let continuationReadOnly = MessageBubbleView.assistantHeaderPresentation(
+            isAssistantContinuation: true,
+            hasMultipleVariants: true,
+            canBranch: false
+        )
+        XCTAssertTrue(continuationReadOnly.showsHeaderRow)
+        XCTAssertFalse(continuationReadOnly.showsAgentName)
+        XCTAssertTrue(continuationReadOnly.showsVariantBadge)
+        XCTAssertFalse(continuationReadOnly.showsVariantSwitcher)
+
+        let continuationSingle = MessageBubbleView.assistantHeaderPresentation(
+            isAssistantContinuation: true,
+            hasMultipleVariants: false,
+            canBranch: true
+        )
+        XCTAssertFalse(continuationSingle.showsHeaderRow)
+        XCTAssertFalse(continuationSingle.showsVariantBadge)
+        XCTAssertFalse(continuationSingle.showsVariantSwitcher)
+    }
+
+    func testNativeTimelineSuppressesSharedVariantChainOnAssistantContinuationsAndPreservesIndependentBranches() {
+        let user = UIMessage.companion.user(prompt: "执行手机任务")
+        let step1 = UIMessage.companion.assistant(prompt: "第一步说明")
+        let step2 = UIMessage.companion.assistant(prompt: "第二步说明")
+        let step3 = UIMessage.companion.assistant(prompt: "独立分支说明")
+        let step1ID = ChatMessageProjector.messageId(for: step1)
+        let step2ID = ChatMessageProjector.messageId(for: step2)
+        let step3ID = ChatMessageProjector.messageId(for: step3)
+
+        let sharedTwoOfTwo = IOSConversationStore.VariantInfo(variantCount: 2, selectedIndex: 1)
+        let independentThreeOfThree = IOSConversationStore.VariantInfo(variantCount: 3, selectedIndex: 2)
+
+        let projection = NativeTimelineProjector.build(
+            messages: [user, step1, step2, step3],
+            event: .conversationLoaded,
+            variantInfoProvider: { index in
+                switch index {
+                case 1, 2: sharedTwoOfTwo
+                case 3: independentThreeOfThree
+                default: IOSConversationStore.VariantInfo(variantCount: 1, selectedIndex: 0)
+                }
+            },
+            contentHashProvider: { _, _ in 1 }
+        )
+
+        XCTAssertEqual(projection.messageEntry(for: step1ID)?.isAssistantContinuation, false)
+        XCTAssertEqual(projection.messageEntry(for: step1ID)?.variantInfo, NativeTimelineVariantInfo(variantCount: 2, selectedIndex: 1))
+        XCTAssertEqual(projection.messageEntry(for: step1ID)?.hasMultipleVariants, true)
+
+        XCTAssertEqual(projection.messageEntry(for: step2ID)?.isAssistantContinuation, true)
+        XCTAssertNil(projection.messageEntry(for: step2ID)?.variantInfo, "同属一次重生成续答链的重复 2/2 必须收紧")
+        XCTAssertEqual(projection.messageEntry(for: step2ID)?.hasMultipleVariants, false)
+
+        XCTAssertEqual(projection.messageEntry(for: step3ID)?.isAssistantContinuation, true)
+        XCTAssertEqual(projection.messageEntry(for: step3ID)?.variantInfo, NativeTimelineVariantInfo(variantCount: 3, selectedIndex: 2),
+                       "拥有独立分支点的续答消息应保留合法切换能力")
+        XCTAssertEqual(projection.messageEntry(for: step3ID)?.hasMultipleVariants, true)
+    }
+
+    func testNativeTimelineGlobalStatusOnlyDoesNotSwallowFirstVisibleVariantSwitcher() {
+        let user = UIMessage.companion.user(prompt: "查询")
+        let instant = KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0)
+        let hiddenReasoning = UIMessage(
+            id: KotlinUuid.companion.random(),
+            role: MessageRole.assistant,
+            parts: [UIMessagePart.Reasoning(reasoning: "思考中", createdAt: instant, finishedAt: nil, metadata: nil)],
+            annotations: [],
+            createdAt: chatNowLocalDateTime(),
+            finishedAt: nil,
+            modelId: nil,
+            usage: nil,
+            translation: nil
+        )
+        let firstVisible = UIMessage.companion.assistant(prompt: "首条可见回答")
+        let trailingContinuation = UIMessage.companion.assistant(prompt: "续答内容")
+        let firstVisibleID = ChatMessageProjector.messageId(for: firstVisible)
+        let trailingID = ChatMessageProjector.messageId(for: trailingContinuation)
+        let sharedTwoOfTwo = IOSConversationStore.VariantInfo(variantCount: 2, selectedIndex: 1)
+
+        let projection = NativeTimelineProjector.build(
+            messages: [user, hiddenReasoning, firstVisible, trailingContinuation],
+            event: .conversationLoaded,
+            variantInfoProvider: { index in
+                index >= 1 ? sharedTwoOfTwo : IOSConversationStore.VariantInfo(variantCount: 1, selectedIndex: 0)
+            },
+            contentHashProvider: { _, _ in 1 }
+        )
+
+        XCTAssertEqual(projection.messageEntry(for: firstVisibleID)?.isAssistantContinuation, false)
+        XCTAssertEqual(projection.messageEntry(for: firstVisibleID)?.variantInfo, NativeTimelineVariantInfo(variantCount: 2, selectedIndex: 1))
+        XCTAssertEqual(projection.messageEntry(for: trailingID)?.isAssistantContinuation, true)
+        XCTAssertNil(projection.messageEntry(for: trailingID)?.variantInfo)
+    }
 }

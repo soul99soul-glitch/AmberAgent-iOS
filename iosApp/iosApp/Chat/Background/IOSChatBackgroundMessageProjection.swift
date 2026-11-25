@@ -118,11 +118,23 @@ extension IOSChatBackgroundGenerationCoordinator {
         preservedGeneratedSuffix: [UIMessage] = [],
         partialAssistantText: String?,
         rawMessage: String,
-        modelId: String
+        modelId: String,
+        formatsAsProviderError: Bool = true
     ) -> [UIMessage] {
         var finalMessages = displayMessages + preservedGeneratedSuffix
         let partial = partialAssistantText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let errorText = ChatViewModel.userFacingGenerationError(rawMessage, modelId: modelId)
+        let trimmedRaw = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        let errorText: String
+        if formatsAsProviderError {
+            errorText = ChatViewModel.userFacingGenerationError(rawMessage, modelId: modelId)
+        } else if !trimmedRaw.isEmpty {
+            errorText = trimmedRaw
+        } else {
+            errorText = IOSAppLocalization.string(
+                "后台生成已停止，可以重试。",
+                defaultValue: "后台生成已停止，可以重试。"
+            )
+        }
         if partial.isEmpty {
             finalMessages.append(assistantErrorMessage(errorText))
         } else {

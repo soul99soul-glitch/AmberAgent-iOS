@@ -202,11 +202,38 @@ extension IOSParityRedLightTests {
         XCTAssertEqual(messages.map { $0.role }, [MessageRole.user, MessageRole.assistant])
         XCTAssertTrue(messages[1].toText().contains("已经生成但尚未完成的正文"))
         XCTAssertTrue(messages[1].toText().contains("后台生成被系统中断"))
+        XCTAssertFalse(messages[1].toText().contains("请检查服务商配置后重试"))
+        XCTAssertFalse(messages[1].toText().contains("原始错误："))
         let errorPart = messages[1].parts.first as? UIMessagePart.Text
         XCTAssertEqual(
             errorPart?.metadata?[MessageKt.LOCAL_GENERATION_ERROR_METADATA_KEY]?.jsonPrimitiveOrNull?.content,
             MessageKt.LOCAL_GENERATION_ERROR_METADATA_VALUE
         )
+    }
+
+    func testBackgroundLocalLifecycleNoticeIsNotWrappedAsProviderConfigurationError() {
+        let displayMessages = [UIMessage.companion.user(prompt: "question")]
+
+        let localNotice = IOSChatBackgroundGenerationCoordinator.failedMessagesForTesting(
+            displayMessages: displayMessages,
+            partialAssistantText: nil,
+            rawMessage: "后台生成已停止，可以重试。",
+            modelId: "test-model",
+            formatsAsProviderError: false
+        )
+        XCTAssertEqual(localNotice.last?.toText(), "后台生成已停止，可以重试。")
+        XCTAssertFalse(localNotice.last?.toText().contains("请检查服务商配置后重试") ?? true)
+        XCTAssertFalse(localNotice.last?.toText().contains("原始错误：") ?? true)
+
+        let providerError = IOSChatBackgroundGenerationCoordinator.failedMessagesForTesting(
+            displayMessages: displayMessages,
+            partialAssistantText: nil,
+            rawMessage: "HTTP 502 bad gateway",
+            modelId: "test-model",
+            formatsAsProviderError: true
+        )
+        XCTAssertTrue(providerError.last?.toText().contains("请求失败。请检查服务商配置后重试。") ?? false)
+        XCTAssertTrue(providerError.last?.toText().contains("原始错误：HTTP 502 bad gateway") ?? false)
     }
 
     func testBackgroundExpirationAtomicallyOwnsTheTerminalPath() {

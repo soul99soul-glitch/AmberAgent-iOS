@@ -83,6 +83,117 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
                 transactionStates: nil
             )
         )
+        XCTAssertTrue(
+            IOSChatBackgroundGenerationCoordinator.preservesOutcomeUnknownStaleRecoveryForTesting(
+                runStatus: .running,
+                transactions: [
+                    IOSToolTransactionSnapshot(
+                        runId: "r-side",
+                        toolCallId: "tc-phone",
+                        toolName: "phone_tap",
+                        argsDigest: "d",
+                        effectClass: .sideEffect,
+                        state: .started,
+                        outcome: nil,
+                        resultPayload: nil
+                    )
+                ]
+            ),
+            "尚未收口的有副作用 started 事务必须走 outcomeUnknown 保护，禁止写入普通失败气泡"
+        )
+        XCTAssertTrue(
+            IOSChatBackgroundGenerationCoordinator.preservesOutcomeUnknownStaleRecoveryForTesting(
+                runStatus: .awaitingPermission,
+                transactions: [
+                    IOSToolTransactionSnapshot(
+                        runId: "r-await",
+                        toolCallId: "tc-phone-2",
+                        toolName: "phone_tap",
+                        argsDigest: "d",
+                        effectClass: .sideEffect,
+                        state: .started,
+                        outcome: nil,
+                        resultPayload: nil
+                    )
+                ]
+            ),
+            "审批后已开始执行的副作用事务在 awaitingPermission 状态下也必须保护"
+        )
+        XCTAssertFalse(
+            IOSChatBackgroundGenerationCoordinator.preservesOutcomeUnknownStaleRecoveryForTesting(
+                runStatus: .running,
+                transactions: [
+                    IOSToolTransactionSnapshot(
+                        runId: "r-pure",
+                        toolCallId: "tc-read",
+                        toolName: "phone_status",
+                        argsDigest: "d",
+                        effectClass: .pure,
+                        state: .started,
+                        outcome: nil,
+                        resultPayload: nil
+                    )
+                ]
+            ),
+            "纯只读工具不应误触发 outcomeUnknown 保护"
+        )
+    }
+
+    @MainActor
+    func testStaleSweepDoesNotWriteRetryableFailureBubbleWhenSideEffectToolIsStarted() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StaleSideEffect-\(UUID().uuidString)", isDirectory: true)
+        let store = IOSConversationStore(baseDirectory: directory)
+        await store.bootstrap()
+        let conversationId = try XCTUnwrap(store.currentConversation?.id)
+        let fixture = DurableCancelFixture(name: "stale-side-effect", conversationId: conversationId)
+        var handoff = fixture.handoff
+        handoff.mode = .continueModel
+        handoff.responseId = nil
+        let settings = makeSettings(for: fixture)
+        let runtime = ChatToolRuntime(
+            settingsStore: SettingsStore(), sharedSettings: settings, localToolExecutor: nil,
+            searchTransport: HandoffTestSearchTransport(), mcpManager: IOSMcpManager(serverProvider: { [] })
+        )
+        let coordinator = IOSChatBackgroundGenerationCoordinator(
+            keepAlive: .shared, provider: IOSChatBackgroundProvider()
+        )
+        defer {
+            coordinator.discardDurableResponse(runId: handoff.runId)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let runStore = IOSDurableRunStore()
+        let started = try await runStore.startChatRun(
+            runId: handoff.runId, startedAt: handoff.startedAt,
+            inputDigest: handoff.inputDigest, conversationId: conversationId.toHexDashString()
+        )
+        XCTAssertTrue(started)
+        let ledger = IOSAgentRunLedger()
+        let didStartSideEffect = await ledger.recordToolCallStarted(
+            runId: handoff.runId,
+            toolCallId: "tc-phone-tap-1",
+            toolName: "phone_tap",
+            argsDigest: "phone-tap-digest",
+            effectClass: .sideEffect
+        )
+        XCTAssertTrue(didStartSideEffect)
+        coordinator.configure(conversationStore: store, toolRuntime: runtime, sharedSettings: settings)
+        XCTAssertTrue(coordinator.persistBackgroundCheckpointForTesting(handoff))
+        let beforeMessages = await store.messages(for: conversationId) ?? []
+
+        coordinator.finalizeStalePersistedJobsIfNeeded()
+        let deadline = Date().addingTimeInterval(5)
+        while coordinator.hasPendingConversationWrites, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertFalse(coordinator.hasPendingConversationWrites, "失效后台 owner 应被摘除")
+        let afterMessages = await store.messages(for: conversationId) ?? []
+        XCTAssertEqual(afterMessages.map(\.id), beforeMessages.map(\.id),
+                       "存在未收口副作用事务时严禁写入「可以重试」的普通失败气泡")
+        XCTAssertFalse(afterMessages.contains { $0.toText().contains("后台生成已停止") })
+        let runSnapshot = try await runStore.snapshot(runId: handoff.runId)
+        XCTAssertEqual(runSnapshot?.status, .running, "run 状态必须保留给 W3 对账翻转为 outcomeUnknown")
     }
 
     @MainActor

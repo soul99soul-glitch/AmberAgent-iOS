@@ -218,6 +218,29 @@ struct MessageBubbleView: View {
         }
     }
 
+    struct AssistantHeaderPresentation: Equatable {
+        let showsHeaderRow: Bool
+        let showsAgentName: Bool
+        let showsVariantBadge: Bool
+        let showsVariantSwitcher: Bool
+    }
+
+    static func assistantHeaderPresentation(
+        isAssistantContinuation: Bool,
+        hasMultipleVariants: Bool,
+        canBranch: Bool
+    ) -> AssistantHeaderPresentation {
+        let showsAgentName = !isAssistantContinuation
+        let showsVariantSwitcher = hasMultipleVariants && canBranch
+        let showsVariantBadge = hasMultipleVariants && !canBranch
+        return AssistantHeaderPresentation(
+            showsHeaderRow: showsAgentName || showsVariantBadge,
+            showsAgentName: showsAgentName,
+            showsVariantBadge: showsVariantBadge,
+            showsVariantSwitcher: showsVariantSwitcher
+        )
+    }
+
     static func instantToDate(_ instant: KotlinInstant) -> Date {
         Date(timeIntervalSince1970:
             Double(instant.epochSeconds) + Double(instant.nanosecondsOfSecond) / 1_000_000_000)
@@ -649,20 +672,24 @@ private struct MessageBubbleStatefulContent: View {
             } else {
                 let animateSegmentedHeader = IOSChatRenderPreferences.shared.isSegmentedReplyDelivery
                     && isLiveStream && !reduceMotion
+                let headerPresentation = MessageBubbleView.assistantHeaderPresentation(
+                    isAssistantContinuation: isAssistantContinuation,
+                    hasMultipleVariants: variantInfo?.hasMultipleVariants == true,
+                    canBranch: canBranch
+                )
                 ChatAssistantStack {
-                    if !awaitingSegmentedFirstBlock,
-                       (!isAssistantContinuation || variantInfo?.hasMultipleVariants == true) {
+                    if !awaitingSegmentedFirstBlock, headerPresentation.showsHeaderRow {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            if !isAssistantContinuation {
+                            if headerPresentation.showsAgentName {
                                 ChatAgentName()
                             }
-                            if variantInfo?.hasMultipleVariants == true {
+                            if headerPresentation.showsVariantBadge {
                                 variantBadge
                             }
                         }
                         .modifier(ChatSegmentedHeaderEntranceModifier(enabled: animateSegmentedHeader))
                     }
-                    if !awaitingSegmentedFirstBlock {
+                    if !awaitingSegmentedFirstBlock, headerPresentation.showsVariantSwitcher {
                         variantSwitcher
                     }
                     messagePartsWithAnchorHighlight(

@@ -51,7 +51,8 @@ extension IOSChatBackgroundGenerationCoordinator {
                 job: prepared, requestId: requestId,
                 rawMessage: "子代理已达到运行时限（\(max(1, Int(ceil(seconds / 60)))) 分钟），已保存当前结果。可在子代理设置中调整超时后重试。",
                 partialAssistantText: nil,
-                terminalReason: IOSThreadOrchestrationToolService.modelRoutingTimeoutTerminalReason
+                terminalReason: IOSThreadOrchestrationToolService.modelRoutingTimeoutTerminalReason,
+                formatsAsProviderError: false
             )
         }
     }
