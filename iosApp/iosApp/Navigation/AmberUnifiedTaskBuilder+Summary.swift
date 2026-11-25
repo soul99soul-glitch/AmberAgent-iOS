@@ -31,6 +31,80 @@ extension AmberUnifiedTaskBuilder {
             entries[key] = summary
         }
     }
+    private final class BoundedStringLRUCache: @unchecked Sendable {
+        private let lock = NSLock()
+        let capacity: Int
+        private var entries: [String: String] = [:]
+        private var order: [String] = []
+
+        init(capacity: Int) {
+            self.capacity = max(1, capacity)
+        }
+
+        func value(for key: String) -> String? {
+            lock.lock()
+            defer { lock.unlock() }
+            guard let value = entries[key] else { return nil }
+            if let idx = order.firstIndex(of: key), idx != order.count - 1 {
+                order.remove(at: idx)
+                order.append(key)
+            }
+            return value
+        }
+
+        func insert(_ value: String, for key: String) {
+            lock.lock()
+            defer { lock.unlock() }
+            if let idx = order.firstIndex(of: key) {
+                order.remove(at: idx)
+            } else if order.count >= capacity, let oldest = order.first {
+                order.removeFirst()
+                entries.removeValue(forKey: oldest)
+            }
+            order.append(key)
+            entries[key] = value
+        }
+
+        func reset() {
+            lock.lock()
+            defer { lock.unlock() }
+            entries.removeAll(keepingCapacity: false)
+            order.removeAll(keepingCapacity: false)
+        }
+    }
+
+    static let sanitizedDialogueTextCacheCapacity = 256
+    private static let sanitizedDialogueTextCache = BoundedStringLRUCache(capacity: sanitizedDialogueTextCacheCapacity)
+    private static let redactedDialogueTitleCache = BoundedStringLRUCache(capacity: 128)
+
+    /// Cached display-time envelope stripping + credential redaction for dialogue task texts.
+    /// Avoids re-running the 11-regex credential pass on unchanged strings across task/badge builds.
+    static func sanitizedDialogueTaskText(_ text: String) -> String {
+        guard !text.isEmpty else { return "" }
+        if let cached = sanitizedDialogueTextCache.value(for: text) { return cached }
+        ChatRenderProbe.record("task-dialogue-sanitize")
+        let sanitized = IOSContextCompactionFidelity.redactCredentials(
+            IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope(text)
+        )
+        sanitizedDialogueTextCache.insert(sanitized, for: text)
+        return sanitized
+    }
+
+    /// Cached credential redaction for raw dialogue user title lines.
+    static func redactedDialogueTaskTitleSource(_ text: String) -> String {
+        guard !text.isEmpty else { return "" }
+        if let cached = redactedDialogueTitleCache.value(for: text) { return cached }
+        ChatRenderProbe.record("task-dialogue-redact")
+        let redacted = IOSContextCompactionFidelity.redactCredentials(text)
+        redactedDialogueTitleCache.insert(redacted, for: text)
+        return redacted
+    }
+
+    static func resetSanitizedDialogueTaskTextCacheForTesting() {
+        sanitizedDialogueTextCache.reset()
+        redactedDialogueTitleCache.reset()
+    }
+
     private static let summaryCache = SummaryCache()
 
     /// Exact input value is the cache key, including decision markers at the tail.

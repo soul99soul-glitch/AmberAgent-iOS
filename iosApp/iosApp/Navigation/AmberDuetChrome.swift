@@ -535,7 +535,26 @@ private struct AmberCloudTaskSelection: Identifiable, Equatable {
     }
 }
 
-struct AmberDuetTaskCenterCard: View {
+@MainActor
+private final class AmberDuetTaskCenterActionBox {
+    var onOpenFullTaskBoard: () -> Void = {}
+    var onOpenTask: ((AmberUnifiedTaskItem) -> Void)? = nil
+    var onFollowupTask: ((AmberUnifiedTaskItem) -> Void)? = nil
+    var onDismissPanel: (() -> Void)? = nil
+    var onHeaderDragChanged: ((DragGesture.Value) -> Void)? = nil
+    var onHeaderDragEnded: ((DragGesture.Value) -> Void)? = nil
+
+    func update(from card: AmberDuetTaskCenterCard) {
+        onOpenFullTaskBoard = card.onOpenFullTaskBoard
+        onOpenTask = card.onOpenTask
+        onFollowupTask = card.onFollowupTask
+        onDismissPanel = card.onDismissPanel
+        onHeaderDragChanged = card.onHeaderDragChanged
+        onHeaderDragEnded = card.onHeaderDragEnded
+    }
+}
+
+struct AmberDuetTaskCenterCard: View, Equatable {
     let gateway: MacGatewayStore
     var subAgentStore: IOSSubAgentActivityStore = .shared
     var taskStore: IOSAdvancedTaskStore = .shared
@@ -550,7 +569,278 @@ struct AmberDuetTaskCenterCard: View {
     var onHeaderDragChanged: ((DragGesture.Value) -> Void)? = nil
     var onHeaderDragEnded: ((DragGesture.Value) -> Void)? = nil
 
+    @State private var actionBox = AmberDuetTaskCenterActionBox()
+
     static let initialRecentPreviewCount = 3
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.gateway === rhs.gateway
+            && lhs.subAgentStore === rhs.subAgentStore
+            && lhs.taskStore === rhs.taskStore
+            && lhs.wakeStore === rhs.wakeStore
+            && lhs.hubStore === rhs.hubStore
+            && lhs.intentInboxStore === rhs.intentInboxStore
+            && lhs.isEmbeddedInModalSheet == rhs.isEmbeddedInModalSheet
+    }
+
+    var body: some View {
+        let _ = actionBox.update(from: self)
+        AmberDuetTaskCenterEquatableBody(
+            gateway: gateway,
+            subAgentStore: subAgentStore,
+            taskStore: taskStore,
+            wakeStore: wakeStore,
+            hubStore: hubStore,
+            intentInboxStore: intentInboxStore,
+            isEmbeddedInModalSheet: isEmbeddedInModalSheet,
+            actions: actionBox
+        )
+        .equatable()
+    }
+
+    func handleQuickDecision(
+        _ decision: AmberTaskQuickDecision,
+        for item: AmberUnifiedTaskItem,
+        onSelectCloudTask: ((String) -> Void)? = nil
+    ) async {
+        await Self.handleQuickDecision(
+            decision,
+            for: item,
+            gateway: gateway,
+            onOpenTask: onOpenTask,
+            onFollowupTask: onFollowupTask,
+            onDismissPanel: onDismissPanel,
+            onSelectCloudTask: onSelectCloudTask
+        )
+    }
+
+    static func handleQuickDecision(
+        _ decision: AmberTaskQuickDecision,
+        for item: AmberUnifiedTaskItem,
+        gateway: MacGatewayStore,
+        onOpenTask: ((AmberUnifiedTaskItem) -> Void)?,
+        onFollowupTask: ((AmberUnifiedTaskItem) -> Void)?,
+        onDismissPanel: (() -> Void)?,
+        onSelectCloudTask: ((String) -> Void)? = nil
+    ) async {
+        if decision.kind == .openDetail || decision.kind == .confirmApproval {
+            openDestinationDirectly(
+                item,
+                onOpenTask: onOpenTask,
+                onFollowupTask: onFollowupTask,
+                onDismissPanel: onDismissPanel,
+                onSelectCloudTask: onSelectCloudTask
+            )
+            return
+        }
+        if case .gatewayBoardItem = item.source {
+            openDestinationDirectly(
+                item,
+                onOpenTask: onOpenTask,
+                onFollowupTask: onFollowupTask,
+                onDismissPanel: onDismissPanel,
+                onSelectCloudTask: onSelectCloudTask
+            )
+            return
+        }
+        if case .gatewaySchedule = item.source {
+            openDestinationDirectly(
+                item,
+                onOpenTask: onOpenTask,
+                onFollowupTask: onFollowupTask,
+                onDismissPanel: onDismissPanel,
+                onSelectCloudTask: onSelectCloudTask
+            )
+            return
+        }
+        if decision.kind == .retry {
+            switch item.source {
+            case .cloudTask(let requestId):
+                if let record = gateway.cloudTasks.first(where: { $0.requestId == requestId }),
+                   !record.needsSubmissionRetry {
+                    openDestinationDirectly(
+                        item,
+                        onOpenTask: onOpenTask,
+                        onFollowupTask: onFollowupTask,
+                        onDismissPanel: onDismissPanel,
+                        onSelectCloudTask: onSelectCloudTask
+                    )
+                } else {
+                    _ = await gateway.retryCloudTask(requestId: requestId)
+                }
+                return
+            default:
+                if item.destination != .none {
+                    openDestinationDirectly(
+                        item,
+                        onOpenTask: onOpenTask,
+                        onFollowupTask: onFollowupTask,
+                        onDismissPanel: onDismissPanel,
+                        onSelectCloudTask: onSelectCloudTask
+                    )
+                    return
+                }
+            }
+        }
+        if decision.kind == .approveAndContinue {
+            switch item.source {
+            case .cloudTask(let requestId):
+                if let record = gateway.cloudTasks.first(where: { $0.requestId == requestId }),
+                   let workItemId = record.workItemId,
+                   !record.isTerminal {
+                    let text = decision.followupInstruction ?? decision.title
+                    let result = await gateway.sendCloudWorkItemInput(workItemId: workItemId, text: text)
+                    if case .success = result {
+                        await gateway.refreshCloudTask(workItemId: workItemId)
+                    }
+                } else {
+                    openDestinationDirectly(
+                        item,
+                        onOpenTask: onOpenTask,
+                        onFollowupTask: onFollowupTask,
+                        onDismissPanel: onDismissPanel,
+                        onSelectCloudTask: onSelectCloudTask
+                    )
+                }
+                return
+            case .cloudDialogueWorkItem(let workItemId):
+                guard gateway.cloudDialogueProgressByWorkItem[workItemId]?.outcome == nil else {
+                    openDestinationDirectly(
+                        item,
+                        onOpenTask: onOpenTask,
+                        onFollowupTask: onFollowupTask,
+                        onDismissPanel: onDismissPanel,
+                        onSelectCloudTask: onSelectCloudTask
+                    )
+                    return
+                }
+                let text = decision.followupInstruction ?? decision.title
+                _ = await gateway.sendCloudWorkItemInput(workItemId: workItemId, text: text)
+                return
+            case .localSubAgent, .executionRecord:
+                if item.destination != .none {
+                    openDestinationDirectly(
+                        item.applyingQuickDecision(decision),
+                        onOpenTask: onOpenTask,
+                        onFollowupTask: onFollowupTask,
+                        onDismissPanel: onDismissPanel,
+                        onSelectCloudTask: onSelectCloudTask
+                    )
+                    return
+                }
+            default:
+                break
+            }
+        }
+        if decision.kind == .adjustDirection {
+            switch item.source {
+            case .localSubAgent, .executionRecord, .cloudDialogueWorkItem:
+                if item.destination != .none {
+                    openDestinationDirectly(
+                        item.applyingQuickDecision(decision),
+                        onOpenTask: onOpenTask,
+                        onFollowupTask: onFollowupTask,
+                        onDismissPanel: onDismissPanel,
+                        onSelectCloudTask: onSelectCloudTask
+                    )
+                    return
+                }
+            default:
+                break
+            }
+        }
+        let updated = item.applyingQuickDecision(decision)
+        if let onFollowupTask {
+            onDismissPanel?()
+            onFollowupTask(updated)
+        } else {
+            openDestinationDirectly(
+                updated,
+                onOpenTask: onOpenTask,
+                onFollowupTask: onFollowupTask,
+                onDismissPanel: onDismissPanel,
+                onSelectCloudTask: onSelectCloudTask
+            )
+        }
+    }
+
+    static func openDestinationDirectly(
+        _ item: AmberUnifiedTaskItem,
+        onOpenTask: ((AmberUnifiedTaskItem) -> Void)?,
+        onFollowupTask: ((AmberUnifiedTaskItem) -> Void)?,
+        onDismissPanel: (() -> Void)?,
+        onSelectCloudTask: ((String) -> Void)? = nil
+    ) {
+        switch item.destination {
+        case .cloudTaskDetail(let requestId):
+            onSelectCloudTask?(requestId)
+        case .subAgentConversation, .executionRecord, .wakeConversation, .cloudDialogueWorkItem, .gatewayBoard:
+            onDismissPanel?()
+            onOpenTask?(item)
+        case .none:
+            onDismissPanel?()
+            if let onFollowupTask {
+                onFollowupTask(item)
+            } else {
+                onOpenTask?(item)
+            }
+        }
+    }
+}
+
+private struct AmberDuetTaskCenterEquatableBody: View, Equatable {
+    let gateway: MacGatewayStore
+    let subAgentStore: IOSSubAgentActivityStore
+    let taskStore: IOSAdvancedTaskStore
+    let wakeStore: IOSWakeTaskStore
+    let hubStore: AmberHubStore
+    let intentInboxStore: AmberIntentInboxStore
+    let isEmbeddedInModalSheet: Bool
+    let actions: AmberDuetTaskCenterActionBox
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.gateway === rhs.gateway
+            && lhs.subAgentStore === rhs.subAgentStore
+            && lhs.taskStore === rhs.taskStore
+            && lhs.wakeStore === rhs.wakeStore
+            && lhs.hubStore === rhs.hubStore
+            && lhs.intentInboxStore === rhs.intentInboxStore
+            && lhs.isEmbeddedInModalSheet == rhs.isEmbeddedInModalSheet
+            && lhs.actions === rhs.actions
+    }
+
+    var body: some View {
+        AmberDuetTaskCenterCardContent(
+            gateway: gateway,
+            subAgentStore: subAgentStore,
+            taskStore: taskStore,
+            wakeStore: wakeStore,
+            hubStore: hubStore,
+            intentInboxStore: intentInboxStore,
+            isEmbeddedInModalSheet: isEmbeddedInModalSheet,
+            actions: actions
+        )
+    }
+}
+
+private struct AmberDuetTaskCenterCardContent: View {
+    let gateway: MacGatewayStore
+    let subAgentStore: IOSSubAgentActivityStore
+    let taskStore: IOSAdvancedTaskStore
+    let wakeStore: IOSWakeTaskStore
+    let hubStore: AmberHubStore
+    let intentInboxStore: AmberIntentInboxStore
+    let isEmbeddedInModalSheet: Bool
+    let actions: AmberDuetTaskCenterActionBox
+
+    private var onOpenFullTaskBoard: () -> Void { actions.onOpenFullTaskBoard }
+    private var onOpenTask: ((AmberUnifiedTaskItem) -> Void)? { actions.onOpenTask }
+    private var onFollowupTask: ((AmberUnifiedTaskItem) -> Void)? { actions.onFollowupTask }
+    private var onDismissPanel: (() -> Void)? { actions.onDismissPanel }
+    private var onHeaderDragChanged: ((DragGesture.Value) -> Void)? { actions.onHeaderDragChanged }
+    private var onHeaderDragEnded: ((DragGesture.Value) -> Void)? { actions.onHeaderDragEnded }
+
+    private static var initialRecentPreviewCount: Int { AmberDuetTaskCenterCard.initialRecentPreviewCount }
 
     @State private var selectedHubFilterId: String? = nil
     @State private var isRecentExpanded: Bool = false
@@ -1001,85 +1291,16 @@ struct AmberDuetTaskCenterCard: View {
         }
     }
 
-    func handleQuickDecision(_ decision: AmberTaskQuickDecision, for item: AmberUnifiedTaskItem) async {
-        if decision.kind == .openDetail || decision.kind == .confirmApproval {
-            openDestinationDirectly(item)
-            return
-        }
-        if case .gatewayBoardItem = item.source {
-            openDestinationDirectly(item)
-            return
-        }
-        if case .gatewaySchedule = item.source {
-            openDestinationDirectly(item)
-            return
-        }
-        if decision.kind == .retry {
-            switch item.source {
-            case .cloudTask(let requestId):
-                if let record = gateway.cloudTasks.first(where: { $0.requestId == requestId }),
-                   !record.needsSubmissionRetry {
-                    openDestinationDirectly(item)
-                } else {
-                    _ = await gateway.retryCloudTask(requestId: requestId)
-                }
-                return
-            default:
-                if item.destination != .none {
-                    openDestinationDirectly(item)
-                    return
-                }
-            }
-        }
-        if decision.kind == .approveAndContinue {
-            switch item.source {
-            case .cloudTask(let requestId):
-                if let record = gateway.cloudTasks.first(where: { $0.requestId == requestId }),
-                   let workItemId = record.workItemId,
-                   !record.isTerminal {
-                    let text = decision.followupInstruction ?? decision.title
-                    let result = await gateway.sendCloudWorkItemInput(workItemId: workItemId, text: text)
-                    if case .success = result {
-                        await gateway.refreshCloudTask(workItemId: workItemId)
-                    }
-                } else {
-                    openDestinationDirectly(item)
-                }
-                return
-            case .cloudDialogueWorkItem(let workItemId):
-                guard gateway.cloudDialogueProgressByWorkItem[workItemId]?.outcome == nil else {
-                    openDestinationDirectly(item)
-                    return
-                }
-                let text = decision.followupInstruction ?? decision.title
-                _ = await gateway.sendCloudWorkItemInput(workItemId: workItemId, text: text)
-                return
-            case .localSubAgent, .executionRecord:
-                if item.destination != .none {
-                    openDestinationDirectly(item.applyingQuickDecision(decision))
-                    return
-                }
-            default:
-                break
-            }
-        }
-        if decision.kind == .adjustDirection {
-            switch item.source {
-            case .localSubAgent, .executionRecord, .cloudDialogueWorkItem:
-                if item.destination != .none {
-                    openDestinationDirectly(item.applyingQuickDecision(decision))
-                    return
-                }
-            default:
-                break
-            }
-        }
-        let updated = item.applyingQuickDecision(decision)
-        if let onFollowupTask {
-            onDismissPanel?()
-            onFollowupTask(updated)
-        } else {
-            openDestinationDirectly(updated)
+    private func handleQuickDecision(_ decision: AmberTaskQuickDecision, for item: AmberUnifiedTaskItem) async {
+        await AmberDuetTaskCenterCard.handleQuickDecision(
+            decision,
+            for: item,
+            gateway: gateway,
+            onOpenTask: onOpenTask,
+            onFollowupTask: onFollowupTask,
+            onDismissPanel: onDismissPanel
+        ) { requestId in
+            selectedCloudTask = AmberCloudTaskSelection(requestId: requestId)
         }
     }
 
@@ -1102,19 +1323,13 @@ struct AmberDuetTaskCenterCard: View {
     }
 
     private func openDestinationDirectly(_ item: AmberUnifiedTaskItem) {
-        switch item.destination {
-        case .cloudTaskDetail(let requestId):
+        AmberDuetTaskCenterCard.openDestinationDirectly(
+            item,
+            onOpenTask: onOpenTask,
+            onFollowupTask: onFollowupTask,
+            onDismissPanel: onDismissPanel
+        ) { requestId in
             selectedCloudTask = AmberCloudTaskSelection(requestId: requestId)
-        case .subAgentConversation, .executionRecord, .wakeConversation, .cloudDialogueWorkItem, .gatewayBoard:
-            onDismissPanel?()
-            onOpenTask?(item)
-        case .none:
-            onDismissPanel?()
-            if let onFollowupTask {
-                onFollowupTask(item)
-            } else {
-                onOpenTask?(item)
-            }
         }
     }
 
@@ -1328,7 +1543,22 @@ struct AmberDuetTaskCenterSheet: View {
 
 // MARK: - 03 Argon Hubs Panel Card & Sheet (Iconless Typography + Collapsed Smart Collections)
 
-struct AmberDuetHubsCard: View {
+@MainActor
+private final class AmberDuetHubsActionBox {
+    var onSelectHub: ((AmberHubItem) -> Void)? = nil
+    var onDismissPanel: (() -> Void)? = nil
+    var onHeaderDragChanged: ((DragGesture.Value) -> Void)? = nil
+    var onHeaderDragEnded: ((DragGesture.Value) -> Void)? = nil
+
+    func update(from card: AmberDuetHubsCard) {
+        onSelectHub = card.onSelectHub
+        onDismissPanel = card.onDismissPanel
+        onHeaderDragChanged = card.onHeaderDragChanged
+        onHeaderDragEnded = card.onHeaderDragEnded
+    }
+}
+
+struct AmberDuetHubsCard: View, Equatable {
     var hubStore: AmberHubStore = .shared
     let conversationStore: IOSConversationStore
     let gateway: MacGatewayStore
@@ -1340,20 +1570,91 @@ struct AmberDuetHubsCard: View {
     var onHeaderDragChanged: ((DragGesture.Value) -> Void)? = nil
     var onHeaderDragEnded: ((DragGesture.Value) -> Void)? = nil
 
+    @State private var actionBox = AmberDuetHubsActionBox()
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.hubStore === rhs.hubStore
+            && lhs.conversationStore === rhs.conversationStore
+            && lhs.gateway === rhs.gateway
+            && lhs.subAgentStore === rhs.subAgentStore
+            && lhs.taskStore === rhs.taskStore
+            && lhs.wakeStore === rhs.wakeStore
+    }
+
+    var body: some View {
+        let _ = actionBox.update(from: self)
+        AmberDuetHubsEquatableBody(
+            hubStore: hubStore,
+            conversationStore: conversationStore,
+            gateway: gateway,
+            subAgentStore: subAgentStore,
+            taskStore: taskStore,
+            wakeStore: wakeStore,
+            actions: actionBox
+        )
+        .equatable()
+    }
+}
+
+private struct AmberDuetHubsEquatableBody: View, Equatable {
+    let hubStore: AmberHubStore
+    let conversationStore: IOSConversationStore
+    let gateway: MacGatewayStore
+    let subAgentStore: IOSSubAgentActivityStore
+    let taskStore: IOSAdvancedTaskStore
+    let wakeStore: IOSWakeTaskStore
+    let actions: AmberDuetHubsActionBox
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.hubStore === rhs.hubStore
+            && lhs.conversationStore === rhs.conversationStore
+            && lhs.gateway === rhs.gateway
+            && lhs.subAgentStore === rhs.subAgentStore
+            && lhs.taskStore === rhs.taskStore
+            && lhs.wakeStore === rhs.wakeStore
+            && lhs.actions === rhs.actions
+    }
+
+    var body: some View {
+        AmberDuetHubsCardContent(
+            hubStore: hubStore,
+            conversationStore: conversationStore,
+            gateway: gateway,
+            subAgentStore: subAgentStore,
+            taskStore: taskStore,
+            wakeStore: wakeStore,
+            actions: actions
+        )
+    }
+}
+
+private struct AmberDuetHubsCardContent: View {
+    let hubStore: AmberHubStore
+    let conversationStore: IOSConversationStore
+    let gateway: MacGatewayStore
+    let subAgentStore: IOSSubAgentActivityStore
+    let taskStore: IOSAdvancedTaskStore
+    let wakeStore: IOSWakeTaskStore
+    let actions: AmberDuetHubsActionBox
+
+    private var onSelectHub: ((AmberHubItem) -> Void)? { actions.onSelectHub }
+    private var onDismissPanel: (() -> Void)? { actions.onDismissPanel }
+    private var onHeaderDragChanged: ((DragGesture.Value) -> Void)? { actions.onHeaderDragChanged }
+    private var onHeaderDragEnded: ((DragGesture.Value) -> Void)? { actions.onHeaderDragEnded }
+
     @State private var isSmartCollectionsExpanded: Bool = false
     @State private var isShowingCreateHubForm: Bool = false
     @State private var newHubTitle: String = ""
     @State private var newHubMemoryPolicy: AmberHubMemoryPolicy = .sharedWithGlobal
 
-    private var allActiveTasks: [AmberUnifiedTaskItem] {
-        let grouped = AmberUnifiedTaskBuilder.buildTasks(
+    private var hubActiveTaskSummary: AmberUnifiedTaskBuilder.HubActiveTaskSummary {
+        AmberUnifiedTaskBuilder.hubActiveTaskSummary(
             gateway: gateway,
             subAgentStore: subAgentStore,
             taskStore: taskStore,
             wakeStore: wakeStore,
             hubStore: hubStore
         )
-        return grouped.needsAttention + grouped.running
     }
 
     var body: some View {
@@ -1405,10 +1706,10 @@ struct AmberDuetHubsCard: View {
                                 .padding(16)
                                 .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         } else {
-                            let activeTasks = ChatRenderProbe.measureUs("us:panel-hubs-tasks") { allActiveTasks }
+                            let activeTaskSummary = ChatRenderProbe.measureUs("us:panel-hubs-tasks") { hubActiveTaskSummary }
                             // Pure-typography Hub cards (No left category icon boxes)
                             ForEach(hubStore.hubs) { hub in
-                                hubRowCard(hub, activeTasks: activeTasks)
+                                hubRowCard(hub, activeTaskSummary: activeTaskSummary)
                             }
                         }
 
@@ -1508,11 +1809,14 @@ struct AmberDuetHubsCard: View {
         .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    private func hubRowCard(_ hub: AmberHubItem, activeTasks: [AmberUnifiedTaskItem]) -> some View {
+    private func hubRowCard(
+        _ hub: AmberHubItem,
+        activeTaskSummary: AmberUnifiedTaskBuilder.HubActiveTaskSummary
+    ) -> some View {
         let isCurrent = hubStore.activeHubId == hub.id
         let subtitle = hubStore.subtitle(
             for: hub,
-            activeTasks: activeTasks
+            activeTaskSummary: activeTaskSummary
         )
         return Button {
             hubStore.selectHub(hub.id)

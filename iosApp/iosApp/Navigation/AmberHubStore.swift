@@ -647,8 +647,35 @@ final class AmberHubStore {
         } else {
             hubTasks = activeTasks.filter { $0.hubId == hub.id || (hub.id == activeHubId && $0.hubId == nil) }
         }
-        let runningCount = hubTasks.filter { $0.phase == .running || $0.phase == .needsAttention }.count
+        let activeHubTasks = hubTasks.filter { $0.phase == .running || $0.phase == .needsAttention }
+        let hasCloud = activeHubTasks.contains {
+            switch $0.source {
+            case .cloudTask, .cloudDialogueWorkItem:
+                return true
+            default:
+                return $0.subtitle.contains("云端")
+            }
+        }
+        return formattedSubtitle(for: hub, runningCount: activeHubTasks.count, hasCloud: hasCloud)
+    }
 
+    /// Lightweight subtitle path consuming pre-aggregated `hub + phase` stats instead of full task cards.
+    func subtitle(
+        for hub: AmberHubItem,
+        activeTaskSummary: AmberUnifiedTaskBuilder.HubActiveTaskSummary
+    ) -> String {
+        if let override = hub.statusSummaryOverride, !override.isEmpty {
+            return override
+        }
+        let stats = activeTaskSummary.activeStats(for: hub, activeHubId: activeHubId)
+        return formattedSubtitle(for: hub, runningCount: stats.count, hasCloud: stats.hasCloud)
+    }
+
+    private func formattedSubtitle(
+        for hub: AmberHubItem,
+        runningCount: Int,
+        hasCloud: Bool
+    ) -> String {
         if hub.memoryPolicy == .hubIsolated {
             if runningCount > 0 {
                 return "\(hub.memoryPolicy.shortBadgeTitle) · \(runningCount) 项任务"
@@ -669,14 +696,6 @@ final class AmberHubStore {
         }
 
         if runningCount > 0 {
-            let hasCloud = hubTasks.contains {
-                switch $0.source {
-                case .cloudTask, .cloudDialogueWorkItem:
-                    return true
-                default:
-                    return $0.subtitle.contains("云端")
-                }
-            }
             parts.append(hasCloud ? "\(runningCount) 项云端运行中" : "\(runningCount) 项任务")
         } else if !hub.taskIds.isEmpty {
             parts.append("\(hub.taskIds.count) 项任务")
@@ -806,6 +825,41 @@ enum AmberUnifiedTaskBuilder {
         }
     }
 
+    /// Lightweight per-Hub active (`needsAttention` + `running`) counts used by `AmberDuetHubsCard`
+    /// subtitles without constructing full `AmberUnifiedTaskItem` cards or parsing Markdown summaries.
+    struct HubActiveTaskSummary: Equatable, Sendable {
+        struct Bucket: Equatable, Sendable {
+            var count: Int = 0
+            var hasCloud: Bool = false
+
+            mutating func record(isCloud: Bool) {
+                count += 1
+                if isCloud { hasCloud = true }
+            }
+        }
+
+        var byHubId: [String: Bucket] = [:]
+        var unbound: Bucket = Bucket()
+
+        mutating func record(phase: AmberUnifiedTaskPhase, hubId: String?, isCloud: Bool) {
+            guard phase == .running || phase == .needsAttention else { return }
+            if let hubId {
+                byHubId[hubId, default: Bucket()].record(isCloud: isCloud)
+            } else {
+                unbound.record(isCloud: isCloud)
+            }
+        }
+
+        func activeStats(for hub: AmberHubItem, activeHubId: String?) -> Bucket {
+            var result = byHubId[hub.id] ?? Bucket()
+            if hub.memoryPolicy != .hubIsolated && hub.id == activeHubId {
+                result.count += unbound.count
+                result.hasCloud = result.hasCloud || unbound.hasCloud
+            }
+            return result
+        }
+    }
+
     private struct CloudDialogueEventIndex {
         var directEventsByWorkItemId: [String: [MacGatewayCloudDialogueEvent]] = [:]
         var firstTopicUserTextByTopicId: [String: String] = [:]
@@ -834,12 +888,6 @@ enum AmberUnifiedTaskBuilder {
             return false
         }
         return structuredDecision(in: initialTrimmed) ?? containsDecisionMarker(trimmedRaw)
-    }
-
-    private static func sanitizedDialogueTaskText(_ text: String) -> String {
-        IOSContextCompactionFidelity.redactCredentials(
-            IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope(text)
-        )
     }
 
     private static func needsDecisionLazy(metadata: [String: String], fallback: () -> Bool) -> Bool {
@@ -996,6 +1044,31 @@ enum AmberUnifiedTaskBuilder {
     }
 
     @MainActor
+    static func hubActiveTaskSummary(
+        gateway: MacGatewayStore,
+        subAgentStore: IOSSubAgentActivityStore,
+        taskStore: IOSAdvancedTaskStore = .shared,
+        wakeStore: IOSWakeTaskStore = .shared,
+        hubStore: AmberHubStore
+    ) -> HubActiveTaskSummary {
+        ChatRenderProbe.record("task-hub-active-summary")
+        return ChatRenderProbe.measureUs("us:task-hub-active-summary") {
+            var summary = HubActiveTaskSummary()
+            enumerateTaskPhases(
+                gateway: gateway,
+                subAgentStore: subAgentStore,
+                taskStore: taskStore,
+                wakeStore: wakeStore,
+                hubStore: hubStore
+            ) { phase, isCloud, resolveHubId in
+                guard phase == .running || phase == .needsAttention else { return }
+                summary.record(phase: phase, hubId: resolveHubId(), isCloud: isCloud)
+            }
+            return summary
+        }
+    }
+
+    @MainActor
     private static func badgeCountsUnprobed(
         gateway: MacGatewayStore,
         subAgentStore: IOSSubAgentActivityStore,
@@ -1003,6 +1076,27 @@ enum AmberUnifiedTaskBuilder {
         wakeStore: IOSWakeTaskStore
     ) -> BadgeCounts {
         var counts = BadgeCounts()
+        enumerateTaskPhases(
+            gateway: gateway,
+            subAgentStore: subAgentStore,
+            taskStore: taskStore,
+            wakeStore: wakeStore,
+            hubStore: nil
+        ) { phase, _, _ in
+            counts.record(phase)
+        }
+        return counts
+    }
+
+    @MainActor
+    private static func enumerateTaskPhases(
+        gateway: MacGatewayStore,
+        subAgentStore: IOSSubAgentActivityStore,
+        taskStore: IOSAdvancedTaskStore,
+        wakeStore: IOSWakeTaskStore,
+        hubStore: AmberHubStore?,
+        visit: (_ phase: AmberUnifiedTaskPhase, _ isCloud: Bool, _ resolveHubId: () -> String?) -> Void
+    ) {
         var seenIdentities = Set<String>()
 
         // 1. Cloud work items (/v2/work-items).
@@ -1019,13 +1113,18 @@ enum AmberUnifiedTaskBuilder {
                 return Self.structuredDecision(in: rawResult)
                     ?? (Self.textNeedsDecision(rawResult ?? progressText) || Self.textNeedsDecision(progressText))
             }
-            counts.record(phase)
+            visit(phase, true) {
+                hubStore?.resolvedHubId(
+                    taskIds: [record.requestId, "cloud:\(record.requestId)"] + (record.workItemId.map { [$0] } ?? [])
+                )
+            }
         }
 
         // 1b. Cloud & Mac dialogue delegated WorkItems (/v2/dialogue/*).
         let remoteSlots: [MacGatewayStore] = [gateway] + (gateway.macSlot?.connection != nil ? [gateway.macSlot!] : [])
         for slot in remoteSlots {
             let isMacSlot = slot !== gateway && slot.endpointRole == .mac
+            let idPrefix = isMacSlot ? "mac-dialogue" : "cloud-dialogue"
             let gatewayScope = slot.connection?.gatewayId ?? (isMacSlot ? "mac-unpaired" : "unpaired")
             var latestResultEventByWorkItemId: [String: MacGatewayCloudDialogueEvent]? = nil
 
@@ -1058,7 +1157,11 @@ enum AmberUnifiedTaskBuilder {
                     }
                     return Self.textNeedsDecision(latestText ?? sanitizedDialogueTaskText(progress.statusLine))
                 }
-                counts.record(phase)
+                visit(phase, !isMacSlot) {
+                    hubStore?.resolvedHubId(
+                        taskIds: [workItemId, "\(idPrefix):\(workItemId)"]
+                    )
+                }
             }
         }
 
@@ -1077,7 +1180,22 @@ enum AmberUnifiedTaskBuilder {
                         ?? (Self.textNeedsDecision(outcome ?? item.statusDetail) || Self.textNeedsDecision(item.statusDetail))
                 }
             }
-            counts.record(phase)
+            visit(phase, false) {
+                let childConvId = item.taskId.hasPrefix("thread:")
+                    ? String(item.taskId.dropFirst("thread:".count))
+                    : nil
+                return hubStore?.resolvedHubId(
+                    explicitHubIds: [backingRecord?.metadata["hub_id"]].compactMap { $0 },
+                    conversationIds: [
+                        item.sourceConversationId,
+                        backingRecord?.metadata["source_conversation_id"],
+                        backingRecord?.metadata["conversation_id"],
+                        backingRecord?.metadata["child_conversation_id"],
+                        childConvId
+                    ].compactMap { $0 },
+                    taskIds: [item.id, item.taskId, "subagent:\(item.id)"]
+                )
+            }
         }
 
         // 3. Other durable background executions owned by IOSAdvancedTaskStore.
@@ -1098,7 +1216,16 @@ enum AmberUnifiedTaskBuilder {
                     Self.textNeedsDecision(outcome)
                 }
             }
-            counts.record(phase)
+            visit(phase, false) {
+                hubStore?.resolvedHubId(
+                    explicitHubIds: [record.metadata["hub_id"]].compactMap { $0 },
+                    conversationIds: [
+                        record.metadata["source_conversation_id"],
+                        record.metadata["conversation_id"]
+                    ].compactMap { $0 },
+                    taskIds: [record.id, "exec:\(record.id)"]
+                )
+            }
         }
 
         // 4. iOS-local scheduled and event-driven monitoring work.
@@ -1107,7 +1234,12 @@ enum AmberUnifiedTaskBuilder {
             let phase = Self.wakeTaskPhase(task: task) {
                 Self.textNeedsDecision(task.resultText ?? task.lastMessage)
             }
-            counts.record(phase)
+            visit(phase, false) {
+                hubStore?.resolvedHubId(
+                    conversationIds: [task.conversationID],
+                    taskIds: [task.id, "wake:\(task.id)"]
+                )
+            }
         }
 
         // 5 & 6. Gateway-owned schedules and board runs across paired Cloud + Mac slots.
@@ -1119,7 +1251,10 @@ enum AmberUnifiedTaskBuilder {
             for schedule in slot.schedules ?? [] {
                 let scheduleItemId = "\(schedulePrefix):\(schedule.id)"
                 guard seenIdentities.insert(scheduleItemId).inserted else { continue }
-                counts.record(Self.schedulePhase(running: schedule.running, enabled: schedule.enabled))
+                let phase = Self.schedulePhase(running: schedule.running, enabled: schedule.enabled)
+                visit(phase, !isMacSlot && schedule.enabled) {
+                    hubStore?.resolvedHubId(taskIds: [schedule.id, scheduleItemId])
+                }
             }
 
             let knownScheduleIds = Set((slot.schedules ?? []).map(\.id))
@@ -1134,11 +1269,11 @@ enum AmberUnifiedTaskBuilder {
                 let phase = Self.boardItemPhase(item: boardItem) {
                     Self.textNeedsDecision(boardItem.detail)
                 }
-                counts.record(phase)
+                visit(phase, !isMacSlot) {
+                    hubStore?.resolvedHubId(taskIds: [boardItem.id, boardItemId])
+                }
             }
         }
-
-        return counts
     }
 
     @MainActor
@@ -1294,7 +1429,7 @@ enum AmberUnifiedTaskBuilder {
                 let rawTitleSource = directEvents.first(where: { $0.kind == .userMessage })?.text
                     ?? (progress.topicId.isEmpty ? nil : eventIndex.firstTopicUserTextByTopicId[progress.topicId])
                 let cleanUserLine = rawTitleSource
-                    .map { IOSContextCompactionFidelity.redactCredentials($0) }?
+                    .map(Self.redactedDialogueTaskTitleSource)?
                     .components(separatedBy: .newlines)
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                     .first(where: { !$0.isEmpty })

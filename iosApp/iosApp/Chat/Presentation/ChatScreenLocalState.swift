@@ -1,5 +1,73 @@
+import Observation
 import SwiftUI
 import PhotosUI
+
+/// Leaf-owned drag offset for inline Duet panels (`任务` / `中心`) so 60–120Hz
+/// vertical drag updates only invalidate the offset modifier instead of `ChatView.body`.
+@MainActor
+@Observable
+final class InlineDuetPanelDragState {
+    var offsetY: CGFloat = 0
+
+    func update(translation: CGSize) {
+        let updated = ChatSheetDismissSmoothnessPolicy.updatedInlineDuetPanelDragOffsetY(
+            currentOffsetY: offsetY,
+            translation: translation
+        )
+        if updated != offsetY {
+            offsetY = updated
+        }
+    }
+
+    func end(
+        translationY: CGFloat,
+        predictedEndTranslationY: CGFloat,
+        onDismiss: () -> Void
+    ) {
+        let shouldDismiss = ChatSheetDismissSmoothnessPolicy.shouldDismissInlineDuetPanel(
+            translationY: translationY,
+            predictedEndTranslationY: predictedEndTranslationY
+        )
+        withAnimation(.snappy(duration: 0.22)) {
+            offsetY = 0
+            if shouldDismiss {
+                onDismiss()
+            }
+        }
+    }
+
+    func cancel() {
+        withAnimation(.snappy(duration: 0.22)) {
+            offsetY = 0
+        }
+    }
+}
+
+struct InlineDuetPanelDragOffsetModifier: ViewModifier {
+    let dragState: InlineDuetPanelDragState
+
+    func body(content: Content) -> some View {
+        content.offset(y: max(0, dragState.offsetY))
+    }
+}
+
+struct InlineDuetPanelDragScope<Content: View>: View {
+    @State private var dragState: InlineDuetPanelDragState
+    private let content: (InlineDuetPanelDragState) -> Content
+
+    init(
+        dragState: InlineDuetPanelDragState = InlineDuetPanelDragState(),
+        @ViewBuilder content: @escaping (InlineDuetPanelDragState) -> Content
+    ) {
+        self._dragState = State(initialValue: dragState)
+        self.content = content
+    }
+
+    var body: some View {
+        content(dragState)
+            .modifier(InlineDuetPanelDragOffsetModifier(dragState: dragState))
+    }
+}
 
 /// Composer focus, approval geometry, and panel presentation.
 struct ChatComposerLocalState {
@@ -18,7 +86,6 @@ struct ChatComposerLocalState {
 
     // Argon 3+1 Mode & In-Place Background Handoff State
     var activeDuetTab: AmberDuetModeTab = .chat
-    var inlineDuetPanelDragOffsetY: CGFloat = 0
     var isBackgroundHandoffMode = false
     var handoffExecutionTarget: AmberHandoffExecutionTarget = .cloud
     var handoffSelectedCloudAgentId: String = "main"

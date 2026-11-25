@@ -179,113 +179,107 @@ extension ChatView {
                                 topTrailingRadius: 28,
                                 style: .continuous
                             )
-                            let handlePanelDragTranslationChanged: (CGSize) -> Void = { translation in
-                                composerState.inlineDuetPanelDragOffsetY = ChatSheetDismissSmoothnessPolicy.updatedInlineDuetPanelDragOffsetY(
-                                    currentOffsetY: composerState.inlineDuetPanelDragOffsetY,
-                                    translation: translation
-                                )
-                            }
-                            let handlePanelDragTranslationEnded: (CGFloat, CGFloat) -> Void = { translationY, predictedEndTranslationY in
-                                let shouldDismiss = ChatSheetDismissSmoothnessPolicy.shouldDismissInlineDuetPanel(
-                                    translationY: translationY,
-                                    predictedEndTranslationY: predictedEndTranslationY
-                                )
-                                withAnimation(.snappy(duration: 0.22)) {
-                                    composerState.inlineDuetPanelDragOffsetY = 0
-                                    if shouldDismiss {
+                            InlineDuetPanelDragScope { dragState in
+                                let handlePanelDragTranslationChanged: (CGSize) -> Void = { translation in
+                                    dragState.update(translation: translation)
+                                }
+                                let handlePanelDragTranslationEnded: (CGFloat, CGFloat) -> Void = { translationY, predictedEndTranslationY in
+                                    dragState.end(
+                                        translationY: translationY,
+                                        predictedEndTranslationY: predictedEndTranslationY
+                                    ) {
                                         composerState.activeDuetTab = .chat
                                     }
                                 }
-                            }
-                            let handlePanelDragCancelled: () -> Void = {
-                                withAnimation(.snappy(duration: 0.22)) {
-                                    composerState.inlineDuetPanelDragOffsetY = 0
+                                let handlePanelDragCancelled: () -> Void = {
+                                    dragState.cancel()
                                 }
-                            }
-                            let handleHeaderDragChanged: (DragGesture.Value) -> Void = { value in
-                                handlePanelDragTranslationChanged(value.translation)
-                            }
-                            let handleHeaderDragEnded: (DragGesture.Value) -> Void = { value in
-                                handlePanelDragTranslationEnded(
-                                    value.translation.height,
-                                    value.predictedEndTranslation.height
-                                )
-                            }
+                                let handleHeaderDragChanged: (DragGesture.Value) -> Void = { value in
+                                    handlePanelDragTranslationChanged(value.translation)
+                                }
+                                let handleHeaderDragEnded: (DragGesture.Value) -> Void = { value in
+                                    handlePanelDragTranslationEnded(
+                                        value.translation.height,
+                                        value.predictedEndTranslation.height
+                                    )
+                                }
 
-                            VStack(alignment: .leading, spacing: 0) {
-                                if composerState.activeDuetTab == .tasks {
-                                    AmberDuetTaskCenterCard(
-                                        gateway: MacGatewayStore.shared,
-                                        subAgentStore: activityStore,
-                                        hubStore: AmberHubStore.shared,
-                                        onOpenFullTaskBoard: {
-                                            composerState.activeDuetTab = .chat
-                                            router.navigate(to: .macTasks)
-                                        },
-                                        onOpenTask: { task in
-                                            composerState.activeDuetTab = .chat
-                                            openUnifiedTask(task)
-                                        },
-                                        onFollowupTask: { task in
-                                            withAnimation(.snappy(duration: 0.22)) {
-                                                followupTaskInChat(task)
-                                            }
-                                        },
-                                        onDismissPanel: {
-                                            withAnimation(.snappy(duration: 0.22)) {
+                                VStack(alignment: .leading, spacing: 0) {
+                                    if composerState.activeDuetTab == .tasks {
+                                        AmberDuetTaskCenterCard(
+                                            gateway: MacGatewayStore.shared,
+                                            subAgentStore: activityStore,
+                                            hubStore: AmberHubStore.shared,
+                                            onOpenFullTaskBoard: {
                                                 composerState.activeDuetTab = .chat
-                                            }
-                                        },
-                                        onHeaderDragChanged: handleHeaderDragChanged,
-                                        onHeaderDragEnded: handleHeaderDragEnded
-                                    )
-                                } else if composerState.activeDuetTab == .hubs {
-                                    AmberDuetHubsCard(
-                                        hubStore: AmberHubStore.shared,
-                                        conversationStore: conversationStore,
-                                        gateway: MacGatewayStore.shared,
-                                        subAgentStore: activityStore,
-                                        onSelectHub: { _ in
-                                            syncIslandPresentation()
-                                        },
-                                        onDismissPanel: {
-                                            withAnimation(.snappy(duration: 0.22)) {
+                                                router.navigate(to: .macTasks)
+                                            },
+                                            onOpenTask: { task in
                                                 composerState.activeDuetTab = .chat
-                                            }
-                                        },
-                                        onHeaderDragChanged: handleHeaderDragChanged,
-                                        onHeaderDragEnded: handleHeaderDragEnded
-                                    )
-                                }
-                            }
-                            .padding(.bottom, 64)
-                            .frame(maxWidth: .infinity)
-                            .frame(maxHeight: panelHeight, alignment: .top)
-                            .background {
-                                #if DEBUG
-                                if ChatTopBarLayout.onPanelFrameForTesting != nil {
-                                    Color.clear.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
-                                        ChatTopBarLayout.onPanelFrameForTesting?($0)
+                                                openUnifiedTask(task)
+                                            },
+                                            onFollowupTask: { task in
+                                                withAnimation(.snappy(duration: 0.22)) {
+                                                    followupTaskInChat(task)
+                                                }
+                                            },
+                                            onDismissPanel: {
+                                                withAnimation(.snappy(duration: 0.22)) {
+                                                    composerState.activeDuetTab = .chat
+                                                }
+                                            },
+                                            onHeaderDragChanged: handleHeaderDragChanged,
+                                            onHeaderDragEnded: handleHeaderDragEnded
+                                        )
+                                        .equatable()
+                                    } else if composerState.activeDuetTab == .hubs {
+                                        AmberDuetHubsCard(
+                                            hubStore: AmberHubStore.shared,
+                                            conversationStore: conversationStore,
+                                            gateway: MacGatewayStore.shared,
+                                            subAgentStore: activityStore,
+                                            onSelectHub: { _ in
+                                                syncIslandPresentation()
+                                            },
+                                            onDismissPanel: {
+                                                withAnimation(.snappy(duration: 0.22)) {
+                                                    composerState.activeDuetTab = .chat
+                                                }
+                                            },
+                                            onHeaderDragChanged: handleHeaderDragChanged,
+                                            onHeaderDragEnded: handleHeaderDragEnded
+                                        )
+                                        .equatable()
                                     }
                                 }
-                                #endif
-                            }
-                            .clipShape(panelShape)
-                            .background(AmberTheme.background, in: panelShape)
-                            .overlay {
-                                // The dock continues into the safe area; its lower edge is open.
-                                panelShape.stroke(AmberTheme.border, lineWidth: 0.8)
-                                    .mask { Rectangle().padding(.bottom, 0.8) }
-                                    .allowsHitTesting(false)
-                            }
-                            .modifier(
-                                AmberInlinePanelDragCallbacksHost(
-                                    onChanged: handlePanelDragTranslationChanged,
-                                    onEnded: handlePanelDragTranslationEnded,
-                                    onCancelled: handlePanelDragCancelled
+                                .padding(.bottom, 64)
+                                .frame(maxWidth: .infinity)
+                                .frame(maxHeight: panelHeight, alignment: .top)
+                                .background {
+                                    #if DEBUG
+                                    if ChatTopBarLayout.onPanelFrameForTesting != nil {
+                                        Color.clear.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                                            ChatTopBarLayout.onPanelFrameForTesting?($0)
+                                        }
+                                    }
+                                    #endif
+                                }
+                                .clipShape(panelShape)
+                                .background(AmberTheme.background, in: panelShape)
+                                .overlay {
+                                    // The dock continues into the safe area; its lower edge is open.
+                                    panelShape.stroke(AmberTheme.border, lineWidth: 0.8)
+                                        .mask { Rectangle().padding(.bottom, 0.8) }
+                                        .allowsHitTesting(false)
+                                }
+                                .modifier(
+                                    AmberInlinePanelDragCallbacksHost(
+                                        onChanged: handlePanelDragTranslationChanged,
+                                        onEnded: handlePanelDragTranslationEnded,
+                                        onCancelled: handlePanelDragCancelled
+                                    )
                                 )
-                            )
-                            .offset(y: max(0, composerState.inlineDuetPanelDragOffsetY))
+                            }
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                         }
 

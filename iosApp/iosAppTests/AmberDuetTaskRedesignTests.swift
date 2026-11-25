@@ -2147,4 +2147,538 @@ final class AmberDuetTaskRedesignTests: XCTestCase {
             AmberHubStore(defaults: defaults)
         )
     }
+
+    // MARK: - Wave 3-A3: Leaf Drag Isolation, Sanitization LRU Cache, Lightweight Hub Subtitles & Panel Equatable
+
+    @MainActor
+    func testInlineDuetPanelDragScopeIsolatesParentAndPanelCardsFromDragFrames() async throws {
+        try await withTaskProjectionStoresAsync { gateway, tasks, activity, wake, hub in
+            struct DragIsolationHarness: View {
+                let dragState: InlineDuetPanelDragState
+                let gateway: MacGatewayStore
+                let activity: IOSSubAgentActivityStore
+                let tasks: IOSAdvancedTaskStore
+                let wake: IOSWakeTaskStore
+                let hub: AmberHubStore
+
+                var body: some View {
+                    let _ = ChatRenderProbe.record("drag-harness-parent-body")
+                    InlineDuetPanelDragScope(dragState: dragState) { state in
+                        let _ = ChatRenderProbe.record("drag-harness-scope-content")
+                        AmberDuetTaskCenterCard(
+                            gateway: gateway,
+                            subAgentStore: activity,
+                            taskStore: tasks,
+                            wakeStore: wake,
+                            hubStore: hub,
+                            onOpenFullTaskBoard: {},
+                            onHeaderDragChanged: { state.update(translation: $0.translation) },
+                            onHeaderDragEnded: {
+                                state.end(
+                                    translationY: $0.translation.height,
+                                    predictedEndTranslationY: $0.predictedEndTranslation.height,
+                                    onDismiss: {}
+                                )
+                            }
+                        )
+                        .equatable()
+                    }
+                }
+            }
+
+            let dragState = InlineDuetPanelDragState()
+            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+            let window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: 393, height: 520)
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+
+            let host = UIHostingController(rootView: DragIsolationHarness(
+                dragState: dragState,
+                gateway: gateway,
+                activity: activity,
+                tasks: tasks,
+                wake: wake,
+                hub: hub
+            ))
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(80))
+
+            let prevProbe = ChatRenderProbe.enabled
+            ChatRenderProbe.enabled = true
+            ChatRenderProbe.reset()
+            defer { ChatRenderProbe.enabled = prevProbe }
+
+            // 模拟 10 帧垂直下拉拖动 + 回弹取消
+            for step in 1...10 {
+                dragState.update(translation: CGSize(width: 2, height: CGFloat(step * 12)))
+                window.layoutIfNeeded()
+                try await Task.sleep(for: .milliseconds(16))
+            }
+            XCTAssertEqual(dragState.offsetY, 120, accuracy: 0.01)
+
+            var didDismissOnSmallDrag = false
+            dragState.end(translationY: 30, predictedEndTranslationY: 40) {
+                didDismissOnSmallDrag = true
+            }
+            XCTAssertFalse(didDismissOnSmallDrag, "未越过关闭阈值松手应回弹而非关闭")
+            XCTAssertEqual(dragState.offsetY, 0, accuracy: 0.01)
+
+            var didDismissOnThreshold = false
+            dragState.update(translation: CGSize(width: 0, height: 150))
+            dragState.end(translationY: 150, predictedEndTranslationY: 220) {
+                didDismissOnThreshold = true
+            }
+            XCTAssertTrue(didDismissOnThreshold, "越过下拉阈值应触发关闭回调")
+            XCTAssertEqual(dragState.offsetY, 0, accuracy: 0.01)
+
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(30))
+
+            let parentBodies = ChatRenderProbe.counts["drag-harness-parent-body"]?.values.reduce(0, +) ?? 0
+            let scopeContents = ChatRenderProbe.counts["drag-harness-scope-content"]?.values.reduce(0, +) ?? 0
+            let panelBodies = ChatRenderProbe.counts["panel-tasks-body"]?.values.reduce(0, +) ?? 0
+            let taskBuilders = ChatRenderProbe.counts["task-builder"]?.values.reduce(0, +) ?? 0
+            XCTAssertEqual(parentBodies, 0, "拖动偏移变化不得使父视图 body 失效")
+            XCTAssertEqual(scopeContents, 0, "拖动偏移仅由叶子 modifier 读取，不得重算面板内容闭包")
+            XCTAssertEqual(panelBodies, 0, "拖动期间任务面板卡 body 不得重算")
+            XCTAssertEqual(taskBuilders, 0, "拖动期间不得触发 AmberUnifiedTaskBuilder.buildTasks")
+        }
+    }
+
+    @MainActor
+    func testSanitizedDialogueTaskTextLRUCacheMatchesDirectRedactionAndEvictsOldest() {
+        AmberUnifiedTaskBuilder.resetSanitizedDialogueTaskTextCacheForTesting()
+        let prevProbe = ChatRenderProbe.enabled
+        ChatRenderProbe.enabled = true
+        ChatRenderProbe.reset()
+        defer {
+            ChatRenderProbe.enabled = prevProbe
+            AmberUnifiedTaskBuilder.resetSanitizedDialogueTaskTextCacheForTesting()
+        }
+
+        let samples = [
+            "",
+            "普通状态更新，无需脱敏",
+            "正在使用 Authorization: Bearer sk-live-secret-99887766 访问接口",
+            #"{"structured_summary":{"formatted_summary":"已完成检查，api_key=sk-live-secret-11223344"}}"#
+        ]
+        for sample in samples {
+            let expected = IOSContextCompactionFidelity.redactCredentials(
+                IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope(sample)
+            )
+            XCTAssertEqual(AmberUnifiedTaskBuilder.sanitizedDialogueTaskText(sample), expected)
+        }
+
+        let missesAfterFirstPass = ChatRenderProbe.counts["task-dialogue-sanitize"]?.values.reduce(0, +) ?? 0
+        XCTAssertEqual(missesAfterFirstPass, 3, "空串短路，3 条非空样本各执行 1 次脱敏")
+
+        for sample in samples {
+            let expected = IOSContextCompactionFidelity.redactCredentials(
+                IOSSubAgentOutputProjection.sanitizeAssistantDisplayTextIfEnvelope(sample)
+            )
+            XCTAssertEqual(AmberUnifiedTaskBuilder.sanitizedDialogueTaskText(sample), expected)
+        }
+        let missesAfterSecondPass = ChatRenderProbe.counts["task-dialogue-sanitize"]?.values.reduce(0, +) ?? 0
+        XCTAssertEqual(missesAfterSecondPass, missesAfterFirstPass, "重复脱敏相同字符串必须命中 LRU 缓存")
+
+        // 验证有界 LRU：填满容量并刷新最早键 k0，再插入新键应淘汰未访问的 k1 而保留 k0
+        AmberUnifiedTaskBuilder.resetSanitizedDialogueTaskTextCacheForTesting()
+        ChatRenderProbe.reset()
+        let capacity = AmberUnifiedTaskBuilder.sanitizedDialogueTextCacheCapacity
+        for idx in 0..<capacity {
+            _ = AmberUnifiedTaskBuilder.sanitizedDialogueTaskText("lru-entry-\(idx)")
+        }
+        let afterFillMisses = ChatRenderProbe.counts["task-dialogue-sanitize"]?.values.reduce(0, +) ?? 0
+        XCTAssertEqual(afterFillMisses, capacity)
+
+        // 访问 k0 使其成为 MRU
+        _ = AmberUnifiedTaskBuilder.sanitizedDialogueTaskText("lru-entry-0")
+        XCTAssertEqual(ChatRenderProbe.counts["task-dialogue-sanitize"]?.values.reduce(0, +) ?? 0, afterFillMisses)
+
+        // 插入溢出键，淘汰 LRU 的 k1
+        _ = AmberUnifiedTaskBuilder.sanitizedDialogueTaskText("lru-entry-overflow")
+        XCTAssertEqual(ChatRenderProbe.counts["task-dialogue-sanitize"]?.values.reduce(0, +) ?? 0, afterFillMisses + 1)
+
+        // k0 仍在缓存中（无新增 miss）
+        _ = AmberUnifiedTaskBuilder.sanitizedDialogueTaskText("lru-entry-0")
+        XCTAssertEqual(ChatRenderProbe.counts["task-dialogue-sanitize"]?.values.reduce(0, +) ?? 0, afterFillMisses + 1)
+
+        // k1 已被淘汰（产生 1 次 miss）
+        _ = AmberUnifiedTaskBuilder.sanitizedDialogueTaskText("lru-entry-1")
+        XCTAssertEqual(ChatRenderProbe.counts["task-dialogue-sanitize"]?.values.reduce(0, +) ?? 0, afterFillMisses + 2)
+    }
+
+    @MainActor
+    func testHubActiveTaskSummaryMatchesFullSubtitleAcrossAllSourcesWithoutTaskBuilder() throws {
+        try withTaskProjectionStores { gateway, tasks, activity, _, hub in
+            let wakeDir = FileManager.default.temporaryDirectory.appendingPathComponent("HubSummaryWake.\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: wakeDir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: wakeDir) }
+            let wake = IOSWakeTaskStore(fileURL: wakeDir.appendingPathComponent("wake.json"))
+            let now = Date()
+
+            let activeConvId = UUID().uuidString.lowercased()
+            let secondaryConvId = UUID().uuidString.lowercased()
+            let isolatedConvId = UUID().uuidString.lowercased()
+
+            let hubActive = hub.createHub(
+                title: "主工作中心",
+                memoryPolicy: .sharedWithGlobal,
+                conversationIds: [activeConvId],
+                memoryCountHint: 5,
+                makeActive: true
+            )
+            let hubLocalOnly = hub.createHub(
+                title: "本地研究",
+                memoryPolicy: .sharedWithGlobal,
+                conversationIds: [secondaryConvId],
+                documentCountHint: 2,
+                makeActive: false
+            )
+            let hubIsolated = hub.createHub(
+                title: "隔离沙箱",
+                memoryPolicy: .hubIsolated,
+                conversationIds: [isolatedConvId],
+                documentCountHint: 3,
+                makeActive: false
+            )
+            let hubOverride = hub.createHub(
+                title: "覆盖摘要",
+                memoryPolicy: .sharedWithGlobal,
+                statusSummaryOverride: "自定义副标题",
+                makeActive: false
+            )
+            hub.selectHub(hubActive.id)
+
+            // 1. Unbound running cloud work item (should attach to active shared hub as cloud running, never to isolated hub)
+            let cloudWork = MacGatewayCloudWorkItem(id: "cw-hub-1", agentId: "main", title: "云端训练",
+                state: .working, progress: "第 2 轮", updatedAtMs: 1_800_000_000_010)
+            gateway.cloudTasks = [
+                MacGatewayCloudTaskRecord(gatewayId: "gw-hub", deviceId: "dev-1",
+                    request: .init(requestId: "req-cloud-1", text: "训练", title: "云端训练"),
+                    workItemId: cloudWork.id,
+                    detail: .init(workItem: cloudWork, brief: "训练", sessionArchived: false, resultMarkdown: nil),
+                    createdAt: now, updatedAt: now)
+            ]
+
+            // 2. Cloud dialogue work item (completed, should NOT be counted as active)
+            let page = MacGatewayCloudDialogueEventsPage(
+                items: [
+                    MacGatewayCloudDialogueEvent(
+                        seq: 1, id: "ev-hub-1", kind: .taskResult, role: "assistant",
+                        text: "已全部完成，无需拍板。", topicId: "t1", workItemId: "dlg-done-1",
+                        outcome: .completed, soulRevision: nil
+                    )
+                ],
+                nextCursor: 1,
+                soulRevision: nil
+            )
+            gateway.ingestCloudDialogueEventsPage(page, requestedAfter: 0)
+
+            // 3. Local subAgent bound to hubLocalOnly (running)
+            let subLocal = tasks.startTask(
+                id: "sub-local-1",
+                kind: .subAgent,
+                title: "文献整理",
+                objective: "梳理要点",
+                metadata: ["source_conversation_id": secondaryConvId]
+            )
+            activity.reconcile([try XCTUnwrap(IOSSubAgentActivityStore.activity(subLocal))])
+
+            // 4. Local execution task bound to hubIsolated (needsAttention via retryable failed)
+            let execIso = tasks.startTask(
+                id: "exec-iso-1",
+                kind: .remoteCommand,
+                title: "隔离脚本",
+                objective: "校验",
+                metadata: ["source_conversation_id": isolatedConvId]
+            )
+            _ = tasks.updateTask(id: execIso.id, status: .failed, error: "超时", retryable: true)
+
+            // 5. Scheduled wake task bound to hubLocalOnly (scheduled, must NOT count toward running+needsAttention)
+            _ = try wake.schedule(
+                conversationID: secondaryConvId,
+                sourceRunID: "run-w",
+                origin: IOSWakeOrigin(userMessageID: "mw", userText: "定时核对"),
+                title: "定时核对",
+                prompt: "核对",
+                fireAt: now.addingTimeInterval(3600),
+                event: nil,
+                requiresForeground: false,
+                requestID: "req-wake-hub"
+            )
+
+            let prevProbe = ChatRenderProbe.enabled
+            ChatRenderProbe.enabled = true
+            ChatRenderProbe.reset()
+            defer { ChatRenderProbe.enabled = prevProbe }
+
+            let summary = AmberUnifiedTaskBuilder.hubActiveTaskSummary(
+                gateway: gateway,
+                subAgentStore: activity,
+                taskStore: tasks,
+                wakeStore: wake,
+                hubStore: hub
+            )
+            XCTAssertEqual(ChatRenderProbe.counts["task-builder"]?.values.reduce(0, +) ?? 0, 0,
+                           "轻量中心副标题路径不得调用 buildTasks")
+            XCTAssertEqual(ChatRenderProbe.counts["task-summary-parse"]?.values.reduce(0, +) ?? 0, 0,
+                           "轻量中心副标题路径不得触发 Markdown 摘要解析")
+
+            let fullGroups = AmberUnifiedTaskBuilder.buildTasks(
+                gateway: gateway,
+                subAgentStore: activity,
+                taskStore: tasks,
+                wakeStore: wake,
+                hubStore: hub
+            )
+            let fullActiveTasks = fullGroups.needsAttention + fullGroups.running
+
+            for item in [hubActive, hubLocalOnly, hubIsolated, hubOverride] {
+                let lightweightSubtitle = hub.subtitle(for: item, activeTaskSummary: summary)
+                let fullSubtitle = hub.subtitle(for: item, activeTasks: fullActiveTasks)
+                XCTAssertEqual(lightweightSubtitle, fullSubtitle, "Hub \(item.title) 轻量副标题必须与全量路径完全一致")
+            }
+            XCTAssertTrue(hub.subtitle(for: hubActive, activeTaskSummary: summary).contains("1 项云端运行中"))
+            XCTAssertTrue(hub.subtitle(for: hubLocalOnly, activeTaskSummary: summary).contains("1 项任务"))
+            XCTAssertTrue(hub.subtitle(for: hubIsolated, activeTaskSummary: summary).contains("1 项任务"))
+            XCTAssertEqual(hub.subtitle(for: hubOverride, activeTaskSummary: summary), "自定义副标题")
+        }
+    }
+
+    @MainActor
+    func testDuetPanelCardsEquatableIsolatesParentRedrawsAndPreservesStoreUpdates() async throws {
+        try await withTaskProjectionStoresAsync { gateway, tasks, activity, wake, hub in
+            let suite = "DuetPanelEquatable.\(UUID().uuidString)"
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            let dir = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer {
+                defaults.removePersistentDomain(forName: suite)
+                try? FileManager.default.removeItem(at: dir)
+            }
+
+            let conversations = IOSConversationStore(baseDirectory: dir, subagentConversationIDsProvider: { [] })
+            let otherGateway = MacGatewayStore(defaults: defaults)
+            let inbox = AmberIntentInboxStore(userDefaults: defaults)
+            let otherInbox = AmberIntentInboxStore(userDefaults: defaults)
+
+            // 1. Direct Equatable semantics: ignore closures, never miss visible state or store identity.
+            let tasksCardA = AmberDuetTaskCenterCard(
+                gateway: gateway,
+                subAgentStore: activity,
+                taskStore: tasks,
+                wakeStore: wake,
+                hubStore: hub,
+                intentInboxStore: inbox,
+                isEmbeddedInModalSheet: false,
+                onOpenFullTaskBoard: { _ = 1 },
+                onDismissPanel: { _ = 1 }
+            )
+            let tasksCardSameDataDifferentClosures = AmberDuetTaskCenterCard(
+                gateway: gateway,
+                subAgentStore: activity,
+                taskStore: tasks,
+                wakeStore: wake,
+                hubStore: hub,
+                intentInboxStore: inbox,
+                isEmbeddedInModalSheet: false,
+                onOpenFullTaskBoard: { _ = 2 },
+                onDismissPanel: { _ = 2 }
+            )
+            let tasksCardDifferentModalFlag = AmberDuetTaskCenterCard(
+                gateway: gateway,
+                subAgentStore: activity,
+                taskStore: tasks,
+                wakeStore: wake,
+                hubStore: hub,
+                intentInboxStore: inbox,
+                isEmbeddedInModalSheet: true,
+                onOpenFullTaskBoard: {}
+            )
+            let tasksCardDifferentStore = AmberDuetTaskCenterCard(
+                gateway: gateway,
+                subAgentStore: activity,
+                taskStore: tasks,
+                wakeStore: wake,
+                hubStore: hub,
+                intentInboxStore: otherInbox,
+                isEmbeddedInModalSheet: false,
+                onOpenFullTaskBoard: {}
+            )
+            XCTAssertEqual(tasksCardA, tasksCardSameDataDifferentClosures)
+            XCTAssertNotEqual(tasksCardA, tasksCardDifferentModalFlag)
+            XCTAssertNotEqual(tasksCardA, tasksCardDifferentStore)
+
+            let hubsCardA = AmberDuetHubsCard(
+                hubStore: hub,
+                conversationStore: conversations,
+                gateway: gateway,
+                subAgentStore: activity,
+                taskStore: tasks,
+                wakeStore: wake,
+                onDismissPanel: { _ = 1 }
+            )
+            let hubsCardSameDataDifferentClosures = AmberDuetHubsCard(
+                hubStore: hub,
+                conversationStore: conversations,
+                gateway: gateway,
+                subAgentStore: activity,
+                taskStore: tasks,
+                wakeStore: wake,
+                onDismissPanel: { _ = 2 }
+            )
+            let hubsCardDifferentGateway = AmberDuetHubsCard(
+                hubStore: hub,
+                conversationStore: conversations,
+                gateway: otherGateway,
+                subAgentStore: activity,
+                taskStore: tasks,
+                wakeStore: wake
+            )
+            XCTAssertEqual(hubsCardA, hubsCardSameDataDifferentClosures)
+            XCTAssertNotEqual(hubsCardA, hubsCardDifferentGateway)
+
+            // 2. Host Hubs card with .equatable(): unrelated parent redraws must not re-run panel-hubs-body
+            //    or task-builder, while hubStore mutation must still refresh it.
+            _ = hub.createHub(title: "测试中心", makeActive: true)
+
+            struct HubsEquatableHarness: View {
+                var tick: Int
+                let hub: AmberHubStore
+                let conversations: IOSConversationStore
+                let gateway: MacGatewayStore
+                let activity: IOSSubAgentActivityStore
+                let tasks: IOSAdvancedTaskStore
+                let wake: IOSWakeTaskStore
+
+                var body: some View {
+                    VStack {
+                        Text("\(tick)")
+                        AmberDuetHubsCard(
+                            hubStore: hub,
+                            conversationStore: conversations,
+                            gateway: gateway,
+                            subAgentStore: activity,
+                            taskStore: tasks,
+                            wakeStore: wake,
+                            onDismissPanel: { _ = tick }
+                        )
+                        .equatable()
+                    }
+                }
+            }
+
+            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+            let window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: 393, height: 520)
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+
+            let host = UIHostingController(rootView: HubsEquatableHarness(
+                tick: 0, hub: hub, conversations: conversations,
+                gateway: gateway, activity: activity, tasks: tasks, wake: wake
+            ))
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(80))
+
+            let prevProbe = ChatRenderProbe.enabled
+            ChatRenderProbe.enabled = true
+            ChatRenderProbe.reset()
+            defer { ChatRenderProbe.enabled = prevProbe }
+
+            for tick in 1...6 {
+                host.rootView = HubsEquatableHarness(
+                    tick: tick, hub: hub, conversations: conversations,
+                    gateway: gateway, activity: activity, tasks: tasks, wake: wake
+                )
+                host.view.setNeedsLayout()
+                host.view.layoutIfNeeded()
+                try await Task.sleep(for: .milliseconds(16))
+            }
+
+            XCTAssertEqual(ChatRenderProbe.counts["panel-hubs-body"]?.values.reduce(0, +) ?? 0, 0,
+                           "父视图无关重绘不得穿透 Equatable 重算中心面板卡")
+            XCTAssertEqual(ChatRenderProbe.counts["task-builder"]?.values.reduce(0, +) ?? 0, 0,
+                           "中心面板卡渲染路径不得调用全量 buildTasks")
+
+            _ = hub.createHub(title: "新增中心", makeActive: false)
+            try await Task.sleep(for: .milliseconds(100))
+            window.layoutIfNeeded()
+
+            XCTAssertGreaterThan(ChatRenderProbe.counts["panel-hubs-body"]?.values.reduce(0, +) ?? 0, 0,
+                                 "Observed hubStore 变更时中心面板卡必须正常刷新")
+            XCTAssertEqual(ChatRenderProbe.counts["task-builder"]?.values.reduce(0, +) ?? 0, 0,
+                           "中心面板卡刷新时仍应走轻量 hubActiveTaskSummary，不调用 buildTasks")
+
+            // 3. Host Tasks card with .equatable(): unrelated parent redraws must not re-run panel-tasks-body
+            //    or buildTasks, while subAgentStore mutation must still refresh it.
+            struct TasksEquatableHarness: View {
+                var tick: Int
+                let hub: AmberHubStore
+                let gateway: MacGatewayStore
+                let activity: IOSSubAgentActivityStore
+                let tasks: IOSAdvancedTaskStore
+                let wake: IOSWakeTaskStore
+                let inbox: AmberIntentInboxStore
+
+                var body: some View {
+                    VStack {
+                        Text("\(tick)")
+                        AmberDuetTaskCenterCard(
+                            gateway: gateway,
+                            subAgentStore: activity,
+                            taskStore: tasks,
+                            wakeStore: wake,
+                            hubStore: hub,
+                            intentInboxStore: inbox,
+                            onOpenFullTaskBoard: { _ = tick },
+                            onDismissPanel: { _ = tick }
+                        )
+                        .equatable()
+                    }
+                }
+            }
+
+            let tasksHost = UIHostingController(rootView: TasksEquatableHarness(
+                tick: 0, hub: hub, gateway: gateway, activity: activity, tasks: tasks, wake: wake, inbox: inbox
+            ))
+            window.rootViewController = tasksHost
+            window.makeKeyAndVisible()
+            window.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(80))
+
+            ChatRenderProbe.reset()
+            for tick in 1...6 {
+                tasksHost.rootView = TasksEquatableHarness(
+                    tick: tick, hub: hub, gateway: gateway, activity: activity, tasks: tasks, wake: wake, inbox: inbox
+                )
+                tasksHost.view.setNeedsLayout()
+                tasksHost.view.layoutIfNeeded()
+                try await Task.sleep(for: .milliseconds(16))
+            }
+
+            XCTAssertEqual(ChatRenderProbe.counts["panel-tasks-body"]?.values.reduce(0, +) ?? 0, 0,
+                           "父视图无关重绘不得穿透 Equatable 重算任务面板卡")
+            XCTAssertEqual(ChatRenderProbe.counts["task-builder"]?.values.reduce(0, +) ?? 0, 0,
+                           "父视图无关重绘期间不得触发 buildTasks")
+
+            let liveSub = tasks.startTask(id: "tasks-card-live-1", kind: .subAgent, title: "刷新任务", objective: "验证观察")
+            activity.reconcile([try XCTUnwrap(IOSSubAgentActivityStore.activity(liveSub))])
+            try await Task.sleep(for: .milliseconds(100))
+            window.layoutIfNeeded()
+
+            XCTAssertGreaterThan(ChatRenderProbe.counts["panel-tasks-body"]?.values.reduce(0, +) ?? 0, 0,
+                                 "Observed subAgentStore 变更时任务面板卡必须正常刷新")
+        }
+    }
 }
