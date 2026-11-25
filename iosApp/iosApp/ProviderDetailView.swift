@@ -31,6 +31,7 @@ struct ProviderDetailView: View {
     @State private var draftUserAgent = ""
     @State private var draftExtraHeaders: [ProviderHeaderDraft] = []
     @State private var selectedUserAgentPreset: ProviderUserAgentPreset?
+    @State private var cachedLegacyApiKey = ""
     @State private var notice: String?
     @State private var showCodexLogin = false
     @State private var showChatGptSiwcLogin = false
@@ -75,7 +76,9 @@ struct ProviderDetailView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .onAppear(perform: loadDraft)
+        .onChange(of: providerId) { _, _ in loadDraft() }
         .onChange(of: sharedSettings.revision) { _, _ in loadDraft() }
+        .onChange(of: settingsStore.apiKey) { _, _ in refreshCachedLegacyApiKey() }
         .onDisappear { cancelModelFetch() }
         .alert(item: Binding(
             get: { modelDraft == nil ? alert : nil },
@@ -1026,12 +1029,13 @@ struct ProviderDetailView: View {
 
     @ViewBuilder
     private var legacyKeyImportSection: some View {
-        let oldKey = settingsStore.currentApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let oldKey = cachedLegacyApiKey
         let providerKey = apiKey(of: provider).trimmingCharacters(in: .whitespacesAndNewlines)
         if !oldKey.isEmpty, providerKey.isEmpty, !isGeminiOAuth {
             Button {
                 draftApiKey = oldKey
                 saveConfig(showSuccess: false)
+                refreshCachedLegacyApiKey()
                 notice = IOSAppLocalization.string(
                     "旧 API Key 已写入当前服务商。",
                     defaultValue: "旧 API Key 已写入当前服务商。"
@@ -1255,7 +1259,12 @@ struct ProviderDetailView: View {
         .buttonStyle(.plain)
     }
 
+    private func refreshCachedLegacyApiKey() {
+        cachedLegacyApiKey = settingsStore.currentApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func loadDraft() {
+        refreshCachedLegacyApiKey()
         guard let provider else { return }
         draftName = provider.name
         draftEnabled = provider.enabled

@@ -61,8 +61,6 @@ targets:
     - path: WatchApp/WatchLocalStore.swift
     - path: WatchApp/WatchTaskViewModel.swift
     - path: AlarmKitResources
-    - path: Resources/Fonts/noto_serif_sc.otf
-      buildPhase: resources
     - path: Resources/Fonts/jetbrains_mono.ttf
       buildPhase: resources
     - path: Resources/Licenses/CPython-3.14.7.txt
@@ -407,8 +405,6 @@ targets:
     - path: WatchApp/WatchLocalStore.swift
     - path: WatchApp/WatchTaskViewModel.swift
     - path: AlarmKitResources
-    - path: Resources/Fonts/noto_serif_sc.otf
-      buildPhase: resources
     - path: Resources/Fonts/jetbrains_mono.ttf
       buildPhase: resources
     - path: Resources/Licenses/CPython-3.14.7.txt
