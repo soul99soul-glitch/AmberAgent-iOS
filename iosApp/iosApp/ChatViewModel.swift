@@ -484,22 +484,26 @@ final class ChatViewModel {
             tokenRevision: revision,
             messageCount: messages.count,
             conversationId: currentConversationId?.toHexDashString(),
-            draftText: inputText,
-            extraWeightedChars: extra,
+            draftText: "",
+            extraWeightedChars: 0,
             systemOverheadText: overhead
         )
+        let baseTokens: Int
         if let hit = cachedOccupancyEntry, hit.key == key {
-            return hit.tokens
+            baseTokens = hit.tokens
+        } else {
+            let computed = IOSContextCompactionCoordinator.shared.nextTurnBaseOccupancyTokens(
+                messages: messages,
+                conversationId: currentConversationId,
+                systemOverheadText: overhead
+            )
+            cachedOccupancyEntry = (key, computed)
+            baseTokens = computed
         }
-        let tokens = IOSContextCompactionCoordinator.shared.nextTurnOccupancyTokens(
-            messages: messages,
-            conversationId: currentConversationId,
-            draftText: inputText,
-            extraWeightedChars: extra,
-            systemOverheadText: overhead
+        return baseTokens + IOSContextCompactionCoordinator.estimateDraftTokens(
+            text: inputText,
+            extraWeightedChars: extra
         )
-        cachedOccupancyEntry = (key, tokens)
-        return tokens
     }
 
     private var occupancyExtraWeightedChars: Int {

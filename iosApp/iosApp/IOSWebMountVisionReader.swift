@@ -259,19 +259,29 @@ struct IOSWebMountVisionReader {
         return registryModalities.contains { $0.name == "IMAGE" } ? .supported : .unknown
     }
 
-    private static func isPNG(_ capture: IOSWebMountScreenshotCapture) -> Bool {
+    static func isPNG(_ capture: IOSWebMountScreenshotCapture) -> Bool {
         guard capture.format.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "png" else {
             return false
         }
-        let bytes = [UInt8](capture.data)
-        guard bytes.count >= 24,
-              Array(bytes.prefix(pngSignature.count)) == pngSignature,
-              Array(bytes[12..<16]) == Array("IHDR".utf8) else {
+        guard capture.data.count >= 24,
+              let expectedWidth = UInt32(exactly: capture.width),
+              let expectedHeight = UInt32(exactly: capture.height) else {
             return false
         }
-        let width = bytes[16..<20].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
-        let height = bytes[20..<24].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
-        return width == UInt32(capture.width) && height == UInt32(capture.height)
+        let header = Array(capture.data.prefix(24))
+        guard header[0..<pngSignature.count].elementsEqual(pngSignature),
+              header[12..<16].elementsEqual("IHDR".utf8) else {
+            return false
+        }
+        let width = (UInt32(header[16]) << 24)
+            | (UInt32(header[17]) << 16)
+            | (UInt32(header[18]) << 8)
+            | UInt32(header[19])
+        let height = (UInt32(header[20]) << 24)
+            | (UInt32(header[21]) << 16)
+            | (UInt32(header[22]) << 8)
+            | UInt32(header[23])
+        return width == expectedWidth && height == expectedHeight
     }
 
     private static func userMessage(question: String, dataURL: String) -> UIMessage {

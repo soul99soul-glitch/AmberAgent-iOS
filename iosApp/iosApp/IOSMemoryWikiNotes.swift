@@ -40,7 +40,22 @@ final class IOSMemoryWikiNotes {
 
     var signature: String { revisions.last?.id ?? "" }
     var paths: [String] {
-        Array(Set(revisions.map(\.path))).filter { !(current(path: $0)?.content.isEmpty ?? true) }.sorted()
+        var latestByKey: [String: IOSMemoryWikiRevision] = [:]
+        var keyByPath: [String: String] = [:]
+        for revision in revisions {
+            let key: String
+            if let cached = keyByPath[revision.path] {
+                key = cached
+            } else {
+                key = Self.key(revision.path)
+                keyByPath[revision.path] = key
+            }
+            latestByKey[key] = revision
+        }
+        return keyByPath.compactMap { path, key in
+            guard let latest = latestByKey[key], !latest.content.isEmpty else { return nil }
+            return path
+        }.sorted()
     }
 
     static func resolve(_ path: String, from containingPage: String? = nil) throws -> String {

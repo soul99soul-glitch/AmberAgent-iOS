@@ -26,11 +26,23 @@ extension IOSContextCompactionCoordinator {
         return max(chars / 4, messages.count * 4)
     }
 
-    static func nextTurnOccupancyTokens(
+    func nextTurnBaseOccupancyTokens(
+        messages: [UIMessage],
+        conversationId: KotlinUuid?,
+        systemOverheadText: String = ""
+    ) -> Int {
+        nextTurnOccupancyTokens(
+            messages: messages,
+            conversationId: conversationId,
+            draftText: "",
+            extraWeightedChars: 0,
+            systemOverheadText: systemOverheadText
+        )
+    }
+
+    static func nextTurnBaseOccupancyTokens(
         messages: [UIMessage],
         activeCompacts: [IOSConversationCompact],
-        draftText: String,
-        extraWeightedChars: Int,
         systemOverheadText: String
     ) -> Int {
         // Same image budget as the request; memoized because the gauge re-renders on every
@@ -53,7 +65,6 @@ extension IOSContextCompactionCoordinator {
             return assistantMillis >= lastCompactAt
         } ?? false
 
-        let base: Int
         if usageIsFresh, let lastAssistant, let usage = lastAssistant.usage {
             let tail: [UIMessage]
             if let index = messages.lastIndex(where: { $0.id == lastAssistant.id }) {
@@ -64,13 +75,26 @@ extension IOSContextCompactionCoordinator {
             // Tool outputs arrive after this assistant's provider usage was measured.
             let newToolOutputChars = lastAssistant.parts.compactMap { $0 as? UIMessagePart.Tool }
                 .flatMap(\.output).reduce(0) { $0 + estimatedChars($1) }
-            base = Int(usage.promptTokens) + Int(usage.completionTokens) + newToolOutputChars / 4
+            return Int(usage.promptTokens) + Int(usage.completionTokens) + newToolOutputChars / 4
                 + (tail.isEmpty ? 0 : estimateTokens(tail))
         } else {
-            base = estimatePreparedMessages(messages, activeCompacts: completed)
+            return estimatePreparedMessages(messages, activeCompacts: completed)
                 + estimateDraftTokens(text: systemOverheadText, extraWeightedChars: 0)
         }
-        return base + estimateDraftTokens(text: draftText, extraWeightedChars: extraWeightedChars)
+    }
+
+    static func nextTurnOccupancyTokens(
+        messages: [UIMessage],
+        activeCompacts: [IOSConversationCompact],
+        draftText: String,
+        extraWeightedChars: Int,
+        systemOverheadText: String
+    ) -> Int {
+        nextTurnBaseOccupancyTokens(
+            messages: messages,
+            activeCompacts: activeCompacts,
+            systemOverheadText: systemOverheadText
+        ) + estimateDraftTokens(text: draftText, extraWeightedChars: extraWeightedChars)
     }
 
     static func estimatePreparedMessages(

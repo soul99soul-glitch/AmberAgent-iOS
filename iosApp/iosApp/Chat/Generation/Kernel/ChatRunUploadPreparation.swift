@@ -258,17 +258,21 @@ final class ChatRunUploadPreparation {
         )
         let finalizedUploadMessages: [UIMessage]
         do {
-            let transcriptMessages = transcriptCapabilities.systemUpdates
-                ? PromptTranscript.shared.prepare(
+            let transitionOverhead: Int
+            if transcriptCapabilities.systemUpdates {
+                let transcriptMessages = PromptTranscript.shared.prepare(
                     canonicalMessages: messages,
                     preparedMessages: runtimePreparedMessages,
                     tools: effectiveParams.tools
                 ).messages
-                : runtimePreparedMessages
-            let transitionOverhead = max(
-                IOSContextCompactionCoordinator.estimatedTokensForRequest(transcriptMessages)
-                    - IOSContextCompactionCoordinator.estimatedTokensForRequest(runtimePreparedMessages), 0
-            )
+                transitionOverhead = max(
+                    IOSContextCompactionCoordinator.estimatedTokensForRequest(transcriptMessages)
+                        - IOSContextCompactionCoordinator.estimatedTokensForRequest(runtimePreparedMessages),
+                    0
+                )
+            } else {
+                transitionOverhead = 0
+            }
             finalizedUploadMessages = try IOSContextCompactionCoordinator.shared.finalizedMessagesForRequest(
                 runtimePreparedMessages,
                 settings: settings,
