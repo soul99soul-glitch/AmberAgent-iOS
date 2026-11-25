@@ -49,5 +49,5 @@ class ClaudeSamplingCompatibilityTest {
             temperature = 0.7f,
             topP = 0.8f,
         ),
-    )
+    ).body
 }

@@ -84,5 +84,5 @@ class ClaudeThinkingCompatibilityTest {
         setting,
         listOf(UIMessage.user("hello")),
         TextGenerationParams(model = model(id), reasoningLevel = level, maxTokens = maxTokens),
-    )
+    ).body
 }

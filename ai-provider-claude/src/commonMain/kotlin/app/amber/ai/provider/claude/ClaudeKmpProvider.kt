@@ -143,9 +143,9 @@ class ClaudeKmpProvider internal constructor(
         messages: List<UIMessage>,
         params: TextGenerationParams,
     ): MessageChunk {
-        val requestBody = buildMessageRequest(providerSetting, messages, params)
+        val request = buildMessageRequest(providerSetting, messages, params)
         val response = httpClient.post("${providerSetting.baseUrl}/messages") {
-            generationHeaders(providerSetting, messages, params).forEach {
+            generationHeaders(providerSetting, messages, params, request.nativeToolChanges).forEach {
                 header(it.name, it.value)
             }
             contentType(ContentType.Application.Json)
@@ -154,7 +154,7 @@ class ClaudeKmpProvider internal constructor(
             configureReferHeaders(providerSetting.baseUrl) { name, value ->
                 header(name, value)
             }
-            setBody(json.encodeToString(requestBody))
+            setBody(json.encodeToString(request.body))
         }
         if (!response.status.isSuccess()) {
             throw Exception("Claude request failed: ${response.status.value} ${response.bodyAsText()}")
@@ -185,14 +185,14 @@ class ClaudeKmpProvider internal constructor(
         messages: List<UIMessage>,
         params: TextGenerationParams,
     ): Flow<MessageChunk> {
-        val requestBody = buildMessageRequest(providerSetting, messages, params, stream = true)
+        val request = buildMessageRequest(providerSetting, messages, params, stream = true)
         val apiKey = providerSetting.apiKey
         val baseUrl = providerSetting.baseUrl
 
         val events = sseClient.sseFlow("$baseUrl/messages") {
             method = HttpMethod.Post
             contentType(ContentType.Application.Json)
-            generationHeaders(providerSetting, messages, params).forEach {
+            generationHeaders(providerSetting, messages, params, request.nativeToolChanges).forEach {
                 header(it.name, it.value)
             }
             header("x-api-key", apiKey)
@@ -200,7 +200,7 @@ class ClaudeKmpProvider internal constructor(
             configureReferHeaders(baseUrl) { name, value ->
                 header(name, value)
             }
-            setBody(json.encodeToString(requestBody))
+            setBody(json.encodeToString(request.body))
         }
         return flow {
             val terminal = ClaudeStreamTerminalState()
@@ -346,13 +346,14 @@ class ClaudeKmpProvider internal constructor(
         providerSetting: ProviderSetting.Claude,
         messages: List<UIMessage>,
         params: TextGenerationParams,
+        nativeToolChanges: Boolean,
     ): List<CustomHeader> {
         val headers = OpenCodeRequestHeaders.forGeneration(
             baseUrl = providerSetting.baseUrl,
             messages = messages,
             customHeaders = params.customHeaders,
         )
-        if (!usesNativeToolChanges(providerSetting, messages, params)) return headers
+        if (!nativeToolChanges) return headers
 
         val existingIndex = headers.indexOfFirst { it.name.equals("anthropic-beta", ignoreCase = true) }
         if (existingIndex < 0) {
@@ -365,37 +366,19 @@ class ClaudeKmpProvider internal constructor(
         }
     }
 
-    private fun usesNativeToolChanges(
-        providerSetting: ProviderSetting.Claude,
-        messages: List<UIMessage>,
-        params: TextGenerationParams,
-    ): Boolean {
-        val capabilities = PromptTranscriptCapabilities.resolve(providerSetting, params.model)
-        if (!params.model.abilities.contains(ModelAbility.TOOL) ||
-            !capabilities.systemUpdates ||
-            !capabilities.toolAdditions ||
-            !capabilities.toolRemovals
-        ) return false
-        val view = PromptTranscript.resolve(messages, params.tools, nativeSystem = true)
-        return view.hasTranscript &&
-            view.initialTools.isNotEmpty() &&
-            !view.hasToolRedefinitions
-    }
+    internal class MessageRequest(val body: JsonObject, val nativeToolChanges: Boolean)
 
-    // ---- request building ----
-    // Internal (not private) so JVM tests can assert the JSON shape without HTTP.
     internal fun buildMessageRequest(
         providerSetting: ProviderSetting.Claude,
         messages: List<UIMessage>,
         params: TextGenerationParams,
         stream: Boolean = false,
-    ): JsonObject {
+    ): MessageRequest {
         fun cacheControlEphemeral() = buildJsonObject { put("type", "ephemeral") }
 
         val capabilities = PromptTranscriptCapabilities.resolve(providerSetting, params.model)
-        val nativeSystem = capabilities.systemUpdates &&
-            PromptTranscript.resolve(messages, params.tools, nativeSystem = true).hasTranscript
-        val transcript = PromptTranscript.resolve(messages, params.tools, nativeSystem)
+        val transcript = PromptTranscript.resolve(messages, params.tools, nativeSystem = capabilities.systemUpdates)
+        val nativeSystem = capabilities.systemUpdates && transcript.hasTranscript
         val nativeToolChanges = nativeSystem &&
             params.model.abilities.contains(ModelAbility.TOOL) &&
             capabilities.toolAdditions &&
@@ -403,7 +386,7 @@ class ClaudeKmpProvider internal constructor(
             transcript.initialTools.isNotEmpty() &&
             !transcript.hasToolRedefinitions
 
-        return buildJsonObject {
+        val body = buildJsonObject {
             put("model", params.model.modelId)
             put(
                 "messages",
@@ -432,7 +415,7 @@ class ClaudeKmpProvider internal constructor(
             val systemTextParts = transcript.messages
                 .filter { message ->
                     if (message.role != MessageRole.SYSTEM) return@filter false
-                    if (!nativeSystem || !transcript.hasTranscript) return@filter true
+                    if (!nativeSystem) return@filter true
                     PromptTranscript.event(message)?.initial == true
                 }
                 .flatMap { message ->
@@ -559,6 +542,7 @@ class ClaudeKmpProvider internal constructor(
                 }
             }
         }.mergeCustomBody(params.customBody)
+        return MessageRequest(body, nativeToolChanges)
     }
 
     private fun buildMessages(

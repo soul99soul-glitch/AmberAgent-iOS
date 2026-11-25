@@ -727,4 +727,4 @@ private fun ClaudeKmpProvider.callBuildMessageRequest(
     messages: List<UIMessage>,
     params: TextGenerationParams,
     stream: Boolean = false,
-): JsonObject = this.buildMessageRequest(setting, messages, params, stream)
+): JsonObject = this.buildMessageRequest(setting, messages, params, stream).body

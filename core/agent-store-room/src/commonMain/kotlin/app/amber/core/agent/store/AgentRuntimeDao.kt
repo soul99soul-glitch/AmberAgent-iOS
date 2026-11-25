@@ -127,6 +127,9 @@ interface AgentRuntimeDao {
     @Query("SELECT * FROM agent_event WHERE run_id = :id ORDER BY seq ASC")
     suspend fun listEventsForRun(id: String): List<AgentEventEntity>
 
+    @Query("SELECT COUNT(*) FROM agent_event WHERE run_id = :runId AND type = :type")
+    suspend fun countEventsForRun(runId: String, type: String): Long
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertToolTransactionIfAbsent(transaction: AgentToolTransactionEntity): Long
 

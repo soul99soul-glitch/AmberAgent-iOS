@@ -66,13 +66,12 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
 
     private func nextRequestSnapshotIndex(runId: String) async -> Int? {
         await withCheckedContinuation { continuation in
-            dao.listEventsForRun(id: runId) { rows, error in
-                guard error == nil, let rows else {
+            dao.countEventsForRun(runId: runId, type: Self.requestSnapshotEventType) { count, error in
+                guard error == nil, let count else {
                     continuation.resume(returning: nil)
                     return
                 }
-                let existingCount = rows.lazy.filter { $0.type == Self.requestSnapshotEventType }.count
-                continuation.resume(returning: existingCount + 1)
+                continuation.resume(returning: count.intValue + 1)
             }
         }
     }

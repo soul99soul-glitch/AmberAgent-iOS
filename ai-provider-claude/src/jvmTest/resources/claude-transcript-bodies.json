@@ -1,0 +1,37 @@
+{
+  "plain": {
+    "model": "claude-opus-5",
+    "messages": [{"role":"user","content":[{"type":"text","text":"你好"}]}],
+    "max_tokens": 64000,
+    "stream": false,
+    "tools": [{"name":"read","description":"Read","cache_control":{"type":"ephemeral"}}],
+    "tool_choice": {"type":"auto","disable_parallel_tool_use":true}
+  },
+  "addition": {
+    "model": "claude-opus-5",
+    "messages": [{"role":"user","content":[{"type":"text","text":"你好"}]},{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_reference","name":"write"}}]}],
+    "max_tokens": 64000,
+    "stream": false,
+    "system": [{"type":"text","text":"<amber_section name=\"rules\">\n规则\n</amber_section>","cache_control":{"type":"ephemeral"}}],
+    "tools": [{"name":"read","description":"Read","cache_control":{"type":"ephemeral"}},{"name":"__amber_deferred_placeholder__","description":"Reserved placeholder. Never available. Never call this.","input_schema":{"type":"object","properties":{},"required":[]},"defer_loading":true},{"name":"write","description":"Write","defer_loading":true}],
+    "tool_choice": {"type":"auto","disable_parallel_tool_use":true}
+  },
+  "removal": {
+    "model": "claude-opus-5",
+    "messages": [{"role":"user","content":[{"type":"text","text":"你好"}]},{"role":"system","content":[{"type":"tool_removal","tool":{"type":"tool_reference","name":"read"}}]}],
+    "max_tokens": 64000,
+    "stream": false,
+    "system": [{"type":"text","text":"<amber_section name=\"rules\">\n规则\n</amber_section>","cache_control":{"type":"ephemeral"}}],
+    "tools": [{"name":"read","description":"Read","cache_control":{"type":"ephemeral"}},{"name":"__amber_deferred_placeholder__","description":"Reserved placeholder. Never available. Never call this.","input_schema":{"type":"object","properties":{},"required":[]},"defer_loading":true}],
+    "tool_choice": {"type":"auto","disable_parallel_tool_use":true}
+  },
+  "redefinition": {
+    "model": "claude-opus-5",
+    "messages": [{"role":"user","content":[{"type":"text","text":"你好"}]}],
+    "max_tokens": 64000,
+    "stream": false,
+    "system": [{"type":"text","text":"<amber_section name=\"rules\">\n规则\n</amber_section>","cache_control":{"type":"ephemeral"}}],
+    "tools": [{"name":"read","description":"Read UTF-8","cache_control":{"type":"ephemeral"}}],
+    "tool_choice": {"type":"auto","disable_parallel_tool_use":true}
+  }
+}

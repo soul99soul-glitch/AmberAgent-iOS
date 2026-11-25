@@ -243,6 +243,27 @@ class DurableRunStoreTest {
     }
 
     @Test
+    fun eventCountIsScopedToRunAndType() = runTest {
+        val db = open(newPath("count"))
+        try {
+            val dao = db.agentRuntimeDao()
+            val store = RoomAgentEventStore(dao)
+            val snapshot = "request_snapshot"
+            assertTrue(store.startRun(run("first")))
+            assertTrue(store.startRun(run("other")))
+            assertEquals(0L, dao.countEventsForRun("first", snapshot))
+            assertTrue(store.appendRunEvent(AgentRunId("first"), event("snapshot-1").copy(type = snapshot)))
+            assertTrue(store.appendRunEvent(AgentRunId("first"), event("finished")))
+            assertTrue(store.appendRunEvent(AgentRunId("first"), event("snapshot-2").copy(type = snapshot)))
+            assertTrue(store.appendRunEvent(AgentRunId("other"), event("other-snapshot").copy(type = snapshot)))
+            assertEquals(2L, dao.countEventsForRun("first", snapshot))
+            assertEquals(1L, dao.countEventsForRun("first", "tool_finished"))
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
     fun concurrentEventAppendDerivesSequenceAndRunIdentityAndRejectsOrphans() = runTest {
         val path = newPath("events")
         val firstDb = open(path)

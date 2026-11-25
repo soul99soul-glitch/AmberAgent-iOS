@@ -1,3 +1,4 @@
+import Network
 import XCTest
 @preconcurrency import Shared
 @testable import iosApp
@@ -468,8 +469,54 @@ final class IOSToolBoundaryTests: XCTestCase {
         XCTAssertEqual(seqs, [1, 2, 3, 4, 5, 6], "fresh run starts seq at 1 and increments by 1 per event, unbroken across instances")
     }
 
-    func testRequestSnapshotIndexContinuesAcrossLedgerInstances() async throws {
+    func testFailedRequestSnapshotPreventsHTTPUntilRunExists() async throws {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        let listener = try NWListener(using: parameters)
+        let queue = DispatchQueue(label: "request-snapshot-http")
+        let ready = expectation(description: "loopback listener ready")
+        let requests = TestEventLog()
+        listener.stateUpdateHandler = { state in
+            if case .ready = state { ready.fulfill() }
+        }
+        listener.newConnectionHandler = { connection in
+            connection.start(queue: queue)
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { data, _, _, _ in
+                if let data, !data.isEmpty { requests.record("request") }
+                let response = Data("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
+                connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+            }
+        }
+        listener.start(queue: queue)
+        defer { listener.cancel() }
+        await fulfillment(of: [ready], timeout: 5)
+        let port = try XCTUnwrap(listener.port)
+
         let db = makeDatabase()
+        defer { db.close() }
+        let dao = db.agentRuntimeDao()
+        let runId = UUID().uuidString
+        let engine = IOSAgentToolEngine(
+            provider: OpenAIKmpProviderAdapter(), executors: [:],
+            ledger: IOSAgentRunLedger(dao: dao), ledgerRunId: runId
+        )
+        let setting = IOSChatForegroundFixtures.makeProviderSetting()
+        setting.baseUrl = "http://127.0.0.1:\(port.rawValue)"
+        let messages = [IOSChatForegroundFixtures.userMessage("hello")]
+        let params = IOSChatForegroundFixtures.makeParams(toolNames: [])
+        let failed = await engine.run(providerSetting: setting, messages: messages, params: params)
+        XCTAssertEqual(failed.providerFailureMessage, "request snapshot ledger write failed")
+        XCTAssertEqual(requests.events.count, 0)
+
+        // Positive control: admitting the same snapshot lets this provider reach the listener.
+        try await insertRunningRun(dao: dao, runId: runId)
+        _ = await engine.run(providerSetting: setting, messages: messages, params: params)
+        XCTAssertEqual(requests.events.count, 1)
+    }
+
+    func testRequestSnapshotIndexContinuesAcrossLedgerInstances() async throws {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".db").path
+        let db = IosDatabaseFactory.shared.createDatabase(atFilePath: path)
         let dao = db.agentRuntimeDao()
         let runId = "request-index-\(UUID().uuidString)"
         try await insertRunningRun(dao: dao, runId: runId)
@@ -486,18 +533,29 @@ final class IOSToolBoundaryTests: XCTestCase {
             compactionRefs: []
         )
 
-        let firstWriteSucceeded = await IOSAgentRunLedger(dao: dao).recordRequestSnapshot(
-            runId: runId,
-            snapshot: snapshot
+        let firstLedger = IOSAgentRunLedger(dao: dao)
+        let firstWriteSucceeded = await firstLedger.recordRequestSnapshot(runId: runId, snapshot: snapshot)
+        await firstLedger.recordApprovalDenied(
+            runId: runId, toolCallId: "denied", toolName: "search", reason: "user denied", capabilityId: nil
         )
-        let secondWriteSucceeded = await IOSAgentRunLedger(dao: dao).recordRequestSnapshot(
+        db.close()
+
+        let reopened = IosDatabaseFactory.shared.createDatabase(atFilePath: path)
+        defer { reopened.close() }
+        let reopenedDao = reopened.agentRuntimeDao()
+        let secondWriteSucceeded = await IOSAgentRunLedger(dao: reopenedDao).recordRequestSnapshot(
             runId: runId,
             snapshot: snapshot
         )
         XCTAssertTrue(firstWriteSucceeded)
         XCTAssertTrue(secondWriteSucceeded)
 
-        let events = await fetchLedgerEvents(dao: dao, runId: runId)
+        let events = await fetchLedgerEvents(dao: reopenedDao, runId: runId)
+        XCTAssertEqual(events.map(\.type), [
+            IOSAgentRunLedger.requestSnapshotEventType,
+            IOSAgentRunLedger.approvalDeniedEventType,
+            IOSAgentRunLedger.requestSnapshotEventType,
+        ])
         let indices = events.compactMap { event -> Int? in
             guard event.type == IOSAgentRunLedger.requestSnapshotEventType,
                   let data = event.payload.data(using: .utf8),
