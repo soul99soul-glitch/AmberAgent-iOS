@@ -1273,8 +1273,7 @@ extension MacGatewayStore {
         if !busyCloudDialogueRequestIds.isEmpty {
             return true
         }
-        let mainSubmissions = cloudDialogueSubmissions.filter { $0.kind == .mainMessage }
-        for submission in mainSubmissions {
+        for submission in cloudDialogueSubmissions where submission.kind == .mainMessage {
             if submission.receipt == nil {
                 if submission.isAwaitingReceiptConfirmation {
                     return true
@@ -1283,6 +1282,7 @@ extension MacGatewayStore {
             }
             guard let receipt = submission.receipt else { continue }
             let effectiveReceipt = cloudDialogueReceipts[receipt.requestId] ?? receipt
+            guard effectiveReceipt.state == .received else { continue }
             let delegatedWorkIds = effectiveReceipt.workItemIds
             let hasTopicWorkItemEvent = cloudDialogueEvents.contains { candidate in
                 candidate.topicId == effectiveReceipt.topicId && candidate.workItemId != nil
@@ -1297,7 +1297,6 @@ extension MacGatewayStore {
                     continue
                 }
             }
-            guard effectiveReceipt.state == .received else { continue }
             if let userEvent = cloudDialogueEvents.first(where: { $0.id == effectiveReceipt.eventId }) {
                 let hasReplyAfter = cloudDialogueEvents.contains { candidate in
                     candidate.seq > userEvent.seq

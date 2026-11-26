@@ -25,6 +25,18 @@ import UIKit
 ///
 /// 系统任务提交失败时，UIKit 短窗仍覆盖有限收尾；已排队但还没 adopt 时，
 /// request 仍留给系统接管。调用方也可显式关闭系统任务，只保留短窗和音频语义。
+/// Minimal seam over `BGContinuedProcessingTask` so unit tests can verify
+/// adoption, progress/title writes, and expiration without instantiating
+/// the system-owned ObjC class.
+protocol BackgroundContinuedProcessingTasking: AnyObject {
+    var progress: Progress { get }
+    var expirationHandler: (() -> Void)? { get set }
+    func updateTitle(_ title: String, subtitle: String)
+    func setTaskCompleted(success: Bool)
+}
+
+extension BGContinuedProcessingTask: BackgroundContinuedProcessingTasking {}
+
 @MainActor
 final class BackgroundGenerationKeepAlive {
     enum ExecutionAssertion: Equatable {
@@ -48,10 +60,15 @@ final class BackgroundGenerationKeepAlive {
     /// 一次生成占用的执行权。相关句柄都挂在这里，终态时一起释放。
     private struct Lease {
         var uiTaskId: UIBackgroundTaskIdentifier
-        var systemTask: BGContinuedProcessingTask?
+        var systemTask: (any BackgroundContinuedProcessingTasking)?
         var systemTaskCompletion: SystemTaskCompletion
         var title: String
         var subtitle: String
+        /// Title/subtitle last sent to the currently adopted `systemTask`.
+        /// Cleared on task detachment or new adoption so every adopted task
+        /// receives its initial `updateTitle` once.
+        var lastSystemTaskTitle: String? = nil
+        var lastSystemTaskSubtitle: String? = nil
         /// Whether a system continued-processing fallback is allowed.
         var submitSystemTask: Bool
         /// True after a system request was handed to BGTaskScheduler. This is diagnostic
@@ -82,7 +99,7 @@ final class BackgroundGenerationKeepAlive {
         private let lock = NSLock()
         private var didComplete = false
 
-        func complete(_ task: BGTask, success: Bool) {
+        func complete(_ task: any BackgroundContinuedProcessingTasking, success: Bool) {
             lock.lock()
             guard !didComplete else {
                 lock.unlock()
@@ -336,6 +353,8 @@ final class BackgroundGenerationKeepAlive {
         if !preservingAdoptedTask, let systemTask = lease.systemTask {
             lease.systemTaskCompletion.complete(systemTask, success: true)
             lease.systemTask = nil
+            lease.lastSystemTaskTitle = nil
+            lease.lastSystemTaskSubtitle = nil
             lease.waiter?.resume()
             lease.waiter = nil
         }
@@ -438,7 +457,11 @@ final class BackgroundGenerationKeepAlive {
                 systemTask.progress.totalUnitCount = total
             }
             systemTask.progress.completedUnitCount = lease.progressCompletedUnitCount
-            systemTask.updateTitle(lease.title, subtitle: lease.subtitle)
+            if lease.lastSystemTaskTitle != lease.title || lease.lastSystemTaskSubtitle != lease.subtitle {
+                systemTask.updateTitle(lease.title, subtitle: lease.subtitle)
+                lease.lastSystemTaskTitle = lease.title
+                lease.lastSystemTaskSubtitle = lease.subtitle
+            }
         }
         leases[leaseId] = lease
     }
@@ -717,6 +740,10 @@ final class BackgroundGenerationKeepAlive {
     /// 系统调度到这一轮：接管执行权，然后挂起等 `end`。
     /// 这里不重跑、不碰生成状态——正在跑的那条流本来就没停。
     func adopt(_ task: BGContinuedProcessingTask, leaseId: String) async {
+        await adoptTask(task, leaseId: leaseId)
+    }
+
+    func adoptTask(_ task: any BackgroundContinuedProcessingTasking, leaseId: String) async {
         guard leases[leaseId] != nil else {
             // 生成已经结束了，系统才调度过来。直接收口，别留个孤儿任务。
             task.setTaskCompleted(success: true)
@@ -727,17 +754,23 @@ final class BackgroundGenerationKeepAlive {
         // 所以先同步收口，清理再回主 actor 做。
         let systemTaskCompletion = SystemTaskCompletion()
         leases[leaseId]?.systemTaskCompletion = systemTaskCompletion
+        nonisolated(unsafe) let expiredTask = task
         task.expirationHandler = { [weak self, systemTaskCompletion] in
-            systemTaskCompletion.complete(task, success: false)
-            Task { @MainActor in self?.handleSystemExpiration(leaseId, task: task) }
+            systemTaskCompletion.complete(expiredTask, success: false)
+            Task { @MainActor in self?.handleSystemExpiration(leaseId, task: expiredTask) }
         }
         leases[leaseId]?.systemTask = task
-        if let lease = leases[leaseId] {
+        leases[leaseId]?.lastSystemTaskTitle = nil
+        leases[leaseId]?.lastSystemTaskSubtitle = nil
+        if var lease = leases[leaseId] {
             if let total = Self.systemTotal(for: lease) {
                 task.progress.totalUnitCount = total
             }
             task.progress.completedUnitCount = lease.progressCompletedUnitCount
             task.updateTitle(lease.title, subtitle: lease.subtitle)
+            lease.lastSystemTaskTitle = lease.title
+            lease.lastSystemTaskSubtitle = lease.subtitle
+            leases[leaseId] = lease
         }
         // 系统接管了，第一条腿就该还回去，不白占 30 秒配额。
         releaseUITask(leaseId)
@@ -812,7 +845,7 @@ final class BackgroundGenerationKeepAlive {
     /// 上层各自的中断/恢复逻辑负责收口。
     ///
     /// 只由 `expirationHandler` 调用，`setTaskCompleted` 已经在那里同步报过了。
-    private func handleSystemExpiration(_ leaseId: String, task: BGContinuedProcessingTask) {
+    private func handleSystemExpiration(_ leaseId: String, task: any BackgroundContinuedProcessingTasking) {
         guard leases[leaseId]?.systemTask === task else { return }
         if var lease = leases[leaseId], lease.audioLegEligible, audioKeepAlive.isActive {
             // 音频腿还在：只摘系统任务，这一轮继续跑。不再重投系统卡——
@@ -820,6 +853,8 @@ final class BackgroundGenerationKeepAlive {
             lease.waiter?.resume()
             lease.waiter = nil
             lease.systemTask = nil
+            lease.lastSystemTaskTitle = nil
+            lease.lastSystemTaskSubtitle = nil
             lease.didSubmitSystemTask = false
             lease.submitSystemTask = false
             lease.heldByAudio = true

@@ -394,6 +394,7 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
     ) async -> [IOSWebMountRunReport] {
         guard let conversationId = ownerConversationId?.nilIfBlank else { return [] }
         let nowMillis = Self.nowMillis()
+        let normalizedOwnerRunId = ownerRunId?.nilIfBlank
         let candidates = await runCandidates(conversationId: conversationId)
         let orderedCandidates = candidates.sorted {
             if $0.startedAtMillis == $1.startedAtMillis { return $0.runId > $1.runId }
@@ -403,14 +404,14 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
 
         for candidate in orderedCandidates {
             guard let transactions = await toolTransactions(runId: candidate.runId) else { continue }
-            let events = await toolEvents(runId: candidate.runId)
-            let steps = Self.projectToolSteps(transactions: transactions, events: events)
-            guard steps.contains(where: { $0.toolName.hasPrefix("wm_") }) else { continue }
-            let matchesCurrentOwner = candidate.runId == ownerRunId?.nilIfBlank
+            let matchesCurrentOwner = candidate.runId == normalizedOwnerRunId
             guard matchesCurrentOwner || Self.containsWebMountSession(
                 sessionId: sessionId,
                 transactions: transactions
             ) else { continue }
+            let events = await toolEvents(runId: candidate.runId)
+            let steps = Self.projectToolSteps(transactions: transactions, events: events)
+            guard steps.contains(where: { $0.toolName.hasPrefix("wm_") }) else { continue }
 
             let attributableWebMountSteps = steps.filter { step in
                 guard step.toolName.hasPrefix("wm_"),
