@@ -159,11 +159,73 @@ enum MacGatewayCloudDialogueEventKind: String, Codable, Equatable, CaseIterable,
     case inputCancelled = "input_cancelled"
     case processEvent = "process_event"
     case taskResult = "task_result"
+    case proactiveMessage = "proactive_message"
     case unknown
 
     init(from decoder: Decoder) throws {
         let rawValue = try decoder.singleValueContainer().decode(String.self)
         self = Self(rawValue: rawValue) ?? .unknown
+    }
+}
+
+struct MacGatewayCloudProactiveMeta: Codable, Equatable, Sendable {
+    var signalId: String
+    var topicKey: String
+    var category: String
+    var title: String
+    var urgency: String = "normal"
+    var silent: Bool = false
+    var sourceLabel: String = ""
+    var actions: [String] = ["act", "snooze", "mute"]
+    var checkPrompt: String? = nil
+    var wakeupId: String? = nil
+    var originSignalId: String? = nil
+
+    init(
+        signalId: String,
+        topicKey: String,
+        category: String,
+        title: String,
+        urgency: String = "normal",
+        silent: Bool = false,
+        sourceLabel: String = "",
+        actions: [String] = ["act", "snooze", "mute"],
+        checkPrompt: String? = nil,
+        wakeupId: String? = nil,
+        originSignalId: String? = nil
+    ) {
+        self.signalId = signalId
+        self.topicKey = topicKey
+        self.category = category
+        self.title = title
+        self.urgency = urgency
+        self.silent = silent
+        self.sourceLabel = sourceLabel
+        self.actions = actions
+        self.checkPrompt = checkPrompt
+        self.wakeupId = wakeupId
+        self.originSignalId = originSignalId
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case signalId, topicKey, category, title
+        case urgency, silent, sourceLabel, actions
+        case checkPrompt, wakeupId, originSignalId
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        signalId = try container.decode(String.self, forKey: .signalId)
+        topicKey = try container.decode(String.self, forKey: .topicKey)
+        category = try container.decode(String.self, forKey: .category)
+        title = try container.decode(String.self, forKey: .title)
+        urgency = try container.decodeIfPresent(String.self, forKey: .urgency) ?? "normal"
+        silent = try container.decodeIfPresent(Bool.self, forKey: .silent) ?? false
+        sourceLabel = try container.decodeIfPresent(String.self, forKey: .sourceLabel) ?? ""
+        actions = try container.decodeIfPresent([String].self, forKey: .actions) ?? ["act", "snooze", "mute"]
+        checkPrompt = try container.decodeIfPresent(String.self, forKey: .checkPrompt)
+        wakeupId = try container.decodeIfPresent(String.self, forKey: .wakeupId)
+        originSignalId = try container.decodeIfPresent(String.self, forKey: .originSignalId)
     }
 }
 
@@ -220,6 +282,41 @@ struct MacGatewayCloudDialogueEvent: Codable, Equatable, Identifiable, Sendable 
     var outcomeUnknown: Bool? = nil
     var sourceRefs: [String]? = nil
     var sourcePaths: [String]? = nil
+    var proactive: MacGatewayCloudProactiveMeta? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case seq, id, kind, role, text, topicId
+        case workItemId, outcome, soulRevision, conversationId
+        case causedByInputId, causedByRequestId, parentRunId
+        case executorKind, executorId, epoch, observedSeq, ledgerId, outcomeUnknown
+        case sourceRefs, sourcePaths, proactive
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        seq = try container.decode(Int64.self, forKey: .seq)
+        id = try container.decode(String.self, forKey: .id)
+        kind = try container.decode(MacGatewayCloudDialogueEventKind.self, forKey: .kind)
+        role = try container.decode(String.self, forKey: .role)
+        text = try container.decode(String.self, forKey: .text)
+        topicId = try container.decode(String.self, forKey: .topicId)
+        workItemId = try container.decodeIfPresent(String.self, forKey: .workItemId)
+        outcome = try container.decodeIfPresent(MacGatewayCloudDialogueOutcome.self, forKey: .outcome)
+        soulRevision = try container.decodeIfPresent(Int64.self, forKey: .soulRevision)
+        conversationId = try container.decodeIfPresent(String.self, forKey: .conversationId)
+        causedByInputId = try container.decodeIfPresent(String.self, forKey: .causedByInputId)
+        causedByRequestId = try container.decodeIfPresent(String.self, forKey: .causedByRequestId)
+        parentRunId = try container.decodeIfPresent(String.self, forKey: .parentRunId)
+        executorKind = try container.decodeIfPresent(String.self, forKey: .executorKind)
+        executorId = try container.decodeIfPresent(String.self, forKey: .executorId)
+        epoch = try container.decodeIfPresent(Int64.self, forKey: .epoch)
+        observedSeq = try container.decodeIfPresent(Int64.self, forKey: .observedSeq)
+        ledgerId = try container.decodeIfPresent(String.self, forKey: .ledgerId)
+        outcomeUnknown = try container.decodeIfPresent(Bool.self, forKey: .outcomeUnknown)
+        sourceRefs = try container.decodeIfPresent([String].self, forKey: .sourceRefs)
+        sourcePaths = try container.decodeIfPresent([String].self, forKey: .sourcePaths)
+        proactive = try container.decodeIfPresent(MacGatewayCloudProactiveMeta.self, forKey: .proactive)
+    }
 
     init(
         seq: Int64,
@@ -242,7 +339,8 @@ struct MacGatewayCloudDialogueEvent: Codable, Equatable, Identifiable, Sendable 
         ledgerId: String? = nil,
         outcomeUnknown: Bool? = nil,
         sourceRefs: [String]? = nil,
-        sourcePaths: [String]? = nil
+        sourcePaths: [String]? = nil,
+        proactive: MacGatewayCloudProactiveMeta? = nil
     ) {
         self.seq = seq
         self.id = id
@@ -265,6 +363,7 @@ struct MacGatewayCloudDialogueEvent: Codable, Equatable, Identifiable, Sendable 
         self.outcomeUnknown = outcomeUnknown
         self.sourceRefs = sourceRefs
         self.sourcePaths = sourcePaths
+        self.proactive = proactive
     }
 
     var displaySourceAnnotations: [String] {
@@ -976,6 +1075,7 @@ extension MacGatewayStore {
             candidate.seq > userEvent.seq &&
             candidate.topicId == userEvent.topicId &&
             candidate.kind != .userMessage &&
+            candidate.kind != .proactiveMessage &&
             !candidate.isUpfrontAcknowledgement
         }
         if hasTopicResponse {
@@ -1072,6 +1172,9 @@ extension MacGatewayStore {
         var result = Set<String>()
         var previousAssistantTopic: String?
         for event in cloudDialogueVisibleEvents {
+            if event.kind == .proactiveMessage {
+                continue
+            }
             if event.role == "user" || event.kind == .userMessage || event.kind == .followup {
                 previousAssistantTopic = nil
             } else if event.role == "assistant" {
@@ -1085,7 +1188,7 @@ extension MacGatewayStore {
     var cloudDialogueVisibleEvents: [MacGatewayCloudDialogueEvent] {
         cloudDialogueEvents.filter { event in
             switch event.kind {
-            case .userMessage, .followup, .assistantReply, .taskResult, .stopRequested:
+            case .userMessage, .followup, .assistantReply, .taskResult, .stopRequested, .proactiveMessage:
                 true
             case .stopTooLate, .processEvent, .inputConsumed, .inputCancelled, .unknown:
                 false
@@ -1291,6 +1394,7 @@ extension MacGatewayStore {
                 let hasTopicActivity = cloudDialogueEvents.contains { candidate in
                     candidate.topicId == effectiveReceipt.topicId
                         && candidate.kind != .userMessage
+                        && candidate.kind != .proactiveMessage
                         && !candidate.isUpfrontAcknowledgement
                 } || delegatedWorkIds.contains { cloudDialogueProgressByWorkItem[$0] != nil }
                 if hasTopicActivity {
@@ -2985,6 +3089,9 @@ extension MacGatewayStore {
                     syncCloudDialogueSoulIfNeeded(for: event, allowHeuristicFallback: allowHeuristicSoulFallback)
                 }
             }
+
+        case .proactiveMessage:
+            break
 
         case .unknown:
             break
