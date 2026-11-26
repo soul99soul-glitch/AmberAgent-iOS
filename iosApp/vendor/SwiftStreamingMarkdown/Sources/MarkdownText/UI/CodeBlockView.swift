@@ -6,6 +6,101 @@
 import Foundation
 import HighlightSwift
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
+
+internal final class CodeBlockHighlightCache: @unchecked Sendable {
+  static let shared = CodeBlockHighlightCache()
+
+  static let defaultCountLimit = 256
+  static let defaultTotalCostLimit = 8 * 1024 * 1024
+
+  private final class CacheKey: NSObject {
+    let css: String
+    let appearance: String
+    let language: String
+    let code: String
+    private let cachedHash: Int
+
+    init(css: String, appearance: String, language: String, code: String) {
+      self.css = css
+      self.appearance = appearance
+      self.language = language
+      self.code = code
+      var hasher = Hasher()
+      hasher.combine(css)
+      hasher.combine(appearance)
+      hasher.combine(language)
+      hasher.combine(code)
+      self.cachedHash = hasher.finalize()
+      super.init()
+    }
+
+    override var hash: Int { cachedHash }
+
+    override func isEqual(_ object: Any?) -> Bool {
+      guard let other = object as? CacheKey else { return false }
+      if self === other { return true }
+      return cachedHash == other.cachedHash
+        && appearance == other.appearance
+        && language == other.language
+        && css == other.css
+        && code == other.code
+    }
+  }
+
+  private final class CacheEntry {
+    let attributedString: AttributedString
+
+    init(attributedString: AttributedString) {
+      self.attributedString = attributedString
+    }
+  }
+
+  private let storage: NSCache<CacheKey, CacheEntry>
+
+  init(countLimit: Int = defaultCountLimit, totalCostLimit: Int = defaultTotalCostLimit) {
+    let cache = NSCache<CacheKey, CacheEntry>()
+    cache.countLimit = countLimit
+    cache.totalCostLimit = totalCostLimit
+    self.storage = cache
+  }
+
+  var countLimit: Int { storage.countLimit }
+  var totalCostLimit: Int { storage.totalCostLimit }
+
+  func attributedString(
+    for code: String,
+    language: String,
+    css: String,
+    appearance: String
+  ) -> AttributedString? {
+    let key = CacheKey(css: css, appearance: appearance, language: language, code: code)
+    return storage.object(forKey: key)?.attributedString
+  }
+
+  func store(
+    _ attributedString: AttributedString,
+    for code: String,
+    language: String,
+    css: String,
+    appearance: String
+  ) {
+    let key = CacheKey(css: css, appearance: appearance, language: language, code: code)
+    let cost = Self.estimatedCost(for: code)
+    storage.setObject(CacheEntry(attributedString: attributedString), forKey: key, cost: cost)
+  }
+
+  func removeAll() {
+    storage.removeAllObjects()
+  }
+
+  static func estimatedCost(for code: String) -> Int {
+    // AttributedString stores UTF-8 characters plus attribute runs (~4x source byte size).
+    max(1, code.utf8.count * 4)
+  }
+}
 
 private actor HighlightTaskManager: ObservableObject {
   /// Shared Highlight instance to avoid creating multiple JSContext/HLJS instances.
@@ -15,26 +110,57 @@ private actor HighlightTaskManager: ObservableObject {
   private static let sharedHighlight = Highlight()
   private static let minimumHighlightIntervalNs: UInt64 = 90_000_000
 
-  private var latestCode: String?
+  struct Request: Sendable {
+    let code: String
+    let language: String
+    let css: String
+    let appearance: String
+  }
+
+  private var latestRequest: Request?
   private var isProcessing = false
   private var lastHighlightFinishedUptimeNs: UInt64 = 0
 
-  func enqueueCode(_ code: String, completion: @escaping (String, AttributedString) -> Void) {
-    latestCode = code
+  static func highlightText(_ code: String, css: String) async throws -> AttributedString {
+    try await sharedHighlight.attributedText(code, colors: .custom(css: css, background: ""))
+  }
+
+  func enqueue(
+    _ request: Request,
+    cache: CodeBlockHighlightCache = .shared,
+    completion: @escaping (String, String, AttributedString) -> Void
+  ) {
+    latestRequest = request
 
     if !isProcessing {
       Task {
-        await processQueue(completion: completion)
+        await processQueue(cache: cache, completion: completion)
       }
     }
   }
 
-  private func processQueue(completion: @escaping (String, AttributedString) -> Void) async {
+  private func processQueue(
+    cache: CodeBlockHighlightCache,
+    completion: @escaping (String, String, AttributedString) -> Void
+  ) async {
     guard !isProcessing else { return }
 
     isProcessing = true
 
-    while latestCode != nil {
+    while let pendingRequest = latestRequest {
+      if let cached = cache.attributedString(
+        for: pendingRequest.code,
+        language: pendingRequest.language,
+        css: pendingRequest.css,
+        appearance: pendingRequest.appearance
+      ) {
+        latestRequest = nil
+        await MainActor.run {
+          completion(pendingRequest.code, pendingRequest.appearance, cached)
+        }
+        continue
+      }
+
       if lastHighlightFinishedUptimeNs > 0 {
         let nowNs = DispatchTime.now().uptimeNanoseconds
         let elapsedNs = nowNs >= lastHighlightFinishedUptimeNs ? nowNs - lastHighlightFinishedUptimeNs : 0
@@ -42,14 +168,32 @@ private actor HighlightTaskManager: ObservableObject {
           try? await Task.sleep(nanoseconds: Self.minimumHighlightIntervalNs - elapsedNs)
         }
       }
-      guard let codeToProcess = latestCode else { break }
-      latestCode = nil
+      guard let request = latestRequest else { break }
+      latestRequest = nil
 
-      let css: String = await CodeBlockView.syntaxHighlightingCss
-      if let result = try? await Self.sharedHighlight.attributedText(codeToProcess, colors: .custom(css: css, background: "")) {
+      if let cached = cache.attributedString(
+        for: request.code,
+        language: request.language,
+        css: request.css,
+        appearance: request.appearance
+      ) {
+        await MainActor.run {
+          completion(request.code, request.appearance, cached)
+        }
+        continue
+      }
+
+      if let result = try? await Self.highlightText(request.code, css: request.css) {
+        cache.store(
+          result,
+          for: request.code,
+          language: request.language,
+          css: request.css,
+          appearance: request.appearance
+        )
         lastHighlightFinishedUptimeNs = DispatchTime.now().uptimeNanoseconds
         await MainActor.run {
-          completion(codeToProcess, result)
+          completion(request.code, request.appearance, result)
         }
       } else {
         lastHighlightFinishedUptimeNs = DispatchTime.now().uptimeNanoseconds
@@ -84,11 +228,14 @@ public struct CodeBlockView: View {
 
   @State private var expanded = false
   @Environment(\.swiftStreamingMarkdownCodeCopyHitOutset) private var copyHitOutset
+  @Environment(\.colorScheme) private var colorScheme
 
   @State var copied: Bool = false
   @State var attributedString: AttributedString?
   @State private var highlightedCode: String?
+  @State private var highlightedAppearance: String?
   @StateObject private var taskManager: HighlightTaskManager = HighlightTaskManager()
+  internal let didPrepopulateHighlightFromCache: Bool
 
   public init(language: String, code: String, onCodeCopied: (() -> Void)? = nil,
               autoWrap: Bool = false, autoCollapse: Bool = false, headerAccessory: AnyView? = nil) {
@@ -98,6 +245,70 @@ public struct CodeBlockView: View {
     self.autoWrap = autoWrap
     self.autoCollapse = autoCollapse
     self.headerAccessory = headerAccessory
+
+    let initialCode = Self.displayedCode(for: code, autoCollapse: autoCollapse, expanded: false)
+    let initialAppearance = Self.currentAppearanceKey()
+    let initialCss = Self.syntaxHighlightingCss(for: initialAppearance)
+    if let cached = CodeBlockHighlightCache.shared.attributedString(
+      for: initialCode,
+      language: language,
+      css: initialCss,
+      appearance: initialAppearance
+    ) {
+      _attributedString = State(initialValue: cached)
+      _highlightedCode = State(initialValue: initialCode)
+      _highlightedAppearance = State(initialValue: initialAppearance)
+      self.didPrepopulateHighlightFromCache = true
+    } else {
+      _attributedString = State(initialValue: nil)
+      _highlightedCode = State(initialValue: nil)
+      _highlightedAppearance = State(initialValue: nil)
+      self.didPrepopulateHighlightFromCache = false
+    }
+  }
+
+  internal static func appearanceKey(for colorScheme: ColorScheme) -> String {
+    colorScheme == .dark ? "dark" : "light"
+  }
+
+  internal static func currentAppearanceKey() -> String {
+    #if canImport(UIKit)
+    return UITraitCollection.current.userInterfaceStyle == .dark ? "dark" : "light"
+    #else
+    return "light"
+    #endif
+  }
+
+  internal static func syntaxHighlightingCss(for appearance: String) -> String {
+    _ = appearance
+    return syntaxHighlightingCss
+  }
+
+  internal static func displayedCode(for code: String, autoCollapse: Bool, expanded: Bool) -> String {
+    (autoCollapse && code.count > 500 && !expanded) ? String(code.prefix(300)) : code
+  }
+
+  internal static func highlight(
+    code: String,
+    language: String,
+    css: String? = nil,
+    appearance: String,
+    cache: CodeBlockHighlightCache = .shared
+  ) async -> AttributedString? {
+    let resolvedCss = css ?? syntaxHighlightingCss(for: appearance)
+    if let cached = cache.attributedString(
+      for: code,
+      language: language,
+      css: resolvedCss,
+      appearance: appearance
+    ) {
+      return cached
+    }
+    guard let result = try? await HighlightTaskManager.highlightText(code, css: resolvedCss) else {
+      return nil
+    }
+    cache.store(result, for: code, language: language, css: resolvedCss, appearance: appearance)
+    return result
   }
 
   private func copyCode() {
@@ -108,9 +319,44 @@ public struct CodeBlockView: View {
     }
   }
 
-  private func updateAttributedString(code: String) async {
-    await taskManager.enqueueCode(code) { processedCode, newAttributedString in
+  @MainActor
+  private func updateAttributedString(code: String, appearance: String) async {
+    if highlightedCode == code,
+       highlightedAppearance == appearance,
+       attributedString != nil {
+      return
+    }
+    let css = Self.syntaxHighlightingCss(for: appearance)
+    if let cached = CodeBlockHighlightCache.shared.attributedString(
+      for: code,
+      language: language,
+      css: css,
+      appearance: appearance
+    ) {
+      self.highlightedCode = code
+      self.highlightedAppearance = appearance
+      self.attributedString = cached
+      return
+    }
+    let request = HighlightTaskManager.Request(
+      code: code,
+      language: language,
+      css: css,
+      appearance: appearance
+    )
+    await taskManager.enqueue(request) { processedCode, processedAppearance, newAttributedString in
+      let currentAppearance = Self.appearanceKey(for: self.colorScheme)
+      guard processedAppearance == currentAppearance else { return }
+      let currentCode = self.displayedCode
+      guard processedCode == currentCode || currentCode.hasPrefix(processedCode) else { return }
+      if self.highlightedAppearance == currentAppearance,
+         let existing = self.highlightedCode,
+         existing.count > processedCode.count,
+         currentCode.hasPrefix(existing) {
+        return
+      }
       self.highlightedCode = processedCode
+      self.highlightedAppearance = processedAppearance
       self.attributedString = newAttributedString
     }
   }
@@ -120,22 +366,33 @@ public struct CodeBlockView: View {
   }
 
   private var displayedCode: String {
-    shouldCollapse ? String(code.prefix(300)) : code
+    Self.displayedCode(for: code, autoCollapse: autoCollapse, expanded: expanded)
   }
 
   @available(iOS 16.1, *)
   private var renderedAttributedCode: AttributedString {
     let currentCode = displayedCode
-    guard let attributedString, let highlightedCode else {
-      return AttributedString(currentCode)
+    let currentAppearance = Self.appearanceKey(for: colorScheme)
+    if let attributedString,
+       let highlightedCode,
+       highlightedAppearance == currentAppearance {
+      if highlightedCode == currentCode {
+        return attributedString
+      }
+      if currentCode.hasPrefix(highlightedCode) {
+        var combined = attributedString
+        combined.append(AttributedString(String(currentCode.dropFirst(highlightedCode.count))))
+        return combined
+      }
     }
-    if highlightedCode == currentCode {
-      return attributedString
-    }
-    if currentCode.hasPrefix(highlightedCode) {
-      var combined = attributedString
-      combined.append(AttributedString(String(currentCode.dropFirst(highlightedCode.count))))
-      return combined
+    let css = Self.syntaxHighlightingCss(for: currentAppearance)
+    if let cached = CodeBlockHighlightCache.shared.attributedString(
+      for: currentCode,
+      language: language,
+      css: css,
+      appearance: currentAppearance
+    ) {
+      return cached
     }
     return AttributedString(currentCode)
   }
@@ -253,13 +510,28 @@ public struct CodeBlockView: View {
       }
     })
     .onChange(of: displayedCode, perform: { value in
+      let appearance = Self.appearanceKey(for: colorScheme)
       Task {
-        await updateAttributedString(code: value)
+        await updateAttributedString(code: value, appearance: appearance)
+      }
+    })
+    .onChange(of: colorScheme, perform: { newScheme in
+      let appearance = Self.appearanceKey(for: newScheme)
+      let value = displayedCode
+      Task {
+        await updateAttributedString(code: value, appearance: appearance)
       }
     })
     .onAppear(perform: {
+      let appearance = Self.appearanceKey(for: colorScheme)
+      let value = displayedCode
+      if highlightedCode == value,
+         highlightedAppearance == appearance,
+         attributedString != nil {
+        return
+      }
       Task {
-        await updateAttributedString(code: displayedCode)
+        await updateAttributedString(code: value, appearance: appearance)
       }
     })
   }

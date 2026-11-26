@@ -947,9 +947,7 @@ final class IOSImageGenerationRepository {
             if let type = root["type"] as? String, !type.isEmpty {
                 eventTypes.append(type)
             }
-        }
-
-        if let text = String(data: data, encoding: .utf8) {
+        } else if let text = String(data: data, encoding: .utf8) {
             for object in sseJSONObjects(from: text) {
                 results.append(contentsOf: codexImageResults(fromJSONObject: object))
                 reasons.append(contentsOf: codexImageFailureReasons(fromJSONObject: object))
