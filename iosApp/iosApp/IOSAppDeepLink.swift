@@ -25,6 +25,8 @@ enum IOSAppDeepLink {
         case gatewayTasks(MacGatewayEndpointRole)
         /// Paired Cloud schedule or native task detail (`amber://cloud-task/<workItemId>`).
         case cloudTask(workItemId: String)
+        /// Cloud proactive signal card detail (`amber://proactive/<signalId>`).
+        case proactiveSignal(id: String)
         /// iOS Share Sheet prefill handoff (`amber://share/<handoffID>`).
         case shareInbox(handoffID: String)
     }
@@ -84,6 +86,11 @@ enum IOSAppDeepLink {
         case ("cloud-task", let parts) where parts.count == 1 && queryItems.isEmpty:
             guard isSafeWorkItemIdentifier(parts[0]) else { return nil }
             return .cloudTask(workItemId: parts[0])
+        case ("proactive", let parts) where parts.count == 1 && queryItems.isEmpty:
+            let id = parts[0]
+            guard components.path == "/\(id)",
+                  isSafeProactiveSignalID(id) else { return nil }
+            return .proactiveSignal(id: id)
         case ("share", let parts) where parts.count == 1 && queryItems.isEmpty:
             guard isSafeIdentifier(parts[0], maxLength: 64) else { return nil }
             return .shareInbox(handoffID: parts[0])
@@ -151,6 +158,10 @@ enum IOSAppDeepLink {
             guard isSafeWorkItemIdentifier(workItemId) else { return nil }
             components.host = "cloud-task"
             components.path = "/\(workItemId)"
+        case .proactiveSignal(let id):
+            guard isSafeProactiveSignalID(id) else { return nil }
+            components.host = "proactive"
+            components.path = "/\(id)"
         case .shareInbox(let handoffID):
             guard isSafeIdentifier(handoffID, maxLength: 64) else { return nil }
             components.host = "share"
@@ -168,6 +179,10 @@ enum IOSAppDeepLink {
             )
         }
         return components.url
+    }
+
+    static func isSafeProactiveSignalID(_ value: String) -> Bool {
+        isSafeIdentifier(value, maxLength: 48)
     }
 
     private static func isSafeIdentifier(_ value: String, maxLength: Int) -> Bool {

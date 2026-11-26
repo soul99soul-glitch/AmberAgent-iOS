@@ -13,6 +13,7 @@ struct IOSAppDeepLinkTests {
         #expect(IOSAppDeepLink.parse(try #require(URL(string: "amber-test://task/active")), expectedScheme: scheme) == .activeTask)
         #expect(IOSAppDeepLink.parse(try #require(URL(string: "amber-test://settings/weather")), expectedScheme: scheme) == .weather)
         #expect(IOSAppDeepLink.parse(try #require(URL(string: "amber-test://agent/ask/handoff-123")), expectedScheme: scheme) == .agentPrompt(handoffID: "handoff-123"))
+        #expect(IOSAppDeepLink.parse(try #require(URL(string: "amber-test://proactive/wt_signal-01")), expectedScheme: scheme) == .proactiveSignal(id: "wt_signal-01"))
     }
 
     @Test func rejectsWrongSchemeQueriesAndUnsafeIdentifiers() throws {
@@ -25,11 +26,42 @@ struct IOSAppDeepLinkTests {
         #expect(IOSAppDeepLink.url(for: .agentPrompt(handoffID: "unsafe/id"), scheme: scheme) == nil)
     }
 
+    @Test func proactiveSignalDeepLinkValidatesAndRoundTrips() throws {
+        let maxLenID = String(repeating: "a", count: 48)
+        let overLenID = String(repeating: "a", count: 49)
+
+        let maxURL = try #require(IOSAppDeepLink.url(for: .proactiveSignal(id: maxLenID), scheme: scheme))
+        #expect(maxURL.absoluteString == "amber-test://proactive/\(maxLenID)")
+        #expect(IOSAppDeepLink.parse(maxURL, expectedScheme: scheme) == .proactiveSignal(id: maxLenID))
+
+        let typicalURL = try #require(IOSAppDeepLink.url(for: .proactiveSignal(id: "wk_12345abcde_99"), scheme: scheme))
+        #expect(IOSAppDeepLink.parse(typicalURL, expectedScheme: scheme) == .proactiveSignal(id: "wk_12345abcde_99"))
+
+        // Reject empty, overlong, path traversal, query, fragment, wrong scheme, and illegal characters.
+        #expect(IOSAppDeepLink.parse(try #require(URL(string: "amber-test://proactive/")), expectedScheme: scheme) == nil)
+        #expect(IOSAppDeepLink.parse(try #require(URL(string: "amber-test://proactive/\(overLenID)")), expectedScheme: scheme) == nil)
+        #expect(IOSAppDeepLink.parse(try #require(URL(string: "amber-test://proactive/..")), expectedScheme: scheme) == nil)
+        #expect(IOSAppDeepLink.parse(try #require(URL(string: "amber-test://proactive/../secret")), expectedScheme: scheme) == nil)
+        #expect(IOSAppDeepLink.parse(try #require(URL(string: "amber-test://proactive/a%2Fb")), expectedScheme: scheme) == nil)
+        #expect(IOSAppDeepLink.parse(try #require(URL(string: "amber-test://proactive/a/b")), expectedScheme: scheme) == nil)
+        #expect(IOSAppDeepLink.parse(try #require(URL(string: "amber-test://proactive//sig_1")), expectedScheme: scheme) == nil)
+        #expect(IOSAppDeepLink.parse(try #require(URL(string: "amber-test://proactive/sig_1?x=1")), expectedScheme: scheme) == nil)
+        #expect(IOSAppDeepLink.parse(try #require(URL(string: "amber-test://proactive/sig_1#frag")), expectedScheme: scheme) == nil)
+        #expect(IOSAppDeepLink.parse(try #require(URL(string: "amber-test://proactive/sig:1")), expectedScheme: scheme) == nil)
+        #expect(IOSAppDeepLink.parse(try #require(URL(string: "https://proactive/sig_1")), expectedScheme: scheme) == nil)
+
+        #expect(IOSAppDeepLink.url(for: .proactiveSignal(id: ""), scheme: scheme) == nil)
+        #expect(IOSAppDeepLink.url(for: .proactiveSignal(id: overLenID), scheme: scheme) == nil)
+        #expect(IOSAppDeepLink.url(for: .proactiveSignal(id: "../escape"), scheme: scheme) == nil)
+        #expect(IOSAppDeepLink.url(for: .proactiveSignal(id: "bad:id"), scheme: scheme) == nil)
+    }
+
     @Test func generatedURLsRoundTrip() throws {
         let destinations: [IOSAppDeepLink.Destination] = [
             .newConversation, .latestConversation, .conversation(id: "ABC_123"),
             .agentPrompt(handoffID: "handoff-123"), .activeTask,
-            .healthSummary, .weather, .appleIntegrations
+            .healthSummary, .weather, .appleIntegrations,
+            .proactiveSignal(id: "wt_demo-01")
         ]
         for destination in destinations {
             let url = try #require(IOSAppDeepLink.url(for: destination, scheme: scheme))

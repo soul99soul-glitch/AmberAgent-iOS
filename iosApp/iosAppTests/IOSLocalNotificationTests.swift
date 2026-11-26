@@ -291,4 +291,188 @@ struct IOSLocalNotificationTests {
         IOSDeepLinkInbox(defaults: defaults).installHandler { received.append($0) }
         #expect(received == [url])
     }
+
+    @Test func notificationCategoriesPreserveExistingAndRegisterProactiveCardActions() throws {
+        let all = AmberNotificationCategories.all
+        let ids = Set(all.map(\.identifier))
+
+        #expect(ids.contains(IOSWatchDecisionNotification.approvalCategory))
+        #expect(ids.contains(IOSWatchDecisionNotification.denyOnlyCategory))
+        #expect(ids.contains(MacGatewayApprovalNotification.category))
+        #expect(ids.contains(CloudProactiveNotification.category))
+
+        let proactive = try #require(all.first { $0.identifier == CloudProactiveNotification.category })
+        #expect(proactive.actions.count == 3)
+
+        let act = try #require(proactive.actions.first { $0.identifier == CloudProactiveNotification.actAction })
+        #expect(act.options.contains(.foreground))
+        #expect(!act.options.contains(.destructive))
+
+        let snooze = try #require(proactive.actions.first { $0.identifier == CloudProactiveNotification.snoozeAction })
+        #expect(!snooze.options.contains(.foreground))
+        #expect(!snooze.options.contains(.destructive))
+
+        let mute = try #require(proactive.actions.first { $0.identifier == CloudProactiveNotification.muteAction })
+        #expect(!mute.options.contains(.foreground))
+        #expect(mute.options.contains(.destructive))
+    }
+
+    @Test func proactiveWillPresentReturnsListOnlyAndTriggersCloudDialoguePoll() async {
+        let delegate = AmberAppDelegate()
+        var pollCount = 0
+
+        let options = delegate.handleWillPresent(
+            identifier: "proactive-1",
+            categoryIdentifier: CloudProactiveNotification.category,
+            userInfo: ["signalId": "wt_signal_1"],
+            pollCloudDialogue: {
+                pollCount += 1
+            }
+        )
+
+        #expect(options == [.list])
+        for _ in 0..<10 where pollCount == 0 {
+            await Task.yield()
+        }
+        #expect(pollCount == 1)
+
+        // Non-proactive categories retain existing foreground presentation behavior.
+        let other = delegate.handleWillPresent(
+            identifier: IOSLocalNotificationService.manualReminderIdentifier,
+            categoryIdentifier: "",
+            userInfo: [:],
+            pollCloudDialogue: {
+                pollCount += 1
+            }
+        )
+        #expect(other == [.banner, .sound])
+        #expect(pollCount == 1)
+    }
+
+    @Test func proactiveDidReceiveActAndDefaultTapSubmitDeepLinkAndDeduplicate() async throws {
+        let delegate = AmberAppDelegate()
+        var submitted: [URL] = []
+        var currentTime = now
+
+        let handledAct = await delegate.handleCloudProactiveNotificationResponse(
+            categoryIdentifier: CloudProactiveNotification.category,
+            actionIdentifier: CloudProactiveNotification.actAction,
+            userInfo: ["signalId": "wt_abc_1"],
+            submitDeepLink: { submitted.append($0) },
+            now: { currentTime }
+        )
+        #expect(handledAct == true)
+        #expect(submitted == [try #require(URL(string: "amber://proactive/wt_abc_1"))])
+
+        // Immediate duplicate tap / onOpenURL overlap within dedupe window is ignored.
+        _ = await delegate.handleCloudProactiveNotificationResponse(
+            categoryIdentifier: CloudProactiveNotification.category,
+            actionIdentifier: UNNotificationDefaultActionIdentifier,
+            userInfo: ["deepLink": "amber://proactive/wt_abc_1"],
+            submitDeepLink: { submitted.append($0) },
+            now: { currentTime.addingTimeInterval(0.5) }
+        )
+        #expect(submitted.count == 1)
+
+        // Default tap using deepLink fallback for a new signal submits the deep link.
+        currentTime = currentTime.addingTimeInterval(3.0)
+        let handledDefault = await delegate.handleCloudProactiveNotificationResponse(
+            categoryIdentifier: CloudProactiveNotification.category,
+            actionIdentifier: UNNotificationDefaultActionIdentifier,
+            userInfo: ["deepLink": "amber://proactive/wk_sig-2"],
+            submitDeepLink: { submitted.append($0) },
+            now: { currentTime }
+        )
+        #expect(handledDefault == true)
+        #expect(submitted.last == URL(string: "amber://proactive/wk_sig-2"))
+
+        // Invalid signalId is claimed without submitting any deep link.
+        let handledInvalid = await delegate.handleCloudProactiveNotificationResponse(
+            categoryIdentifier: CloudProactiveNotification.category,
+            actionIdentifier: CloudProactiveNotification.actAction,
+            userInfo: ["signalId": "../escape"],
+            submitDeepLink: { submitted.append($0) },
+            now: { currentTime.addingTimeInterval(5.0) }
+        )
+        #expect(handledInvalid == true)
+        #expect(submitted.count == 2)
+    }
+
+    @Test func proactiveDidReceiveSnoozeAndMuteWaitForRestoreAndNotifyOnFailure() async {
+        let delegate = AmberAppDelegate()
+        var callLog: [String] = []
+        var feedbackCalls: [(String, CloudProactiveFeedbackAction)] = []
+        var fallbackNotifications: [(id: String, title: String, body: String, userInfo: [AnyHashable: Any])] = []
+
+        // 1) Snooze succeeds after waiting for store restore: no fallback notification.
+        let snoozeOk = await delegate.handleCloudProactiveNotificationResponse(
+            categoryIdentifier: CloudProactiveNotification.category,
+            actionIdentifier: CloudProactiveNotification.snoozeAction,
+            userInfo: ["signalId": "wt_snooze_ok"],
+            ensureCloudGatewayReady: {
+                callLog.append("restore")
+            },
+            sendProactiveFeedback: { signalId, action in
+                callLog.append("feedback:\(action.rawValue)")
+                feedbackCalls.append((signalId, action))
+                return true
+            },
+            deliverFallbackNotification: { id, title, body, info in
+                fallbackNotifications.append((id, title, body, info))
+            },
+            beginBackgroundTask: { _ in .invalid },
+            endBackgroundTask: { _ in }
+        )
+        #expect(snoozeOk == true)
+        #expect(callLog == ["restore", "feedback:snooze"])
+        #expect(feedbackCalls.last?.0 == "wt_snooze_ok")
+        #expect(feedbackCalls.last?.1 == .snooze)
+        #expect(fallbackNotifications.isEmpty)
+
+        // 2) Snooze fails: emits local fallback notification with deepLink to retry.
+        let snoozeFail = await delegate.handleCloudProactiveNotificationResponse(
+            categoryIdentifier: CloudProactiveNotification.category,
+            actionIdentifier: CloudProactiveNotification.snoozeAction,
+            userInfo: ["signalId": "wt_snooze_fail"],
+            ensureCloudGatewayReady: {},
+            sendProactiveFeedback: { signalId, action in
+                feedbackCalls.append((signalId, action))
+                return false
+            },
+            deliverFallbackNotification: { id, title, body, info in
+                fallbackNotifications.append((id, title, body, info))
+            },
+            beginBackgroundTask: { _ in .invalid },
+            endBackgroundTask: { _ in }
+        )
+        #expect(snoozeFail == true)
+        #expect(fallbackNotifications.count == 1)
+        #expect(fallbackNotifications.last?.id == CloudProactiveNotification.failureNotificationIdentifier(signalId: "wt_snooze_fail", action: .snooze))
+        #expect(fallbackNotifications.last?.body.contains("稍后提醒") == true)
+        #expect(fallbackNotifications.last?.userInfo["deepLink"] as? String == "amber://proactive/wt_snooze_fail")
+
+        // 3) Mute fails: calls muteTopic feedback and emits fallback notification.
+        let muteFail = await delegate.handleCloudProactiveNotificationResponse(
+            categoryIdentifier: CloudProactiveNotification.category,
+            actionIdentifier: CloudProactiveNotification.muteAction,
+            userInfo: ["deepLink": "amber://proactive/wt_mute_fail"],
+            ensureCloudGatewayReady: {},
+            sendProactiveFeedback: { signalId, action in
+                feedbackCalls.append((signalId, action))
+                return false
+            },
+            deliverFallbackNotification: { id, title, body, info in
+                fallbackNotifications.append((id, title, body, info))
+            },
+            beginBackgroundTask: { _ in .invalid },
+            endBackgroundTask: { _ in }
+        )
+        #expect(muteFail == true)
+        #expect(feedbackCalls.last?.0 == "wt_mute_fail")
+        #expect(feedbackCalls.last?.1 == .muteTopic)
+        #expect(fallbackNotifications.count == 2)
+        #expect(fallbackNotifications.last?.id == CloudProactiveNotification.failureNotificationIdentifier(signalId: "wt_mute_fail", action: .muteTopic))
+        #expect(fallbackNotifications.last?.body.contains("减少此类") == true)
+        #expect(fallbackNotifications.last?.userInfo["deepLink"] as? String == "amber://proactive/wt_mute_fail")
+    }
 }

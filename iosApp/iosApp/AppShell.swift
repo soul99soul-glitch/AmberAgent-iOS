@@ -31,6 +31,7 @@ struct AppShell: View {
     @State private var pendingAppDeepLinkDestination: IOSAppDeepLink.Destination?
     @State private var pendingAppDeepLinkURL: URL?
     @State private var isOpeningPendingAppDeepLink = false
+    @State private var lastRoutedProactiveSignal: (id: String, at: Date)?
     @State private var didBootstrapConversations = false
     @State private var didRunStartupRecovery = false
     @State private var didCompleteStartupRecovery = false
@@ -528,6 +529,7 @@ struct AppShell: View {
     }
 
     private static let coldStartMaintenanceDedupeWindow: TimeInterval = 3.0
+    private static let proactiveDeepLinkDedupeWindow: TimeInterval = 2.0
 
     private func shouldRunColdStartDeduplicated(_ lastTimestamp: inout Date?, now: Date = Date()) -> Bool {
         if let lastTimestamp, now.timeIntervalSince(lastTimestamp) < Self.coldStartMaintenanceDedupeWindow {
@@ -591,6 +593,13 @@ struct AppShell: View {
             pendingAgentActivityTarget = target
             pendingAgentActivityURL = url
             Task { await openPendingAgentActivityIfReady() }
+        case .proactiveSignal:
+            if pendingAppDeepLinkDestination == destination {
+                return
+            }
+            pendingAppDeepLinkDestination = destination
+            pendingAppDeepLinkURL = url
+            Task { await openPendingAppDeepLinkIfReady() }
         default:
             pendingAppDeepLinkDestination = destination
             pendingAppDeepLinkURL = url
@@ -792,6 +801,20 @@ struct AppShell: View {
             Task { @MainActor in
                 _ = await MacGatewayStore.shared.ensureCloudTaskLoaded(workItemId: workItemId)
             }
+        case .proactiveSignal(let signalId):
+            let now = Date()
+            if let last = lastRoutedProactiveSignal,
+               last.id == signalId,
+               now.timeIntervalSince(last.at) < Self.proactiveDeepLinkDedupeWindow {
+                break
+            }
+            lastRoutedProactiveSignal = (signalId, now)
+            Self.routeProactiveSignal(
+                signalId: signalId,
+                router: rootRouter,
+                gatewayStore: MacGatewayStore.shared,
+                proactiveStore: CloudProactiveStore.shared
+            )
         case .shareInbox(let handoffID):
             if let payload = AmberShareHandoffStore.shared?.consume(id: handoffID),
                let prefill = payload.formattedPrefillText {
@@ -809,6 +832,25 @@ struct AppShell: View {
         }
         pendingAppDeepLinkDestination = nil
         pendingAppDeepLinkURL = nil
+    }
+
+    @discardableResult
+    static func routeProactiveSignal(
+        signalId: String,
+        router: RouterPath,
+        gatewayStore: MacGatewayStore = .shared,
+        proactiveStore: CloudProactiveStore = .shared,
+        sendOpenedFeedback: (@MainActor (String) async -> Bool)? = nil
+    ) -> Task<Void, Never> {
+        router.path = [.chat]
+        gatewayStore.slot(for: .cloud).setCloudMainDialogueSelected(true)
+        proactiveStore.pendingSignalId = signalId
+        let feedbackSender = sendOpenedFeedback ?? { id in
+            await proactiveStore.sendFeedback(signalId: id, action: .opened)
+        }
+        return Task { @MainActor in
+            _ = await feedbackSender(signalId)
+        }
     }
 
     private func consumePendingShareInboxIfAvailable() {
