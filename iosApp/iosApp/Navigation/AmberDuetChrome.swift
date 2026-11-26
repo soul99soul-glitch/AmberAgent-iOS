@@ -592,7 +592,7 @@ struct AmberDuetTaskCenterCard: View, Equatable {
             wakeStore: wakeStore,
             hubStore: hubStore,
             intentInboxStore: intentInboxStore,
-            isEmbeddedInModalSheet: isEmbeddedInModalSheet,
+            isEmbeddedInModalSheetFlag: isEmbeddedInModalSheet ? 1 : 0,
             actions: actionBox
         )
         .equatable()
@@ -795,7 +795,9 @@ private struct AmberDuetTaskCenterEquatableBody: View, Equatable {
     let wakeStore: IOSWakeTaskStore
     let hubStore: AmberHubStore
     let intentInboxStore: AmberIntentInboxStore
-    let isEmbeddedInModalSheet: Bool
+    // Use an 8-byte Int instead of Bool so the struct stays padding-free between pointer fields;
+    // uninitialized alignment padding breaks SwiftUI/AttributeGraph bitwise short-circuiting.
+    let isEmbeddedInModalSheetFlag: Int
     let actions: AmberDuetTaskCenterActionBox
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
@@ -805,7 +807,7 @@ private struct AmberDuetTaskCenterEquatableBody: View, Equatable {
             && lhs.wakeStore === rhs.wakeStore
             && lhs.hubStore === rhs.hubStore
             && lhs.intentInboxStore === rhs.intentInboxStore
-            && lhs.isEmbeddedInModalSheet == rhs.isEmbeddedInModalSheet
+            && lhs.isEmbeddedInModalSheetFlag == rhs.isEmbeddedInModalSheetFlag
             && lhs.actions === rhs.actions
     }
 
@@ -817,7 +819,7 @@ private struct AmberDuetTaskCenterEquatableBody: View, Equatable {
             wakeStore: wakeStore,
             hubStore: hubStore,
             intentInboxStore: intentInboxStore,
-            isEmbeddedInModalSheet: isEmbeddedInModalSheet,
+            isEmbeddedInModalSheet: isEmbeddedInModalSheetFlag != 0,
             actions: actions
         )
     }
