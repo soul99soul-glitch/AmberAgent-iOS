@@ -27,7 +27,21 @@ data class ProactiveMonitorRecord(
     val lastSummary: String? = null,
     val consecutiveUnchanged: Int = 0,
     val nextRunAtMs: Long,
-)
+    val deliveryMode: String = DELIVERY_MODE_IMMEDIATE,
+) {
+    companion object {
+        const val DELIVERY_MODE_IMMEDIATE = "immediate"
+        const val DELIVERY_MODE_DIGEST = "digest"
+
+        fun normalizeDeliveryMode(raw: String): String {
+            val normalized = raw.trim().lowercase()
+            require(normalized == DELIVERY_MODE_IMMEDIATE || normalized == DELIVERY_MODE_DIGEST) {
+                "deliveryMode 仅支持 immediate 或 digest"
+            }
+            return normalized
+        }
+    }
+}
 
 /**
  * Watchtower 静默巡检规则持久化存储（`dataDir/proactive/monitors.json`，权限 `0600`）。
@@ -61,10 +75,12 @@ class ProactiveMonitorStore(
         conditionPrompt: String = "",
         intervalMinutes: Int = 15,
         enabled: Boolean = true,
+        deliveryMode: String = ProactiveMonitorRecord.DELIVERY_MODE_IMMEDIATE,
         nowMs: Long = clockMs(),
     ): ProactiveMonitorRecord {
         val cleanUrl = url.trim()
         ProactiveUrlGuard.validateSyntaxAndLiteralHost(cleanUrl)
+        val normalizedDeliveryMode = ProactiveMonitorRecord.normalizeDeliveryMode(deliveryMode)
         val cleanTitle = CredentialRedactor.redact(title.trim()).ifBlank { cleanUrl }.take(120)
         val cleanCondition = CredentialRedactor.redact(conditionPrompt.trim()).take(500)
         val clampedInterval = intervalMinutes.coerceIn(MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES)
@@ -78,6 +94,7 @@ class ProactiveMonitorStore(
             enabled = enabled,
             createdAtMs = nowMs,
             nextRunAtMs = nowMs,
+            deliveryMode = normalizedDeliveryMode,
         )
         records[id] = record
         persistToDisk()
@@ -92,6 +109,7 @@ class ProactiveMonitorStore(
         conditionPrompt: String? = null,
         intervalMinutes: Int? = null,
         enabled: Boolean? = null,
+        deliveryMode: String? = null,
         nowMs: Long = clockMs(),
     ): ProactiveMonitorRecord? {
         val existing = records[id] ?: return null
@@ -100,6 +118,11 @@ class ProactiveMonitorStore(
             ProactiveUrlGuard.validateSyntaxAndLiteralHost(trimmed)
             trimmed
         } else existing.url
+        val nextDeliveryMode = if (deliveryMode != null) {
+            ProactiveMonitorRecord.normalizeDeliveryMode(deliveryMode)
+        } else {
+            existing.deliveryMode
+        }
         val nextTitle = title?.trim()?.takeIf { it.isNotEmpty() }
             ?.let { CredentialRedactor.redact(it).take(120) } ?: existing.title
         val nextCondition = conditionPrompt?.trim()
@@ -120,6 +143,7 @@ class ProactiveMonitorStore(
             intervalMinutes = nextInterval,
             enabled = nextEnabled,
             nextRunAtMs = nextRun,
+            deliveryMode = nextDeliveryMode,
         )
         records[id] = updated
         persistToDisk()
@@ -233,6 +257,7 @@ class WatchtowerMonitorTriggerSource(
                     monitorId = monitor.id,
                     topicKey = "watchtower:${monitor.id}",
                     timestampEpochMs = nowEpochMs,
+                    digest = monitor.deliveryMode == ProactiveMonitorRecord.DELIVERY_MODE_DIGEST,
                 )
             )
         }
@@ -270,16 +295,26 @@ class WatchtowerMonitorTriggerSource(
                 )
             }
             is ProactiveRunResult.SuppressedAtGate -> {
-                val reason = when (val v = result.restraintVerdict) {
-                    is RestraintVerdict.SuppressedQuietHours -> v.reason
-                    is RestraintVerdict.DeferredByBudget -> v.reason
-                    is RestraintVerdict.DroppedLowScore -> v.reason
+                val verdict = result.restraintVerdict
+                val reason = when (verdict) {
+                    is RestraintVerdict.SuppressedQuietHours -> verdict.reason
+                    is RestraintVerdict.DeferredByBudget -> verdict.reason
+                    is RestraintVerdict.DroppedLowScore -> verdict.reason
                     is RestraintVerdict.AllowedToPush -> "allowed"
+                }
+                val outcome = if (
+                    result.l1Delta.urgency == ProactiveUrgency.DIGEST &&
+                    verdict is RestraintVerdict.DeferredByBudget &&
+                    verdict.bufferedForMorningBriefing
+                ) {
+                    "digest"
+                } else {
+                    "suppressed"
                 }
                 monitorStore.recordCheckResult(
                     id = monitorId,
                     checkedAtMs = nowEpochMs,
-                    outcome = "suppressed",
+                    outcome = outcome,
                     summary = reason,
                     consecutiveUnchanged = 0,
                     effectiveIntervalMinutes = monitor.intervalMinutes,

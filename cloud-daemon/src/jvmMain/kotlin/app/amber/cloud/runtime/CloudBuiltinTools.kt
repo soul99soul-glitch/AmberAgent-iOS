@@ -265,9 +265,9 @@ internal object CloudBuiltinTools {
             toolRegistry.register(
                 CloudToolDefinition(
                     name = "proactive_monitor_create",
-                    description = "创建一条 Watchtower 静默网页巡检规则（仅允许公开 http/https URL，有变化才提醒）",
+                    description = "创建一条 Watchtower 静默网页巡检规则（仅允许公开 http/https URL，有变化才提醒；支持 delivery_mode：immediate 即时提醒或 digest 汇总至晨报）",
                     parameters = app.amber.cloud.tasks.schema(
-                        "{\"title\":{\"type\":\"string\"},\"url\":{\"type\":\"string\"},\"conditionPrompt\":{\"type\":\"string\"},\"intervalMinutes\":{\"type\":\"integer\"},\"enabled\":{\"type\":\"boolean\"}}",
+                        "{\"title\":{\"type\":\"string\"},\"url\":{\"type\":\"string\"},\"conditionPrompt\":{\"type\":\"string\"},\"intervalMinutes\":{\"type\":\"integer\"},\"enabled\":{\"type\":\"boolean\"},\"delivery_mode\":{\"type\":\"string\",\"enum\":[\"immediate\",\"digest\"]}}",
                         "url",
                     ),
                     highRisk = false,
@@ -284,12 +284,23 @@ internal object CloudBuiltinTools {
                         ?: 15
                     val enabled = args["enabled"]?.jsonPrimitive?.booleanOrNull ?: true
                     runCatching {
+                        val rawDeliveryModeEl = (args["delivery_mode"] ?: args["deliveryMode"])
+                            ?.takeUnless { it is JsonNull }
+                        val deliveryMode = if (rawDeliveryModeEl != null) {
+                            val prim = rawDeliveryModeEl as? kotlinx.serialization.json.JsonPrimitive
+                                ?: throw IllegalArgumentException("delivery_mode 仅支持 immediate 或 digest")
+                            if (!prim.isString) throw IllegalArgumentException("delivery_mode 仅支持 immediate 或 digest")
+                            prim.content
+                        } else {
+                            ProactiveMonitorRecord.DELIVERY_MODE_IMMEDIATE
+                        }
                         val created = proactiveMonitorStore.create(
                             title = title,
                             url = url,
                             conditionPrompt = condition,
                             intervalMinutes = interval,
                             enabled = enabled,
+                            deliveryMode = deliveryMode,
                         )
                         buildJsonObject {
                             put("ok", true)
@@ -330,9 +341,9 @@ internal object CloudBuiltinTools {
             toolRegistry.register(
                 CloudToolDefinition(
                     name = "proactive_monitor_update",
-                    description = "更新指定 Watchtower 巡检规则（启停、调整轮询频率、修改关注条件或标题/URL）",
+                    description = "更新指定 Watchtower 巡检规则（启停、调整轮询频率、修改关注条件、标题/URL 或投递模式 delivery_mode）",
                     parameters = app.amber.cloud.tasks.schema(
-                        "{\"id\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"},\"url\":{\"type\":\"string\"},\"conditionPrompt\":{\"type\":\"string\"},\"intervalMinutes\":{\"type\":\"integer\"},\"enabled\":{\"type\":\"boolean\"}}",
+                        "{\"id\":{\"type\":\"string\"},\"title\":{\"type\":\"string\"},\"url\":{\"type\":\"string\"},\"conditionPrompt\":{\"type\":\"string\"},\"intervalMinutes\":{\"type\":\"integer\"},\"enabled\":{\"type\":\"boolean\"},\"delivery_mode\":{\"type\":\"string\",\"enum\":[\"immediate\",\"digest\"]}}",
                         "id",
                     ),
                     highRisk = false,
@@ -341,6 +352,16 @@ internal object CloudBuiltinTools {
                 ) { args ->
                     val id = args["id"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
                     runCatching {
+                        val rawDeliveryModeEl = (args["delivery_mode"] ?: args["deliveryMode"])
+                            ?.takeUnless { it is JsonNull }
+                        val deliveryMode = if (rawDeliveryModeEl != null) {
+                            val prim = rawDeliveryModeEl as? kotlinx.serialization.json.JsonPrimitive
+                                ?: throw IllegalArgumentException("delivery_mode 仅支持 immediate 或 digest")
+                            if (!prim.isString) throw IllegalArgumentException("delivery_mode 仅支持 immediate 或 digest")
+                            prim.content
+                        } else {
+                            null
+                        }
                         val updated = proactiveMonitorStore.update(
                             id = id,
                             title = args["title"]?.jsonPrimitive?.contentOrNull,
@@ -350,6 +371,7 @@ internal object CloudBuiltinTools {
                             intervalMinutes = args["intervalMinutes"]?.jsonPrimitive?.intOrNull
                                 ?: args["interval_minutes"]?.jsonPrimitive?.intOrNull,
                             enabled = args["enabled"]?.jsonPrimitive?.booleanOrNull,
+                            deliveryMode = deliveryMode,
                         )
                         if (updated == null) {
                             buildJsonObject {

@@ -414,6 +414,7 @@ class L1DeterministicFilter(
             etag = cleanEtag,
             addedLines = added,
             removedLines = removed,
+            urgency = if (signal.digest) ProactiveUrgency.DIGEST else ProactiveUrgency.NORMAL,
         )
     }
 

@@ -500,4 +500,169 @@ class ProactiveUrgencyFeedbackTest {
         )
         assertNotNull(assertIs<RestraintVerdict.AllowedToPush>(urgent))
     }
+
+    @Test
+    fun `watchtowerPageSignal with digest true routes as DIGEST urgency buffering into pulse without consuming daily budget`() = runTest {
+        val gate = ProactiveRestraintGate(
+            quietHours = QuietHoursConfig(enabled = false),
+            budgetConfig = InterruptionBudgetConfig(dailyMaxPushes = 3, topicCooldownMs = 0L),
+        )
+        val engine = ProactiveEngine(
+            l2Judge = NoteworthyJudgeProvider { req ->
+                L2NoteworthyScore(
+                    noteworthy = true,
+                    urgency = 4,
+                    importance = 4,
+                    summary = "汇总摘要：${req.topicKey}",
+                )
+            },
+            restraintGate = gate,
+        )
+        val dayMs = epochMsAt(2026, 11, 26, 14, 0)
+
+        val digestSignal = ProactiveTriggerSignal.WatchtowerPageSignal(
+            signalId = "wt_digest_1",
+            url = "https://github.com/amber/demo/releases.atom",
+            title = "Amber Demo Releases",
+            httpStatusCode = 200,
+            rawBody = "<feed><entry><title>v3.0.0</title></entry></feed>",
+            topicKey = "watchtower:mon_digest",
+            timestampEpochMs = dayMs,
+            digest = true,
+        )
+        val digestResult = engine.processSignal(digestSignal, targetChatId = "owner", nowOverrideMs = dayMs)
+        val suppressed = assertIs<ProactiveRunResult.SuppressedAtGate>(digestResult)
+        assertEquals(ProactiveUrgency.DIGEST, suppressed.l1Delta.urgency)
+        val deferred = assertIs<RestraintVerdict.DeferredByBudget>(suppressed.restraintVerdict)
+        assertEquals("已转入 Pulse 汇总", deferred.reason)
+        assertTrue(deferred.bufferedForMorningBriefing)
+
+        val snap = gate.statusSnapshot(dayMs)
+        assertEquals(0, snap.pushesToday, "DIGEST 不得扣减普通日预算")
+        assertEquals(3, snap.remainingToday)
+        assertEquals(1, snap.bufferedPulseCount)
+        assertEquals(listOf("汇总摘要：watchtower:mon_digest"), gate.peekBufferedPulseItems())
+        assertEquals(0, engine.metrics().pushedCount)
+        assertEquals(0, engine.metrics().l3CardsProducedCount)
+
+        // 默认 digest = false 的 WatchtowerPageSignal 保持 NORMAL 并即时推送
+        val immediateSignal = ProactiveTriggerSignal.WatchtowerPageSignal(
+            signalId = "wt_imm_1",
+            url = "https://example.com/status",
+            title = "Status Page",
+            httpStatusCode = 200,
+            rawBody = "<html><body>Incident resolved</body></html>",
+            topicKey = "watchtower:mon_imm",
+            timestampEpochMs = dayMs + 60_000L,
+        )
+        val immediateResult = engine.processSignal(immediateSignal, targetChatId = "owner", nowOverrideMs = dayMs + 60_000L)
+        val pushed = assertIs<ProactiveRunResult.PushedAtL3>(immediateResult)
+        assertEquals(ProactiveUrgency.NORMAL, pushed.l1Delta.urgency)
+        assertEquals(1, gate.statusSnapshot(dayMs + 60_000L).pushesToday)
+    }
+
+    @Test
+    fun `implicit ignore accumulates unread same-topic pushes decays on threshold persists and respects feedback and userRequested urgent`() {
+        val dir = Files.createTempDirectory("proactive-implicit-ignore").toFile()
+        val gateFile = File(dir, "restraint-gate.json")
+        val t0 = epochMsAt(2026, 11, 26, 10, 0)
+
+        val gate1 = ProactiveRestraintGate(
+            quietHours = QuietHoursConfig(enabled = false),
+            budgetConfig = InterruptionBudgetConfig(dailyMaxPushes = 20, topicCooldownMs = 0L),
+            persistenceFile = gateFile,
+        )
+
+        // 1. 同一 topic 连续推送第 1、2、3 次且均无反馈：第 1、2、3 次放行（累计 2 次未读忽略，pending=sig_3）
+        assertIs<RestraintVerdict.AllowedToPush>(
+            gate1.evaluateAndConsume("topic:blog", "文章 1", score = 12, noteworthy = true, nowEpochMs = t0, signalId = "sig_1")
+        )
+        assertIs<RestraintVerdict.AllowedToPush>(
+            gate1.evaluateAndConsume("topic:blog", "文章 2", score = 12, noteworthy = true, nowEpochMs = t0 + 1_000L, signalId = "sig_2")
+        )
+        assertIs<RestraintVerdict.AllowedToPush>(
+            gate1.evaluateAndConsume("topic:blog", "文章 3", score = 12, noteworthy = true, nowEpochMs = t0 + 2_000L, signalId = "sig_3")
+        )
+
+        val perms = PosixFilePermissions.toString(Files.getPosixFilePermissions(gateFile.toPath()))
+        assertEquals("rw-------", perms)
+
+        // 2. 重启从磁盘重载 pendingFeedbackByTopic 后，第 4 次推送结算 sig_3 未读 -> 累计 3 次忽略 -> 触发衰减阈值 18
+        val gate2 = ProactiveRestraintGate(
+            quietHours = QuietHoursConfig(enabled = false),
+            budgetConfig = InterruptionBudgetConfig(dailyMaxPushes = 20, topicCooldownMs = 0L),
+            persistenceFile = gateFile,
+        )
+        val fourthVerdict = gate2.evaluateAndConsume(
+            topicKey = "topic:blog",
+            summary = "文章 4",
+            score = 12,
+            noteworthy = true,
+            nowEpochMs = t0 + 3_000L,
+            signalId = "sig_4",
+        )
+        val dropped = assertIs<RestraintVerdict.DroppedLowScore>(fourthVerdict)
+        assertEquals(18, dropped.requiredScore)
+        assertTrue(gate2.peekBufferedPulseItems().contains("文章 4"))
+
+        // 高分（>= 18）即使已衰减仍可通过
+        assertIs<RestraintVerdict.AllowedToPush>(
+            gate2.evaluateAndConsume("topic:blog", "重大更新", score = 20, noteworthy = true, nowEpochMs = t0 + 4_000L, signalId = "sig_5")
+        )
+
+        // 3. 中途调用 applyFeedback（OPENED / REPLIED / SNOOZE）清除 pendingFeedbackByTopic，不累计隐式忽略
+        assertIs<RestraintVerdict.AllowedToPush>(
+            gate2.evaluateAndConsume("topic:active", "提醒 1", score = 12, noteworthy = true, nowEpochMs = t0 + 10_000L, signalId = "act_1")
+        )
+        assertTrue(gate2.applyFeedback("act_1", "topic:active", ProactiveFeedbackAction.SNOOZE, t0 + 11_000L).applied)
+
+        assertIs<RestraintVerdict.AllowedToPush>(
+            gate2.evaluateAndConsume("topic:active", "提醒 2", score = 12, noteworthy = true, nowEpochMs = t0 + 12_000L, signalId = "act_2")
+        )
+        assertTrue(gate2.applyFeedback("act_2", "topic:active", ProactiveFeedbackAction.OPENED, t0 + 13_000L).applied)
+
+        assertIs<RestraintVerdict.AllowedToPush>(
+            gate2.evaluateAndConsume("topic:active", "提醒 3", score = 12, noteworthy = true, nowEpochMs = t0 + 14_000L, signalId = "act_3")
+        )
+        assertTrue(gate2.applyFeedback("act_3", "topic:active", ProactiveFeedbackAction.REPLIED, t0 + 15_000L).applied)
+
+        assertIs<RestraintVerdict.AllowedToPush>(
+            gate2.evaluateAndConsume("topic:active", "提醒 4", score = 12, noteworthy = true, nowEpochMs = t0 + 16_000L, signalId = "act_4")
+        )
+
+        // DISMISS 显式计 1 次忽略并清除 pending，下一次推送不应对同一张卡双重计数
+        assertIs<RestraintVerdict.AllowedToPush>(
+            gate2.evaluateAndConsume("topic:dismiss_once", "条目 1", score = 12, noteworthy = true, nowEpochMs = t0 + 20_000L, signalId = "dis_1")
+        )
+        assertTrue(gate2.applyFeedback("dis_1", "topic:dismiss_once", ProactiveFeedbackAction.DISMISS, t0 + 21_000L).applied)
+        assertIs<RestraintVerdict.AllowedToPush>(
+            gate2.evaluateAndConsume("topic:dismiss_once", "条目 2", score = 12, noteworthy = true, nowEpochMs = t0 + 22_000L, signalId = "dis_2")
+        )
+        // 若 dis_1 被误双重计数，此处 dis_3 就会变成第 3 次而衰减；正确情况下此处应为第 2 次忽略，仍放行
+        assertIs<RestraintVerdict.AllowedToPush>(
+            gate2.evaluateAndConsume("topic:dismiss_once", "条目 3", score = 12, noteworthy = true, nowEpochMs = t0 + 23_000L, signalId = "dis_3")
+        )
+
+        // 4. userRequested=true 的 URGENT 唤醒不参与隐式忽略（既不结算前一张未读，也不写入 pending）
+        assertIs<RestraintVerdict.AllowedToPush>(
+            gate2.evaluateAndConsume("wakeup:user_timer", "普通通知 1", score = 12, noteworthy = true, nowEpochMs = t0 + 30_000L, signalId = "norm_1")
+        )
+        repeat(4) { idx ->
+            val u = gate2.evaluateAndConsume(
+                topicKey = "wakeup:user_timer",
+                summary = "用户定时提醒 #$idx",
+                score = 12,
+                noteworthy = true,
+                nowEpochMs = t0 + 31_000L + idx * 1_000L,
+                urgency = ProactiveUrgency.URGENT,
+                userRequested = true,
+                signalId = "wk_urgent_$idx",
+            )
+            assertEquals(ProactiveUrgency.URGENT, assertIs<RestraintVerdict.AllowedToPush>(u).urgency)
+        }
+        // 后续普通通知仅结算 norm_1 这 1 次忽略，绝不因 4 次 userRequested URGENT 衰减
+        assertIs<RestraintVerdict.AllowedToPush>(
+            gate2.evaluateAndConsume("wakeup:user_timer", "普通通知 2", score = 12, noteworthy = true, nowEpochMs = t0 + 40_000L, signalId = "norm_2")
+        )
+    }
 }

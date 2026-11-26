@@ -146,11 +146,13 @@ class ProactiveRestraintGate(
         val appliedFeedbackKeys: List<String> = emptyList(),
         val urgentDay: String? = null,
         val urgentPushesToday: Int = 0,
+        val pendingFeedbackByTopic: Map<String, String> = emptyMap(),
     )
 
     companion object {
         private const val MAX_PULSE_ITEMS = 100
         private const val MAX_APPLIED_FEEDBACK_KEYS = 500
+        private const val MAX_PENDING_FEEDBACK_TOPICS = 500
         private const val MAX_DAILY_URGENT_PUSHES = 10
         private val HH_MM_REGEX = Regex("""^([01]\d|2[0-3]):[0-5]\d$""")
         private val TIME_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
@@ -184,6 +186,7 @@ class ProactiveRestraintGate(
     private val mutedUntilByTopic = mutableMapOf<String, Long>()
     private val bufferedPulseItems = ArrayDeque<String>()
     private val appliedFeedbackKeys = LinkedHashSet<String>()
+    private val pendingFeedbackByTopic = LinkedHashMap<String, String>()
 
     init {
         loadFromDisk()
@@ -292,6 +295,8 @@ class ProactiveRestraintGate(
             }
             ProactiveFeedbackAction.SNOOZE -> Unit
         }
+        // 收到该 topic 的任意有效反馈即清除未读挂起记录，避免后续推送重复/误算隐式忽略
+        pendingFeedbackByTopic.remove(topicKey)
         persistToDisk()
         return FeedbackOutcome(applied = true, mutedUntilEpochMs = mutedUntil)
     }
@@ -316,6 +321,7 @@ class ProactiveRestraintGate(
     @Synchronized
     fun recordTopicResponded(topicKey: String) {
         consecutiveIgnoresByTopic[topicKey] = 0
+        pendingFeedbackByTopic.remove(topicKey)
         persistToDisk()
     }
 
@@ -351,7 +357,10 @@ class ProactiveRestraintGate(
         isScheduledBriefing: Boolean = false,
         urgency: ProactiveUrgency = ProactiveUrgency.NORMAL,
         userRequested: Boolean = false,
+        signalId: String? = null,
     ): RestraintVerdict {
+        val cleanSignalId = signalId?.trim()?.takeIf { it.isNotEmpty() }
+        val exemptFromImplicitIgnore = isScheduledBriefing || (urgency == ProactiveUrgency.URGENT && userRequested)
         val today = Instant.ofEpochMilli(nowEpochMs).atZone(budgetConfig.zoneId).toLocalDate()
         var dirty = false
         if (currentDay != today) {
@@ -423,6 +432,13 @@ class ProactiveRestraintGate(
                 )
             }
             if (urgentPushesToday < MAX_DAILY_URGENT_PUSHES) {
+                if (!exemptFromImplicitIgnore && cleanSignalId != null) {
+                    val prevPending = pendingFeedbackByTopic[topicKey]
+                    if (prevPending != null && prevPending != cleanSignalId) {
+                        consecutiveIgnoresByTopic[topicKey] = (consecutiveIgnoresByTopic[topicKey] ?: 0) + 1
+                    }
+                    recordPendingFeedback(topicKey, cleanSignalId)
+                }
                 urgentPushesToday++
                 persistToDisk()
                 return RestraintVerdict.AllowedToPush(
@@ -520,6 +536,33 @@ class ProactiveRestraintGate(
             )
         }
 
+        // 3.5 同话题隐式忽略结算：即将放行新卡片时，若上一张同 topic 卡片仍未收到任何反馈则计 1 次隐式忽略
+        if (!exemptFromImplicitIgnore && cleanSignalId != null) {
+            val prevPending = pendingFeedbackByTopic[topicKey]
+            if (prevPending != null && prevPending != cleanSignalId) {
+                val nextIgnores = (consecutiveIgnoresByTopic[topicKey] ?: 0) + 1
+                consecutiveIgnoresByTopic[topicKey] = nextIgnores
+                pendingFeedbackByTopic.remove(topicKey)
+                val updatedMinScore = if (nextIgnores >= budgetConfig.consecutiveIgnoresForDecay) {
+                    budgetConfig.decayedMinScoreAfterIgnore
+                } else {
+                    budgetConfig.defaultMinScore
+                }
+                if (score < updatedMinScore) {
+                    if (score >= budgetConfig.defaultMinScore && summary.isNotBlank()) {
+                        bufferForMorning(summary)
+                    }
+                    persistToDisk()
+                    return RestraintVerdict.DroppedLowScore(
+                        reason = "L2 评分未达主动触达阈值 (noteworthy=$noteworthy, score=$score, required=$updatedMinScore)",
+                        score = score,
+                        requiredScore = updatedMinScore,
+                    )
+                }
+            }
+            recordPendingFeedback(topicKey, cleanSignalId)
+        }
+
         // 4. 扣减打扰预算并放行
         pushesToday++
         lastGlobalPushEpochMs = nowEpochMs
@@ -537,6 +580,17 @@ class ProactiveRestraintGate(
             silentDelivery = tier <= 2,
             urgency = ProactiveUrgency.NORMAL,
         )
+    }
+
+    private fun recordPendingFeedback(topicKey: String, signalId: String) {
+        pendingFeedbackByTopic.remove(topicKey)
+        pendingFeedbackByTopic[topicKey] = signalId
+        while (pendingFeedbackByTopic.size > MAX_PENDING_FEEDBACK_TOPICS) {
+            val iter = pendingFeedbackByTopic.entries.iterator()
+            if (!iter.hasNext()) break
+            iter.next()
+            iter.remove()
+        }
     }
 
     private fun bufferForMorning(summary: String) {
@@ -582,6 +636,12 @@ class ProactiveRestraintGate(
         state.bufferedPulseItems.takeLast(MAX_PULSE_ITEMS).forEach(::bufferForMorning)
         appliedFeedbackKeys.clear()
         appliedFeedbackKeys.addAll(state.appliedFeedbackKeys.takeLast(MAX_APPLIED_FEEDBACK_KEYS))
+        pendingFeedbackByTopic.clear()
+        state.pendingFeedbackByTopic.entries.forEach { (topic, sig) ->
+            if (topic.isNotBlank() && sig.isNotBlank()) {
+                recordPendingFeedback(topic, sig)
+            }
+        }
     }
 
     private fun persistToDisk(
@@ -611,6 +671,7 @@ class ProactiveRestraintGate(
             appliedFeedbackKeys = appliedFeedbackKeys.toList().takeLast(MAX_APPLIED_FEEDBACK_KEYS),
             urgentDay = urgentDay?.toString(),
             urgentPushesToday = urgentPushesToday,
+            pendingFeedbackByTopic = pendingFeedbackByTopic.toMap(),
         )
         ProactiveFilePersistence.atomicWrite0600(file, persistenceJson.encodeToString(state))
     }

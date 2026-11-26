@@ -170,6 +170,7 @@ class ProactiveEngine(
                     isScheduledBriefing = l1.bypassL2ForScheduledBriefing,
                     urgency = l1.urgency,
                     userRequested = l1.userRequested,
+                    signalId = l1.signalId,
                 )
 
                 return when (verdict) {

@@ -67,6 +67,7 @@ sealed interface ProactiveTriggerSignal {
         val monitorId: String? = null,
         override val topicKey: String = "watchtower:$url",
         override val timestampEpochMs: Long = System.currentTimeMillis(),
+        val digest: Boolean = false,
     ) : ProactiveTriggerSignal {
         override val category: TriggerCategory = TriggerCategory.EXTERNAL_SENSOR
     }

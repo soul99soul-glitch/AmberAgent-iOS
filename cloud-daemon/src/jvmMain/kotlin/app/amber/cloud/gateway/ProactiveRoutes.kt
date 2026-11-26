@@ -352,12 +352,22 @@ internal fun Application.configureProactiveRoutes(
                 ?: 15
             val enabled = body["enabled"]?.jsonPrimitive?.booleanOrNull ?: true
             try {
+                val rawDeliveryModeEl = (body["deliveryMode"] ?: body["delivery_mode"])?.takeUnless { it is JsonNull }
+                val deliveryMode = if (rawDeliveryModeEl != null) {
+                    val prim = rawDeliveryModeEl as? JsonPrimitive
+                        ?: throw IllegalArgumentException("deliveryMode 仅支持 immediate 或 digest")
+                    if (!prim.isString) throw IllegalArgumentException("deliveryMode 仅支持 immediate 或 digest")
+                    prim.content
+                } else {
+                    ProactiveMonitorRecord.DELIVERY_MODE_IMMEDIATE
+                }
                 val created = kernel.proactiveMonitorStore.create(
                     title = title,
                     url = url,
                     conditionPrompt = conditionPrompt,
                     intervalMinutes = intervalMinutes,
                     enabled = enabled,
+                    deliveryMode = deliveryMode,
                 )
                 state.recordAudit("proactive-monitor-create", mapOf("device" to device.id, "monitorId" to created.id))
                 val resp = buildJsonObject {
@@ -374,6 +384,15 @@ internal fun Application.configureProactiveRoutes(
             val id = call.parameters["id"]?.let { URLDecoder.decode(it, StandardCharsets.UTF_8) }?.trim().orEmpty()
             val body = call.parseJsonBody() ?: return@patch call.respondError(400, "invalid_json")
             try {
+                val rawDeliveryModeEl = (body["deliveryMode"] ?: body["delivery_mode"])?.takeUnless { it is JsonNull }
+                val deliveryMode = if (rawDeliveryModeEl != null) {
+                    val prim = rawDeliveryModeEl as? JsonPrimitive
+                        ?: throw IllegalArgumentException("deliveryMode 仅支持 immediate 或 digest")
+                    if (!prim.isString) throw IllegalArgumentException("deliveryMode 仅支持 immediate 或 digest")
+                    prim.content
+                } else {
+                    null
+                }
                 val updated = kernel.proactiveMonitorStore.update(
                     id = id,
                     title = body["title"]?.jsonPrimitive?.contentOrNull,
@@ -383,6 +402,7 @@ internal fun Application.configureProactiveRoutes(
                     intervalMinutes = body["intervalMinutes"]?.jsonPrimitive?.intOrNull
                         ?: body["interval_minutes"]?.jsonPrimitive?.intOrNull,
                     enabled = body["enabled"]?.jsonPrimitive?.booleanOrNull,
+                    deliveryMode = deliveryMode,
                 )
                 if (updated == null) {
                     call.respondError(404, "monitor_not_found")
