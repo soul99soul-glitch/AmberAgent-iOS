@@ -11,6 +11,7 @@ import app.amber.cloud.channel.resolveConversationId
 import app.amber.cloud.orchestration.imMessageIdentity
 import app.amber.cloud.orchestration.ModelRouterBrain
 import app.amber.cloud.orchestration.RouterTurnInput
+import app.amber.cloud.proactive.ProactiveFeedbackAction
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.core.model.Conversation
 import app.amber.core.model.ConversationMemoryMode
@@ -26,7 +27,100 @@ import kotlin.uuid.Uuid
 internal class CloudRouterIngress(private val kernel: CloudAgentKernel) : ChannelIngress by kernel {
     private val conversationMutex = Mutex()
 
+    companion object {
+        private val PROACTIVE_CALLBACK_REGEX = Regex("^pa:(act|snooze|mute):([A-Za-z0-9_-]{1,48})$")
+        private const val EXPIRED_CARD_REPLY = "该卡片已过期，请在 App 中处理"
+    }
+
     override suspend fun handleInbound(message: InboundMessage): OutboundMessage {
+        val rawCallback = message.callbackData?.trim()?.takeIf { it.isNotEmpty() }
+        val effectiveMessage = if (rawCallback != null) {
+            when (val handled = interceptProactiveCallback(message, rawCallback)) {
+                is ProactiveCallbackDisposition.Handled -> return handled.reply
+                is ProactiveCallbackDisposition.ReenterAsOwnerMessage -> handled.rewrittenMessage
+                ProactiveCallbackDisposition.PassThrough -> message
+            }
+        } else {
+            message
+        }
+        return processNormalInbound(effectiveMessage)
+    }
+
+    private sealed interface ProactiveCallbackDisposition {
+        data class Handled(val reply: OutboundMessage) : ProactiveCallbackDisposition
+        data class ReenterAsOwnerMessage(val rewrittenMessage: InboundMessage) : ProactiveCallbackDisposition
+        data object PassThrough : ProactiveCallbackDisposition
+    }
+
+    private fun interceptProactiveCallback(
+        message: InboundMessage,
+        rawCallback: String,
+    ): ProactiveCallbackDisposition {
+        val isOwnerDirect = message.scope == ConversationScope.DIRECT && message.senderRole == SenderRole.OWNER
+
+        if (rawCallback.startsWith("proactive:")) {
+            val replyText = if (isOwnerDirect) EXPIRED_CARD_REPLY else ""
+            return ProactiveCallbackDisposition.Handled(response(message, replyText))
+        }
+
+        if (!rawCallback.startsWith("pa:")) {
+            return ProactiveCallbackDisposition.PassThrough
+        }
+
+        if (!isOwnerDirect) {
+            return ProactiveCallbackDisposition.Handled(response(message, ""))
+        }
+
+        val match = PROACTIVE_CALLBACK_REGEX.matchEntire(rawCallback)
+            ?: return ProactiveCallbackDisposition.Handled(response(message, EXPIRED_CARD_REPLY))
+
+        val verb = match.groupValues[1]
+        val signalId = match.groupValues[2]
+
+        return when (verb) {
+            "snooze" -> {
+                val res = kernel.applyProactiveFeedback(
+                    signalId = signalId,
+                    action = ProactiveFeedbackAction.SNOOZE,
+                    snoozeMinutes = 60,
+                )
+                val replyText = when (res) {
+                    CloudAgentKernel.ProactiveFeedbackResult.SignalNotFound -> EXPIRED_CARD_REPLY
+                    is CloudAgentKernel.ProactiveFeedbackResult.Applied ->
+                        if (res.applied) "好的，1 小时后再提醒你。" else "已为你安排 1 小时后提醒。"
+                }
+                ProactiveCallbackDisposition.Handled(response(message, replyText))
+            }
+            "mute" -> {
+                val res = kernel.applyProactiveFeedback(
+                    signalId = signalId,
+                    action = ProactiveFeedbackAction.MUTE_TOPIC,
+                    muteHours = 168,
+                )
+                val replyText = when (res) {
+                    CloudAgentKernel.ProactiveFeedbackResult.SignalNotFound -> EXPIRED_CARD_REPLY
+                    is CloudAgentKernel.ProactiveFeedbackResult.Applied ->
+                        if (res.applied) "好的，已静音该类话题 7 天，可在主动中心恢复。" else "该类话题已处于静音状态。"
+                }
+                ProactiveCallbackDisposition.Handled(response(message, replyText))
+            }
+            "act" -> {
+                val event = kernel.orchestrationStore.dialogue.findEvent("proactive:$signalId")
+                    ?: return ProactiveCallbackDisposition.Handled(response(message, EXPIRED_CARD_REPLY))
+                kernel.applyProactiveFeedback(
+                    signalId = signalId,
+                    action = ProactiveFeedbackAction.REPLIED,
+                )
+                val actPrompt = kernel.buildProactiveActPrompt(event)
+                ProactiveCallbackDisposition.ReenterAsOwnerMessage(
+                    message.copy(text = actPrompt, callbackData = null)
+                )
+            }
+            else -> ProactiveCallbackDisposition.Handled(response(message, EXPIRED_CARD_REPLY))
+        }
+    }
+
+    private suspend fun processNormalInbound(message: InboundMessage): OutboundMessage {
         val conversationId = resolveConversationId(message)
         if (message.scope == ConversationScope.GROUP && message.senderRole == SenderRole.GUEST) {
             return response(message, "当前群聊仅响应已绑定的主人或授权协作者。")

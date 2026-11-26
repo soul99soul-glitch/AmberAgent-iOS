@@ -49,11 +49,27 @@ internal fun loadConfiguredDaemon(
             persistenceFile = File(proactiveDir, "restraint-gate.json"),
         ),
     )
-    return ConfiguredCloudDaemon(config, CloudAgentKernel(
+    val kernel = CloudAgentKernel(
         dataDir = dataDir, modelClient = manager.modelClient, masterSecretOverride = masterSecret,
         configurationManager = manager, vaultOverride = vault,
         ownerBinding = ownerBinding, proactiveEngine = proactive,
         searchSources = config.searchSources.split(',').map { it.trim() }.filter { it.isNotEmpty() }, searchMode = config.searchMode,
         workerApprovals = config.workerApprovals,
-    ))
+    )
+    val apnsSender = CloudConfigLoader.createApnsPushSenderOrNull(
+        config = config,
+        vault = vault,
+        logger = logger,
+        deviceLookup = kernel.gatewayState::findDeviceById,
+        onInvalidToken = { deviceId, pushToken, reason ->
+            kernel.gatewayState.clearPushToken(deviceId = deviceId, expectedToken = pushToken, reason = reason)
+        },
+    )
+    if (apnsSender != null) {
+        kernel.gatewayState.pushSender = apnsSender
+        kernel.gatewayState.pushConfigured = true
+    } else {
+        kernel.gatewayState.pushConfigured = false
+    }
+    return ConfiguredCloudDaemon(config, kernel)
 }

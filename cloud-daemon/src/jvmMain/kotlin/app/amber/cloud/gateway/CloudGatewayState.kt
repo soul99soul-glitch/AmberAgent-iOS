@@ -3,6 +3,7 @@ package app.amber.cloud.gateway
 import app.amber.cloud.channel.OutboundCard
 import app.amber.cloud.config.ConfigurationApiException
 import app.amber.cloud.config.PairingBootstrapSnapshot
+import app.amber.cloud.proactive.ProactiveUrgency
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.security.EnvelopeCredentialVault
 import app.amber.core.native.AmberNativeBridge
@@ -206,6 +207,8 @@ data class PushMessagePayload(
     val deepLink: String? = null,
     val workItemId: String? = null,
     val silent: Boolean = false,
+    val signalId: String? = null,
+    val interruptionLevel: String? = null,
 )
 
 fun interface PushSender {
@@ -225,10 +228,22 @@ fun interface PushSender {
 class CloudGatewayState(
     val dataDir: File,
     gatewayNameOverride: String? = null,
-    var pushSender: PushSender = PushSender { Result.success(Unit) },
+    pushSender: PushSender = PushSender { Result.success(Unit) },
     var soulRevisionProvider: () -> Long = { 0L },
     internal val clockEpochSeconds: () -> Double = { nowEpochSeconds() },
 ) {
+    @Volatile
+    var pushConfigured: Boolean = false
+
+    @Volatile
+    private var _pushSender: PushSender = pushSender
+
+    var pushSender: PushSender
+        get() = _pushSender
+        set(value) {
+            _pushSender = value
+            pushConfigured = true
+        }
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
     private val compactJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val secureRandom = SecureRandom()
@@ -445,6 +460,7 @@ class CloudGatewayState(
         card: OutboundCard,
         signalId: String,
         silentDelivery: Boolean,
+        urgency: ProactiveUrgency = ProactiveUrgency.NORMAL,
     ): PushMessagePayload? {
         if (device.platform.lowercase() !in setOf("ios", "watchos", "watch")) return null
         val pushToken = device.pushToken?.takeIf(::validPushToken) ?: return null
@@ -456,6 +472,11 @@ class CloudGatewayState(
             .firstOrNull { it.isNotEmpty() }
             ?: safeTitle
         val safeBody = CredentialRedactor.redact(firstLine).take(180)
+        val interruptionLevel = when {
+            urgency == ProactiveUrgency.URGENT -> "time-sensitive"
+            silentDelivery -> "passive"
+            else -> "active"
+        }
         return PushMessagePayload(
             deviceId = device.id,
             platform = device.platform,
@@ -469,6 +490,8 @@ class CloudGatewayState(
             deepLink = "amber://proactive/$signalId",
             workItemId = null,
             silent = silentDelivery,
+            signalId = signalId,
+            interruptionLevel = interruptionLevel,
         )
     }
 
@@ -535,10 +558,31 @@ class CloudGatewayState(
         }
     }
 
+    @Synchronized
+    fun clearPushToken(deviceId: String, expectedToken: String? = null, reason: String = "invalid_token"): Boolean {
+        val current = runCatching { loadDevicesStrict() }.getOrNull() ?: return false
+        var changed = false
+        val updated = current.map { existing ->
+            if (existing.id == deviceId && existing.pushToken != null &&
+                (expectedToken == null || existing.pushToken == expectedToken)
+            ) {
+                changed = true
+                existing.copy(pushToken = null, pushEnvironment = null)
+            } else {
+                existing
+            }
+        }
+        if (!changed) return false
+        saveDevicesStrict(updated)
+        recordAudit("push-token-cleared", mapOf("device" to deviceId, "reason" to reason))
+        return true
+    }
+
     suspend fun sendTestPush(deviceId: String): Pair<Int, String?> {
         val device = synchronized(this) {
             loadDevicesStrict().firstOrNull { it.id == deviceId }
         } ?: return 401 to "unauthorized"
+        if (!pushConfigured) return 503 to "push_not_configured"
         val pushToken = device.pushToken ?: return 409 to "设备尚未上报推送 token"
         val payload = PushMessagePayload(
             deviceId = device.id,

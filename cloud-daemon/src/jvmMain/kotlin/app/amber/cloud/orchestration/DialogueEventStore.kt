@@ -25,7 +25,22 @@ object DialogueEventKinds {
     const val RUN_HANDOFF = "run_handoff"
     const val LEDGER_IMPORTED = "ledger_imported"
     const val STOP_TOO_LATE = "stop_too_late"
+    const val PROACTIVE_MESSAGE = "proactive_message"
 }
+
+@Serializable data class ProactiveEventMeta(
+    val signalId: String,
+    val topicKey: String,
+    val category: String,
+    val title: String,
+    val urgency: String = "normal",
+    val silent: Boolean = false,
+    val sourceLabel: String = "",
+    val actions: List<String> = listOf("act", "snooze", "mute"),
+    val checkPrompt: String? = null,
+    val wakeupId: String? = null,
+    val originSignalId: String? = null,
+)
 
 @Serializable data class DialogueInput(
     val id: String,
@@ -102,6 +117,7 @@ object DialogueEventKinds {
     val requiresLocalApproval: Boolean? = null,
     val sourceRefs: List<String>? = null,
     val sourcePaths: List<String>? = null,
+    val proactive: ProactiveEventMeta? = null,
 )
 
 @Serializable data class DialoguePage(
@@ -482,6 +498,13 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
 
     fun hasEvent(id: String): Boolean = synchronized(lock) {
         db.prepare("SELECT 1 FROM dialogue_events WHERE id=?").use { it.bindText(1, id); it.step() }
+    }
+
+    fun findEvent(id: String): DialogueEvent? = synchronized(lock) {
+        db.prepare("SELECT seq,payload FROM dialogue_events WHERE id=?").use {
+            it.bindText(1, id)
+            if (it.step()) json.decodeFromString<DialogueEvent>(it.getText(1)).copy(seq = it.getLong(0)) else null
+        }
     }
 
     fun latestMeaningfulFeedback(topicId: String): DialogueEvent? = synchronized(lock) {

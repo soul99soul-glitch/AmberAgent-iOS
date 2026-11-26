@@ -7,6 +7,9 @@ import app.amber.cloud.channels.OwnerBindingManager
 import app.amber.cloud.channels.RedactingChannelLogger
 import app.amber.cloud.channels.SecretValue
 import app.amber.cloud.channels.TelegramChannel
+import app.amber.cloud.gateway.ApnsConfig
+import app.amber.cloud.gateway.ApnsPushSender
+import app.amber.cloud.gateway.PairedDevice
 import app.amber.cloud.proactive.InterruptionBudgetConfig
 import app.amber.cloud.proactive.QuietHoursConfig
 import app.amber.cloud.security.CredentialRedactor
@@ -50,6 +53,10 @@ data class CloudDaemonConfig(
     val modelId: String = "claude-sonnet-4-5-20250929",
     val modelBaseUrl: String = "",
     val workerApprovals: Boolean = false,
+    val apnsKeyId: String = "",
+    val apnsTeamId: String = "",
+    val apnsTopic: String = "",
+    val apnsP8File: String = "",
 ) {
     fun toQuietHoursConfig(zoneId: ZoneId = ZoneId.of("Asia/Shanghai")): QuietHoursConfig {
         val start = runCatching { LocalTime.parse(quietHoursStart.trim()) }.getOrDefault(LocalTime.of(23, 0))
@@ -135,6 +142,16 @@ object CloudConfigLoader {
     const val KEY_MODEL_API_KEY = "model.api_key"
     const val ENV_MODEL_API_KEY = "AMBER_MODEL_API_KEY"
 
+    const val KEY_APNS_KEY_ID = "push.apns_key_id"
+    const val ENV_APNS_KEY_ID = "AMBER_APNS_KEY_ID"
+    const val KEY_APNS_TEAM_ID = "push.apns_team_id"
+    const val ENV_APNS_TEAM_ID = "AMBER_APNS_TEAM_ID"
+    const val KEY_APNS_TOPIC = "push.apns_topic"
+    const val ENV_APNS_TOPIC = "AMBER_APNS_TOPIC"
+    const val KEY_APNS_P8_FILE = "push.apns_p8_file"
+    const val ENV_APNS_P8_FILE = "AMBER_APNS_P8_FILE"
+    const val KEY_APNS_P8 = "push.apns_p8"
+
     private val SECRET_MAPPINGS = listOf(
         KEY_TELEGRAM_BOT_TOKEN to ENV_TELEGRAM_BOT_TOKEN,
         KEY_FEISHU_APP_SECRET to ENV_FEISHU_APP_SECRET,
@@ -210,7 +227,12 @@ object CloudConfigLoader {
             modelId = resolveValue(KEY_MODEL_ID, ENV_MODEL_ID) ?: "claude-sonnet-4-5-20250929",
             modelBaseUrl = resolveValue(KEY_MODEL_BASE_URL, ENV_MODEL_BASE_URL).orEmpty(),
             workerApprovals = resolveValue("worker.approvals", "AMBER_WORKER_APPROVALS")?.toBooleanStrictOrNull() ?: false,
+            apnsKeyId = resolveValue(KEY_APNS_KEY_ID, ENV_APNS_KEY_ID).orEmpty(),
+            apnsTeamId = resolveValue(KEY_APNS_TEAM_ID, ENV_APNS_TEAM_ID).orEmpty(),
+            apnsTopic = resolveValue(KEY_APNS_TOPIC, ENV_APNS_TOPIC).orEmpty(),
+            apnsP8File = resolveValue(KEY_APNS_P8_FILE, ENV_APNS_P8_FILE).orEmpty(),
         )
+        vault.getSecret(KEY_APNS_P8)?.let { logger.registerLiteral(it) }
 
         if (ownerBinding != null) {
             if (cfg.telegramOwnerId.isNotBlank()) {
@@ -293,6 +315,45 @@ object CloudConfigLoader {
             logger = logger,
             httpClient = httpClient,
         )
+    }
+
+    fun createApnsPushSenderOrNull(
+        config: CloudDaemonConfig,
+        vault: EnvelopeCredentialVault,
+        logger: RedactingChannelLogger = RedactingChannelLogger(),
+        deviceLookup: (deviceId: String) -> PairedDevice?,
+        onInvalidToken: (deviceId: String, pushToken: String, reason: String) -> Unit = { _, _, _ -> },
+        httpClient: HttpClient = ApnsPushSender.defaultHttpClient(),
+        baseUrlOverride: String? = null,
+    ): ApnsPushSender? {
+        val keyId = config.apnsKeyId.trim()
+        val teamId = config.apnsTeamId.trim()
+        val topic = config.apnsTopic.trim()
+        if (keyId.isEmpty() || teamId.isEmpty() || topic.isEmpty()) return null
+
+        val pemFromFile = config.apnsP8File.trim().takeIf { it.isNotEmpty() }?.let { path ->
+            runCatching { File(path).takeIf { it.isFile }?.readText() }.getOrNull()
+        }?.trim()?.takeIf { it.isNotEmpty() }
+
+        val pem = pemFromFile
+            ?: vault.getSecret(KEY_APNS_P8)?.trim()?.takeIf { it.isNotEmpty() }
+            ?: return null
+
+        logger.registerLiteral(pem)
+        return runCatching {
+            ApnsPushSender(
+                config = ApnsConfig(
+                    keyId = keyId,
+                    teamId = teamId,
+                    topic = topic,
+                    privateKeyPem = pem,
+                ),
+                deviceLookup = deviceLookup,
+                onInvalidToken = onInvalidToken,
+                httpClient = httpClient,
+                baseUrlOverride = baseUrlOverride,
+            )
+        }.getOrNull()
     }
 
     private fun parseConfigFile(configFile: File?): Map<String, String> {

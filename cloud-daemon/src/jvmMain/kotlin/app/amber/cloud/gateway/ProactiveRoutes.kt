@@ -1,11 +1,14 @@
 package app.amber.cloud.gateway
 
+import app.amber.cloud.orchestration.DialogueEvent
 import app.amber.cloud.proactive.CreatedProactiveWebhook
 import app.amber.cloud.proactive.L1DeterministicFilter
+import app.amber.cloud.proactive.ProactiveFeedbackAction
 import app.amber.cloud.proactive.ProactiveMonitorRecord
 import app.amber.cloud.proactive.ProactiveRunHistoryEntry
 import app.amber.cloud.proactive.ProactiveRunResult
 import app.amber.cloud.proactive.ProactiveTriggerSignal
+import app.amber.cloud.proactive.ProactiveWakeupRecord
 import app.amber.cloud.proactive.ProactiveWebhookRecord
 import app.amber.cloud.proactive.RestraintStatusSnapshot
 import app.amber.cloud.proactive.RestraintVerdict
@@ -50,9 +53,11 @@ data class ProactiveSummaryResponseDto(
     val webhooks: List<ProactiveWebhookRecord>,
     val restraint: RestraintStatusSnapshot,
     val recentRuns: List<ProactiveRunHistoryEntry>,
+    val wakeups: List<ProactiveWakeupRecord> = emptyList(),
 )
 
 private const val MAX_WEBHOOK_BODY_BYTES = 64 * 1024
+private val PROACTIVE_SIGNAL_ID_REGEX = Regex("^[A-Za-z0-9_-]{1,48}$")
 
 /**
  * 主动自动化 v2 REST API 与个人签名入站 Webhook 端点：
@@ -217,8 +222,103 @@ internal fun Application.configureProactiveRoutes(
                 webhooks = kernel.proactiveWebhookStore.list(),
                 restraint = kernel.proactiveEngine.restraintGate.statusSnapshot(),
                 recentRuns = kernel.proactiveRunHistoryStore.recent(20),
+                wakeups = emptyList(),
             )
             call.respondJson(200, json.encodeToString(ProactiveSummaryResponseDto.serializer(), dto))
+        }
+
+        get("/v2/proactive/signals/{signalId}") {
+            call.authenticateOwnerDevice() ?: return@get
+            val signalId = call.parameters["signalId"]?.trim().orEmpty()
+            if (!PROACTIVE_SIGNAL_ID_REGEX.matches(signalId)) {
+                call.respondError(400, "invalid_signal_id")
+                return@get
+            }
+            val event = kernel.orchestrationStore.dialogue.findEvent("proactive:$signalId")
+            if (event == null) {
+                call.respondError(404, "signal_not_found")
+                return@get
+            }
+            val resp = buildJsonObject {
+                put("event", json.encodeToJsonElement(DialogueEvent.serializer(), event))
+            }
+            call.respondJson(200, json.encodeToString(JsonObject.serializer(), resp))
+        }
+
+        post("/v2/proactive/signals/{signalId}/feedback") {
+            val device = call.authenticateOwnerDevice() ?: return@post
+            val signalId = call.parameters["signalId"]?.trim().orEmpty()
+            if (!PROACTIVE_SIGNAL_ID_REGEX.matches(signalId)) {
+                call.respondError(400, "invalid_signal_id")
+                return@post
+            }
+            val body = call.parseJsonBody() ?: return@post call.respondError(400, "invalid_json")
+            val rawAction = body["action"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+            val action = ProactiveFeedbackAction.entries.firstOrNull { it.wire == rawAction }
+            if (action == null) {
+                call.respondError(400, "invalid_action")
+                return@post
+            }
+            val snoozeMinutes = (body["snoozeMinutes"]?.jsonPrimitive?.intOrNull
+                ?: body["snooze_minutes"]?.jsonPrimitive?.intOrNull
+                ?: 60).coerceIn(15, 1440)
+            val muteHours = (body["muteHours"]?.jsonPrimitive?.intOrNull
+                ?: body["mute_hours"]?.jsonPrimitive?.intOrNull
+                ?: 168).coerceIn(1, 720)
+
+            when (
+                val result = kernel.applyProactiveFeedback(
+                    signalId = signalId,
+                    action = action,
+                    snoozeMinutes = snoozeMinutes,
+                    muteHours = muteHours,
+                )
+            ) {
+                CloudAgentKernel.ProactiveFeedbackResult.SignalNotFound -> {
+                    call.respondError(404, "signal_not_found")
+                }
+                is CloudAgentKernel.ProactiveFeedbackResult.Applied -> {
+                    state.recordAudit(
+                        "proactive-signal-feedback",
+                        mapOf(
+                            "device" to device.id,
+                            "signalId" to signalId,
+                            "action" to action.wire,
+                            "applied" to result.applied.toString(),
+                        ),
+                    )
+                    val resp = buildJsonObject {
+                        put("ok", true)
+                        put("action", action.wire)
+                        put("applied", result.applied)
+                        result.wakeupId?.let { put("wakeupId", it) }
+                        result.mutedUntilEpochMs?.let { put("mutedUntilEpochMs", it) }
+                    }
+                    call.respondJson(200, json.encodeToString(JsonObject.serializer(), resp))
+                }
+            }
+        }
+
+        post("/v2/proactive/restraint/unmute") {
+            val device = call.authenticateOwnerDevice() ?: return@post
+            val body = call.parseJsonBody() ?: return@post call.respondError(400, "invalid_json")
+            val topicKey = (body["topicKey"]?.jsonPrimitive?.contentOrNull
+                ?: body["topic_key"]?.jsonPrimitive?.contentOrNull)
+                ?.trim()
+                .orEmpty()
+            if (topicKey.isEmpty()) {
+                call.respondError(400, "missing_topic_key")
+                return@post
+            }
+            val snapshot = kernel.proactiveEngine.restraintGate.unmuteTopic(topicKey)
+            state.recordAudit(
+                "proactive-restraint-unmute",
+                mapOf("device" to device.id, "topicKey" to topicKey.take(160)),
+            )
+            val resp = buildJsonObject {
+                put("restraint", json.encodeToJsonElement(RestraintStatusSnapshot.serializer(), snapshot))
+            }
+            call.respondJson(200, json.encodeToString(JsonObject.serializer(), resp))
         }
 
         post("/v2/proactive/monitors") {

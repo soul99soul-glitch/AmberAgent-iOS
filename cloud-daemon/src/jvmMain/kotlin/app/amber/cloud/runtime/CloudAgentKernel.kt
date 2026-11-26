@@ -27,9 +27,12 @@ import app.amber.cloud.orchestration.CloudPrincipal
 import app.amber.cloud.orchestration.CloudRouter
 import app.amber.cloud.orchestration.ConnectorImStatusSink
 import app.amber.cloud.orchestration.DefaultCloudOrchestrationKernel
+import app.amber.cloud.orchestration.DialogueEvent
+import app.amber.cloud.orchestration.DialogueEventKinds
 import app.amber.cloud.orchestration.ModelRouterBrain
 import app.amber.cloud.orchestration.ModelWorkerTurnRunner
 import app.amber.cloud.orchestration.OrchestrationConfig
+import app.amber.cloud.orchestration.ProactiveEventMeta
 import app.amber.cloud.orchestration.RouterBrain
 import app.amber.cloud.orchestration.RouterDecision
 import app.amber.cloud.agents.AgentRegistry
@@ -46,15 +49,22 @@ import app.amber.cloud.proactive.CloudProactiveL2Judge
 import app.amber.cloud.proactive.DeviceContextPrepTriggerSource
 import app.amber.cloud.proactive.InterruptionBudgetConfig
 import app.amber.cloud.proactive.L1DeterministicFilter
+import app.amber.cloud.proactive.L1Outcome
 import app.amber.cloud.proactive.ProactiveEngine
+import app.amber.cloud.proactive.ProactiveFeedbackAction
 import app.amber.cloud.proactive.ProactiveFilePersistence
 import app.amber.cloud.proactive.ProactiveMonitorStore
 import app.amber.cloud.proactive.ProactiveRestraintGate
 import app.amber.cloud.proactive.ProactiveRunHistoryStore
 import app.amber.cloud.proactive.ProactiveRunResult
 import app.amber.cloud.proactive.ProactiveTriggerSignal
+import app.amber.cloud.proactive.ProactiveUrgency
+import app.amber.cloud.proactive.ProactiveWakeupRecord
+import app.amber.cloud.proactive.ProactiveWakeupStore
 import app.amber.cloud.proactive.ProactiveWebhookStore
 import app.amber.cloud.proactive.QuietHoursConfig
+import app.amber.cloud.proactive.SelfWakeupTriggerSource
+import app.amber.cloud.proactive.TriggerCategory
 import app.amber.cloud.proactive.WatchtowerMonitorTriggerSource
 import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.security.EnvelopeCredentialVault
@@ -175,6 +185,7 @@ class CloudAgentKernel(
     val proactiveMonitorStore = ProactiveMonitorStore(proactiveDir)
     val proactiveWebhookStore = ProactiveWebhookStore(proactiveDir, vault)
     val proactiveRunHistoryStore = ProactiveRunHistoryStore(proactiveDir)
+    val proactiveWakeupStore = ProactiveWakeupStore(proactiveDir)
     val memoryStore = CloudMemoryStore(memoryDir)
     val proceduralRuleStore = app.amber.cloud.rules.ProceduralRuleStore(dataDir)
     val soulStore = app.amber.cloud.soul.CloudSoulStore(dataDir = dataDir, memoryDir = memoryDir, workspaceDir = workspaceDir).also { s ->
@@ -255,6 +266,33 @@ class CloudAgentKernel(
         pairedDevicesProvider = gatewayState::loadDevicesStrict,
         zoneIdProvider = { proactiveEngine.restraintGate.budgetConfig.zoneId },
     )
+    val selfWakeupTriggerSource: SelfWakeupTriggerSource = SelfWakeupTriggerSource(
+        wakeupStore = proactiveWakeupStore,
+        onExpired = { record, nowMs ->
+            val summary = CredentialRedactor.redact("已过期提醒：${record.title}")
+            proactiveEngine.restraintGate.evaluateAndConsume(
+                topicKey = "wakeup_expired:${record.id}",
+                summary = summary,
+                score = 12,
+                noteworthy = true,
+                nowEpochMs = nowMs,
+                urgency = ProactiveUrgency.DIGEST,
+            )
+            proactiveRunHistoryStore.record(
+                signalId = ProactiveWakeupStore.signalIdFor(record),
+                category = if (record.kind == ProactiveWakeupRecord.KIND_COMMITMENT) {
+                    TriggerCategory.MEMORY_COMMITMENT
+                } else {
+                    TriggerCategory.CLOCK_CRON
+                },
+                topicKey = "wakeup:${record.id}",
+                title = record.title,
+                outcome = "wakeup_expired",
+                summary = "唤醒已逾期超过 12 小时，已转入 Pulse 缓冲",
+                timestampEpochMs = nowMs,
+            )
+        },
+    )
 
     private val connectors = ConcurrentHashMap<ChannelKind, ChannelConnector>()
     private val pendingRunsBySessionKey = ConcurrentHashMap<String, PendingRunRecord>()
@@ -275,6 +313,7 @@ class CloudAgentKernel(
         registerBuiltinTools()
         proactiveEngine.registerTriggerSource(watchtowerTriggerSource)
         proactiveEngine.registerTriggerSource(deviceContextPrepTriggerSource)
+        proactiveEngine.registerTriggerSource(selfWakeupTriggerSource)
         app.amber.cloud.tasks.TaskExecutionTools(taskWorkspace, taskProcesses).register(toolRegistry)
         app.amber.cloud.tasks.TaskNetworkTools(publicHttp, taskWorkspace).register(toolRegistry)
         search.register(toolRegistry) {
@@ -552,18 +591,175 @@ class CloudAgentKernel(
         }
     }
 
-    private suspend fun deliverProactiveCardToOwner(pushed: ProactiveRunResult.PushedAtL3): ProactiveRunResult.PushedAtL3 {
+    sealed interface ProactiveFeedbackResult {
+        data class Applied(
+            val action: ProactiveFeedbackAction,
+            val applied: Boolean,
+            val wakeupId: String? = null,
+            val mutedUntilEpochMs: Long? = null,
+        ) : ProactiveFeedbackResult
+
+        data object SignalNotFound : ProactiveFeedbackResult
+    }
+
+    /**
+     * 统一应用用户对主动卡片的反馈（供 REST `/v2/proactive/signals/{id}/feedback` 与 IM `pa:` 回调共用）。
+     */
+    fun applyProactiveFeedback(
+        signalId: String,
+        action: ProactiveFeedbackAction,
+        snoozeMinutes: Int = 60,
+        muteHours: Int = 168,
+        nowEpochMs: Long = System.currentTimeMillis(),
+    ): ProactiveFeedbackResult {
+        val event = orchestrationStore.dialogue.findEvent("proactive:$signalId")
+            ?: return ProactiveFeedbackResult.SignalNotFound
+        val meta = event.proactive
+        val topicKey = meta?.topicKey?.takeIf { it.isNotBlank() } ?: "proactive:$signalId"
+        val title = meta?.title?.takeIf { it.isNotBlank() } ?: "Amber 主动提醒"
+        val category = meta?.category
+            ?.let { runCatching { TriggerCategory.valueOf(it) }.getOrNull() }
+            ?: TriggerCategory.CLOCK_CRON
+
+        val clampedSnooze = snoozeMinutes.coerceIn(15, 1440)
+        val clampedMute = muteHours.coerceIn(1, 720)
+        val outcome = proactiveEngine.restraintGate.applyFeedback(
+            signalId = signalId,
+            topicKey = topicKey,
+            action = action,
+            nowEpochMs = nowEpochMs,
+            muteHours = clampedMute,
+        )
+
+        var wakeupId: String? = null
+        if (action == ProactiveFeedbackAction.SNOOZE) {
+            wakeupId = if (outcome.applied) {
+                proactiveWakeupStore.upsertSnooze(
+                    originSignalId = signalId,
+                    title = title,
+                    detail = event.text.take(1_000),
+                    checkPrompt = meta?.checkPrompt,
+                    triggerAtEpochMs = nowEpochMs + clampedSnooze * 60_000L,
+                    nowEpochMs = nowEpochMs,
+                ).id
+            } else {
+                proactiveWakeupStore.get(ProactiveWakeupStore.deterministicSnoozeId(signalId))?.id
+                    ?: ProactiveWakeupStore.deterministicSnoozeId(signalId)
+            }
+        }
+
+        if (outcome.applied) {
+            val summary = when (action) {
+                ProactiveFeedbackAction.OPENED -> "用户已打开卡片"
+                ProactiveFeedbackAction.REPLIED -> "用户已交由 Amber 处理"
+                ProactiveFeedbackAction.DISMISS -> "用户忽略了该卡片"
+                ProactiveFeedbackAction.SNOOZE -> "已延后 $clampedSnooze 分钟再提醒"
+                ProactiveFeedbackAction.MUTE_TOPIC -> "已静音该话题 $clampedMute 小时"
+            }
+            proactiveRunHistoryStore.record(
+                signalId = signalId,
+                category = category,
+                topicKey = topicKey,
+                title = title,
+                outcome = "feedback_${action.wire}",
+                summary = summary,
+                timestampEpochMs = nowEpochMs,
+            )
+        }
+
+        return ProactiveFeedbackResult.Applied(
+            action = action,
+            applied = outcome.applied,
+            wakeupId = wakeupId,
+            mutedUntilEpochMs = outcome.mutedUntilEpochMs,
+        )
+    }
+
+    internal fun buildProactiveActPrompt(event: DialogueEvent): String {
+        val checkPrompt = event.proactive?.checkPrompt?.trim()?.takeIf { it.isNotEmpty() }
+        if (checkPrompt != null) return CredentialRedactor.redact(checkPrompt).take(2_000)
+        val title = event.proactive?.title?.trim()?.takeIf { it.isNotEmpty() } ?: "主动提醒"
+        return CredentialRedactor.redact("关于这条主动提醒「$title」，请帮我处理：\n\n" + event.text.take(600))
+    }
+
+    private fun resolveProactiveSourceLabel(delta: L1Outcome.PassedWithDelta): String = when {
+        delta.bypassL2ForScheduledBriefing -> "晨报"
+        delta.wakeupId != null -> "提醒"
+        delta.topicKey.startsWith("watchtower:") -> "网页监控"
+        delta.topicKey.startsWith("webhook:") -> "Webhook"
+        delta.topicKey.startsWith("calendar:") || delta.topicKey.startsWith("prep:event:") -> "日程"
+        delta.topicKey.startsWith("prep:overdue_reminders:") -> "待办"
+        delta.category == TriggerCategory.MEMORY_COMMITMENT -> "承诺提醒"
+        delta.category == TriggerCategory.TASK_LIFECYCLE -> "任务更新"
+        delta.category == TriggerCategory.EDGE_NODE_EVENT -> "设备事件"
+        else -> "主动提醒"
+    }.take(24)
+
+    internal suspend fun deliverProactiveCardToOwner(pushed: ProactiveRunResult.PushedAtL3): ProactiveRunResult.PushedAtL3 {
         val card = pushed.card
+        val delta = pushed.l1Delta
+        val signalId = delta.signalId
         var firstReceipt: OutboundReceipt? = pushed.receipt
 
-        // Record the proactive card in the primary timeline so context is continuous across restarts
+        // 1. Write proactive_message DialogueEvent (idempotent by id="proactive:{signalId}"; failures must not block delivery)
+        val safeTitle = CredentialRedactor.redact(card.title).trim().ifBlank { "Amber 主动提醒" }.take(100)
+        val safeBody = CredentialRedactor.redact(card.markdownBody).take(4_000)
+        val safeTopicKey = CredentialRedactor.redact(delta.topicKey).take(160)
+        val safeCheckPrompt = delta.checkPrompt?.trim()?.takeIf { it.isNotEmpty() }
+            ?.let { CredentialRedactor.redact(it).take(2_000) }
+        val urgencyWire = when (pushed.restraintVerdict.urgency) {
+            ProactiveUrgency.URGENT -> "urgent"
+            ProactiveUrgency.DIGEST -> "digest"
+            ProactiveUrgency.NORMAL -> "normal"
+        }
+        val eventId = "proactive:$signalId"
+        val proactiveEvent = DialogueEvent(
+            id = eventId,
+            kind = DialogueEventKinds.PROACTIVE_MESSAGE,
+            role = "assistant",
+            text = safeBody,
+            topicId = eventId,
+            workItemId = null,
+            proactive = ProactiveEventMeta(
+                signalId = signalId,
+                topicKey = safeTopicKey,
+                category = delta.category.name,
+                title = safeTitle,
+                urgency = urgencyWire,
+                silent = pushed.restraintVerdict.silentDelivery,
+                sourceLabel = resolveProactiveSourceLabel(delta),
+                actions = if (delta.approvalToolCallId != null) emptyList() else listOf("act", "snooze", "mute"),
+                checkPrompt = safeCheckPrompt,
+                wakeupId = delta.wakeupId,
+                originSignalId = delta.originSignalId,
+            ),
+        )
+        try {
+            orchestrationStore.dialogue.append(proactiveEvent)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (e: Throwable) {
+            runCatching {
+                orchestrationStore.appendDiagnosticEvent(
+                    sessionId = PRIMARY_CONVERSATION_ID.toString(),
+                    workItemId = null,
+                    kind = "proactive_event_write_failed",
+                    detail = CredentialRedactor.redact("signalId=$signalId, error=${e.message ?: e::class.simpleName}"),
+                    nowMs = System.currentTimeMillis(),
+                )
+            }
+        }
+
+        // 2. Record the proactive card in the primary timeline so context is continuous across restarts
+        val deterministicMsgId = Uuid.parse(UUID.nameUUIDFromBytes(eventId.toByteArray()).toString())
         routerIngress.recordReply(
             PRIMARY_CONVERSATION_ID.toString(),
             CredentialRedactor.redact("【主动提醒 · ${card.title}】\n${card.markdownBody}"),
+            messageId = deterministicMsgId,
             createPrimaryIfMissing = true,
         )
 
-        // Dispatch outbound card to all registered connectors where the owner has a bound private chat
+        // 3. Dispatch outbound card to all registered connectors where the owner has a bound private chat
         for ((kind, connector) in connectors) {
             val ownerChatId = ownerBinding.getOwnerDirectChatId(kind.wireName) ?: continue
             val outbound = OutboundMessage(
@@ -573,7 +769,7 @@ class CloudAgentKernel(
                 conversationId = PRIMARY_CONVERSATION_ID.toString(),
                 silent = pushed.restraintVerdict.silentDelivery,
                 card = card,
-                idempotencyKey = "proactive:${pushed.l1Delta.signalId}:${kind.wireName}",
+                idempotencyKey = "proactive:$signalId:${kind.wireName}",
             )
             val receipt = try {
                 connector.sendWithReceipt(outbound)
@@ -587,23 +783,26 @@ class CloudAgentKernel(
             }
         }
 
-        // Dispatch APNs push to paired owner iOS/Watch devices with push tokens, honoring silentDelivery
-        val pairedDevices = runCatching { gatewayState.loadDevicesStrict() }.getOrDefault(emptyList())
-        for (paired in pairedDevices) {
-            // Pairings and tokens may change while the preceding device's send is suspended.
-            val device = gatewayState.findDeviceById(paired.id) ?: continue
-            val pushPayload = gatewayState.buildProactivePushPayload(
-                device = device,
-                card = card,
-                signalId = pushed.l1Delta.signalId,
-                silentDelivery = pushed.restraintVerdict.silentDelivery,
-            ) ?: continue
-            try {
-                gatewayState.pushSender.send(pushPayload).getOrThrow()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                gatewayState.recordAudit("proactive-push-failed", mapOf("device" to device.id))
+        // 4. Dispatch APNs push to paired owner iOS/Watch devices only when pushConfigured == true
+        if (gatewayState.pushConfigured) {
+            val pairedDevices = runCatching { gatewayState.loadDevicesStrict() }.getOrDefault(emptyList())
+            for (paired in pairedDevices) {
+                // Pairings and tokens may change while the preceding device's send is suspended.
+                val device = gatewayState.findDeviceById(paired.id) ?: continue
+                val pushPayload = gatewayState.buildProactivePushPayload(
+                    device = device,
+                    card = card,
+                    signalId = signalId,
+                    silentDelivery = pushed.restraintVerdict.silentDelivery,
+                    urgency = pushed.restraintVerdict.urgency,
+                ) ?: continue
+                try {
+                    gatewayState.pushSender.send(pushPayload).getOrThrow()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    gatewayState.recordAudit("proactive-push-failed", mapOf("device" to device.id))
+                }
             }
         }
 
