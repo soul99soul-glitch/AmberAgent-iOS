@@ -5,7 +5,11 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.UUID
+import kotlin.math.abs
 
 /**
  * 主动自唤醒记录（snooze / agent / commitment 共用，冻结契约 §4.2）。
@@ -41,7 +45,18 @@ data class ProactiveWakeupRecord(
 /**
  * 自唤醒持久化仓库（`@Synchronized` 线程安全，0600 原子写）。
  */
-class ProactiveWakeupStore(proactiveDir: File) {
+class ProactiveWakeupStore(
+    proactiveDir: File,
+    private val zoneIdProvider: () -> ZoneId = { ZoneId.of("Asia/Shanghai") },
+) {
+    @Serializable
+    private data class PersistedWakeupState(
+        val version: Int = 1,
+        val agentQuotaDay: String? = null,
+        val agentCreatedToday: Int = 0,
+        val records: List<ProactiveWakeupRecord> = emptyList(),
+    )
+
     data class DuePartition(
         val due: List<ProactiveWakeupRecord>,
         val expired: List<ProactiveWakeupRecord>,
@@ -50,6 +65,8 @@ class ProactiveWakeupStore(proactiveDir: File) {
     private val file = File(proactiveDir, "wakeups.json")
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
     private val records = LinkedHashMap<String, ProactiveWakeupRecord>()
+    private var agentQuotaDay: LocalDate? = null
+    private var agentCreatedToday: Int = 0
 
     init {
         ProactiveFilePersistence.ensureOwnerOnlyDir(proactiveDir)
@@ -68,6 +85,39 @@ class ProactiveWakeupStore(proactiveDir: File) {
     fun listAll(): List<ProactiveWakeupRecord> = records.values.toList()
 
     /**
+     * 检查最近 [createdWithinMs]（默认 10 分钟）内同 [sourceConversationId] 下，
+     * 是否已有 Agent 工具创建的、触发时间在 `dueAtEpochMs ± triggerToleranceMs`（默认 30 分钟）内的待触发唤醒。
+     * 用于隐式承诺抽取防重。
+     */
+    @Synchronized
+    fun hasRecentAgentWakeupNear(
+        sourceConversationId: String,
+        dueAtEpochMs: Long,
+        nowEpochMs: Long = System.currentTimeMillis(),
+        createdWithinMs: Long = COMMITMENT_DEDUP_CREATED_WINDOW_MS,
+        triggerToleranceMs: Long = COMMITMENT_DEDUP_TRIGGER_TOLERANCE_MS,
+    ): Boolean {
+        val cleanConv = sourceConversationId.trim()
+        if (cleanConv.isEmpty()) return false
+        return records.values.any { record ->
+            record.status == ProactiveWakeupRecord.STATUS_PENDING &&
+                record.kind == ProactiveWakeupRecord.KIND_AGENT &&
+                record.sourceConversationId == cleanConv &&
+                (nowEpochMs - record.createdAtEpochMs) in 0L..createdWithinMs &&
+                abs(record.triggerAtEpochMs - dueAtEpochMs) <= triggerToleranceMs
+        }
+    }
+
+    /**
+     * 查询当前本地日期的 Agent 唤醒已创建次数（按 [zoneIdProvider] 计算）。
+     */
+    @Synchronized
+    fun agentCreatedCountForDay(nowEpochMs: Long = System.currentTimeMillis()): Int {
+        val today = Instant.ofEpochMilli(nowEpochMs).atZone(zoneIdProvider()).toLocalDate()
+        return if (agentQuotaDay == today) agentCreatedToday else 0
+    }
+
+    /**
      * 为单张主动卡片创建或幂等更新确定性 snooze 唤醒（id 由 `originSignalId` 确定性派生）。
      */
     @Synchronized
@@ -81,6 +131,7 @@ class ProactiveWakeupStore(proactiveDir: File) {
     ): ProactiveWakeupRecord {
         val cleanOrigin = originSignalId.trim()
         require(cleanOrigin.isNotEmpty()) { "originSignalId 不能为空" }
+        validateTriggerWindow(triggerAtEpochMs = triggerAtEpochMs, nowEpochMs = nowEpochMs)
         val id = deterministicSnoozeId(cleanOrigin)
         val existing = records[id]
         if (existing == null || existing.status != ProactiveWakeupRecord.STATUS_PENDING) {
@@ -128,6 +179,7 @@ class ProactiveWakeupStore(proactiveDir: File) {
         customId: String? = null,
     ): ProactiveWakeupRecord {
         require(kind in VALID_KINDS) { "非法的唤醒类型: $kind" }
+        validateTriggerWindow(triggerAtEpochMs = triggerAtEpochMs, nowEpochMs = nowEpochMs)
         val id = customId?.trim()?.takeIf { it.isNotEmpty() }
             ?: ("wk" + UUID.randomUUID().toString().replace("-", "").take(10))
         require(ID_REGEX.matches(id)) { "非法的唤醒 id" }
@@ -136,6 +188,18 @@ class ProactiveWakeupStore(proactiveDir: File) {
             val pendingCount = records.values.count { it.status == ProactiveWakeupRecord.STATUS_PENDING }
             require(pendingCount < MAX_PENDING) { "待触发提醒已达上限 ($MAX_PENDING)" }
         }
+        val quotaDayForAgent: LocalDate? = if (kind == ProactiveWakeupRecord.KIND_AGENT) {
+            val today = Instant.ofEpochMilli(nowEpochMs).atZone(zoneIdProvider()).toLocalDate()
+            val effectiveCount = when {
+                agentQuotaDay == today -> agentCreatedToday
+                agentQuotaDay?.isAfter(today) == true -> agentCreatedToday
+                else -> 0
+            }
+            require(effectiveCount < MAX_AGENT_DAILY_CREATES) {
+                "今日 Agent 创建提醒已达上限 ($MAX_AGENT_DAILY_CREATES 次/天)"
+            }
+            if (agentQuotaDay?.isAfter(today) == true) agentQuotaDay else today
+        } else null
         val safeTitle = CredentialRedactor.redact(title.trim()).take(100).ifBlank { "定时提醒" }
         val safeDetail = CredentialRedactor.redact(detail.trim()).take(1_000)
         val safeCheckPrompt = checkPrompt
@@ -157,6 +221,13 @@ class ProactiveWakeupStore(proactiveDir: File) {
             createdAtEpochMs = nowEpochMs,
             firedAtEpochMs = null,
         )
+        if (kind == ProactiveWakeupRecord.KIND_AGENT && quotaDayForAgent != null) {
+            if (agentQuotaDay != quotaDayForAgent) {
+                agentQuotaDay = quotaDayForAgent
+                agentCreatedToday = 0
+            }
+            agentCreatedToday++
+        }
         records[id] = record
         pruneHistoryLocked()
         persistToDisk()
@@ -231,23 +302,54 @@ class ProactiveWakeupStore(proactiveDir: File) {
         }
     }
 
-    private fun loadFromDisk() {
-        if (!file.isFile) return
-        val loaded = runCatching {
-            json.decodeFromString<List<ProactiveWakeupRecord>>(file.readText())
-        }.getOrNull() ?: return
-        records.clear()
-        for (r in loaded) {
-            records[r.id] = r
+    private fun validateTriggerWindow(triggerAtEpochMs: Long, nowEpochMs: Long) {
+        val deltaMs = triggerAtEpochMs - nowEpochMs
+        require(deltaMs in MIN_TRIGGER_DELAY_MS..MAX_TRIGGER_DELAY_MS) {
+            "触发时间必须在当前时间后 1 分钟至 90 天内"
         }
     }
 
+    private fun loadFromDisk() {
+        if (!file.isFile) return
+        val raw = runCatching { file.readText() }.getOrNull()?.trim().orEmpty()
+        if (raw.isEmpty()) return
+        if (raw.startsWith("[")) {
+            val legacy = runCatching {
+                json.decodeFromString<List<ProactiveWakeupRecord>>(raw)
+            }.getOrNull() ?: return
+            records.clear()
+            for (r in legacy) {
+                records[r.id] = r
+            }
+            return
+        }
+        val state = runCatching {
+            json.decodeFromString<PersistedWakeupState>(raw)
+        }.getOrNull() ?: return
+        records.clear()
+        for (r in state.records) {
+            records[r.id] = r
+        }
+        agentQuotaDay = state.agentQuotaDay?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+        agentCreatedToday = state.agentCreatedToday.coerceAtLeast(0)
+    }
+
     private fun persistToDisk() {
-        ProactiveFilePersistence.atomicWrite0600(file, json.encodeToString(records.values.toList()))
+        val state = PersistedWakeupState(
+            agentQuotaDay = agentQuotaDay?.toString(),
+            agentCreatedToday = agentCreatedToday,
+            records = records.values.toList(),
+        )
+        ProactiveFilePersistence.atomicWrite0600(file, json.encodeToString(state))
     }
 
     companion object {
         const val MAX_PENDING = 50
+        const val MAX_AGENT_DAILY_CREATES = 20
+        const val MIN_TRIGGER_DELAY_MS = 60_000L
+        const val MAX_TRIGGER_DELAY_MS = 90L * 24L * 3_600_000L
+        const val COMMITMENT_DEDUP_CREATED_WINDOW_MS = 10L * 60_000L
+        const val COMMITMENT_DEDUP_TRIGGER_TOLERANCE_MS = 30L * 60_000L
         const val MAX_TERMINAL_HISTORY = 200
         const val OVERDUE_LIMIT_MS = 12 * 3_600_000L
 

@@ -5,6 +5,8 @@ import app.amber.cloud.gateway.DeviceContextSnapshotStore
 import app.amber.cloud.gateway.PairedDevice
 import app.amber.cloud.proactive.ProactiveMonitorRecord
 import app.amber.cloud.proactive.ProactiveMonitorStore
+import app.amber.cloud.proactive.ProactiveWakeupRecord
+import app.amber.cloud.proactive.ProactiveWakeupStore
 import app.amber.cloud.proactive.ProactiveWebhookRecord
 import app.amber.cloud.proactive.ProactiveWebhookStore
 import app.amber.cloud.security.CredentialRedactor
@@ -12,6 +14,7 @@ import app.amber.cloud.security.EnvelopeCredentialVault
 import app.amber.cloud.security.PlaceholderCredentialException
 import app.amber.core.storage.conversation.JsonConversationStorage
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
@@ -20,8 +23,15 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.io.File
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import kotlin.uuid.Uuid
 
 /**
@@ -42,6 +52,9 @@ internal object CloudBuiltinTools {
         pairedIosDevicesProvider: () -> List<PairedDevice> = { emptyList() },
         proactiveMonitorStore: ProactiveMonitorStore? = null,
         proactiveWebhookStore: ProactiveWebhookStore? = null,
+        proactiveWakeupStore: ProactiveWakeupStore? = null,
+        proactiveZoneIdProvider: () -> ZoneId = { ZoneId.of("Asia/Shanghai") },
+        proactiveClockMs: () -> Long = { System.currentTimeMillis() },
     ) {
         toolRegistry.register(
             CloudToolDefinition(
@@ -456,5 +469,147 @@ internal object CloudBuiltinTools {
                 }
             )
         }
+
+        if (proactiveWakeupStore != null) {
+            toolRegistry.register(
+                CloudToolDefinition(
+                    name = "proactive_wakeup_create",
+                    description = "创建一条一次性定时提醒唤醒。边界：到点只提醒/说话（0 Token）用 wakeup；到点需要执行工具或产出文件请用 schedule。支持 trigger_at（带偏移 ISO-8601；无偏移按用户当前时区解释）或 delay_minutes（二选一），触发时间须在未来 1 分钟至 90 天内。",
+                    parameters = app.amber.cloud.tasks.schema(
+                        "{\"title\":{\"type\":\"string\",\"maxLength\":100},\"trigger_at\":{\"type\":\"string\"},\"delay_minutes\":{\"type\":\"integer\"},\"detail\":{\"type\":\"string\",\"maxLength\":1000},\"check_prompt\":{\"type\":\"string\",\"maxLength\":2000},\"user_requested\":{\"type\":\"boolean\"},\"conversation_id\":{\"type\":\"string\"}}",
+                        "title",
+                    ),
+                    highRisk = false,
+                    effect = ToolEffect.SIDE_EFFECT,
+                    ownerOnly = true,
+                ) { args ->
+                    val rawTitle = args["title"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+                    val triggerAtRaw = (args["trigger_at"] ?: args["triggerAt"])
+                        ?.takeUnless { it is JsonNull }
+                        ?.jsonPrimitive?.contentOrNull?.trim()
+                        ?.takeIf { it.isNotEmpty() }
+                    val delayEl = (args["delay_minutes"] ?: args["delayMinutes"])
+                        ?.takeUnless { it is JsonNull }
+                    val detail = (args["detail"]?.jsonPrimitive?.contentOrNull ?: "").trim()
+                    val checkPrompt = (args["check_prompt"] ?: args["checkPrompt"])
+                        ?.takeUnless { it is JsonNull }
+                        ?.jsonPrimitive?.contentOrNull?.trim()
+                        ?.takeIf { it.isNotEmpty() }
+                    val userRequested = (args["user_requested"] ?: args["userRequested"])
+                        ?.takeUnless { it is JsonNull }
+                        ?.jsonPrimitive?.booleanOrNull ?: false
+                    val conversationId = (args["conversation_id"] ?: args["conversationId"])
+                        ?.takeUnless { it is JsonNull }
+                        ?.jsonPrimitive?.contentOrNull?.trim()
+                        ?.takeIf { it.isNotEmpty() }
+                        ?: PRIMARY_CONVERSATION_ID.toString()
+
+                    runCatching {
+                        require(rawTitle.isNotEmpty()) { "title 不能为空" }
+                        require(rawTitle.length <= 100) { "title 长度不能超过 100 个字符" }
+                        require(detail.length <= 1_000) { "detail 长度不能超过 1000 个字符" }
+                        require((checkPrompt?.length ?: 0) <= 2_000) { "check_prompt 长度不能超过 2000 个字符" }
+                        require(triggerAtRaw != null || delayEl != null) {
+                            "必须提供 trigger_at 或 delay_minutes 其中之一"
+                        }
+                        require(!(triggerAtRaw != null && delayEl != null)) {
+                            "trigger_at 与 delay_minutes 只能二选一"
+                        }
+                        val nowMs = proactiveClockMs()
+                        val triggerAtEpochMs = if (triggerAtRaw != null) {
+                            parseIsoTriggerAtEpochMs(triggerAtRaw, proactiveZoneIdProvider())
+                        } else {
+                            val delayMinutes = delayEl!!.jsonPrimitive.longOrNull
+                                ?: throw IllegalArgumentException("delay_minutes 必须为整数")
+                            require(delayMinutes > 0L) { "delay_minutes 必须大于 0" }
+                            require(delayMinutes <= MAX_WAKEUP_DELAY_MINUTES) {
+                                "触发时间必须在当前时间后 1 分钟至 90 天内"
+                            }
+                            nowMs + delayMinutes * 60_000L
+                        }
+                        val created = proactiveWakeupStore.create(
+                            kind = ProactiveWakeupRecord.KIND_AGENT,
+                            title = rawTitle,
+                            detail = detail,
+                            checkPrompt = checkPrompt,
+                            triggerAtEpochMs = triggerAtEpochMs,
+                            userRequested = userRequested,
+                            sourceConversationId = conversationId,
+                            nowEpochMs = nowMs,
+                        )
+                        buildJsonObject {
+                            put("ok", true)
+                            put("wakeup", toolJson.encodeToJsonElement(ProactiveWakeupRecord.serializer(), created))
+                        }
+                    }.getOrElse { err ->
+                        buildJsonObject {
+                            put("ok", false)
+                            put("error", err.message ?: "创建定时提醒唤醒失败")
+                        }
+                    }
+                }
+            )
+
+            toolRegistry.register(
+                CloudToolDefinition(
+                    name = "proactive_wakeup_list",
+                    description = "列出当前所有待触发（pending）的主动提醒唤醒",
+                    parameters = app.amber.cloud.tasks.schema("{}"),
+                    highRisk = false,
+                    effect = ToolEffect.PURE,
+                    ownerOnly = true,
+                ) {
+                    val pending = proactiveWakeupStore.listPending()
+                    buildJsonObject {
+                        put("ok", true)
+                        put(
+                            "wakeups",
+                            buildJsonArray {
+                                pending.forEach { add(toolJson.encodeToJsonElement(ProactiveWakeupRecord.serializer(), it)) }
+                            }
+                        )
+                    }
+                }
+            )
+
+            toolRegistry.register(
+                CloudToolDefinition(
+                    name = "proactive_wakeup_cancel",
+                    description = "按 id 取消一条待触发的主动提醒唤醒",
+                    parameters = app.amber.cloud.tasks.schema("{\"id\":{\"type\":\"string\"}}", "id"),
+                    highRisk = false,
+                    effect = ToolEffect.SIDE_EFFECT,
+                    ownerOnly = true,
+                ) { args ->
+                    val id = args["id"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+                    val cancelled = if (id.isNotEmpty()) proactiveWakeupStore.cancel(id) else false
+                    buildJsonObject {
+                        put("ok", cancelled)
+                        put("id", id)
+                        if (!cancelled) put("error", "未找到待触发的提醒唤醒: $id")
+                    }
+                }
+            )
+        }
+    }
+
+    private const val MAX_WAKEUP_DELAY_MINUTES = 90L * 24L * 60L
+    private val SPACE_LOCAL_DATETIME_SEC: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+    private val SPACE_LOCAL_DATETIME_MIN: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+
+    internal fun parseIsoTriggerAtEpochMs(raw: String, fallbackZoneId: ZoneId): Long {
+        val text = raw.trim()
+        require(text.isNotEmpty()) { "trigger_at 不能为空" }
+        runCatching { return OffsetDateTime.parse(text).toInstant().toEpochMilli() }
+        runCatching { return ZonedDateTime.parse(text).toInstant().toEpochMilli() }
+        runCatching { return Instant.parse(text).toEpochMilli() }
+        runCatching { return LocalDateTime.parse(text).atZone(fallbackZoneId).toInstant().toEpochMilli() }
+        runCatching {
+            return LocalDateTime.parse(text, SPACE_LOCAL_DATETIME_SEC).atZone(fallbackZoneId).toInstant().toEpochMilli()
+        }
+        runCatching {
+            return LocalDateTime.parse(text, SPACE_LOCAL_DATETIME_MIN).atZone(fallbackZoneId).toInstant().toEpochMilli()
+        }
+        throw IllegalArgumentException("trigger_at 格式非法，请提供 ISO-8601 时间（如 2026-11-27T09:30:00+08:00 或 2026-11-27T09:30）")
     }
 }

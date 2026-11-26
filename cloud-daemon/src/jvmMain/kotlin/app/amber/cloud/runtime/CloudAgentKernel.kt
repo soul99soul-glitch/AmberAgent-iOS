@@ -46,6 +46,8 @@ import app.amber.cloud.supertags.HubService
 import app.amber.cloud.supertags.SupertagMaintenance
 import app.amber.cloud.supertags.SupertagStore
 import app.amber.cloud.proactive.CloudProactiveL2Judge
+import app.amber.cloud.proactive.CommitmentExtractor
+import app.amber.cloud.proactive.DailyPulseTriggerSource
 import app.amber.cloud.proactive.DeviceContextPrepTriggerSource
 import app.amber.cloud.proactive.InterruptionBudgetConfig
 import app.amber.cloud.proactive.L1DeterministicFilter
@@ -185,7 +187,10 @@ class CloudAgentKernel(
     val proactiveMonitorStore = ProactiveMonitorStore(proactiveDir)
     val proactiveWebhookStore = ProactiveWebhookStore(proactiveDir, vault)
     val proactiveRunHistoryStore = ProactiveRunHistoryStore(proactiveDir)
-    val proactiveWakeupStore = ProactiveWakeupStore(proactiveDir)
+    val proactiveWakeupStore = ProactiveWakeupStore(
+        proactiveDir = proactiveDir,
+        zoneIdProvider = { proactiveEngine.restraintGate.budgetConfig.zoneId },
+    )
     val memoryStore = CloudMemoryStore(memoryDir)
     val proceduralRuleStore = app.amber.cloud.rules.ProceduralRuleStore(dataDir)
     val soulStore = app.amber.cloud.soul.CloudSoulStore(dataDir = dataDir, memoryDir = memoryDir, workspaceDir = workspaceDir).also { s ->
@@ -293,6 +298,21 @@ class CloudAgentKernel(
             )
         },
     )
+    val dailyPulseTriggerSource: DailyPulseTriggerSource = DailyPulseTriggerSource(
+        restraintGate = proactiveEngine.restraintGate,
+        l1Filter = proactiveEngine.l1Filter,
+        deviceContextStore = gatewayState.deviceContextStore,
+        pairedDevicesProvider = gatewayState::loadDevicesStrict,
+    )
+    val commitmentExtractor: CommitmentExtractor = CommitmentExtractor(
+        wakeupStore = proactiveWakeupStore,
+        restraintGate = proactiveEngine.restraintGate,
+        modelClientProvider = { configurationManager?.snapshot()?.model ?: modelClient },
+        memoryModeProvider = { id ->
+            runCatching { Uuid.parse(id) }.getOrNull()?.let { conversationStorage.loadConversation(it)?.memoryMode }
+        },
+        persistenceFile = File(proactiveDir, "commitment-extractor.json"),
+    )
 
     private val connectors = ConcurrentHashMap<ChannelKind, ChannelConnector>()
     private val pendingRunsBySessionKey = ConcurrentHashMap<String, PendingRunRecord>()
@@ -314,6 +334,7 @@ class CloudAgentKernel(
         proactiveEngine.registerTriggerSource(watchtowerTriggerSource)
         proactiveEngine.registerTriggerSource(deviceContextPrepTriggerSource)
         proactiveEngine.registerTriggerSource(selfWakeupTriggerSource)
+        proactiveEngine.registerTriggerSource(dailyPulseTriggerSource)
         app.amber.cloud.tasks.TaskExecutionTools(taskWorkspace, taskProcesses).register(toolRegistry)
         app.amber.cloud.tasks.TaskNetworkTools(publicHttp, taskWorkspace).register(toolRegistry)
         search.register(toolRegistry) {
@@ -421,6 +442,11 @@ class CloudAgentKernel(
                     // A newer inbound message may already be on the timeline while this reply finishes.
                     val prompt = input.events.filter { it.kind == "user_message" }.joinToString("\n") { it.summaryText }
                     conversationTagger.enqueue(conversation.copy(messageNodes = listOf(UIMessage.user(prompt).toMessageNode(), reply)))
+                    commitmentExtractor.enqueue(
+                        conversationId = conversation.id.toString(),
+                        userText = prompt,
+                        assistantText = reply.currentMessage.toText(),
+                    )
                 }
             },
             soulStore = soulStore,
@@ -526,6 +552,7 @@ class CloudAgentKernel(
     fun stopProactiveLoop() {
         orchestrationKernel.shutdownForRestart()
         router.shutdown()
+        commitmentExtractor.close()
         proactiveJob?.cancel()
         proactiveJob = null
     }
@@ -1235,6 +1262,8 @@ class CloudAgentKernel(
             pairedIosDevicesProvider = { gatewayState.loadDevicesStrict() },
             proactiveMonitorStore = proactiveMonitorStore,
             proactiveWebhookStore = proactiveWebhookStore,
+            proactiveWakeupStore = proactiveWakeupStore,
+            proactiveZoneIdProvider = { proactiveEngine.restraintGate.budgetConfig.zoneId },
         )
     }
 }

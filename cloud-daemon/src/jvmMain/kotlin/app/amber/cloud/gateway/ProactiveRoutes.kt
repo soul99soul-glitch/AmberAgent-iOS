@@ -34,7 +34,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -222,9 +224,25 @@ internal fun Application.configureProactiveRoutes(
                 webhooks = kernel.proactiveWebhookStore.list(),
                 restraint = kernel.proactiveEngine.restraintGate.statusSnapshot(),
                 recentRuns = kernel.proactiveRunHistoryStore.recent(20),
-                wakeups = emptyList(),
+                wakeups = kernel.proactiveWakeupStore.listPending(),
             )
             call.respondJson(200, json.encodeToString(ProactiveSummaryResponseDto.serializer(), dto))
+        }
+
+        delete("/v2/proactive/wakeups/{id}") {
+            val device = call.authenticateOwnerDevice() ?: return@delete
+            val id = call.parameters["id"]?.let { URLDecoder.decode(it, StandardCharsets.UTF_8) }?.trim().orEmpty()
+            val cancelled = if (id.isNotEmpty()) kernel.proactiveWakeupStore.cancel(id) else false
+            if (!cancelled) {
+                call.respondError(404, "wakeup_not_found")
+            } else {
+                state.recordAudit("proactive-wakeup-cancel", mapOf("device" to device.id, "wakeupId" to id))
+                val resp = buildJsonObject {
+                    put("cancelled", true)
+                    put("id", id)
+                }
+                call.respondJson(200, json.encodeToString(JsonObject.serializer(), resp))
+            }
         }
 
         get("/v2/proactive/signals/{signalId}") {
@@ -457,6 +475,14 @@ internal fun Application.configureProactiveRoutes(
             val device = call.authenticateOwnerDevice() ?: return@patch
             val body = call.parseJsonBody() ?: return@patch call.respondError(400, "invalid_json")
             try {
+                val rawPulseTimeEl = (body["pulseTime"] ?: body["pulse_time"])?.takeUnless { it is JsonNull }
+                val pulseTime = if (rawPulseTimeEl != null) {
+                    val prim = rawPulseTimeEl as? JsonPrimitive
+                        ?: throw IllegalArgumentException("pulseTime 必须为 HH:mm 格式字符串")
+                    if (!prim.isString) throw IllegalArgumentException("pulseTime 必须为 HH:mm 格式字符串")
+                    prim.content
+                } else null
+
                 val updated = kernel.proactiveEngine.restraintGate.updateConfig(
                     quietHoursEnabled = body["quietHoursEnabled"]?.jsonPrimitive?.booleanOrNull
                         ?: body["quiet_hours_enabled"]?.jsonPrimitive?.booleanOrNull,
@@ -466,6 +492,11 @@ internal fun Application.configureProactiveRoutes(
                         ?: body["quiet_hours_end"]?.jsonPrimitive?.contentOrNull,
                     dailyMaxPushes = body["dailyMaxPushes"]?.jsonPrimitive?.intOrNull
                         ?: body["daily_max_pushes"]?.jsonPrimitive?.intOrNull,
+                    pulseEnabled = body["pulseEnabled"]?.jsonPrimitive?.booleanOrNull
+                        ?: body["pulse_enabled"]?.jsonPrimitive?.booleanOrNull,
+                    pulseTime = pulseTime,
+                    commitmentExtractionEnabled = body["commitmentExtractionEnabled"]?.jsonPrimitive?.booleanOrNull
+                        ?: body["commitment_extraction_enabled"]?.jsonPrimitive?.booleanOrNull,
                 )
                 state.recordAudit(
                     "proactive-restraint-update",

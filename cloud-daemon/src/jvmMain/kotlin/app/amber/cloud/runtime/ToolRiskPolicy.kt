@@ -52,6 +52,7 @@ object ToolRiskPolicy {
         "schedule_list",
         "proactive_monitor_list",
         "proactive_webhook_list",
+        "proactive_wakeup_list",
     )
 
     val L2_REVERSIBLE_WRITE_TOOLS = setOf(
@@ -66,6 +67,8 @@ object ToolRiskPolicy {
         "proactive_monitor_delete",
         "proactive_webhook_create",
         "proactive_webhook_delete",
+        "proactive_wakeup_create",
+        "proactive_wakeup_cancel",
     )
 
     val L3_IRREVERSIBLE_OR_EXTERNAL_TOOLS = CloudToolRegistry.BUILTIN_HIGH_RISK_NAMES + setOf(
@@ -116,6 +119,7 @@ object ToolRiskPolicy {
             "agent_soul_update" -> "已更新形象人设（L2：保留历史快照可一键回退）"
             "proactive_monitor_create", "proactive_monitor_update", "proactive_monitor_delete" -> "已更新 Watchtower 静默巡检规则（L2：可随时启停或删除）"
             "proactive_webhook_create", "proactive_webhook_delete" -> "已更新个人签名入站 Webhook 配置（L2：可随时启停或吊销）"
+            "proactive_wakeup_create", "proactive_wakeup_cancel" -> "已更新定时提醒唤醒（L2：可随时查看或取消）"
             else -> "已执行可逆写入 `$toolName`（L2）"
         }
     }
