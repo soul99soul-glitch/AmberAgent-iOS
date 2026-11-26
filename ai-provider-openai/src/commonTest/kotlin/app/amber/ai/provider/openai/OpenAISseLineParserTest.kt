@@ -2,6 +2,7 @@ package app.amber.ai.provider.openai
 
 import app.amber.ai.ui.UIMessagePart
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
@@ -115,6 +116,26 @@ data: {"type":"response.output_text.delta","item_id":"1","delta":"second"}"""
         )
 
         assertEquals(listOf("first", "second"), chunks.map(::textDelta))
+    }
+
+    @Test
+    fun laterErrorInSameEventPreventsPartialDelivery() {
+        val provider = OpenAIKmpProvider()
+        val emitted = mutableListOf<String>()
+        val errorLine = """data: data: {"error":{"message":"later failure"}}"""
+        val chatError = assertFailsWith<Exception> {
+            provider.parseChatCompletionStreamData(
+                """{"choices":[{"delta":{"content":"first"}}]}""" + "\n" + errorLine
+            ).forEach { emitted += textDelta(it) }
+        }
+        assertContains(chatError.message.orEmpty(), "later failure")
+        val responsesError = assertFailsWith<Exception> {
+            provider.parseResponsesStreamData(
+                """{"type":"response.output_text.delta","delta":"first"}""" + "\n" + errorLine
+            ).forEach { emitted += textDelta(it) }
+        }
+        assertContains(responsesError.message.orEmpty(), "later failure")
+        assertEquals(emptyList(), emitted)
     }
 
     private fun textDelta(chunk: app.amber.ai.ui.MessageChunk): String =

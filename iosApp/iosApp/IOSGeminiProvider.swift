@@ -483,6 +483,7 @@ struct IOSGeminiStreamFrame: Equatable {
         case functionCallName(index: Int, name: String)
         case functionCallArgs(index: Int, delta: String)
         case functionCallSignature(index: Int, signature: String)
+        case usage(TokenUsage)
         case finish(String?)
         case error(String)
     }
@@ -517,16 +518,18 @@ enum IOSGeminiStreamParser {
            !blockReason.isEmpty {
             return [IOSGeminiStreamFrame(kind: .error("请求被拒：\(blockReason)"))]
         }
+        var frames: [IOSGeminiStreamFrame] = []
+        let metadata = (object["usageMetadata"] ?? root["usageMetadata"]) as? [String: Any]
+        if let usage = tokenUsage(metadata) {
+            frames.append(IOSGeminiStreamFrame(kind: .usage(usage)))
+        }
         guard let candidates = object["candidates"] as? [[String: Any]],
               let first = candidates.first else {
-            return []
+            return frames
         }
         let finishReason = (first["finishReason"] as? String).nonBlank
-        guard let content = first["content"] as? [String: Any],
-              let parts = content["parts"] as? [[String: Any]] else {
-            return finishReason.map { [IOSGeminiStreamFrame(kind: .finish($0))] } ?? []
-        }
-        var frames: [IOSGeminiStreamFrame] = []
+        let content = first["content"] as? [String: Any]
+        let parts = content?["parts"] as? [[String: Any]] ?? []
         for (index, part) in parts.enumerated() {
             if let thoughtContent = Self.standaloneThoughtContent(in: part) {
                 frames.append(IOSGeminiStreamFrame(kind: .reasoning(thoughtContent)))
@@ -590,6 +593,35 @@ enum IOSGeminiStreamParser {
             frames.append(IOSGeminiStreamFrame(kind: .finish(finishReason)))
         }
         return frames
+    }
+
+    private static func tokenUsage(_ metadata: [String: Any]?) -> TokenUsage? {
+        guard let metadata else { return nil }
+        func count(_ key: String) -> Int? {
+            guard let number = metadata[key] as? NSNumber,
+                  CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  let value = number as? Int32, value >= 0 else { return nil }
+            return Int(value)
+        }
+        let prompt = count("promptTokenCount")
+        let cached = count("cachedContentTokenCount")
+        let candidates = count("candidatesTokenCount")
+        let thoughts = count("thoughtsTokenCount")
+        let toolPrompt = count("toolUsePromptTokenCount")
+        let total = count("totalTokenCount")
+        guard prompt != nil || cached != nil || candidates != nil || thoughts != nil ||
+              toolPrompt != nil || total != nil else { return nil }
+
+        // Gemini counts tool prompts as input and thoughts as output. Cache reads are already in prompt.
+        let input = (prompt ?? 0) + (toolPrompt ?? 0)
+        let output = (candidates ?? 0) + (thoughts ?? 0)
+        return TokenUsage(
+            promptTokens: Int32(clamping: input),
+            completionTokens: Int32(clamping: output),
+            cachedTokens: Int32(cached ?? 0),
+            totalTokens: Int32(clamping: total ?? (input + output)),
+            generationDurationMs: 0
+        )
     }
 
     private static func isThoughtPart(_ part: [String: Any]) -> Bool {
@@ -660,6 +692,18 @@ final class IOSGeminiClient {
         params: TextGenerationParams,
         onChunk: @escaping (MessageChunk) -> Void
     ) async throws {
+        let result = try await readStream(messages: messages, params: params, onChunk: onChunk)
+        if let usage = result.usage {
+            // The assistant owns the reported total even if the response has no content or token breakdown.
+            onChunk(Self.assistantDeltaChunk(parts: [], model: params.model, usage: usage))
+        }
+    }
+
+    private func readStream(
+        messages: [UIMessage],
+        params: TextGenerationParams,
+        onChunk: (MessageChunk) -> Void
+    ) async throws -> (finishReason: String?, usage: TokenUsage?) {
         let (request, wireModelId) = try await makeStreamRequest(messages: messages, params: params)
         let (bytes, response) = try await session.bytes(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -675,6 +719,8 @@ final class IOSGeminiClient {
         var pendingCalls: [PendingCall] = []
         var callIDs: [String: Int] = [:]
         var fragmentSlots: [Int: Int] = [:]
+        var latestUsage: TokenUsage?
+        var finishReason: String?
 
         for try await line in bytes.lines {
             if Task.isCancelled { throw CancellationError() }
@@ -694,7 +740,9 @@ final class IOSGeminiClient {
             for frame in IOSGeminiStreamParser.parse(line) {
                 switch frame.kind {
                 case .text(let text):
-                    if !text.isEmpty { onChunk(Self.textDeltaChunk(token: text, model: params.model)) }
+                    if !text.isEmpty {
+                        onChunk(Self.assistantDeltaChunk(parts: [UIMessagePart.Text(text: text, metadata: nil)], model: params.model))
+                    }
                 case .reasoning(let text):
                     if !text.isEmpty { onChunk(Self.reasoningDeltaChunk(text: text, model: params.model)) }
                 case .provisionalFunctionCall(let index, let id, let name, let signature):
@@ -772,10 +820,13 @@ final class IOSGeminiClient {
                         ? delta : pendingCalls[target].args + delta
                 case .functionCallSignature(let index, let signature):
                     pendingCalls[slot(for: index)].thoughtSignature = signature
+                case .usage(let usage):
+                    latestUsage = usage
                 case .finish(let reason):
                     if let reason, Self.failedFinishReasons.contains(reason.uppercased()) {
                         throw IOSGeminiError.stream("Gemini 生成失败：\(reason)")
                     }
+                    if let reason { finishReason = reason }
                     for (index, call) in pendingCalls.enumerated() {
                         onChunk(Self.toolDeltaChunk(callId: index, call: call))
                     }
@@ -795,6 +846,7 @@ final class IOSGeminiClient {
         for (index, call) in pendingCalls.enumerated() {
             onChunk(Self.toolDeltaChunk(callId: index, call: call))
         }
+        return (finishReason, latestUsage)
     }
 
     // MARK: non-streaming (engine paths)
@@ -804,14 +856,12 @@ final class IOSGeminiClient {
         params: TextGenerationParams
     ) async throws -> MessageChunk {
         var lastText = ""
-        var finish: String?
-        try await streamText(messages: messages, params: params) { chunk in
+        let result = try await readStream(messages: messages, params: params) { chunk in
             for choice in chunk.choices {
                 if let delta = choice.delta {
                     lastText += delta.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined()
                 }
             }
-            finish = chunk.choices.compactMap(\.finishReason).last
         }
         let message = UIMessage(
             id: KotlinUuid.companion.random(),
@@ -821,14 +871,14 @@ final class IOSGeminiClient {
             createdAt: chatNowLocalDateTime(),
             finishedAt: chatNowLocalDateTime(),
             modelId: nil,
-            usage: nil,
+            usage: result.usage,
             translation: nil
         )
         return MessageChunk(
             id: UUID().uuidString,
             model: params.model.modelId,
-            choices: [UIMessageChoice(index: 0, delta: nil, message: message, finishReason: finish)],
-            usage: nil
+            choices: [UIMessageChoice(index: 0, delta: nil, message: message, finishReason: result.finishReason)],
+            usage: result.usage
         )
     }
 
@@ -1160,23 +1210,23 @@ final class IOSGeminiClient {
         )
     }
 
-    private static func textDeltaChunk(token: String, model: Model) -> MessageChunk {
+    private static func assistantDeltaChunk(parts: [UIMessagePart], model: Model, usage: TokenUsage? = nil) -> MessageChunk {
         let delta = UIMessage(
             id: KotlinUuid.companion.random(),
             role: MessageRole.assistant,
-            parts: [UIMessagePart.Text(text: token, metadata: nil)],
+            parts: parts,
             annotations: [],
             createdAt: chatNowLocalDateTime(),
             finishedAt: nil,
             modelId: nil,
-            usage: nil,
+            usage: usage,
             translation: nil
         )
         return MessageChunk(
             id: UUID().uuidString,
             model: model.modelId,
             choices: [UIMessageChoice(index: 0, delta: delta, message: nil, finishReason: nil)],
-            usage: nil
+            usage: usage
         )
     }
 

@@ -323,8 +323,7 @@ class OpenAIKmpProvider internal constructor(
             events.collect { event ->
                 when (event) {
                     is SseEvent.Event -> {
-                        terminal.observe(event.data)
-                        parseChatCompletionStreamData(event.data).forEach {
+                        parseChatCompletionStreamData(event.data, terminal).forEach {
                             emit(textToolRecovery?.transform(it) ?: it)
                         }
                     }
@@ -705,11 +704,12 @@ class OpenAIKmpProvider internal constructor(
 
     // ---- response parsing ----
 
-    internal fun parseChatCompletionStreamData(data: String): List<MessageChunk> =
-        normalizeOpenAIStreamDataLines(data).mapNotNull(::parseStreamChunk)
+    internal fun parseChatCompletionStreamData(
+        data: String,
+        terminal: OpenAIStreamTerminalState = OpenAIStreamTerminalState(OpenAIStreamKind.CHAT_COMPLETIONS),
+    ): List<MessageChunk> = terminal.observe(data).map(::parseStreamChunk)
 
-    private fun parseStreamChunk(payload: String): MessageChunk? {
-        val obj = runCatching { json.parseToJsonElement(payload) as? JsonObject }.getOrNull() ?: return null
+    private fun parseStreamChunk(obj: JsonObject): MessageChunk {
         if (obj["error"] != null) {
             throw Exception("OpenAI stream error: ${obj["error"]}")
         }
@@ -802,22 +802,6 @@ class OpenAIKmpProvider internal constructor(
             cachedTokens = obj["prompt_tokens_details"]?.obj()?.int("cached_tokens")
                 ?: promptCacheHit ?: 0,
         )
-    }
-
-    private fun normalizeOpenAIStreamDataLines(data: String): List<String> =
-        data.lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .map { it.withoutNestedSseDataPrefix() }
-            .filter { it.isNotBlank() && it != "[DONE]" }
-            .toList()
-
-    private fun String.withoutNestedSseDataPrefix(): String {
-        var value = trimStart()
-        while (value.startsWith("data:")) {
-            value = value.removePrefix("data:").trimStart()
-        }
-        return value
     }
 
     private fun JsonObject.mergeCustomBody(customBody: List<CustomBody>): JsonObject {
@@ -965,8 +949,7 @@ class OpenAIKmpProvider internal constructor(
             events.collect { event ->
                 when (event) {
                     is SseEvent.Event -> {
-                        terminal.observe(event.data)
-                        parseResponsesStreamData(event.data, providerSetting.authMode)
+                        parseResponsesStreamData(event.data, providerSetting.authMode, terminal)
                             .forEach { emit(it.normalizeResponseStreamAssistant(streamAssistantId)) }
                     }
 
@@ -989,10 +972,9 @@ class OpenAIKmpProvider internal constructor(
     internal fun parseResponsesStreamData(
         data: String,
         authMode: OpenAIAuthMode = OpenAIAuthMode.API_KEY,
+        terminal: OpenAIStreamTerminalState = OpenAIStreamTerminalState(OpenAIStreamKind.RESPONSES),
     ): List<MessageChunk> =
-        normalizeOpenAIStreamDataLines(data).mapNotNull { payload ->
-            val obj = runCatching { json.parseToJsonElement(payload) as? JsonObject }
-                .getOrNull() ?: return@mapNotNull null
+        terminal.observe(data).mapNotNull { obj ->
             val error = obj["error"] ?: obj.takeIf {
                 authMode == OpenAIAuthMode.CHATGPT_SIWC && it.str("type") == "error"
             }

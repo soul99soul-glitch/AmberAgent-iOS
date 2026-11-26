@@ -113,10 +113,7 @@ internal class OpenAISseLineParser {
     }
 
     private fun String.isStandaloneOpenAIPayload(): Boolean {
-        var payload = trim()
-        while (payload.startsWith("data:")) {
-            payload = payload.removePrefix("data:").trimStart()
-        }
+        val payload = trim().withoutSseDataPrefix()
         return payload == "[DONE]" ||
             runCatching { json.parseToJsonElement(payload) is JsonObject }.getOrDefault(false)
     }
@@ -138,41 +135,40 @@ internal class OpenAIStreamTerminalState(
 
     private var completed = false
 
-    fun observe(data: String) {
-        data.lineSequence()
-            .map { it.trim().withoutSseDataPrefix() }
-            .filter { it.isNotBlank() }
-            .forEach { payload ->
-                if (payload == "[DONE]") {
-                    if (kind != OpenAIStreamKind.RESPONSES_SIWC) {
-                        completed = true
+    /** Observe protocol markers and pass the same JSON objects to the message decoder. */
+    fun observe(data: String): List<JsonObject> = buildList {
+        for (line in data.lineSequence()) {
+            val payload = line.trim().withoutSseDataPrefix()
+            if (payload.isEmpty()) continue
+            if (payload == "[DONE]") {
+                if (kind != OpenAIStreamKind.RESPONSES_SIWC) completed = true
+                continue
+            }
+            val objectPayload = runCatching { json.parseToJsonElement(payload) as? JsonObject }
+                .getOrNull() ?: continue
+            completed = completed || when (kind) {
+                OpenAIStreamKind.CHAT_COMPLETIONS ->
+                    (objectPayload["choices"] as? JsonArray).orEmpty().any { choice ->
+                        val choiceObject = choice as? JsonObject ?: return@any false
+                        (choiceObject["finish_reason"] as? JsonPrimitive)?.contentOrNull != null
                     }
-                    return@forEach
+
+                // `response.incomplete` 同样是协议终态(输出写满上限 / 内容过滤),
+                // 只是内容未写完。把它排除在终态之外,会让一次正常的上限截断在
+                // 连接关闭时再被误报成"流在终态前断开"。
+                OpenAIStreamKind.RESPONSES -> {
+                    val eventType = (objectPayload["type"] as? JsonPrimitive)?.contentOrNull
+                    eventType == "response.completed" || eventType == "response.incomplete"
                 }
-                val objectPayload = runCatching { json.parseToJsonElement(payload) as? JsonObject }
-                    .getOrNull() ?: return@forEach
-                completed = completed || when (kind) {
-                    OpenAIStreamKind.CHAT_COMPLETIONS ->
-                        (objectPayload["choices"] as? JsonArray).orEmpty().any { choice ->
-                            val choiceObject = choice as? JsonObject ?: return@any false
-                            (choiceObject["finish_reason"] as? JsonPrimitive)?.contentOrNull != null
-                        }
 
-                    // `response.incomplete` 同样是协议终态(输出写满上限 / 内容过滤),
-                    // 只是内容未写完。把它排除在终态之外,会让一次正常的上限截断在
-                    // 连接关闭时再被误报成"流在终态前断开"。
-                    OpenAIStreamKind.RESPONSES -> {
-                        val eventType = (objectPayload["type"] as? JsonPrimitive)?.contentOrNull
-                        eventType == "response.completed" || eventType == "response.incomplete"
-                    }
-
-                    // OpenAI SIWC Preview: only `response.completed` counts as stream success.
-                    OpenAIStreamKind.RESPONSES_SIWC -> {
-                        val eventType = (objectPayload["type"] as? JsonPrimitive)?.contentOrNull
-                        eventType == "response.completed"
-                    }
+                // OpenAI SIWC Preview: only `response.completed` counts as stream success.
+                OpenAIStreamKind.RESPONSES_SIWC -> {
+                    val eventType = (objectPayload["type"] as? JsonPrimitive)?.contentOrNull
+                    eventType == "response.completed"
                 }
             }
+            add(objectPayload)
+        }
     }
 
     fun requireCompleted() {
@@ -183,14 +179,14 @@ internal class OpenAIStreamTerminalState(
             throw IllegalStateException("OpenAI ${kind.name.lowercase()} stream ended before a terminal event")
         }
     }
+}
 
-    private fun String.withoutSseDataPrefix(): String {
-        var value = this
-        while (value.startsWith("data:")) {
-            value = value.removePrefix("data:").trimStart()
-        }
-        return value
+private fun String.withoutSseDataPrefix(): String {
+    var value = this
+    while (value.startsWith("data:")) {
+        value = value.removePrefix("data:").trimStart()
     }
+    return value
 }
 
 /** Decode only after a complete byte-framed line is available, preserving UTF-8 split across network reads. */
