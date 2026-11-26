@@ -138,7 +138,7 @@ class ProactiveEngine(
             is L1Outcome.PassedWithDelta -> {
                 // Stage L2: 小模型 noteworthy 打分（跨端缺陷 #3：进入 L2 提示词前强制脱敏）
                 val safeDeltaSummary = CredentialRedactor.redact(l1.deltaSummary)
-                val l2Score: L2NoteworthyScore? = if (l1.bypassL2ForScheduledBriefing) {
+                val l2Score: L2NoteworthyScore? = if (l1.skipL2 || l1.bypassL2ForScheduledBriefing) {
                     null
                 } else {
                     l2Calls.incrementAndGet()
@@ -152,8 +152,12 @@ class ProactiveEngine(
                     )
                 }
 
-                val effectiveNoteworthy = l2Score?.noteworthy ?: true
-                val effectiveScore = l2Score?.compositeScore ?: 16
+                val effectiveNoteworthy = if (l1.skipL2) true else (l2Score?.noteworthy ?: true)
+                val effectiveScore = when {
+                    l1.skipL2 -> 12
+                    l2Score != null -> l2Score.compositeScore
+                    else -> 16
+                }
                 val effectiveSummary = CredentialRedactor.redact(l2Score?.summary?.ifBlank { l1.title } ?: l1.title)
 
                 // Stage 2.5: 静默时段与打扰预算桶节制阀门
@@ -164,6 +168,8 @@ class ProactiveEngine(
                     noteworthy = effectiveNoteworthy,
                     nowEpochMs = evalTimeMs,
                     isScheduledBriefing = l1.bypassL2ForScheduledBriefing,
+                    urgency = l1.urgency,
+                    userRequested = l1.userRequested,
                 )
 
                 return when (verdict) {
@@ -180,6 +186,7 @@ class ProactiveEngine(
                     }
                     is RestraintVerdict.AllowedToPush -> {
                         // Stage L3: 产出结构化主动卡片并投递
+                        // 严格约束：只有晨间定时简报才 drain 晨报缓冲，自唤醒卡绝不吸走缓冲
                         val extraPulse = if (l1.bypassL2ForScheduledBriefing) {
                             restraintGate.drainBufferedPulseItems()
                         } else {

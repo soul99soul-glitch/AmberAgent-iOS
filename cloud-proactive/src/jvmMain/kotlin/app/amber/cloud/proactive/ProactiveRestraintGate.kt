@@ -61,6 +61,7 @@ sealed class RestraintVerdict {
         val remainingDailyBudget: Int,
         val tier: Int,
         val silentDelivery: Boolean,
+        val urgency: ProactiveUrgency = ProactiveUrgency.NORMAL,
     ) : RestraintVerdict()
 
     data class SuppressedQuietHours(
@@ -80,6 +81,25 @@ sealed class RestraintVerdict {
     ) : RestraintVerdict()
 }
 
+enum class ProactiveFeedbackAction(val wire: String) {
+    OPENED("opened"),
+    REPLIED("replied"),
+    DISMISS("dismiss"),
+    SNOOZE("snooze"),
+    MUTE_TOPIC("mute_topic"),
+}
+
+data class FeedbackOutcome(
+    val applied: Boolean,
+    val mutedUntilEpochMs: Long? = null,
+)
+
+@Serializable
+data class MutedTopicDto(
+    val topicKey: String,
+    val untilEpochMs: Long,
+)
+
 @Serializable
 data class RestraintStatusSnapshot(
     val quietHoursEnabled: Boolean,
@@ -91,6 +111,10 @@ data class RestraintStatusSnapshot(
     val remainingToday: Int,
     val bufferedPulseCount: Int,
     val mutedTopicsCount: Int,
+    val pulseEnabled: Boolean = true,
+    val pulseTime: String = "08:30",
+    val commitmentExtractionEnabled: Boolean = true,
+    val mutedTopics: List<MutedTopicDto> = emptyList(),
 )
 
 /**
@@ -116,12 +140,27 @@ class ProactiveRestraintGate(
         val consecutiveIgnoresByTopic: Map<String, Int> = emptyMap(),
         val mutedUntilByTopic: Map<String, Long> = emptyMap(),
         val bufferedPulseItems: List<String> = emptyList(),
+        val pulseEnabled: Boolean = true,
+        val pulseTime: String = "08:30",
+        val commitmentExtractionEnabled: Boolean = true,
+        val appliedFeedbackKeys: List<String> = emptyList(),
+        val urgentDay: String? = null,
+        val urgentPushesToday: Int = 0,
     )
 
     companion object {
         private const val MAX_PULSE_ITEMS = 100
+        private const val MAX_APPLIED_FEEDBACK_KEYS = 500
+        private const val MAX_DAILY_URGENT_PUSHES = 10
+        private val HH_MM_REGEX = Regex("""^([01]\d|2[0-3]):[0-5]\d$""")
         private val TIME_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
         private val persistenceJson = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
+
+        private fun parseStrictPulseTime(raw: String): LocalTime {
+            val trimmed = raw.trim()
+            require(HH_MM_REGEX.matches(trimmed)) { "pulseTime 必须为 HH:mm 格式" }
+            return LocalTime.parse(trimmed, TIME_FMT)
+        }
     }
 
     @Volatile
@@ -134,11 +173,17 @@ class ProactiveRestraintGate(
 
     private var currentDay: LocalDate? = null
     private var pushesToday: Int = 0
+    private var urgentDay: LocalDate? = null
+    private var urgentPushesToday: Int = 0
+    private var pulseEnabled: Boolean = true
+    private var pulseTime: LocalTime = LocalTime.of(8, 30)
+    private var commitmentExtractionEnabled: Boolean = true
     private var lastGlobalPushEpochMs: Long = Long.MIN_VALUE
     private val lastPushByTopic = mutableMapOf<String, Long>()
     private val consecutiveIgnoresByTopic = mutableMapOf<String, Int>()
     private val mutedUntilByTopic = mutableMapOf<String, Long>()
     private val bufferedPulseItems = ArrayDeque<String>()
+    private val appliedFeedbackKeys = LinkedHashSet<String>()
 
     init {
         loadFromDisk()
@@ -150,6 +195,9 @@ class ProactiveRestraintGate(
         quietHoursStart: String? = null,
         quietHoursEnd: String? = null,
         dailyMaxPushes: Int? = null,
+        pulseEnabled: Boolean? = null,
+        pulseTime: String? = null,
+        commitmentExtractionEnabled: Boolean? = null,
     ): RestraintStatusSnapshot {
         val nextStart = quietHoursStart?.trim()?.let { LocalTime.parse(it) } ?: quietHours.start
         val nextEnd = quietHoursEnd?.trim()?.let { LocalTime.parse(it) } ?: quietHours.end
@@ -158,9 +206,26 @@ class ProactiveRestraintGate(
             require(dailyMaxPushes in 1..100) { "dailyMaxPushes 必须在 1..100 之间" }
             budgetConfig.copy(dailyMaxPushes = dailyMaxPushes)
         } else budgetConfig
-        persistToDisk(nextQuiet, nextBudget)
+        val nextPulseEnabled = pulseEnabled ?: this.pulseEnabled
+        val nextPulseTime = if (pulseTime != null) {
+            parseStrictPulseTime(pulseTime)
+        } else {
+            this.pulseTime
+        }
+        val nextCommitmentExtractionEnabled = commitmentExtractionEnabled ?: this.commitmentExtractionEnabled
+
+        persistToDisk(
+            quiet = nextQuiet,
+            budget = nextBudget,
+            pulseEnabledValue = nextPulseEnabled,
+            pulseTimeValue = nextPulseTime,
+            commitmentExtractionEnabledValue = nextCommitmentExtractionEnabled,
+        )
         quietHours = nextQuiet
         budgetConfig = nextBudget
+        this.pulseEnabled = nextPulseEnabled
+        this.pulseTime = nextPulseTime
+        this.commitmentExtractionEnabled = nextCommitmentExtractionEnabled
         return statusSnapshot()
     }
 
@@ -168,7 +233,10 @@ class ProactiveRestraintGate(
     fun statusSnapshot(nowEpochMs: Long = System.currentTimeMillis()): RestraintStatusSnapshot {
         val today = Instant.ofEpochMilli(nowEpochMs).atZone(budgetConfig.zoneId).toLocalDate()
         val effectivePushesToday = if (currentDay == today) pushesToday else 0
-        val activeMutedCount = mutedUntilByTopic.values.count { nowEpochMs < it }
+        val activeMutedTopics = mutedUntilByTopic.entries
+            .filter { nowEpochMs < it.value }
+            .sortedBy { it.key }
+            .map { MutedTopicDto(topicKey = it.key, untilEpochMs = it.value) }
         return RestraintStatusSnapshot(
             quietHoursEnabled = quietHours.enabled,
             quietHoursStart = quietHours.start.format(TIME_FMT),
@@ -178,8 +246,62 @@ class ProactiveRestraintGate(
             pushesToday = effectivePushesToday,
             remainingToday = (budgetConfig.dailyMaxPushes - effectivePushesToday).coerceAtLeast(0),
             bufferedPulseCount = bufferedPulseItems.size,
-            mutedTopicsCount = activeMutedCount,
+            mutedTopicsCount = activeMutedTopics.size,
+            pulseEnabled = pulseEnabled,
+            pulseTime = pulseTime.format(TIME_FMT),
+            commitmentExtractionEnabled = commitmentExtractionEnabled,
+            mutedTopics = activeMutedTopics,
         )
+    }
+
+    /**
+     * 幂等应用用户对单条主动卡片的反馈（按 signalId + action 去重并 0600 原子持久化）。
+     */
+    @Synchronized
+    fun applyFeedback(
+        signalId: String,
+        topicKey: String,
+        action: ProactiveFeedbackAction,
+        nowEpochMs: Long,
+        muteHours: Int = 168,
+    ): FeedbackOutcome {
+        val dedupKey = "$signalId:${action.wire}"
+        if (dedupKey in appliedFeedbackKeys) {
+            return FeedbackOutcome(applied = false)
+        }
+        appliedFeedbackKeys.add(dedupKey)
+        while (appliedFeedbackKeys.size > MAX_APPLIED_FEEDBACK_KEYS) {
+            val iter = appliedFeedbackKeys.iterator()
+            if (!iter.hasNext()) break
+            iter.next()
+            iter.remove()
+        }
+        var mutedUntil: Long? = null
+        when (action) {
+            ProactiveFeedbackAction.OPENED,
+            ProactiveFeedbackAction.REPLIED -> {
+                consecutiveIgnoresByTopic[topicKey] = 0
+            }
+            ProactiveFeedbackAction.DISMISS -> {
+                consecutiveIgnoresByTopic[topicKey] = (consecutiveIgnoresByTopic[topicKey] ?: 0) + 1
+            }
+            ProactiveFeedbackAction.MUTE_TOPIC -> {
+                val until = nowEpochMs + muteHours.coerceIn(1, 720) * 3_600_000L
+                mutedUntilByTopic[topicKey] = until
+                mutedUntil = until
+            }
+            ProactiveFeedbackAction.SNOOZE -> Unit
+        }
+        persistToDisk()
+        return FeedbackOutcome(applied = true, mutedUntilEpochMs = mutedUntil)
+    }
+
+    @Synchronized
+    fun unmuteTopic(topicKey: String): RestraintStatusSnapshot {
+        if (mutedUntilByTopic.remove(topicKey) != null) {
+            persistToDisk()
+        }
+        return statusSnapshot()
     }
 
     /**
@@ -227,6 +349,8 @@ class ProactiveRestraintGate(
         noteworthy: Boolean,
         nowEpochMs: Long,
         isScheduledBriefing: Boolean = false,
+        urgency: ProactiveUrgency = ProactiveUrgency.NORMAL,
+        userRequested: Boolean = false,
     ): RestraintVerdict {
         val today = Instant.ofEpochMilli(nowEpochMs).atZone(budgetConfig.zoneId).toLocalDate()
         var dirty = false
@@ -238,6 +362,77 @@ class ProactiveRestraintGate(
             currentDay = today
             pushesToday = 0
             dirty = true
+        }
+        if (urgentDay != today) {
+            if (urgentDay?.isAfter(today) == true) {
+                return RestraintVerdict.DeferredByBudget("事项属于已结算日期", bufferedForMorningBriefing = false)
+            }
+            urgentDay = today
+            urgentPushesToday = 0
+            dirty = true
+        }
+
+        // 0A. DIGEST：只写入晨报缓冲，不扣预算
+        if (!isScheduledBriefing && urgency == ProactiveUrgency.DIGEST) {
+            val mutedUntil = mutedUntilByTopic[topicKey] ?: 0L
+            if (nowEpochMs < mutedUntil) {
+                if (dirty) persistToDisk()
+                return RestraintVerdict.DeferredByBudget(
+                    reason = "话题 $topicKey 处于用户负反馈冷却期",
+                    bufferedForMorningBriefing = false,
+                )
+            }
+            if (!noteworthy) {
+                if (dirty) persistToDisk()
+                return RestraintVerdict.DroppedLowScore(
+                    reason = "L2 评分未达主动触达阈值 (noteworthy=false, score=$score, required=${budgetConfig.defaultMinScore})",
+                    score = score,
+                    requiredScore = budgetConfig.defaultMinScore,
+                )
+            }
+            if (summary.isNotBlank()) {
+                bufferForMorning(summary)
+                dirty = true
+            }
+            if (dirty) persistToDisk()
+            return RestraintVerdict.DeferredByBudget(
+                reason = "已转入 Pulse 汇总",
+                bufferedForMorningBriefing = true,
+            )
+        }
+
+        // 0B. URGENT：受静默（非 userRequested）、静音（非 userRequested）与当日 10 次上限约束；超限降级按 NORMAL 评估
+        if (!isScheduledBriefing && urgency == ProactiveUrgency.URGENT) {
+            if (quietHours.isInQuietHours(nowEpochMs) && !userRequested) {
+                if (noteworthy && summary.isNotBlank()) {
+                    bufferForMorning(summary)
+                    dirty = true
+                }
+                if (dirty) persistToDisk()
+                return RestraintVerdict.SuppressedQuietHours(
+                    reason = "当前处于静默时段 (${quietHours.start}–${quietHours.end})，已暂存至次日晨间简报",
+                    bufferedForMorningBriefing = true,
+                )
+            }
+            val mutedUntil = mutedUntilByTopic[topicKey] ?: 0L
+            if (nowEpochMs < mutedUntil && !userRequested) {
+                if (dirty) persistToDisk()
+                return RestraintVerdict.DeferredByBudget(
+                    reason = "话题 $topicKey 处于用户负反馈冷却期",
+                    bufferedForMorningBriefing = false,
+                )
+            }
+            if (urgentPushesToday < MAX_DAILY_URGENT_PUSHES) {
+                urgentPushesToday++
+                persistToDisk()
+                return RestraintVerdict.AllowedToPush(
+                    remainingDailyBudget = (budgetConfig.dailyMaxPushes - pushesToday).coerceAtLeast(0),
+                    tier = 3,
+                    silentDelivery = false,
+                    urgency = ProactiveUrgency.URGENT,
+                )
+            }
+            // urgentPushesToday >= 10：降级走下方 NORMAL 规则评估
         }
 
         // 1. 静默时段硬拦截（默认 23:00–08:00 严禁任何 IM 主动推送，攒入次日晨报）
@@ -259,6 +454,7 @@ class ProactiveRestraintGate(
                 remainingDailyBudget = (budgetConfig.dailyMaxPushes - pushesToday).coerceAtLeast(0),
                 tier = 1,
                 silentDelivery = false,
+                urgency = ProactiveUrgency.NORMAL,
             )
         }
 
@@ -339,6 +535,7 @@ class ProactiveRestraintGate(
             remainingDailyBudget = budgetConfig.dailyMaxPushes - pushesToday,
             tier = tier,
             silentDelivery = tier <= 2,
+            urgency = ProactiveUrgency.NORMAL,
         )
     }
 
@@ -356,6 +553,7 @@ class ProactiveRestraintGate(
         val loadedZone = runCatching { ZoneId.of(state.zoneId) }.getOrDefault(quietHours.zoneId)
         val loadedStart = runCatching { LocalTime.parse(state.quietHoursStart) }.getOrDefault(quietHours.start)
         val loadedEnd = runCatching { LocalTime.parse(state.quietHoursEnd) }.getOrDefault(quietHours.end)
+        val loadedPulseTime = runCatching { parseStrictPulseTime(state.pulseTime) }.getOrDefault(LocalTime.of(8, 30))
         quietHours = QuietHoursConfig(
             enabled = state.quietHoursEnabled,
             start = loadedStart,
@@ -368,6 +566,11 @@ class ProactiveRestraintGate(
         )
         currentDay = state.currentDay?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
         pushesToday = state.pushesToday.coerceAtLeast(0)
+        urgentDay = state.urgentDay?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+        urgentPushesToday = state.urgentPushesToday.coerceAtLeast(0)
+        pulseEnabled = state.pulseEnabled
+        pulseTime = loadedPulseTime
+        commitmentExtractionEnabled = state.commitmentExtractionEnabled
         lastGlobalPushEpochMs = state.lastGlobalPushEpochMs
         lastPushByTopic.clear()
         lastPushByTopic.putAll(state.lastPushByTopic)
@@ -377,9 +580,17 @@ class ProactiveRestraintGate(
         mutedUntilByTopic.putAll(state.mutedUntilByTopic)
         bufferedPulseItems.clear()
         state.bufferedPulseItems.takeLast(MAX_PULSE_ITEMS).forEach(::bufferForMorning)
+        appliedFeedbackKeys.clear()
+        appliedFeedbackKeys.addAll(state.appliedFeedbackKeys.takeLast(MAX_APPLIED_FEEDBACK_KEYS))
     }
 
-    private fun persistToDisk(quiet: QuietHoursConfig = quietHours, budget: InterruptionBudgetConfig = budgetConfig) {
+    private fun persistToDisk(
+        quiet: QuietHoursConfig = quietHours,
+        budget: InterruptionBudgetConfig = budgetConfig,
+        pulseEnabledValue: Boolean = pulseEnabled,
+        pulseTimeValue: LocalTime = pulseTime,
+        commitmentExtractionEnabledValue: Boolean = commitmentExtractionEnabled,
+    ) {
         val file = persistenceFile ?: return
         val state = PersistedRestraintState(
             quietHoursEnabled = quiet.enabled,
@@ -394,6 +605,12 @@ class ProactiveRestraintGate(
             consecutiveIgnoresByTopic = consecutiveIgnoresByTopic.toMap(),
             mutedUntilByTopic = mutedUntilByTopic.toMap(),
             bufferedPulseItems = bufferedPulseItems.toList(),
+            pulseEnabled = pulseEnabledValue,
+            pulseTime = pulseTimeValue.format(TIME_FMT),
+            commitmentExtractionEnabled = commitmentExtractionEnabledValue,
+            appliedFeedbackKeys = appliedFeedbackKeys.toList().takeLast(MAX_APPLIED_FEEDBACK_KEYS),
+            urgentDay = urgentDay?.toString(),
+            urgentPushesToday = urgentPushesToday,
         )
         ProactiveFilePersistence.atomicWrite0600(file, persistenceJson.encodeToString(state))
     }

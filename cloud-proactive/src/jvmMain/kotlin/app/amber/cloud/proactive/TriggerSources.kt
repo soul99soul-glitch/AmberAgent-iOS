@@ -4,6 +4,16 @@ import app.amber.cloud.channels.FeishuCalendarEvent
 import kotlinx.serialization.Serializable
 
 /**
+ * 主动推送紧迫度分级（冻结契约 §4.1）。
+ */
+@Serializable
+enum class ProactiveUrgency {
+    URGENT,
+    NORMAL,
+    DIGEST,
+}
+
+/**
  * 强主动性引擎的五类触发源分类（对齐 `amber-cloud-self-plan.md` §6.1）。
  */
 @Serializable
@@ -151,6 +161,23 @@ sealed interface ProactiveTriggerSignal {
         override val timestampEpochMs: Long = System.currentTimeMillis(),
     ) : ProactiveTriggerSignal {
         override val category: TriggerCategory = TriggerCategory.TASK_LIFECYCLE
+    }
+
+    /** 类别 1B / 4C：自唤醒信号（snooze 延后提醒 / Agent 自定回访 / 隐式承诺到期） */
+    data class SelfWakeupSignal(
+        override val signalId: String,    // 遵循 "wk_{wakeupId}_{epochMin}"，匹配 ^[A-Za-z0-9_-]{1,48}$
+        val wakeupId: String,
+        val kind: String,                 // "snooze" | "agent" | "commitment"
+        val title: String,                // ≤100，已脱敏
+        val detail: String = "",          // ≤1000
+        val checkPrompt: String? = null,  // ≤2000
+        val userRequested: Boolean = false,
+        val originSignalId: String? = null,
+        override val topicKey: String = "wakeup:$wakeupId",
+        override val timestampEpochMs: Long = System.currentTimeMillis(),
+    ) : ProactiveTriggerSignal {
+        override val category: TriggerCategory =
+            if (kind == "commitment") TriggerCategory.MEMORY_COMMITMENT else TriggerCategory.CLOCK_CRON
     }
 }
 

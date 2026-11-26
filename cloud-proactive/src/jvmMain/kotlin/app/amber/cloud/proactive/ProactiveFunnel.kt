@@ -52,6 +52,12 @@ sealed class L1Outcome {
         val suggestedFreeSlots: List<FeishuFreeSlot> = emptyList(),
         val approvalToolCallId: String? = null,
         val bypassL2ForScheduledBriefing: Boolean = false,
+        val urgency: ProactiveUrgency = ProactiveUrgency.NORMAL,
+        val skipL2: Boolean = false,
+        val userRequested: Boolean = false,
+        val wakeupId: String? = null,
+        val originSignalId: String? = null,
+        val checkPrompt: String? = null,
     ) : L1Outcome()
 }
 
@@ -255,6 +261,7 @@ class L1DeterministicFilter(
             is ProactiveTriggerSignal.MemoryCommitmentSignal -> evaluateMemoryCommitment(signal)
             is ProactiveTriggerSignal.OverdueReminderPrepSignal -> evaluateOverdueReminderPrep(signal)
             is ProactiveTriggerSignal.TaskLifecycleSignal -> evaluateTaskLifecycle(signal)
+            is ProactiveTriggerSignal.SelfWakeupSignal -> evaluateSelfWakeup(signal)
         }
         persistToDisk()
         return outcome
@@ -461,16 +468,20 @@ class L1DeterministicFilter(
         val dayEvents = signal.calendarEvents.filter { it.startTime.startsWith(signal.dateString) }
         val conflicts = computeCalendarConflicts(signal.dateString, dayEvents)
         val freeSlots = FeishuCalendarClient.computeFreeSlots(signal.dateString, dayEvents)
-        val summary = buildString {
-            append("早安！今日（${signal.dateString}）共有 ${dayEvents.size} 场日程安排")
-            if (conflicts.isNotEmpty()) {
-                append("（含 ${conflicts.size} 处时间冲突需留意）")
-            }
-            append("。\n")
-            for (ev in dayEvents.sortedBy { it.startTime }) {
-                append("• ${ev.startTime.takeLast(5)}-${ev.endTime.takeLast(5)} ${ev.summary}（${ev.location}）\n")
-            }
-        }.trim()
+        val summary = if (dayEvents.isEmpty()) {
+            "早安！${signal.dateString} 今日暂无日程。"
+        } else {
+            buildString {
+                append("早安！今日（${signal.dateString}）共有 ${dayEvents.size} 场日程安排")
+                if (conflicts.isNotEmpty()) {
+                    append("（含 ${conflicts.size} 处时间冲突需留意）")
+                }
+                append("。\n")
+                for (ev in dayEvents.sortedBy { it.startTime }) {
+                    append("• ${ev.startTime.takeLast(5)}-${ev.endTime.takeLast(5)} ${ev.summary}（${ev.location}）\n")
+                }
+            }.trim()
+        }
 
         return L1Outcome.PassedWithDelta(
             signalId = signal.signalId,
@@ -612,6 +623,34 @@ class L1DeterministicFilter(
             approvalToolCallId = signal.approvalToolCallId,
         )
     }
+
+    private fun evaluateSelfWakeup(signal: ProactiveTriggerSignal.SelfWakeupSignal): L1Outcome {
+        val dedupKey = "wakeup:${signal.wakeupId}:${signal.signalId}"
+        if (!recordDedupKey(dedupKey)) {
+            return L1Outcome.DroppedUnchanged(reason = "自唤醒事件 $dedupKey 已触发")
+        }
+        val safeTitle = CredentialRedactor.redact(signal.title.trim()).take(100).ifBlank { "定时提醒" }
+        val safeDetail = CredentialRedactor.redact(signal.detail.trim()).take(1_000)
+        val safeCheckPrompt = signal.checkPrompt
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { CredentialRedactor.redact(it).take(2_000) }
+        val deltaSummary = safeDetail.ifBlank { safeTitle }
+
+        return L1Outcome.PassedWithDelta(
+            signalId = signal.signalId,
+            category = signal.category,
+            topicKey = signal.topicKey,
+            title = safeTitle,
+            deltaSummary = deltaSummary,
+            urgency = if (signal.userRequested) ProactiveUrgency.URGENT else ProactiveUrgency.NORMAL,
+            skipL2 = true,
+            userRequested = signal.userRequested,
+            wakeupId = signal.wakeupId,
+            originSignalId = signal.originSignalId,
+            checkPrompt = safeCheckPrompt,
+        )
+    }
 }
 
 /**
@@ -694,6 +733,8 @@ object NoteworthyResponseParser {
  * 第三级漏斗（L3）：产出主动触达结构化卡片。
  */
 object L3ProactiveCardProducer {
+    private const val MAX_CALLBACK_DATA_BYTES = 64
+
     fun buildCard(
         delta: L1Outcome.PassedWithDelta,
         l2Score: L2NoteworthyScore?,
@@ -701,7 +742,7 @@ object L3ProactiveCardProducer {
     ): OutboundCard {
         val headerTemplate = when {
             delta.approvalToolCallId != null -> "amber"
-            (l2Score?.compositeScore ?: 15) >= 20 -> "red"
+            delta.urgency == ProactiveUrgency.URGENT || (l2Score?.compositeScore ?: 15) >= 20 -> "red"
             delta.conflicts.isNotEmpty() -> "amber"
             else -> "wathet"
         }
@@ -733,21 +774,21 @@ object L3ProactiveCardProducer {
         } else {
             listOf(
                 OutboundButton(
-                    text = "🔍 展开详情",
-                    actionData = "proactive:detail:${delta.signalId}",
+                    text = "🔍 让 Amber 处理",
+                    actionData = "pa:act:${delta.signalId}",
                     style = ButtonStyle.PRIMARY,
                 ),
                 OutboundButton(
-                    text = "⏰ 稍后提醒(2h)",
-                    actionData = "proactive:snooze_2h:${delta.topicKey}",
+                    text = "⏰ 1 小时后",
+                    actionData = "pa:snooze:${delta.signalId}",
                     style = ButtonStyle.DEFAULT,
                 ),
                 OutboundButton(
-                    text = "🔕 减少此类提醒",
-                    actionData = "proactive:mute:${delta.topicKey}",
+                    text = "🔕 减少此类",
+                    actionData = "pa:mute:${delta.signalId}",
                     style = ButtonStyle.DANGER,
                 ),
-            )
+            ).filter { it.actionData.toByteArray(StandardCharsets.UTF_8).size <= MAX_CALLBACK_DATA_BYTES }
         }
 
         val rawCard = OutboundCard(
