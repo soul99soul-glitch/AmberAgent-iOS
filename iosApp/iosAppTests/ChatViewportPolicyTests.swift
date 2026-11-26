@@ -3,6 +3,47 @@ import XCTest
 
 final class ChatViewportPolicyTests: XCTestCase {
 
+    func testTurnStageUsesOnlyRemainingViewportAndReleasesBottomPinDuringPush() {
+        XCTAssertEqual(ChatTurnStagePolicy.floorHeight(anchorTopY: 0, visibleHeight: 780, topClearance: 42), 716)
+        XCTAssertEqual(ChatTurnStagePolicy.floorHeight(anchorTopY: 0, visibleHeight: 40, topClearance: 42), 0)
+        let open = ChatTurnStagePolicy.floorHeight(anchorTopY: 2200, visibleHeight: 500, topClearance: 42)
+        let closed = ChatTurnStagePolicy.floorHeight(anchorTopY: 2200, visibleHeight: 780, topClearance: 42)
+        XCTAssertEqual(closed - open, 280)
+        XCTAssertEqual(ChatTurnStagePolicy.provisionalAnchorTop(naturalStackHeight: 0), 0)
+        XCTAssertEqual(ChatTurnStagePolicy.provisionalAnchorTop(naturalStackHeight: 500), 488)
+
+        var viewport = ChatViewportState()
+        viewport.isAtBottom = true
+        XCTAssertFalse(NativeChatTimelineView.shouldPinBottomOnSizeChanges(
+            followGeneration: true, viewportState: viewport, driverPausedForUser: false, turnStagePushing: true))
+    }
+
+    @MainActor
+    func testOnlyANewArmedIdleNativeSendActivatesTheStage() {
+        func activates(_ event: ChatEvent = .userMessageAppended, id: String? = "new", anchor: String? = "old",
+                       armed: Bool = true, generating: Bool = false, native: Bool = true) -> Bool {
+            ChatTurnStagePolicy.shouldActivate(event: event, lastUserMessageID: id, currentAnchorID: anchor,
+                                              wasArmed: armed, isGenerationActive: generating, nativeDriverActive: native)
+        }
+        XCTAssertTrue(activates())
+        XCTAssertFalse(activates(.assistantStreamDelta))
+        XCTAssertFalse(activates(id: nil))
+        XCTAssertFalse(activates(anchor: "new"))
+        XCTAssertFalse(activates(armed: false))
+        XCTAssertFalse(activates(generating: true))
+        XCTAssertFalse(activates(native: false))
+        XCTAssertTrue(ChatTurnStagePolicy.resets(on: .conversationLoaded))
+        XCTAssertTrue(ChatTurnStagePolicy.resets(on: .conversationSwitched))
+        XCTAssertTrue(ChatTurnStagePolicy.resets(on: .branchChanged))
+        XCTAssertFalse(ChatTurnStagePolicy.resets(on: .generationCompleted))
+
+        let key = UUID().uuidString
+        ChatUserSendEntranceGate.arm(key, at: 10)
+        XCTAssertNotNil(ChatUserSendEntranceGate.claimOrResume(key, at: 10))
+        XCTAssertTrue(ChatUserSendEntranceGate.wasArmedRecently(key, at: 10.1))
+        XCTAssertFalse(ChatUserSendEntranceGate.wasArmedRecently(key, at: 12))
+    }
+
     func testSwiftUIStreamingTailSuspendsOnlyAfterTailIsConfirmedOffscreen() {
         let messageID = "tail"
 

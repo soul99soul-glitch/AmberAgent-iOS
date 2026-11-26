@@ -792,7 +792,9 @@ extension ChatView {
         composerState.sharePrefillNotice = nil
         composerState.cloudDialogueErrorMessage = nil
         viewportState.followPaused = false
-        viewModel.sendMessage(startsGenerationAfterInsertion: true)
+        if viewModel.sendMessage(startsGenerationAfterInsertion: true) {
+            dismissKeyboard()
+        }
     }
 
     /// Explicit single-owner delegation to either Cloud or Mac from the unified main timeline.
@@ -852,6 +854,7 @@ extension ChatView {
             targetWorkItemId: targetWorkItemId
         )
         ChatUserSendEntranceGate.arm("cloud-user:\(submission.requestId)")
+        dismissKeyboard()
         viewModel.suggestionDraftChanged(text)
 
         Task { @MainActor in

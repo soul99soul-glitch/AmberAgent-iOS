@@ -309,6 +309,11 @@ enum ChatUserSendEntranceGate {
         return (now - entry.armedAt) <= freshnessWindow
     }
 
+    static func wasArmedRecently(_ key: String, at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard let entry = entries[key] else { return false }
+        return now - entry.armedAt <= freshnessWindow
+    }
+
     static func resetForTesting() {
         entries.removeAll()
         insertionOrder.removeAll()

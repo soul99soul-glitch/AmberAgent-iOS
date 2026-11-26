@@ -8,6 +8,199 @@ import Shared
 @MainActor
 final class ChatNativeTimelineReplayHistoryTests: ChatNativeTimelineReplayTestCase {
 
+    func testContainerRelativeHeightTracksKeyboardViewport() throws {
+        let user = makeUserMessage("第一轮")
+        ChatUserSendEntranceGate.arm("local-user:\(user.id.toHexDashString())")
+        let fixture = makeFixture(exclusiveWindow: true) {
+            $0.messages = [user]
+            $0.send(.userAppend)
+        }
+        defer { fixture.tearDown() }
+        let field = UITextField(frame: CGRect(x: 8, y: 100, width: 100, height: 40))
+        fixture.window.addSubview(field)
+        defer { field.removeFromSuperview() }
+        XCTAssertTrue(pumpUntil(timeout: 3) { (fixture.scrollView?.contentSize.height ?? 0) > 300 })
+        let scroll = try XCTUnwrap(fixture.scrollView)
+        func verify(_ state: String) -> CGFloat {
+            let insets = scroll.adjustedContentInset
+            let visible = scroll.bounds.height - insets.top - insets.bottom
+            // First user starts at y=0. With all outer padding restored, the laid-out
+            // floor and its padding measure exactly the containerRelativeFrame length.
+            let relative = scroll.contentSize.height
+            print("[stage-viewport] \(state) relative=\(relative) bounds=\(scroll.bounds.height) insets=\(insets) visible=\(visible)")
+            XCTAssertEqual(relative, visible, accuracy: 1, state)
+            return visible
+        }
+        let hidden = verify("hidden")
+        XCTAssertTrue(field.becomeFirstResponder())
+        pump(seconds: 1)
+        let shown = verify("shown")
+        XCTAssertLessThan(shown, hidden - 100, "The software keyboard must occupy the viewport")
+        XCTAssertTrue(field.resignFirstResponder())
+        pump(seconds: 0.8)
+        XCTAssertEqual(verify("dismissed"), hidden, accuracy: 1)
+    }
+
+    func testComposerKeepsBlockedDraftAndStagesAcceptedMessageBelowTopBar() async throws {
+        var anchorFrame = CGRect.null
+        NativeChatTimelineView.onTurnStageAnchorFrameForTesting = { anchorFrame = $0 }
+        defer { NativeChatTimelineView.onTurnStageAnchorFrameForTesting = nil }
+        let suite = "ComposerStage-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
+        let conversations = IOSConversationStore(baseDirectory: directory, subagentConversationIDsProvider: { [] })
+        await conversations.bootstrap()
+        let settings = SettingsStore(userDefaults: defaults)
+        let shared = IOSSharedSettingsStore(userDefaults: defaults)
+        let model = ChatViewModel(settingsStore: settings, sharedSettings: shared, autoGenerateResponses: false)
+        model.conversationStore = conversations
+        model.reloadFromStore()
+        let root = ChatView(settingsStore: settings, sharedSettings: shared, viewModel: model)
+            .environment(conversations)
+            .environment(ConversationActivityCenter(conversationStore: conversations))
+            .environment(RouterPath())
+        let host = UIHostingController(rootView: root)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        try await Task.sleep(for: .milliseconds(500))
+        model.messages = longConversation(turns: 10)
+        model.bumpMessageRevision(reason: .initialLoad)
+        try await Task.sleep(for: .milliseconds(500))
+
+        func composer(in view: UIView) -> UITextView? {
+            if let input = view as? UITextView, input.delegate is ComposerInputTextView.Coordinator { return input }
+            for child in view.subviews {
+                if let input = composer(in: child) { return input }
+            }
+            return nil
+        }
+        let input = try XCTUnwrap(composer(in: host.view))
+        let delegate = try XCTUnwrap(input.delegate as? ComposerInputTextView.Coordinator)
+        XCTAssertTrue(input.becomeFirstResponder())
+        input.insertText("   ")
+        try await Task.sleep(for: .milliseconds(500))
+        let priorCount = model.messages.count
+        delegate.parent.onSubmit()
+        XCTAssertTrue(input.isFirstResponder)
+        XCTAssertEqual(input.text, "   ")
+        XCTAssertEqual(model.messages.count, priorCount)
+
+        input.insertText("请给这一轮回复留出空间")
+        delegate.parent.onSubmit()
+        XCTAssertFalse(input.isFirstResponder)
+        XCTAssertEqual(model.messages.count, priorCount + 1)
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertEqual(input.text, "")
+        let scroll = try XCTUnwrap(Fixture.findScrollView(in: host.view))
+        XCTAssertFalse(anchorFrame.isNull)
+        let top = anchorFrame.minY - scroll.convert(scroll.bounds, to: host.view).minY - scroll.adjustedContentInset.top
+        let clearance = ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension - ChatTopBarLayout.toolbarHeight
+        print("[send-stage] composer bubbleTop=\(top) topClearance=\(clearance)")
+        XCTAssertEqual(top, clearance + 12, accuracy: 2)
+        let attachment = XCTAttachment(image: UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        })
+        attachment.name = "composer-after-send"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    func testArmedSendPushesUserBubbleUpAndHandsOffToStreaming() async throws {
+        var anchorFrame = CGRect.null
+        NativeChatTimelineView.onTurnStageAnchorFrameForTesting = { anchorFrame = $0 }
+        defer { NativeChatTimelineView.onTurnStageAnchorFrameForTesting = nil }
+        let fixture = makeFixture(exclusiveWindow: true) { $0.messages = longConversation(turns: 12) }
+        defer { fixture.tearDown() }
+        try await Task.sleep(for: .milliseconds(550))
+        XCTAssertTrue(fixture.model.latestViewport.isAtBottom)
+        let scroll = try XCTUnwrap(fixture.scrollView)
+        let field = UITextField(frame: CGRect(x: 8, y: 100, width: 100, height: 40))
+        fixture.window.addSubview(field)
+        defer { field.removeFromSuperview() }
+        XCTAssertTrue(field.becomeFirstResponder())
+        try await Task.sleep(for: .milliseconds(700))
+        let user = makeUserMessage("给这轮回复留出空间")
+        ChatUserSendEntranceGate.arm("local-user:\(user.id.toHexDashString())")
+        fixture.model.messages.append(user)
+        fixture.model.send(.userAppend)
+        XCTAssertTrue(field.resignFirstResponder())
+        try await Task.sleep(for: .milliseconds(800))
+
+        XCTAssertFalse(anchorFrame.isNull)
+        func bubbleTop() -> CGFloat {
+            anchorFrame.minY - scroll.convert(scroll.bounds, to: fixture.host.view).minY - scroll.adjustedContentInset.top
+        }
+        let top = bubbleTop()
+        let height = scroll.contentSize.height
+        XCTAssertEqual(top, 12, accuracy: 2)
+        var text = "连续正文开始。"
+        let reply = makeAssistantMessage(text: text, finished: false)
+        fixture.model.isGenerationActive = true
+        fixture.model.messages.append(reply)
+        fixture.model.send(.streamDelta)
+        try await Task.sleep(for: .milliseconds(400))
+        let shortReplyTop = bubbleTop()
+        XCTAssertEqual(shortReplyTop, top, accuracy: 1)
+        XCTAssertEqual(scroll.contentSize.height, height, accuracy: 1)
+        XCTAssertTrue(fixture.model.latestViewport.isAtBottom)
+
+        var overflowSamples = 0
+        var maximumBottomGap: CGFloat = 0
+        for index in 1...36 {
+            text += "\n\n第\(index)段。本轮回复继续向下增长，写到屏幕之外。"
+            fixture.model.messages[fixture.model.messages.count - 1] = makeAssistantMessage(id: reply.id, text: text, finished: false)
+            fixture.model.send(.streamDelta)
+            try await Task.sleep(for: .milliseconds(50))
+            if scroll.contentSize.height > height + 1 {
+                overflowSamples += 1
+                let bottomGap = scroll.contentSize.height - (scroll.bounds.maxY - scroll.adjustedContentInset.bottom)
+                maximumBottomGap = max(maximumBottomGap, abs(bottomGap))
+            }
+        }
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertGreaterThan(overflowSamples, 1)
+        XCTAssertLessThanOrEqual(maximumBottomGap, 2)
+        print("[send-stage] bubbleTop=\(top) shortReplyTop=\(shortReplyTop) overflowSamples=\(overflowSamples) maxGap=\(maximumBottomGap)")
+        XCTAssertGreaterThan(scroll.contentSize.height, height + 100)
+        XCTAssertTrue(fixture.model.latestViewport.isAtBottom)
+        let visibleBottom = scroll.bounds.maxY - scroll.adjustedContentInset.bottom
+        XCTAssertEqual(visibleBottom, scroll.contentSize.height, accuracy: 2)
+    }
+
+    func testConversationSwitchClearsShortReplySpaceAndUnarmedAppendKeepsNaturalHeight() throws {
+        let history = longConversation(turns: 8)
+        let fixture = makeFixture { $0.messages = history }
+        defer { fixture.tearDown() }
+        XCTAssertTrue(pumpUntil(timeout: 4) { fixture.model.latestViewport.isAtBottom })
+        let scroll = try XCTUnwrap(fixture.scrollView)
+        let user = makeUserMessage("同一条自然高度对照消息")
+        fixture.model.messages.append(user)
+        fixture.model.send(.userAppend)
+        pump(seconds: 0.5)
+        let naturalHeight = scroll.contentSize.height
+        fixture.model.messages = history
+        fixture.model.send(.conversationSwitch)
+        pump(seconds: 0.4)
+        ChatUserSendEntranceGate.arm("local-user:\(user.id.toHexDashString())")
+        fixture.model.messages.append(user)
+        fixture.model.send(.userAppend)
+        pump(seconds: 0.5)
+        let stagedHeight = scroll.contentSize.height
+        XCTAssertGreaterThan(stagedHeight, naturalHeight + 300)
+        fixture.model.send(.generationCompleted)
+        pump(seconds: 0.4)
+        XCTAssertEqual(scroll.contentSize.height, stagedHeight, accuracy: 1)
+        fixture.model.send(.conversationSwitch)
+        pump(seconds: 0.4)
+        XCTAssertEqual(scroll.contentSize.height, naturalHeight, accuracy: 1)
+        XCTAssertTrue(fixture.model.latestViewport.isAtBottom)
+    }
+
     func testConversationEntryAnchorsToBottom() {
         let fixture = makeFixture()
         defer { fixture.tearDown() }

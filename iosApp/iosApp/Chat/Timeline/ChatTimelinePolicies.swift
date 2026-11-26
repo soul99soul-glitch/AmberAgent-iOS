@@ -27,6 +27,60 @@ enum NativeChatTimelineSessionIdentity {
     }
 }
 
+struct ChatTurnStage {
+    let anchorMessageID: String
+    var anchorTopY: CGFloat
+    // The send revision identifies the push while it owns the bottom animation.
+    var pushingRevision: Int?
+    static let coordinateSpace = "chat-turn-stage"
+    static let pushSettleDelay: Duration = .milliseconds(350)
+}
+
+@MainActor
+final class ChatTurnStageMetrics {
+    // Measuring the natural stack must not invalidate the timeline during streaming.
+    var naturalStackHeight: CGFloat = 0
+}
+
+enum ChatTurnStagePolicy {
+    static let contentTopPadding: CGFloat = 12
+    static let contentBottomPadding: CGFloat = 10
+
+    static func floorHeight(anchorTopY: CGFloat, visibleHeight: CGFloat, topClearance: CGFloat) -> CGFloat {
+        max(0, anchorTopY + visibleHeight - topClearance - contentTopPadding - contentBottomPadding)
+    }
+
+    static func provisionalAnchorTop(naturalStackHeight: CGFloat) -> CGFloat {
+        max(0, naturalStackHeight - ChatLayout.bottomRestGap)
+    }
+
+    static func shouldActivate(event: ChatEvent, lastUserMessageID: String?, currentAnchorID: String?,
+                               wasArmed: Bool, isGenerationActive: Bool, nativeDriverActive: Bool) -> Bool {
+        event == .userMessageAppended && nativeDriverActive && !isGenerationActive &&
+            wasArmed && lastUserMessageID != nil && lastUserMessageID != currentAnchorID
+    }
+
+    static func resets(on event: ChatEvent) -> Bool {
+        event == .conversationLoaded || event == .conversationSwitched || event == .branchChanged
+    }
+}
+
+struct ChatTurnStageFloor: View {
+    let anchorTopY: CGFloat?
+    let topClearance: CGFloat
+
+    var body: some View {
+        Color.clear
+            .containerRelativeFrame(.vertical, alignment: .top) { visible, _ in
+                guard let anchorTopY else { return 0 }
+                return ChatTurnStagePolicy.floorHeight(anchorTopY: anchorTopY,
+                                                       visibleHeight: visible, topClearance: topClearance)
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
 enum NativeStaticTimelineViewportPolicy {
     static func state(
         distanceToBottom: CGFloat,

@@ -9,6 +9,7 @@ import Combine
 struct NativeChatTimelineView: View {
     #if DEBUG
     private static let contentCoordinateSpace = "NativeChatTimelineView.content"
+    static var onTurnStageAnchorFrameForTesting: ((CGRect) -> Void)?
     #endif
 
     static let historyPageSize = 60
@@ -54,6 +55,8 @@ struct NativeChatTimelineView: View {
     private var projectionCache: NativeTimelineProjectionCache { timelineUpdates?.projectionCache ?? fallbackProjectionCache }
     @State private var scrollDriver = NativeTimelineScrollDriver()
     @State private var timelineGrowth = ChatTimelineGrowth()
+    @State private var turnStage: ChatTurnStage?
+    @State private var turnStageMetrics = ChatTurnStageMetrics()
     @State private var nativeUserScrollActive = false
     @State private var nativeTouchStartedWhileFollowing = false
     @State private var nativeDragPhaseOccurredDuringTouch = false
@@ -88,6 +91,8 @@ struct NativeChatTimelineView: View {
         let messages = timelineUpdates?.structuralMessages ?? messagesProvider()
         let _ = resetConversationCachesIfNeeded(event: signal.event, revision: signal.revision)
         let startIndex = resolvedHistoryStartIndex(messages: messages)
+        let pendingStage = pendingTurnStage(messages: messages)
+        let effectiveStage = ChatTurnStagePolicy.resets(on: signal.event) ? nil : (pendingStage ?? turnStage)
         let nativeScrollDriverDesired = isNativeScrollDriverDesired
         let displaySettingSignature = projectionCache.settings.display(displaySetting, fontScale: fontScale, chatFont: chatFont, agentName: agentName)
         let generativeUiSettingSignature = projectionCache.settings.generative(generativeUiSetting)
@@ -134,6 +139,7 @@ struct NativeChatTimelineView: View {
             projection.entries.contains { $0.messageId == status.anchorMessageID }
         } ?? true
         let entryContext = EntryRenderContext(
+            turnStageAnchorID: effectiveStage?.anchorMessageID,
             displaySettingSignature: displaySettingSignature,
             generativeUiSettingSignature: generativeUiSettingSignature,
             liveRenderingFarFromBottom: viewportState.liveRenderingFarFromBottom,
@@ -157,38 +163,46 @@ struct NativeChatTimelineView: View {
         }
         ScrollViewReader { historyScrollProxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if startIndex > 0 {
-                        Button("加载更早的消息") {
-                            loadEarlierMessages()
+                ZStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if startIndex > 0 {
+                            Button("加载更早的消息") {
+                                loadEarlierMessages()
+                            }
+                            .font(.footnote)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .disabled(historyRevealAnchor != nil)
+                            .accessibilityIdentifier("chat-load-earlier")
                         }
-                        .font(.footnote)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .disabled(historyRevealAnchor != nil)
-                        .accessibilityIdentifier("chat-load-earlier")
-                    }
-                    // Only materialize the loaded history window. Its eager height model
-                    // keeps the existing live-tail and bottom-follow geometry stable.
-                    ForEach(NativeTimelineChunk.group(projection.entries)) { chunk in
-                        let chunkActivity = activity.flatMap { value in
-                            chunk.messageIDs.contains(value.anchorMessageID) ||
-                                (!hasActivityAnchor && chunk.entries.contains { $0.kind == .bottomAnchor }) ? value : nil
+                        // Only materialize the loaded history window. Its eager height model
+                        // keeps the existing live-tail and bottom-follow geometry stable.
+                        ForEach(NativeTimelineChunk.group(projection.entries)) { chunk in
+                            let chunkActivity = activity.flatMap { value in
+                                chunk.messageIDs.contains(value.anchorMessageID) ||
+                                    (!hasActivityAnchor && chunk.entries.contains { $0.kind == .bottomAnchor }) ? value : nil
+                            }
+                            ChatTimelineChunkView(
+                                chunk: chunk,
+                                presentationSignature: chunkPresentationSignature(chunk, firstEntryID: projection.entries.first?.id,
+                                    historyLoadTriggerID: historyLoadTriggerID, display: displaySettingSignature,
+                                    generative: generativeUiSettingSignature, turnStageAnchorID: entryContext.turnStageAnchorID),
+                                firstEntryID: projection.entries.first?.id, historyLoadTriggerID: historyLoadTriggerID,
+                                historyBoundaryIDs: historyBoundaryIDs, activity: chunkActivity,
+                                hasActivityAnchor: hasActivityAnchor, contextCompactState: contextCompactState,
+                                callbacks: chunkCallbacks,
+                                entryView: { entryView($0, context: entryContext) }
+                            ).equatable()
                         }
-                        ChatTimelineChunkView(
-                            chunk: chunk,
-                            presentationSignature: chunkPresentationSignature(chunk, firstEntryID: projection.entries.first?.id,
-                                historyLoadTriggerID: historyLoadTriggerID, display: displaySettingSignature,
-                                generative: generativeUiSettingSignature),
-                            firstEntryID: projection.entries.first?.id, historyLoadTriggerID: historyLoadTriggerID,
-                            historyBoundaryIDs: historyBoundaryIDs, activity: chunkActivity,
-                            hasActivityAnchor: hasActivityAnchor, contextCompactState: contextCompactState,
-                            callbacks: chunkCallbacks,
-                            entryView: { entryView($0, context: entryContext) }
-                        ).equatable()
                     }
+                    .coordinateSpace(.named(ChatTurnStage.coordinateSpace))
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                        turnStageMetrics.naturalStackHeight = $0
+                    }
+                    .scrollTargetLayout()
+                    ChatTurnStageFloor(anchorTopY: effectiveStage?.anchorTopY, topClearance: topContentClearance)
                 }
                 .padding(.horizontal, ChatLayout.timelineHorizontalInset)
-                .padding(.top, 12)
+                .padding(.top, ChatTurnStagePolicy.contentTopPadding)
                 #if DEBUG
                 .background {
                     if ChatTopBarLayout.onTimelineContentInsetForTesting != nil {
@@ -206,12 +220,11 @@ struct NativeChatTimelineView: View {
                 #endif
                 // 底部留白收窄：原先 28 与底锚点 bottomRestGap(26) 叠加达到 54pt，
                 // 气泡悬在半空。这里与锚点合计约 22pt，贴近输入框上方但有呼吸感。
-                .padding(.bottom, 10)
+                .padding(.bottom, ChatTurnStagePolicy.contentBottomPadding)
                 .environment(\.chatPhoneToolGroupToggle, phoneToolGroupToggleHandler)
                 .environment(\.chatTimelineGrowth, timelineGrowth)
                 .environment(workspaceStore)
                 .modifier(ChatTimelineGrowthModifier(growth: timelineGrowth))
-                .scrollTargetLayout()
                 .onGeometryChange(for: String?.self) { _ in
                     firstHistoryMessageEntry?.messageId
                 } action: { firstMessageID in
@@ -243,7 +256,8 @@ struct NativeChatTimelineView: View {
                 enabled: Self.shouldPinBottomOnSizeChanges(
                     followGeneration: followGeneration,
                     viewportState: viewportState,
-                    driverPausedForUser: isNativeScrollDriverActive && scrollDriver.isPausedForUser
+                    driverPausedForUser: isNativeScrollDriverActive && scrollDriver.isPausedForUser,
+                    turnStagePushing: effectiveStage?.pushingRevision != nil
                 )
             ))
             .nativeTimelineScrollPosition($scrollPosition)
@@ -287,6 +301,7 @@ struct NativeChatTimelineView: View {
                             phase: phase,
                             isUIKitUserInteracting: scrollDriver.isUIKitUserInteracting
                         ) else { return }
+                        if turnStage?.pushingRevision != nil { turnStage?.pushingRevision = nil }
                         if !nativeUserScrollActive {
                             // 新触摸开始：重置「本次触摸内是否出现过拖拽」。只在此处
                             // 重置（interacting 会在一次拖拽中反复触发，不能在分支里
@@ -407,6 +422,7 @@ struct NativeChatTimelineView: View {
             }
             .onAppear {
                 isNativeScrollSurfaceVisible = true
+                if let pendingStage { turnStage = pendingStage }
                 updateGrowthFollowState()
                 historyStartIndex = startIndex
                 historyResetRevision = signal.revision
@@ -415,6 +431,13 @@ struct NativeChatTimelineView: View {
                 updateRendererMemory(event: signal.event, messages: messages)
                 consumeExternalScrollToBottomTriggerIfNeeded()
                 scrollToMessageAnchorIfAvailable()
+            }
+            .task(id: turnStage?.pushingRevision) {
+                guard let revision = turnStage?.pushingRevision else { return }
+                do { try await Task.sleep(for: ChatTurnStage.pushSettleDelay) } catch { return }
+                guard turnStage?.pushingRevision == revision else { return }
+                turnStage?.pushingRevision = nil
+                updateGrowthFollowState()
             }
             .task(id: highlightedMessageAnchor) {
                 guard highlightedMessageAnchor != nil else { return }
@@ -442,15 +465,20 @@ struct NativeChatTimelineView: View {
             }
             .onChange(of: reduceMotion) { _, _ in updateGrowthFollowState() }
             .onChange(of: signal) { _, newSignal in
-                if newSignal.event == .conversationLoaded || newSignal.event == .conversationSwitched ||
-                    newSignal.event == .branchChanged {
+                if let pendingStage {
+                    turnStage = pendingStage
+                    updateGrowthFollowState()
+                }
+                if ChatTurnStagePolicy.resets(on: newSignal.event) {
+                    turnStage = nil
                     historyRevealAnchor = nil
                     historyBoundaryIDs.removeAll()
                     historyStartIndex = max(0, messagesProvider().count - Self.historyPageSize)
                     historyResetRevision = newSignal.revision
                 }
                 updateRendererMemory(event: newSignal.event, messages: messagesProvider())
-                submitNativeScrollIntent(for: newSignal.event, lagAllowance: newSignal.lagAllowance)
+                submitNativeScrollIntent(for: newSignal.event, lagAllowance: newSignal.lagAllowance,
+                                         startsTurnStage: pendingStage != nil)
                 scrollToMessageAnchorIfAvailable()
             }
             .onChange(of: messageAnchor) { _, newAnchor in
@@ -468,6 +496,7 @@ struct NativeChatTimelineView: View {
             }
             .onChange(of: nativeScrollFallbackReason) { _, reason in
                 guard reason != nil else { return }
+                turnStage = nil
                 if scheduledMessageAnchor != nil {
                     nativeScrollFallbackShouldReplayBottom = false
                     return
@@ -489,6 +518,22 @@ struct NativeChatTimelineView: View {
                 }
             }
         }
+    }
+
+    private func pendingTurnStage(messages: [UIMessage]) -> ChatTurnStage? {
+        guard signal.event == .userMessageAppended, let lastUser = messages.last(where: { $0.role == .user }) else {
+            return nil
+        }
+        let id = ChatMessageProjector.messageId(for: lastUser)
+        // A first send can mount a fresh native scroll view before its resolver attaches.
+        guard ChatTurnStagePolicy.shouldActivate(
+            event: signal.event, lastUserMessageID: id, currentAnchorID: turnStage?.anchorMessageID,
+            wasArmed: ChatUserSendEntranceGate.wasArmedRecently("local-user:\(id)"),
+            isGenerationActive: isGenerationActive, nativeDriverActive: nativeScrollFallbackReason == nil
+        ) else { return nil }
+        return ChatTurnStage(anchorMessageID: id,
+                             anchorTopY: ChatTurnStagePolicy.provisionalAnchorTop(naturalStackHeight: turnStageMetrics.naturalStackHeight),
+                             pushingRevision: signal.revision)
     }
 
     private var isNativeScrollDriverActive: Bool {
@@ -581,9 +626,9 @@ struct NativeChatTimelineView: View {
     }
 
     static func shouldPinBottomOnSizeChanges(
-        followGeneration: Bool, viewportState: ChatViewportState, driverPausedForUser: Bool
+        followGeneration: Bool, viewportState: ChatViewportState, driverPausedForUser: Bool, turnStagePushing: Bool = false
     ) -> Bool {
-        followGeneration && viewportState.isAtBottom && !viewportState.followPaused && !driverPausedForUser
+        followGeneration && viewportState.isAtBottom && !viewportState.followPaused && !driverPausedForUser && !turnStagePushing
     }
 
     /// 历史滚动门控：仅在视口状态确实变化，或用户暂停跟随且已接近底部时同步消息并尝试恢复跟随。
@@ -622,8 +667,9 @@ struct NativeChatTimelineView: View {
         if nativeUserScrollActive || viewportState.followPaused {
             scrollDriver.submit(.userDragBegan)
         } else {
-            scrollDriver.submit(.explicitBottom(source: .button, animated: false, keyboardToken: nil))
-            if followGeneration, shouldSettleNativeScrollAfterAttach {
+            let pushing = turnStage?.pushingRevision != nil
+            scrollDriver.submit(.explicitBottom(source: .button, animated: pushing && !reduceMotion, keyboardToken: nil))
+            if !pushing, followGeneration, shouldSettleNativeScrollAfterAttach {
                 scrollDriver.submit(.generationTerminated)
             }
         }
@@ -837,7 +883,8 @@ struct NativeChatTimelineView: View {
     }
 
     private func chunkPresentationSignature(_ chunk: NativeTimelineChunk, firstEntryID: String?,
-                                            historyLoadTriggerID: String?, display: Int, generative: Int) -> Int {
+                                            historyLoadTriggerID: String?, display: Int, generative: Int,
+                                            turnStageAnchorID: String?) -> Int {
         var hash = Hasher()
         hash.combine(display); hash.combine(generative)
         hash.combine(isGenerationActive && chunk.entries.contains(where: \.observesGenerationState))
@@ -855,6 +902,7 @@ struct NativeChatTimelineView: View {
             hash.combine(entry.id == historyLoadTriggerID)
             hash.combine(historyBoundaryIDs.contains(entry.id))
             let messageID = entry.messageId
+            hash.combine(messageID != nil && messageID == turnStageAnchorID)
             let highlighted = highlightedMessageAnchor?.conversationID == currentConversationID &&
                 highlightedMessageAnchor?.messageID == messageID
             hash.combine(highlighted)
@@ -878,6 +926,7 @@ struct NativeChatTimelineView: View {
     }
 
     private struct EntryRenderContext {
+        let turnStageAnchorID: String?
         let displaySettingSignature: Int
         let generativeUiSettingSignature: Int
         let liveRenderingFarFromBottom: Bool
@@ -973,6 +1022,23 @@ struct NativeChatTimelineView: View {
                     alignment: entry.role == MessageRole.user ? .topTrailing : .topLeading
                 )
                 .id(entry.id)
+                #if DEBUG
+                .background {
+                    if messageId == context.turnStageAnchorID, Self.onTurnStageAnchorFrameForTesting != nil {
+                        Color.clear.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                            Self.onTurnStageAnchorFrameForTesting?($0)
+                        }
+                    }
+                }
+                #endif
+                .onGeometryChange(for: CGFloat?.self) { proxy in
+                    guard messageId == context.turnStageAnchorID else { return nil }
+                    return proxy.frame(in: .named(ChatTurnStage.coordinateSpace)).minY
+                } action: { top in
+                    guard let top, let stage = turnStage, stage.anchorMessageID == messageId,
+                          abs(stage.anchorTopY - top) > 0.5 else { return }
+                    turnStage?.anchorTopY = top
+                }
                 .transition(entry.phoneToolGroup?.isExpandedMember == true
                     ? .opacity : userMessageInsertionTransition(for: entry))
                 .zIndex(entry.canAnimateInsertion ? 1 : 0)
@@ -1155,6 +1221,7 @@ struct NativeChatTimelineView: View {
             }()
             if !isMonotonicEvent {
                 let currentIDs = Set(messages.map(ChatMessageProjector.messageId(for:)))
+                if let turnStage, !currentIDs.contains(turnStage.anchorMessageID) { self.turnStage = nil }
                 renderStateStore.retain(ids: currentIDs)
                 contentHashCache.retain(ids: currentIDs)
             }
@@ -1377,7 +1444,7 @@ struct NativeChatTimelineView: View {
         }
     }
 
-    private func submitNativeScrollIntent(for event: ChatEvent, lagAllowance: CGFloat = 1) {
+    private func submitNativeScrollIntent(for event: ChatEvent, lagAllowance: CGFloat = 1, startsTurnStage: Bool = false) {
         guard isNativeScrollDriverActive else {
             submitNativeSwiftUIFallbackScrollIntent(for: event)
             return
@@ -1389,7 +1456,7 @@ struct NativeChatTimelineView: View {
         case .branchChanged:
             scrollDriver.submit(.conversationReset)
         case .userMessageAppended:
-            scrollDriver.submit(.explicitBottom(source: .button, animated: false, keyboardToken: nil))
+            scrollDriver.submit(.explicitBottom(source: .button, animated: startsTurnStage && !reduceMotion, keyboardToken: nil))
         case .assistantStreamDelta:
             guard followGeneration else { return }
             scrollDriver.submit(.streamContentGrew(lagAllowance: lagAllowance))
@@ -1413,7 +1480,8 @@ struct NativeChatTimelineView: View {
         let layoutPinsBottom = !nativeUserScrollActive &&
             Self.shouldPinBottomOnSizeChanges(followGeneration: followGeneration,
                 viewportState: currentViewport,
-                driverPausedForUser: isNativeScrollDriverActive && scrollDriver.isPausedForUser)
+                driverPausedForUser: isNativeScrollDriverActive && scrollDriver.isPausedForUser,
+                turnStagePushing: turnStage?.pushingRevision != nil)
         timelineGrowth.onContentGrew = { [weak scrollDriver] _ in
             scrollDriver?.syncBottomLockDuringLayoutIfNeeded()
         }

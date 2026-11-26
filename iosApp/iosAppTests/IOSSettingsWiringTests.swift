@@ -243,20 +243,26 @@ final class IOSSettingsWiringTests: XCTestCase {
         let chat = try source("iosApp/Chat/Composer/ChatViewComposer.swift")
         let viewModel = try source("iosApp/Chat/Session/ChatConversationMutations.swift")
         let sendStart = try XCTUnwrap(chat.range(of: "private func sendComposerMessage()"))
-        let sendEnd = try XCTUnwrap(chat.range(of: "private func openComposerModelSheet()", range: sendStart.upperBound..<chat.endIndex))
+        let sendEnd = try XCTUnwrap(chat.range(of: "private func delegateToMacFromUnifiedTimeline", range: sendStart.upperBound..<chat.endIndex))
         let send = chat[sendStart.lowerBound..<sendEnd.lowerBound]
         let gate = try XCTUnwrap(send.range(of: "guard sendEnabled(for: committedText) else { return }"))
-        let dispatch = try XCTUnwrap(send.range(of: "viewModel.sendMessage(startsGenerationAfterInsertion: true)"))
+        let dispatch = try XCTUnwrap(send.range(of: "if viewModel.sendMessage(startsGenerationAfterInsertion: true) {"))
         let cancelStart = try XCTUnwrap(viewModel.range(of: "func cancelGeneration()"))
         let cancelEnd = try XCTUnwrap(viewModel.range(of: "func cancelGeneration(runId:", range: cancelStart.upperBound..<viewModel.endIndex))
         let cancel = viewModel[cancelStart.lowerBound..<cancelEnd.lowerBound]
 
-        XCTAssertTrue(chat.contains("onSend: sendComposerMessage"))
-        XCTAssertTrue(chat.contains("isLoading: isComposerStopMode"))
+        XCTAssertTrue(chat.contains("onSendMessage: sendComposerMessage"))
+        XCTAssertTrue(chat.contains("onSend: onSendMessage"))
+        XCTAssertTrue(chat.contains("isRunActive: isCurrentConversationRunActive"))
+        XCTAssertTrue(chat.contains("isLoading: isStopMode"))
         XCTAssertTrue(chat.contains("viewModel.isGenerationActiveForCurrentConversation"))
         XCTAssertTrue(chat.contains("viewModel.cancelGeneration()"))
         XCTAssertTrue(send.contains("composerInputController.committedText()"))
-        XCTAssertFalse(send.contains("dismissKeyboard()"))
+        let dismiss = try XCTUnwrap(send.range(of: "dismissKeyboard()"))
+        XCTAssertLessThan(dispatch.lowerBound, dismiss.lowerBound)
+        XCTAssertTrue(send[dispatch.upperBound...].drop(while: { $0.isWhitespace }).hasPrefix("dismissKeyboard()"))
+        let cloud = try XCTUnwrap(chat.range(of: #"ChatUserSendEntranceGate.arm("cloud-user:\(submission.requestId)")"#))
+        XCTAssertTrue(chat[cloud.upperBound...].drop(while: { $0.isWhitespace }).hasPrefix("dismissKeyboard()"))
         XCTAssertTrue(chat.contains("return viewModel.composerSendBlockReason(for: text) == nil"))
         XCTAssertLessThan(gate.lowerBound, dispatch.lowerBound)
         // 停止键在生成延后启动的窗口内也要作用于本轮 run。
@@ -290,7 +296,8 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertFalse(projection.contains("NativeChatTimelineMirror"))
         XCTAssertTrue(settings.contains("DisplayToggleRow(title: \"生成时跟随滚动\", isOn: followGeneration)"))
         XCTAssertTrue(keys.contains("static let followGeneration = \"app.amber.ios.display.followGeneration\""))
-        XCTAssertTrue(chatView.contains("@AppStorage(IOSDisplayPreferenceKeys.followGeneration) private var followGeneration = true"))
+        XCTAssertTrue(chatView.contains("private var followGeneration: Bool { IOSChatRenderPreferences.shared.followGeneration }"))
+        XCTAssertTrue(keys.contains("key: IOSDisplayPreferenceKeys.followGeneration, defaultValue: true"))
         XCTAssertTrue(chatView.contains("followGeneration: followGeneration"))
     }
 
