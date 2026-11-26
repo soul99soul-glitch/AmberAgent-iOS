@@ -452,9 +452,103 @@ extension MacGatewayClient {
         }
     }
 
+    /// Validates wakeup IDs against `^[A-Za-z0-9_-]{1,64}$` before issuing DELETE requests.
+    static func isValidProactiveWakeupId(_ wakeupId: String) -> Bool {
+        guard !wakeupId.isEmpty, wakeupId.utf8.count <= 64 else { return false }
+        return wakeupId.unicodeScalars.allSatisfy { scalar in
+            (scalar.value >= 0x30 && scalar.value <= 0x39)      // 0-9
+                || (scalar.value >= 0x41 && scalar.value <= 0x5A) // A-Z
+                || (scalar.value >= 0x61 && scalar.value <= 0x7A) // a-z
+                || scalar.value == 0x5F                           // _
+                || scalar.value == 0x2D                           // -
+        }
+    }
+
+    /// Valid monitor delivery modes per the frozen Phase 3 contract.
+    static func isValidProactiveMonitorDeliveryMode(_ mode: String) -> Bool {
+        mode == "immediate" || mode == "digest"
+    }
+
+    /// Strictly validates a GitHub `owner/repo` slug and returns
+    /// `https://github.com/{owner}/{repo}/releases.atom`.
+    /// Rejects schemes, whitespace, path traversal (`..`), query/fragment characters,
+    /// extra slashes, non-ASCII/illegal characters, and dotted numeric IPv4 literals.
+    static func buildGitHubReleaseFeedURL(from repoSlug: String) -> URL? {
+        let trimmed = repoSlug.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let parts = trimmed.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2 else { return nil }
+
+        let owner = String(parts[0])
+        let repo = String(parts[1])
+        guard !owner.isEmpty, !repo.isEmpty,
+              owner.utf8.count <= 100, repo.utf8.count <= 100 else {
+            return nil
+        }
+
+        func isAllowedSlugSegment(_ segment: String) -> Bool {
+            guard segment != ".", segment != "..", !segment.contains("..") else {
+                return false
+            }
+            return segment.unicodeScalars.allSatisfy { scalar in
+                (scalar.value >= 0x30 && scalar.value <= 0x39)      // 0-9
+                    || (scalar.value >= 0x41 && scalar.value <= 0x5A) // A-Z
+                    || (scalar.value >= 0x61 && scalar.value <= 0x7A) // a-z
+                    || scalar.value == 0x5F                           // _
+                    || scalar.value == 0x2E                           // .
+                    || scalar.value == 0x2D                           // -
+            }
+        }
+
+        func isDottedNumericHostLiteral(_ segment: String) -> Bool {
+            guard segment.contains(".") else { return false }
+            let labels = segment.split(separator: ".", omittingEmptySubsequences: false)
+            guard !labels.isEmpty else { return false }
+            return labels.allSatisfy { label in
+                guard !label.isEmpty else { return false }
+                if label.allSatisfy({ $0.isASCII && $0.isNumber }) {
+                    return true
+                }
+                if label.count > 2,
+                   (label.hasPrefix("0x") || label.hasPrefix("0X")),
+                   label.dropFirst(2).allSatisfy({ $0.isASCII && $0.isHexDigit }) {
+                    return true
+                }
+                return false
+            }
+        }
+
+        guard isAllowedSlugSegment(owner),
+              isAllowedSlugSegment(repo),
+              !owner.hasPrefix("."),
+              !owner.hasSuffix("."),
+              !isDottedNumericHostLiteral(owner) else {
+            return nil
+        }
+
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "github.com"
+        components.path = "/\(owner)/\(repo)/releases.atom"
+        guard let url = components.url,
+              url.scheme == "https",
+              url.host?.lowercased() == "github.com",
+              url.query == nil,
+              url.fragment == nil,
+              url.path == "/\(owner)/\(repo)/releases.atom" else {
+            return nil
+        }
+        return url
+    }
+
     private static func encodeProactivePathSegment(_ raw: String) throws -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
+              trimmed != ".",
+              trimmed != "..",
+              !trimmed.contains("/"),
+              !trimmed.contains("?"),
+              !trimmed.contains("#"),
               let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: proactivePathAllowed),
               !encoded.isEmpty else {
             throw MacGatewayError.server("invalid_identifier")
@@ -466,6 +560,14 @@ extension MacGatewayClient {
         guard isValidProactiveSignalId(signalId),
               let encoded = signalId.addingPercentEncoding(withAllowedCharacters: proactivePathAllowed) else {
             throw MacGatewayError.server("invalid_signal_id")
+        }
+        return encoded
+    }
+
+    private static func validatedEncodedWakeupId(_ wakeupId: String) throws -> String {
+        guard isValidProactiveWakeupId(wakeupId),
+              let encoded = wakeupId.addingPercentEncoding(withAllowedCharacters: proactivePathAllowed) else {
+            throw MacGatewayError.server("invalid_wakeup_id")
         }
         return encoded
     }
@@ -511,9 +613,63 @@ extension MacGatewayClient {
         return response.monitor
     }
 
+    @discardableResult
+    func setProactiveMonitorDeliveryMode(id: String, deliveryMode: String) async throws -> CloudProactiveMonitorRecord {
+        struct Response: Decodable { var monitor: CloudProactiveMonitorRecord }
+        guard Self.isValidProactiveMonitorDeliveryMode(deliveryMode) else {
+            throw MacGatewayError.server("invalid_delivery_mode")
+        }
+        let encoded = try Self.encodeProactivePathSegment(id)
+        let response: Response = try decode(
+            await send("PATCH", "/v2/proactive/monitors/\(encoded)", body: ["deliveryMode": deliveryMode])
+        )
+        return response.monitor
+    }
+
+    @discardableResult
+    func createProactiveMonitor(
+        name: String,
+        url: String,
+        deliveryMode: String
+    ) async throws -> CloudProactiveMonitorRecord {
+        struct Response: Decodable { var monitor: CloudProactiveMonitorRecord }
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            throw MacGatewayError.server("invalid_monitor_title")
+        }
+        guard let parsedURL = URL(string: trimmedURL),
+              let scheme = parsedURL.scheme?.lowercased(),
+              scheme == "https" || scheme == "http",
+              let host = parsedURL.host,
+              !host.isEmpty else {
+            throw MacGatewayError.server("invalid_monitor_url")
+        }
+        guard Self.isValidProactiveMonitorDeliveryMode(deliveryMode) else {
+            throw MacGatewayError.server("invalid_delivery_mode")
+        }
+        let response: Response = try decode(
+            await send(
+                "POST",
+                "/v2/proactive/monitors",
+                body: [
+                    "title": trimmedName,
+                    "url": trimmedURL,
+                    "deliveryMode": deliveryMode,
+                ]
+            )
+        )
+        return response.monitor
+    }
+
     func deleteProactiveMonitor(id: String) async throws {
         let encoded = try Self.encodeProactivePathSegment(id)
         _ = try await send("DELETE", "/v2/proactive/monitors/\(encoded)")
+    }
+
+    func cancelProactiveWakeup(id: String) async throws {
+        let encoded = try Self.validatedEncodedWakeupId(id)
+        _ = try await send("DELETE", "/v2/proactive/wakeups/\(encoded)")
     }
 
     @discardableResult
@@ -723,6 +879,100 @@ final class CloudProactiveStore: ObservableObject {
             try await client.deleteProactiveMonitor(id: id)
             if var current = summary {
                 current.monitors.removeAll { $0.id == id }
+                if summary != current { summary = current }
+            }
+            clearErrorIfNeeded()
+        } catch {
+            recordError(error)
+        }
+    }
+
+    func setMonitorDeliveryMode(id: String, mode: String) async {
+        guard MacGatewayClient.isValidProactiveMonitorDeliveryMode(mode) else {
+            let message = IOSAppLocalization.string(
+                "不支持的投递方式，仅支持即时推送或并入晨报",
+                defaultValue: "不支持的投递方式，仅支持即时推送或并入晨报"
+            )
+            if lastError != message { lastError = message }
+            return
+        }
+        guard let client = requireClient() else { return }
+        do {
+            let updated = try await client.setProactiveMonitorDeliveryMode(id: id, deliveryMode: mode)
+            if var current = summary {
+                if let idx = current.monitors.firstIndex(where: { $0.id == updated.id }) {
+                    current.monitors[idx] = updated
+                } else {
+                    current.monitors.append(updated)
+                }
+                if summary != current { summary = current }
+            }
+            clearErrorIfNeeded()
+        } catch {
+            recordError(error)
+        }
+    }
+
+    nonisolated static func buildGitHubReleaseFeedURL(from repoSlug: String) -> URL? {
+        MacGatewayClient.buildGitHubReleaseFeedURL(from: repoSlug)
+    }
+
+    @discardableResult
+    func addGitHubReleaseMonitor(repoSlug: String, deliveryMode: String = "digest") async -> Bool {
+        let trimmedSlug = repoSlug.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let feedURL = Self.buildGitHubReleaseFeedURL(from: trimmedSlug) else {
+            let message = IOSAppLocalization.string(
+                "仓库格式无效，请输入 owner/repo（例如 apple/swift）",
+                defaultValue: "仓库格式无效，请输入 owner/repo（例如 apple/swift）"
+            )
+            if lastError != message { lastError = message }
+            return false
+        }
+        guard MacGatewayClient.isValidProactiveMonitorDeliveryMode(deliveryMode) else {
+            let message = IOSAppLocalization.string(
+                "不支持的投递方式，仅支持即时推送或并入晨报",
+                defaultValue: "不支持的投递方式，仅支持即时推送或并入晨报"
+            )
+            if lastError != message { lastError = message }
+            return false
+        }
+        guard let client = requireClient() else { return false }
+        do {
+            let created = try await client.createProactiveMonitor(
+                name: "\(trimmedSlug) Releases",
+                url: feedURL.absoluteString,
+                deliveryMode: deliveryMode
+            )
+            if var current = summary {
+                if let idx = current.monitors.firstIndex(where: { $0.id == created.id }) {
+                    current.monitors[idx] = created
+                } else {
+                    current.monitors.append(created)
+                }
+                if summary != current { summary = current }
+            }
+            clearErrorIfNeeded()
+            if let refreshed = try? await client.fetchProactiveSummary() {
+                if summary != refreshed { summary = refreshed }
+            }
+            return true
+        } catch {
+            recordError(error)
+            return false
+        }
+    }
+
+    func cancelWakeup(id: String) async {
+        guard MacGatewayClient.isValidProactiveWakeupId(id) else {
+            let message = IOSAppLocalization.string("无效的待提醒标识", defaultValue: "无效的待提醒标识")
+            if lastError != message { lastError = message }
+            return
+        }
+        guard let client = requireClient() else { return }
+        do {
+            try await client.cancelProactiveWakeup(id: id)
+            if var current = summary {
+                current.wakeups.removeAll { $0.id == id }
                 if summary != current { summary = current }
             }
             clearErrorIfNeeded()

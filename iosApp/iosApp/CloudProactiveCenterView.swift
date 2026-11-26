@@ -10,6 +10,7 @@ enum CloudProactiveCenterPresentation {
     }
 
     struct SectionSnapshot: Equatable, Sendable {
+        let isWakeupsEmpty: Bool
         let isMonitorsEmpty: Bool
         let isWebhooksEmpty: Bool
         let isMutedTopicsEmpty: Bool
@@ -29,6 +30,7 @@ enum CloudProactiveCenterPresentation {
             + macGatewayL("剩余")
             + " \(max(0, summary.restraint.remainingToday))"
         return SectionSnapshot(
+            isWakeupsEmpty: pendingWakeups(from: summary).isEmpty,
             isMonitorsEmpty: summary.monitors.isEmpty,
             isWebhooksEmpty: summary.webhooks.isEmpty,
             isMutedTopicsEmpty: summary.restraint.mutedTopics.isEmpty,
@@ -37,6 +39,49 @@ enum CloudProactiveCenterPresentation {
             clampedDailyMaxPushes: clampedMax,
             quotaSummaryText: quota
         )
+    }
+
+    static func pendingWakeups(from summary: CloudProactiveSummary) -> [CloudProactiveWakeupRecord] {
+        summary.wakeups
+            .filter { record in
+                let status = record.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                return status.isEmpty || status == "pending"
+            }
+            .sorted { lhs, rhs in
+                if lhs.triggerAtEpochMs != rhs.triggerAtEpochMs {
+                    return lhs.triggerAtEpochMs < rhs.triggerAtEpochMs
+                }
+                return lhs.id < rhs.id
+            }
+    }
+
+    static func wakeupSourceLabel(for kind: String) -> String {
+        switch kind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "commitment":
+            return macGatewayL("从对话记下")
+        case "snooze":
+            return macGatewayL("稍后提醒")
+        case "agent":
+            return macGatewayL("Amber 安排")
+        default:
+            return macGatewayL("定时提醒")
+        }
+    }
+
+    static func normalizedDeliveryMode(for raw: String) -> String {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines) == "digest" ? "digest" : "immediate"
+    }
+
+    static func deliveryModeDisplayText(for raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch trimmed {
+        case "digest":
+            return macGatewayL("并入晨报")
+        case "immediate", "":
+            return macGatewayL("即时推送")
+        default:
+            return trimmed
+        }
     }
 
     static func clampDailyMaxPushes(_ value: Int) -> Int {
@@ -160,6 +205,7 @@ enum CloudProactiveCenterPresentation {
     static func monitorStatusText(for monitor: CloudProactiveMonitorRecord) -> String {
         var parts: [String] = [
             monitor.enabled ? macGatewayL("已开启") : macGatewayL("已暂停"),
+            deliveryModeDisplayText(for: monitor.deliveryMode),
             macGatewayL("每 \(max(1, monitor.intervalMinutes)) 分钟")
         ]
         if let outcome = monitor.lastOutcome?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -212,12 +258,17 @@ struct CloudProactiveCenterView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
 
+    @State private var busyWakeupIds: Set<String> = []
     @State private var busyMonitorIds: Set<String> = []
     @State private var busyWebhookIds: Set<String> = []
     @State private var busyMutedTopics: Set<String> = []
     @State private var isUpdatingRestraint = false
     @State private var pendingDeleteMonitor: CloudProactiveMonitorRecord?
     @State private var pendingDeleteWebhook: CloudProactiveWebhookRecord?
+    @State private var isPresentingGitHubTemplate = false
+    @State private var githubRepoSlug = ""
+    @State private var githubDeliveryMode = "digest"
+    @State private var isSubmittingGitHubMonitor = false
 
     init(
         store: CloudProactiveStore = .shared,
@@ -283,6 +334,9 @@ struct CloudProactiveCenterView: View {
                 Text(verbatim: webhook.name)
             }
         }
+        .sheet(isPresented: $isPresentingGitHubTemplate) {
+            githubReleaseTemplateSheet
+        }
     }
 
     private var header: some View {
@@ -338,6 +392,8 @@ struct CloudProactiveCenterView: View {
                         summary: summary,
                         anyDeviceContextSharingEnabled: gatewayStore.anyDeviceContextSharingEnabled
                     )
+                    let pendingWakeups = CloudProactiveCenterPresentation.pendingWakeups(from: summary)
+                    pendingWakeupsSection(pendingWakeups)
                     restraintSection(summary.restraint, snapshot: snapshot)
                     monitorsSection(summary.monitors)
                     webhooksSection(summary.webhooks)
@@ -441,7 +497,96 @@ struct CloudProactiveCenterView: View {
         .padding(.top, 12)
     }
 
-    // MARK: - Restraint & Quiet Hours
+    // MARK: - Pending Wakeups
+
+    private func pendingWakeupsSection(_ wakeups: [CloudProactiveWakeupRecord]) -> some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "待提醒")
+            AmberFormGroup {
+                if wakeups.isEmpty {
+                    emptyRow(macGatewayL("暂无待触发的提醒，对话中约定的事项或稍后提醒会显示在这里。"))
+                } else {
+                    ForEach(Array(wakeups.enumerated()), id: \.element.id) { index, wakeup in
+                        if index > 0 {
+                            MacGatewayRowDivider()
+                        }
+                        pendingWakeupRow(wakeup)
+                    }
+                }
+            }
+        }
+    }
+
+    private func pendingWakeupRow(_ wakeup: CloudProactiveWakeupRecord) -> some View {
+        let isBusy = busyWakeupIds.contains(wakeup.id)
+        let sourceLabel = CloudProactiveCenterPresentation.wakeupSourceLabel(for: wakeup.kind)
+        let badgeColor: Color = {
+            switch wakeup.kind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "commitment":
+                return AmberTheme.accent
+            case "snooze":
+                return MacDelegationSemanticInk.warning
+            default:
+                return AmberTheme.muted
+            }
+        }()
+        let triggerText = CloudProactiveCenterPresentation.formatTimestamp(wakeup.triggerAtEpochMs)
+        let trimmedDetail = wakeup.detail.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(verbatim: wakeup.title.isEmpty ? macGatewayL("未命名提醒") : wakeup.title)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(AmberTheme.foreground)
+                        .lineLimit(2)
+
+                    Text(verbatim: sourceLabel)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(badgeColor)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(
+                            badgeColor.opacity(colorScheme == .dark ? 0.22 : 0.12),
+                            in: Capsule(style: .continuous)
+                        )
+                        .fixedSize()
+                }
+
+                if !trimmedDetail.isEmpty {
+                    Text(verbatim: trimmedDetail)
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.foreground2)
+                        .lineLimit(2)
+                }
+
+                if !triggerText.isEmpty {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                            .font(.caption2)
+                        Text(verbatim: macGatewayL("计划触发") + " \(triggerText)")
+                            .font(.caption2.monospacedDigit())
+                    }
+                    .foregroundStyle(AmberTheme.muted)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if isBusy {
+                ProgressView()
+                    .frame(width: 44, height: 36)
+            } else {
+                MacGatewayCapsuleButton(title: macGatewayL("取消")) {
+                    performCancelWakeup(wakeup.id)
+                }
+                .accessibilityLabel(Text(verbatim: macGatewayL("取消待提醒") + " \(wakeup.title)"))
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    // MARK: - Restraint, Quiet Hours, Pulse & Commitment Extraction
 
     private func restraintSection(
         _ restraint: CloudProactiveRestraintSnapshot,
@@ -479,6 +624,31 @@ struct CloudProactiveCenterView: View {
                 let clamped = CloudProactiveCenterPresentation.clampDailyMaxPushes(newValue)
                 guard clamped != restraint.dailyMaxPushes else { return }
                 applyRestraintPatch(CloudProactiveRestraintPatch(dailyMaxPushes: clamped))
+            }
+        )
+
+        let pulseToggleBinding = Binding<Bool>(
+            get: { restraint.pulseEnabled },
+            set: { newValue in
+                guard newValue != restraint.pulseEnabled else { return }
+                applyRestraintPatch(CloudProactiveRestraintPatch(pulseEnabled: newValue))
+            }
+        )
+
+        let pulseDateBinding = Binding<Date>(
+            get: { CloudProactiveCenterPresentation.parseHourMinute(restraint.pulseTime) },
+            set: { newDate in
+                let formatted = CloudProactiveCenterPresentation.formatHourMinute(newDate)
+                guard formatted != restraint.pulseTime else { return }
+                applyRestraintPatch(CloudProactiveRestraintPatch(pulseTime: formatted))
+            }
+        )
+
+        let commitmentToggleBinding = Binding<Bool>(
+            get: { restraint.commitmentExtractionEnabled },
+            set: { newValue in
+                guard newValue != restraint.commitmentExtractionEnabled else { return }
+                applyRestraintPatch(CloudProactiveRestraintPatch(commitmentExtractionEnabled: newValue))
             }
         )
 
@@ -549,6 +719,56 @@ struct CloudProactiveCenterView: View {
                 .disabled(isUpdatingRestraint)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
+
+                MacGatewayRowDivider()
+                Toggle(isOn: pulseToggleBinding) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(verbatim: macGatewayL("每日晨报"))
+                            .font(.body)
+                            .foregroundStyle(AmberTheme.foreground)
+                        Text(verbatim: macGatewayL("有缓冲内容或今日日程时汇总推送一次，无内容不打扰"))
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                    }
+                }
+                .disabled(isUpdatingRestraint)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+
+                if restraint.pulseEnabled {
+                    MacGatewayRowDivider()
+                    HStack {
+                        Text(verbatim: macGatewayL("晨报时间"))
+                            .font(.body)
+                            .foregroundStyle(AmberTheme.foreground)
+                        Spacer(minLength: 8)
+                        DatePicker(
+                            macGatewayL("晨报时间"),
+                            selection: pulseDateBinding,
+                            displayedComponents: .hourAndMinute
+                        )
+                        .labelsHidden()
+                        .disabled(isUpdatingRestraint)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                }
+
+                MacGatewayRowDivider()
+                Toggle(isOn: commitmentToggleBinding) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(verbatim: macGatewayL("自动抽取对话承诺"))
+                            .font(.body)
+                            .foregroundStyle(AmberTheme.foreground)
+                        Text(verbatim: macGatewayL("仅在开启记忆的对话中生效，自动记下的提醒会出现在上方待提醒列表"))
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .disabled(isUpdatingRestraint)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
             }
             MacGatewaySectionFooter(
                 text: snapshot.quotaSummaryText
@@ -564,7 +784,7 @@ struct CloudProactiveCenterView: View {
             AmberSectionLabel(text: "网页监控")
             AmberFormGroup {
                 if monitors.isEmpty {
-                    emptyRow(macGatewayL("暂无网页监控，直接在云端对话里告诉 Amber 即可创建。"))
+                    emptyRow(macGatewayL("暂无网页监控，可直接订阅 GitHub Release 或在云端对话里告诉 Amber 创建。"))
                 } else {
                     ForEach(Array(monitors.enumerated()), id: \.element.id) { index, monitor in
                         if index > 0 {
@@ -573,6 +793,30 @@ struct CloudProactiveCenterView: View {
                         monitorRow(monitor)
                     }
                 }
+
+                MacGatewayRowDivider()
+                Button {
+                    githubRepoSlug = ""
+                    githubDeliveryMode = "digest"
+                    isPresentingGitHubTemplate = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(AmberTheme.accent)
+                        Text(verbatim: macGatewayL("订阅 GitHub Release"))
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(AmberTheme.accent)
+                        Spacer(minLength: 0)
+                        Text(verbatim: "owner/repo")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(AmberTheme.muted)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -586,47 +830,192 @@ struct CloudProactiveCenterView: View {
                 performSetMonitorEnabled(id: monitor.id, enabled: newValue)
             }
         )
-
-        return HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(verbatim: monitor.title.isEmpty ? monitor.url : monitor.title)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(AmberTheme.foreground)
-                    .lineLimit(2)
-                Text(verbatim: monitor.url)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(AmberTheme.muted)
-                    .lineLimit(1)
-                Text(verbatim: CloudProactiveCenterPresentation.monitorStatusText(for: monitor))
-                    .font(.caption2)
-                    .foregroundStyle(AmberTheme.foreground2)
-                    .lineLimit(2)
+        let currentDeliveryMode = CloudProactiveCenterPresentation.normalizedDeliveryMode(for: monitor.deliveryMode)
+        let deliveryModeBinding = Binding<String>(
+            get: { currentDeliveryMode },
+            set: { newMode in
+                guard newMode != currentDeliveryMode else { return }
+                performSetMonitorDeliveryMode(id: monitor.id, mode: newMode)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        )
 
-            if isBusy {
-                ProgressView()
-                    .frame(width: 36, height: 36)
-            } else {
-                Toggle("", isOn: toggleBinding)
-                    .labelsHidden()
-                    .accessibilityLabel(Text(verbatim: macGatewayL("启停监控") + " \(monitor.title)"))
-
-                Button {
-                    pendingDeleteMonitor = monitor
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.subheadline)
-                        .foregroundStyle(MacDelegationSemanticInk.danger)
-                        .frame(width: 36, height: 36)
-                        .contentShape(Rectangle())
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(verbatim: monitor.title.isEmpty ? monitor.url : monitor.title)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(AmberTheme.foreground)
+                        .lineLimit(2)
+                    Text(verbatim: monitor.url)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(AmberTheme.muted)
+                        .lineLimit(1)
+                    Text(verbatim: CloudProactiveCenterPresentation.monitorStatusText(for: monitor))
+                        .font(.caption2)
+                        .foregroundStyle(AmberTheme.foreground2)
+                        .lineLimit(2)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(verbatim: macGatewayL("删除监控") + " \(monitor.title)"))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if isBusy {
+                    ProgressView()
+                        .frame(width: 36, height: 36)
+                } else {
+                    Toggle("", isOn: toggleBinding)
+                        .labelsHidden()
+                        .accessibilityLabel(Text(verbatim: macGatewayL("启停监控") + " \(monitor.title)"))
+
+                    Button {
+                        pendingDeleteMonitor = monitor
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.subheadline)
+                            .foregroundStyle(MacDelegationSemanticInk.danger)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text(verbatim: macGatewayL("删除监控") + " \(monitor.title)"))
+                }
+            }
+
+            HStack(spacing: 10) {
+                Text(verbatim: macGatewayL("投递方式"))
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+                Spacer(minLength: 6)
+                Picker(macGatewayL("投递方式"), selection: deliveryModeBinding) {
+                    Text(verbatim: macGatewayL("即时推送")).tag("immediate")
+                    Text(verbatim: macGatewayL("并入晨报")).tag("digest")
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 196)
+                .disabled(isBusy)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    private var githubReleaseTemplateSheet: some View {
+        let trimmedSlug = githubRepoSlug.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedURL = MacGatewayClient.buildGitHubReleaseFeedURL(from: trimmedSlug)
+        let hasInvalidInput = !trimmedSlug.isEmpty && resolvedURL == nil
+
+        return ZStack {
+            AmberTheme.background.ignoresSafeArea()
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    AmberGlassCircleButton(systemImage: "xmark", accessibilityLabel: "关闭", size: 40, symbolSize: 16) {
+                        isPresentingGitHubTemplate = false
+                    }
+                    Spacer(minLength: 0)
+                    Text(verbatim: macGatewayL("订阅 GitHub Release"))
+                        .font(.headline)
+                        .foregroundStyle(AmberTheme.foreground)
+                    Spacer(minLength: 0)
+                    Color.clear.frame(width: 40, height: 40)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, 10)
+
+                ScrollView {
+                    VStack(spacing: 0) {
+                        AmberSectionLabel(text: "仓库信息")
+                        AmberFormGroup {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(verbatim: macGatewayL("GitHub 仓库（owner/repo）"))
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(AmberTheme.muted)
+                                TextField("apple/swift", text: $githubRepoSlug)
+                                    .font(.body.monospaced())
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled(true)
+                                    .keyboardType(.asciiCapable)
+                                    .disabled(isSubmittingGitHubMonitor)
+
+                                if let resolvedURL {
+                                    HStack(alignment: .top, spacing: 6) {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(MacDelegationSemanticInk.success)
+                                            .padding(.top, 1)
+                                        Text(verbatim: resolvedURL.absoluteString)
+                                            .font(.caption2.monospaced())
+                                            .foregroundStyle(AmberTheme.foreground2)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                } else if hasInvalidInput {
+                                    Text(verbatim: macGatewayL("格式无效：请输入合法的 owner/repo，不含协议前缀、空格、.. 或非法字符。"))
+                                        .font(.caption)
+                                        .foregroundStyle(MacDelegationSemanticInk.danger)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                } else {
+                                    Text(verbatim: macGatewayL("仅生成 https://github.com/{owner}/{repo}/releases.atom 订阅地址。"))
+                                        .font(.caption)
+                                        .foregroundStyle(AmberTheme.muted)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+
+                            MacGatewayRowDivider()
+
+                            HStack(spacing: 10) {
+                                Text(verbatim: macGatewayL("投递方式"))
+                                    .font(.body)
+                                    .foregroundStyle(AmberTheme.foreground)
+                                Spacer(minLength: 8)
+                                Picker(macGatewayL("投递方式"), selection: $githubDeliveryMode) {
+                                    Text(verbatim: macGatewayL("并入晨报")).tag("digest")
+                                    Text(verbatim: macGatewayL("即时推送")).tag("immediate")
+                                }
+                                .pickerStyle(.segmented)
+                                .frame(maxWidth: 196)
+                                .disabled(isSubmittingGitHubMonitor)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                        }
+
+                        if let error = store.lastError, !error.isEmpty {
+                            errorBanner(error)
+                                .padding(.top, 8)
+                        }
+
+                        Button {
+                            performAddGitHubReleaseMonitor()
+                        } label: {
+                            HStack(spacing: 8) {
+                                if isSubmittingGitHubMonitor {
+                                    ProgressView()
+                                        .tint(.white)
+                                }
+                                Text(verbatim: macGatewayL("添加订阅"))
+                                    .font(.headline)
+                            }
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 13)
+                            .background(
+                                (resolvedURL == nil || isSubmittingGitHubMonitor)
+                                    ? AmberTheme.accent.opacity(0.4)
+                                    : AmberTheme.accent,
+                                in: RoundedRectangle(cornerRadius: AmberTheme.radiusLarge, style: .continuous)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(resolvedURL == nil || isSubmittingGitHubMonitor)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 18)
+                    }
+                    .padding(.bottom, 24)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     // MARK: - Inbound Webhooks
@@ -832,11 +1221,42 @@ struct CloudProactiveCenterView: View {
         }
     }
 
+    private func performCancelWakeup(_ id: String) {
+        busyWakeupIds.insert(id)
+        Task { @MainActor in
+            await store.cancelWakeup(id: id)
+            busyWakeupIds.remove(id)
+        }
+    }
+
     private func performSetMonitorEnabled(id: String, enabled: Bool) {
         busyMonitorIds.insert(id)
         Task { @MainActor in
             await store.setMonitorEnabled(id: id, enabled: enabled)
             busyMonitorIds.remove(id)
+        }
+    }
+
+    private func performSetMonitorDeliveryMode(id: String, mode: String) {
+        busyMonitorIds.insert(id)
+        Task { @MainActor in
+            await store.setMonitorDeliveryMode(id: id, mode: mode)
+            busyMonitorIds.remove(id)
+        }
+    }
+
+    private func performAddGitHubReleaseMonitor() {
+        isSubmittingGitHubMonitor = true
+        let slug = githubRepoSlug
+        let mode = githubDeliveryMode
+        Task { @MainActor in
+            let created = await store.addGitHubReleaseMonitor(repoSlug: slug, deliveryMode: mode)
+            isSubmittingGitHubMonitor = false
+            if created {
+                githubRepoSlug = ""
+                githubDeliveryMode = "digest"
+                isPresentingGitHubTemplate = false
+            }
         }
     }
 
