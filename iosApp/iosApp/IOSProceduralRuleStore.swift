@@ -956,12 +956,16 @@ final class IOSProceduralRuleStore {
 
     private func persist(_ snapshot: [IOSProceduralRule]) {
         guard let storageURL else { return }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(snapshot) else { return }
         Self.persistenceQueue.async {
+            guard let data = Self.encodeRulesSnapshot(snapshot) else { return }
             Self.atomicWrite(data: data, to: storageURL)
         }
+    }
+
+    nonisolated static func encodeRulesSnapshot(_ snapshot: [IOSProceduralRule]) -> Data? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try? encoder.encode(snapshot)
     }
 
     /// Synchronous flush helper for tests verifying on-disk durability.

@@ -1123,40 +1123,59 @@ struct ProviderDetailView: View {
     }
 
     private var modelsPanel: some View {
-        ScrollView {
-            VStack(spacing: 0) {
+        let resolvedProvider = provider
+        let currentEnabledModels = resolvedProvider?.models ?? []
+        let isCodex = resolvedProvider.map(IOSCodexProviderResolver.isCodexProvider) ?? false
+        let currentChatModelId = sharedSettings.snapshot.getCurrentChatModel()?.id
+        let selectedImageModelId = sharedSettings.snapshot.imageGenerationModelId
+        let currentImageModelId = currentEnabledModels.first {
+            $0.type == ModelType.image && $0.id == selectedImageModelId
+        }?.id
+        let enabledEntries = ProviderModelListSupport.enabledRowEntries(from: currentEnabledModels)
+        let enabledLookup = ProviderModelListSupport.enabledModelLookup(from: currentEnabledModels)
+        let availableEntries = ProviderModelListSupport.availableRowEntries(from: availableModels)
+
+        return ScrollView {
+            LazyVStack(spacing: 0) {
                 AmberSectionLabel(text: "已启用模型")
-                AmberFormGroup {
-                    if enabledModels.isEmpty {
+                ProviderLazyFormGroup {
+                    if enabledEntries.isEmpty {
                         ProviderStaticRow(
                             title: "没有模型",
                             subtitle: "可自动获取模型，也可手动添加服务商文档中的 Model ID。",
                             value: "空"
                         )
                     } else {
-                        ForEach(Array(enabledModels.enumerated()), id: \.offset) { index, model in
-                            let selection = modelDefaultSelection(for: model)
-                            ProviderModelRow(
-                                systemImage: selection == nil ? modelSystemImage(for: model) : "checkmark.circle.fill",
-                                name: displayName(for: model),
-                                badge: selection ?? modelTypeTitle(for: model),
-                                summary: modelSummary(model),
-                                isCurrent: selection != nil,
-                                canSetCurrent: model.type == ModelType.chat || model.type == ModelType.image,
-                                setCurrentTitle: model.type == ModelType.image ? "设为生图默认" : "设为聊天默认",
-                                onEdit: {
-                                    modelDraft = ProviderModelDraft(model: model)
-                                },
-                                onSetCurrent: {
-                                    setCurrent(model)
-                                },
-                                onDelete: {
-                                    deleteModel(model)
-                                }
+                        ForEach(enabledEntries) { entry in
+                            let model = entry.model
+                            let selection = ProviderModelListSupport.defaultSelectionTitle(
+                                for: model,
+                                currentChatModelId: currentChatModelId,
+                                currentImageModelId: currentImageModelId
                             )
-                            .accessibilityIdentifier("provider.model.\(model.modelId)")
-                            if index < enabledModels.count - 1 {
-                                ProviderDetailDivider()
+                            VStack(spacing: 0) {
+                                ProviderModelRow(
+                                    systemImage: selection == nil ? modelSystemImage(for: model) : "checkmark.circle.fill",
+                                    name: displayName(for: model),
+                                    badge: selection ?? modelTypeTitle(for: model),
+                                    summary: modelSummary(model),
+                                    isCurrent: selection != nil,
+                                    canSetCurrent: model.type == ModelType.chat || model.type == ModelType.image,
+                                    setCurrentTitle: model.type == ModelType.image ? "设为生图默认" : "设为聊天默认",
+                                    onEdit: {
+                                        modelDraft = ProviderModelDraft(model: model)
+                                    },
+                                    onSetCurrent: {
+                                        setCurrent(model)
+                                    },
+                                    onDelete: {
+                                        deleteModel(model)
+                                    }
+                                )
+                                .accessibilityIdentifier("provider.model.\(model.modelId)")
+                                if entry.showsDivider {
+                                    ProviderDetailDivider()
+                                }
                             }
                         }
                     }
@@ -1164,41 +1183,49 @@ struct ProviderDetailView: View {
 
                 modelActions
 
-                if !availableModels.isEmpty {
-                    AmberSectionLabel(text: isCodexProvider ? "可用聊天模型与 GPT Image 生图预设" : "可用模型")
-                    AmberFormGroup {
-                        ForEach(Array(availableModels.enumerated()), id: \.offset) { index, model in
-                            let enabledModel = enabledModels.first {
-                                $0.modelId == model.modelId && $0.type == model.type
-                            }
-                            let selection = enabledModel.flatMap { modelDefaultSelection(for: $0) }
-                            let isEmbedding = model.type == ModelType.embedding
-                            Button {
-                                if let enabledModel {
-                                    if !isEmbedding {
-                                        setCurrent(enabledModel)
-                                    }
-                                } else {
-                                    addFetchedModel(model)
-                                }
-                            } label: {
-                                ProviderRowContent(
-                                    // Drop the duplicate ID line when the model has no
-                                    // custom display name (name == id) — the big title
-                                    // already shows it; printing it twice is pure clutter.
-                                    title: displayName(for: model),
-                                    subtitle: displayName(for: model) == model.modelId ? "" : model.modelId,
-                                    value: selection ?? (enabledModel == nil ? "添加" : (isEmbedding ? "已添加" : "使用")),
-                                    valueStyle: selection == nil && enabledModel == nil ? .accent : .body,
-                                    showsChevron: false,
-                                    stacksValueOnAccessibility: true
+                if !availableEntries.isEmpty {
+                    AmberSectionLabel(text: isCodex ? "可用聊天模型与 GPT Image 生图预设" : "可用模型")
+                    ProviderLazyFormGroup {
+                        ForEach(availableEntries) { entry in
+                            let model = entry.model
+                            let enabledModel = enabledLookup[ProviderModelListSupport.lookupKey(for: model)]
+                            let selection = enabledModel.flatMap {
+                                ProviderModelListSupport.defaultSelectionTitle(
+                                    for: $0,
+                                    currentChatModelId: currentChatModelId,
+                                    currentImageModelId: currentImageModelId
                                 )
                             }
-                            .buttonStyle(.plain)
-                            .disabled(selection != nil || (isEmbedding && enabledModel != nil))
+                            let isEmbedding = model.type == ModelType.embedding
+                            let title = displayName(for: model)
+                            VStack(spacing: 0) {
+                                Button {
+                                    if let enabledModel {
+                                        if !isEmbedding {
+                                            setCurrent(enabledModel)
+                                        }
+                                    } else {
+                                        addFetchedModel(model)
+                                    }
+                                } label: {
+                                    ProviderRowContent(
+                                        // Drop the duplicate ID line when the model has no
+                                        // custom display name (name == id) — the big title
+                                        // already shows it; printing it twice is pure clutter.
+                                        title: title,
+                                        subtitle: title == model.modelId ? "" : model.modelId,
+                                        value: selection ?? (enabledModel == nil ? "添加" : (isEmbedding ? "已添加" : "使用")),
+                                        valueStyle: selection == nil && enabledModel == nil ? .accent : .body,
+                                        showsChevron: false,
+                                        stacksValueOnAccessibility: true
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(selection != nil || (isEmbedding && enabledModel != nil))
 
-                            if index < availableModels.count - 1 {
-                                ProviderDetailDivider()
+                                if entry.showsDivider {
+                                    ProviderDetailDivider()
+                                }
                             }
                         }
                     }
@@ -1774,4 +1801,103 @@ struct ProviderDetailView: View {
         fetchModels(saveBeforeFetch: false, reportsConnectionStatus: true)
     }
 
+}
+
+private struct ProviderLazyFormGroup<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        LazyVStack(spacing: 0) {
+            content
+        }
+        .background(AmberTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
+        }
+        .padding(.horizontal, 16)
+    }
+}
+
+struct ProviderModelLookupKey: Hashable {
+    let modelId: String
+    let typeKey: String
+}
+
+struct ProviderModelListRowEntry: Identifiable {
+    let id: String
+    let model: Model
+    let showsDivider: Bool
+}
+
+enum ProviderModelListSupport {
+    static func modelTypeKey(_ type: ModelType) -> String {
+        if type == ModelType.chat { return "chat" }
+        if type == ModelType.image { return "image" }
+        if type == ModelType.embedding { return "embedding" }
+        return String(describing: type)
+    }
+
+    static func lookupKey(for model: Model) -> ProviderModelLookupKey {
+        ProviderModelLookupKey(modelId: model.modelId, typeKey: modelTypeKey(model.type))
+    }
+
+    static func enabledModelLookup(from models: [Model]) -> [ProviderModelLookupKey: Model] {
+        var lookup: [ProviderModelLookupKey: Model] = [:]
+        lookup.reserveCapacity(models.count)
+        for model in models {
+            let key = lookupKey(for: model)
+            if lookup[key] == nil {
+                lookup[key] = model
+            }
+        }
+        return lookup
+    }
+
+    static func enabledRowEntries(from models: [Model]) -> [ProviderModelListRowEntry] {
+        uniqueRowEntries(from: models) { model in
+            model.id.description()
+        }
+    }
+
+    static func availableRowEntries(from models: [Model]) -> [ProviderModelListRowEntry] {
+        uniqueRowEntries(from: models) { model in
+            "\(model.modelId)|\(modelTypeKey(model.type))"
+        }
+    }
+
+    static func defaultSelectionTitle(
+        for model: Model,
+        currentChatModelId: KotlinUuid?,
+        currentImageModelId: KotlinUuid?
+    ) -> String? {
+        if model.type == ModelType.chat, model.id == currentChatModelId {
+            return "聊天默认"
+        }
+        if model.type == ModelType.image, model.id == currentImageModelId {
+            return "生图默认"
+        }
+        return nil
+    }
+
+    private static func uniqueRowEntries(
+        from models: [Model],
+        baseKey: (Model) -> String
+    ) -> [ProviderModelListRowEntry] {
+        let lastIndex = models.count - 1
+        var seenCounts: [String: Int] = [:]
+        seenCounts.reserveCapacity(models.count)
+        return models.enumerated().map { index, model in
+            let base = baseKey(model)
+            let occurrence = seenCounts[base, default: 0]
+            seenCounts[base] = occurrence + 1
+            let stableId = occurrence == 0 ? base : "\(base)#\(occurrence)"
+            return ProviderModelListRowEntry(
+                id: stableId,
+                model: model,
+                showsDivider: index < lastIndex
+            )
+        }
+    }
 }

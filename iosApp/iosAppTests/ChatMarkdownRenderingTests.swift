@@ -602,7 +602,7 @@ final class ChatMarkdownRenderingTests: ChatMessageProjectionTestCase {
             .last?
             .components(separatedBy: "struct ChatStreamingMarkdownBlock:")
             .first ?? ""
-        XCTAssertTrue(controllerSource.contains("publishPreservingSettledBlocks(parsed)"))
+        XCTAssertTrue(controllerSource.contains("publishPreservingSettledBlocks(parsed, text:"))
         XCTAssertFalse(
             controllerSource.contains("if pendingParse == nil"),
             "Continuous deltas must not starve every completed block parse publication."

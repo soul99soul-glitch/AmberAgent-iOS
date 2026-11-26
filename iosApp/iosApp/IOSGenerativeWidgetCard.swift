@@ -899,21 +899,99 @@ private struct IOSRichSandboxWebView: IOSWidgetWebContent {
         }
 
         private func sandboxHTML() -> String? {
-            let fileName = renderer == "slides" ? "slides-sandbox" : "vchart-sandbox"
-            guard let url = bundleResourceURL(fileName, extension: "html", subdirectory: "generative-libs"),
-                  var html = try? String(contentsOf: url, encoding: .utf8) else {
-                return nil
-            }
-            if renderer == "vchart",
-               let jsURL = bundleResourceURL("vchart.min", extension: "js", subdirectory: "generative-libs"),
-               let js = try? String(contentsOf: jsURL, encoding: .utf8) {
-                html = html.replacingOccurrences(of: #"<script src="./vchart.min.js"></script>"#, with: "<script>\n\(js)\n</script>")
-            }
-            html = html
-                .replacingOccurrences(of: "https://amberagent.local/builtin-fonts/PlayfairDisplay-Regular.ttf", with: "PlayfairDisplay-Regular.ttf")
-                .replacingOccurrences(of: "https://amberagent.local/builtin-fonts/Inter-Regular.ttf", with: "Inter-Regular.ttf")
-            return html
+            IOSGenerativeSandboxHTMLCache.shared.sandboxHTML(for: renderer)
         }
+    }
+}
+
+final class IOSGenerativeSandboxHTMLCache: @unchecked Sendable {
+    static let shared = IOSGenerativeSandboxHTMLCache()
+
+    typealias ResourceLoader = (_ name: String, _ ext: String, _ subdirectory: String) -> String?
+
+    private let lock = NSLock()
+    private let loader: ResourceLoader
+    private var cachedVChartJS: String?
+    private var cachedSandboxHTML: [String: String] = [:]
+
+    init(loader: @escaping ResourceLoader = IOSGenerativeSandboxHTMLCache.defaultResourceLoader) {
+        self.loader = loader
+    }
+
+    func sandboxHTML(for renderer: String) -> String? {
+        let isSlides = renderer == "slides"
+        let inlinesVChartJS = renderer == "vchart"
+        let cacheKey = isSlides ? "slides" : (inlinesVChartJS ? "vchart" : "vchart-raw")
+
+        lock.lock()
+        if let cached = cachedSandboxHTML[cacheKey] {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        let fileName = isSlides ? "slides-sandbox" : "vchart-sandbox"
+        guard var html = loader(fileName, "html", "generative-libs") else {
+            return nil
+        }
+
+        var didInlineVChartJS = false
+        if inlinesVChartJS, let js = loadVChartJS() {
+            html = html.replacingOccurrences(
+                of: #"<script src="./vchart.min.js"></script>"#,
+                with: "<script>\n\(js)\n</script>"
+            )
+            didInlineVChartJS = true
+        }
+        html = html
+            .replacingOccurrences(
+                of: "https://amberagent.local/builtin-fonts/PlayfairDisplay-Regular.ttf",
+                with: "PlayfairDisplay-Regular.ttf"
+            )
+            .replacingOccurrences(
+                of: "https://amberagent.local/builtin-fonts/Inter-Regular.ttf",
+                with: "Inter-Regular.ttf"
+            )
+
+        if !inlinesVChartJS || didInlineVChartJS {
+            lock.lock()
+            if let existing = cachedSandboxHTML[cacheKey] {
+                lock.unlock()
+                return existing
+            }
+            cachedSandboxHTML[cacheKey] = html
+            lock.unlock()
+        }
+        return html
+    }
+
+    private func loadVChartJS() -> String? {
+        lock.lock()
+        if let cached = cachedVChartJS {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+
+        guard let js = loader("vchart.min", "js", "generative-libs") else {
+            return nil
+        }
+
+        lock.lock()
+        if let existing = cachedVChartJS {
+            lock.unlock()
+            return existing
+        }
+        cachedVChartJS = js
+        lock.unlock()
+        return js
+    }
+
+    private static func defaultResourceLoader(name: String, ext: String, subdirectory: String) -> String? {
+        guard let url = bundleResourceURL(name, extension: ext, subdirectory: subdirectory) else {
+            return nil
+        }
+        return try? String(contentsOf: url, encoding: .utf8)
     }
 }
 
