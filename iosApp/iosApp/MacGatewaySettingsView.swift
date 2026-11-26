@@ -563,6 +563,19 @@ struct MacGatewaySettingsView: View {
                               action: { router.navigate(to: .proceduralRules) }) {
                     MacGatewayChevron()
                 }
+                MacGatewayRowDivider()
+                NavigationLink {
+                    CloudProactiveCenterView()
+                } label: {
+                    MacGatewayRow(
+                        icon: "bell.and.waves.left.and.right",
+                        title: L("主动提醒中心"),
+                        detail: L("管理静默时段、网页监控、Webhook 与已静音话题")
+                    ) {
+                        MacGatewayChevron()
+                    }
+                }
+                .buttonStyle(.plain)
             }
         }
     }
