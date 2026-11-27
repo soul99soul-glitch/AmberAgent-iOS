@@ -838,4 +838,410 @@ struct MacGatewayCloudProactiveTests {
         #expect(feedbackWhileUnpaired == false)
         #expect(unpairedStore.lastError != nil)
     }
+
+    // MARK: - 5. Phase 2 (I4): Wakeup Cancel & Restraint Pulse/Commitment Patch
+
+    @Test @MainActor func cancelWakeupSendsDeleteHandlesFailureAndRejectsInvalidIds() async throws {
+        let server = MockProactiveServer { method, path, _ in
+            switch (method, path) {
+            case ("GET", "/v2/proactive/summary"):
+                return (200, #"""
+                {
+                  "monitors": [],
+                  "webhooks": [],
+                  "restraint": {
+                    "quietHoursEnabled": true,
+                    "quietHoursStart": "23:00",
+                    "quietHoursEnd": "08:00",
+                    "dailyMaxPushes": 5,
+                    "pushesToday": 0,
+                    "remainingToday": 5,
+                    "pulseEnabled": true,
+                    "pulseTime": "08:30",
+                    "commitmentExtractionEnabled": true,
+                    "mutedTopics": []
+                  },
+                  "recentRuns": [],
+                  "wakeups": [
+                    {
+                      "id": "wk_commit_01",
+                      "kind": "commitment",
+                      "title": "周五前回访方案",
+                      "detail": "发邮件确认预算",
+                      "triggerAtEpochMs": 1700500000000,
+                      "userRequested": true,
+                      "status": "pending"
+                    },
+                    {
+                      "id": "wk_snooze_02",
+                      "kind": "snooze",
+                      "title": "稍后再看的卡片",
+                      "triggerAtEpochMs": 1700503600000,
+                      "userRequested": true,
+                      "status": "pending"
+                    }
+                  ]
+                }
+                """#)
+            case ("DELETE", "/v2/proactive/wakeups/wk_commit_01"):
+                return (200, #"{"cancelled":true,"id":"wk_commit_01"}"#)
+            case ("DELETE", "/v2/proactive/wakeups/wk_missing_404"):
+                return (404, #"{"error":"wakeup_not_found"}"#)
+            default:
+                return (404, #"{"error":"not_found"}"#)
+            }
+        }
+        let client = makeClient(server: server)
+        let store = CloudProactiveStore(clientProvider: { client }, localEventsProvider: { [] })
+
+        // Invalid wakeup IDs must be rejected locally before hitting transport.
+        let invalidIds = [
+            "",
+            "   ",
+            "../etc/passwd",
+            "wk/slash",
+            "wk space",
+            "wk?x=1",
+            "wk#frag",
+            "中文id",
+            String(repeating: "w", count: 65),
+        ]
+        for badId in invalidIds {
+            #expect(!MacGatewayClient.isValidProactiveWakeupId(badId))
+            await #expect(throws: MacGatewayError.self) {
+                try await client.cancelProactiveWakeup(id: badId)
+            }
+            await store.cancelWakeup(id: badId)
+            #expect(store.lastError != nil)
+        }
+        #expect(await server.requests.isEmpty, "Invalid wakeup IDs must never hit network")
+
+        await store.refreshSummary()
+        #expect(store.summary?.wakeups.count == 2)
+        #expect(store.lastError == nil)
+
+        // Successful cancellation removes only the cancelled wakeup and clears error.
+        await store.cancelWakeup(id: "wk_commit_01")
+        #expect(store.lastError == nil)
+        #expect(store.summary?.wakeups.map(\.id) == ["wk_snooze_02"])
+
+        // Server failure must record explicit error and keep remaining wakeups intact.
+        await store.cancelWakeup(id: "wk_missing_404")
+        #expect(store.lastError != nil)
+        #expect(store.summary?.wakeups.map(\.id) == ["wk_snooze_02"])
+
+        let recorded = await server.requests
+        #expect(recorded.contains { $0.method == "DELETE" && $0.path == "/v2/proactive/wakeups/wk_commit_01" })
+        #expect(recorded.contains { $0.method == "DELETE" && $0.path == "/v2/proactive/wakeups/wk_missing_404" })
+
+        // Unpaired store must record error rather than returning silently.
+        let unpaired = CloudProactiveStore(clientProvider: { nil }, localEventsProvider: { [] })
+        await unpaired.cancelWakeup(id: "wk_commit_01")
+        #expect(unpaired.lastError != nil)
+    }
+
+    @Test @MainActor func updateRestraintForwardsPulseAndCommitmentFieldsAccurately() async throws {
+        let server = MockProactiveServer { method, path, body in
+            switch (method, path) {
+            case ("GET", "/v2/proactive/summary"):
+                return (200, #"""
+                {
+                  "monitors": [],
+                  "webhooks": [],
+                  "restraint": {
+                    "quietHoursEnabled": true,
+                    "quietHoursStart": "23:00",
+                    "quietHoursEnd": "08:00",
+                    "dailyMaxPushes": 5,
+                    "pushesToday": 0,
+                    "remainingToday": 5,
+                    "pulseEnabled": true,
+                    "pulseTime": "08:30",
+                    "commitmentExtractionEnabled": true,
+                    "mutedTopics": []
+                  },
+                  "recentRuns": [],
+                  "wakeups": []
+                }
+                """#)
+            case ("PATCH", "/v2/proactive/restraint"):
+                let pulseEnabled = body?.contains("\"pulseEnabled\":false") == true ? "false" : "true"
+                let pulseTime = body?.contains("\"pulseTime\":\"07:45\"") == true ? "07:45" : "08:30"
+                let commitEnabled = body?.contains("\"commitmentExtractionEnabled\":false") == true ? "false" : "true"
+                return (200, #"""
+                {
+                  "restraint": {
+                    "quietHoursEnabled": true,
+                    "quietHoursStart": "23:00",
+                    "quietHoursEnd": "08:00",
+                    "dailyMaxPushes": 5,
+                    "pushesToday": 0,
+                    "remainingToday": 5,
+                    "pulseEnabled": \#(pulseEnabled),
+                    "pulseTime": "\#(pulseTime)",
+                    "commitmentExtractionEnabled": \#(commitEnabled),
+                    "mutedTopics": []
+                  }
+                }
+                """#)
+            default:
+                return (404, #"{"error":"not_found"}"#)
+            }
+        }
+        let client = makeClient(server: server)
+        let store = CloudProactiveStore(clientProvider: { client }, localEventsProvider: { [] })
+        await store.refreshSummary()
+
+        await store.updateRestraint(
+            CloudProactiveRestraintPatch(
+                pulseEnabled: false,
+                pulseTime: "07:45",
+                commitmentExtractionEnabled: false
+            )
+        )
+        #expect(store.lastError == nil)
+        #expect(store.summary?.restraint.pulseEnabled == false)
+        #expect(store.summary?.restraint.pulseTime == "07:45")
+        #expect(store.summary?.restraint.commitmentExtractionEnabled == false)
+
+        let patchReq = try #require(await server.requests.last(where: { $0.method == "PATCH" && $0.path == "/v2/proactive/restraint" }))
+        let bodyData = try #require(patchReq.body?.data(using: .utf8))
+        let bodyObj = try #require(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+        #expect(bodyObj["pulseEnabled"] as? Bool == false)
+        #expect(bodyObj["pulseTime"] as? String == "07:45")
+        #expect(bodyObj["commitmentExtractionEnabled"] as? Bool == false)
+        #expect(bodyObj["quietHoursEnabled"] == nil)
+        #expect(bodyObj["dailyMaxPushes"] == nil)
+    }
+
+    // MARK: - 6. Phase 3 (I5): Monitor Delivery Mode & GitHub Release Template
+
+    @Test @MainActor func setMonitorDeliveryModeValidatesModeAndPatchesMonitor() async throws {
+        let server = MockProactiveServer { method, path, body in
+            switch (method, path) {
+            case ("GET", "/v2/proactive/summary"):
+                return (200, #"""
+                {
+                  "monitors": [
+                    {
+                      "id": "mon_rel_1",
+                      "title": "Swift Releases",
+                      "url": "https://github.com/apple/swift/releases.atom",
+                      "enabled": true,
+                      "deliveryMode": "immediate"
+                    }
+                  ],
+                  "webhooks": [],
+                  "restraint": {
+                    "quietHoursEnabled": true,
+                    "quietHoursStart": "23:00",
+                    "quietHoursEnd": "08:00",
+                    "dailyMaxPushes": 5
+                  },
+                  "recentRuns": [],
+                  "wakeups": []
+                }
+                """#)
+            case ("PATCH", "/v2/proactive/monitors/mon_rel_1"):
+                let nextMode = body?.contains("\"digest\"") == true ? "digest" : "immediate"
+                return (200, #"""
+                {
+                  "monitor": {
+                    "id": "mon_rel_1",
+                    "title": "Swift Releases",
+                    "url": "https://github.com/apple/swift/releases.atom",
+                    "enabled": true,
+                    "deliveryMode": "\#(nextMode)"
+                  }
+                }
+                """#)
+            default:
+                return (404, #"{"error":"monitor_not_found"}"#)
+            }
+        }
+        let client = makeClient(server: server)
+        let store = CloudProactiveStore(clientProvider: { client }, localEventsProvider: { [] })
+
+        // Illegal delivery modes must be rejected before hitting transport.
+        for badMode in ["", "DIGEST", "silent", "digest ", "immediate\n", "email"] {
+            #expect(!MacGatewayClient.isValidProactiveMonitorDeliveryMode(badMode))
+            await #expect(throws: MacGatewayError.self) {
+                _ = try await client.setProactiveMonitorDeliveryMode(id: "mon_rel_1", deliveryMode: badMode)
+            }
+            await store.setMonitorDeliveryMode(id: "mon_rel_1", mode: badMode)
+            #expect(store.lastError != nil)
+        }
+        #expect(await server.requests.isEmpty, "Invalid deliveryMode must never hit transport")
+
+        await store.refreshSummary()
+        #expect(store.summary?.monitors.first?.deliveryMode == "immediate")
+
+        await store.setMonitorDeliveryMode(id: "mon_rel_1", mode: "digest")
+        #expect(store.lastError == nil)
+        #expect(store.summary?.monitors.first?.deliveryMode == "digest")
+
+        await store.setMonitorDeliveryMode(id: "mon_rel_1", mode: "immediate")
+        #expect(store.lastError == nil)
+        #expect(store.summary?.monitors.first?.deliveryMode == "immediate")
+
+        let patchRequests = await server.requests.filter { $0.method == "PATCH" && $0.path == "/v2/proactive/monitors/mon_rel_1" }
+        #expect(patchRequests.count == 2)
+        let firstPatchObj = try #require(
+            patchRequests[0].body.flatMap { $0.data(using: .utf8) }.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        )
+        #expect(firstPatchObj["deliveryMode"] as? String == "digest")
+        let secondPatchObj = try #require(
+            patchRequests[1].body.flatMap { $0.data(using: .utf8) }.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        )
+        #expect(secondPatchObj["deliveryMode"] as? String == "immediate")
+    }
+
+    @Test func buildGitHubReleaseFeedURLStrictlyEnforcesSecurityBoundaries() {
+        let validCases: [(String, String)] = [
+            ("owner/repo", "https://github.com/owner/repo/releases.atom"),
+            ("  org.name/repo_1-2 \n", "https://github.com/org.name/repo_1-2/releases.atom"),
+            ("apple/swift", "https://github.com/apple/swift/releases.atom"),
+            ("my-org/.github", "https://github.com/my-org/.github/releases.atom"),
+        ]
+        for (slug, expected) in validCases {
+            let url = MacGatewayClient.buildGitHubReleaseFeedURL(from: slug)
+            #expect(url?.absoluteString == expected)
+            #expect(url?.scheme == "https")
+            #expect(url?.host == "github.com")
+            #expect(CloudProactiveStore.buildGitHubReleaseFeedURL(from: slug)?.absoluteString == expected)
+        }
+
+        let invalidSlugs = [
+            "",
+            "   ",
+            "http://evil.com/owner/repo",
+            "https://github.com/owner/repo",
+            "../etc/passwd",
+            "../repo",
+            "owner/..",
+            "./repo",
+            "owner/.",
+            "a..b/repo",
+            "owner/a..b",
+            "a/b?x=1",
+            "a/b#frag",
+            "127.0.0.1/x",
+            "10.0.0.1/repo",
+            "169.254.169.254/latest",
+            "0x7f.0.0.1/x",
+            "a/b/c",
+            "onlyowner",
+            "/repo",
+            "owner/",
+            "owner name/repo",
+            "owner/repo name",
+            "owner%2Frepo/x",
+            "owner/repo@v1",
+        ]
+        for badSlug in invalidSlugs {
+            #expect(
+                MacGatewayClient.buildGitHubReleaseFeedURL(from: badSlug) == nil,
+                "Slug '\(badSlug)' must be rejected"
+            )
+        }
+    }
+
+    @Test @MainActor func addGitHubReleaseMonitorValidatesSlugPostsMonitorAndRefreshesSummary() async throws {
+        let server = MockProactiveServer { method, path, body in
+            switch (method, path) {
+            case ("POST", "/v2/proactive/monitors"):
+                let bodyObj = body.flatMap { $0.data(using: .utf8) }.flatMap {
+                    try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+                } ?? [:]
+                let title = bodyObj["title"] as? String ?? ""
+                let url = bodyObj["url"] as? String ?? ""
+                let mode = bodyObj["deliveryMode"] as? String ?? "immediate"
+                if url.contains("fail-org/fail-repo") {
+                    return (500, #"{"error":"upstream_failed"}"#)
+                }
+                return (201, #"""
+                {
+                  "monitor": {
+                    "id": "mon_gh_1",
+                    "title": "\#(title)",
+                    "url": "\#(url)",
+                    "enabled": true,
+                    "deliveryMode": "\#(mode)"
+                  }
+                }
+                """#)
+            case ("GET", "/v2/proactive/summary"):
+                return (200, #"""
+                {
+                  "monitors": [
+                    {
+                      "id": "mon_gh_1",
+                      "title": "org.name/repo_1-2 Releases",
+                      "url": "https://github.com/org.name/repo_1-2/releases.atom",
+                      "enabled": true,
+                      "deliveryMode": "digest"
+                    }
+                  ],
+                  "webhooks": [],
+                  "restraint": {
+                    "quietHoursEnabled": true,
+                    "quietHoursStart": "23:00",
+                    "quietHoursEnd": "08:00",
+                    "dailyMaxPushes": 5
+                  },
+                  "recentRuns": [],
+                  "wakeups": []
+                }
+                """#)
+            default:
+                return (404, #"{"error":"not_found"}"#)
+            }
+        }
+        let client = makeClient(server: server)
+        let store = CloudProactiveStore(clientProvider: { client }, localEventsProvider: { [] })
+
+        // Invalid slug must fail locally with readable error and zero network calls.
+        let rejected = await store.addGitHubReleaseMonitor(repoSlug: "127.0.0.1/x")
+        #expect(rejected == false)
+        #expect(store.lastError != nil)
+        #expect(await server.requests.isEmpty)
+
+        // Valid slug posts to /v2/proactive/monitors with default deliveryMode="digest" and refreshes summary.
+        let created = await store.addGitHubReleaseMonitor(repoSlug: "  org.name/repo_1-2  ")
+        #expect(created == true)
+        #expect(store.lastError == nil)
+        #expect(store.summary?.monitors.count == 1)
+        #expect(store.summary?.monitors.first?.url == "https://github.com/org.name/repo_1-2/releases.atom")
+        #expect(store.summary?.monitors.first?.deliveryMode == "digest")
+
+        let requests = await server.requests
+        let postReq = try #require(requests.first(where: { $0.method == "POST" && $0.path == "/v2/proactive/monitors" }))
+        let postData = try #require(postReq.body?.data(using: .utf8))
+        let postObj = try #require(JSONSerialization.jsonObject(with: postData) as? [String: Any])
+        #expect(postObj["title"] as? String == "org.name/repo_1-2 Releases")
+        #expect(postObj["url"] as? String == "https://github.com/org.name/repo_1-2/releases.atom")
+        #expect(postObj["deliveryMode"] as? String == "digest")
+        #expect(requests.contains { $0.method == "GET" && $0.path == "/v2/proactive/summary" })
+
+        // Server failure must return false and record readable error.
+        let failed = await store.addGitHubReleaseMonitor(repoSlug: "fail-org/fail-repo", deliveryMode: "immediate")
+        #expect(failed == false)
+        #expect(store.lastError != nil)
+
+        // Presentation helpers for Phase 2 & 3 labels and pending wakeup sorting.
+        #expect(CloudProactiveCenterPresentation.wakeupSourceLabel(for: "commitment") == "从对话记下")
+        #expect(CloudProactiveCenterPresentation.wakeupSourceLabel(for: "snooze") == "稍后提醒")
+        #expect(CloudProactiveCenterPresentation.wakeupSourceLabel(for: "agent") == "Amber 安排")
+        #expect(CloudProactiveCenterPresentation.deliveryModeDisplayText(for: "digest") == "并入晨报")
+        #expect(CloudProactiveCenterPresentation.deliveryModeDisplayText(for: "immediate") == "即时推送")
+
+        let summaryForSort = CloudProactiveSummary(
+            wakeups: [
+                CloudProactiveWakeupRecord(id: "wk_late", kind: "agent", title: "晚点", triggerAtEpochMs: 2000, status: "pending"),
+                CloudProactiveWakeupRecord(id: "wk_fired", kind: "snooze", title: "已触发", triggerAtEpochMs: 500, status: "fired"),
+                CloudProactiveWakeupRecord(id: "wk_early", kind: "commitment", title: "早点", triggerAtEpochMs: 1000, status: "pending"),
+            ]
+        )
+        #expect(CloudProactiveCenterPresentation.pendingWakeups(from: summaryForSort).map(\.id) == ["wk_early", "wk_late"])
+    }
 }

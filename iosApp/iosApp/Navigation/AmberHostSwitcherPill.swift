@@ -538,7 +538,36 @@ struct AmberInlineCloudMainDialogueView: View {
 
     @Environment(\.scenePhase) private var scenePhase
 
+    @ObservedObject private var proactiveStore = CloudProactiveStore.shared
     @State private var scrollCoordinator = AmberCloudTimelineScrollCoordinator()
+    @State private var highlightedProactiveEventId: String?
+    @State private var highlightClearTask: Task<Void, Never>?
+    @State private var lastScrolledPendingSignalId: String?
+
+    private struct PendingProactiveSheetItem: Identifiable, Equatable {
+        let id: String
+    }
+
+    private var normalizedPendingSignalId: String? {
+        guard let raw = proactiveStore.pendingSignalId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return nil
+        }
+        return raw
+    }
+
+    private var pendingProactiveSheetBinding: Binding<PendingProactiveSheetItem?> {
+        Binding(
+            get: {
+                normalizedPendingSignalId.map { PendingProactiveSheetItem(id: $0) }
+            },
+            set: { newValue in
+                if newValue == nil, proactiveStore.pendingSignalId != nil {
+                    proactiveStore.pendingSignalId = nil
+                }
+            }
+        )
+    }
 
     private struct CloudTailStatusRowItem: Identifiable {
         let id: String
@@ -620,7 +649,7 @@ struct AmberInlineCloudMainDialogueView: View {
                                 .chatLiveEntrance(key: "cloud-entry:\(event.id)", isLive: store.cloudDialogueEntranceEventIds.contains(event.id)) {
                                     store.cloudDialogueEntranceEventIds.remove(event.id)
                                 }
-                                .id("cloud-event-\(event.id)")
+                                .id(event.id)
                         }
 
                         ForEach(unmergedMainSubmissions) { submission in
@@ -679,23 +708,74 @@ struct AmberInlineCloudMainDialogueView: View {
                     }
                     _ = await store.pollCloudDialogueEvents()
                 }
-                proxy.scrollTo("cloud-dialogue-bottom-anchor", anchor: .bottom)
-                scrollCoordinator.scrollToBottom()
+                if let pendingId = normalizedPendingSignalId {
+                    focusPendingProactiveSignalIfVisible(pendingId, proxy: proxy)
+                } else {
+                    proxy.scrollTo("cloud-dialogue-bottom-anchor", anchor: .bottom)
+                    scrollCoordinator.scrollToBottom()
+                }
             }
             .onChange(of: scrollTailToken) { _, _ in
+                guard normalizedPendingSignalId == nil else { return }
                 withAnimation(.easeOut(duration: 0.18)) {
                     proxy.scrollTo("cloud-dialogue-bottom-anchor", anchor: .bottom)
                 }
                 scrollCoordinator.scrollToBottom()
             }
+            .onChange(of: proactiveStore.pendingSignalId) { _, _ in
+                if let pendingId = normalizedPendingSignalId {
+                    focusPendingProactiveSignalIfVisible(pendingId, proxy: proxy)
+                } else {
+                    lastScrolledPendingSignalId = nil
+                }
+            }
+            .onChange(of: store.cloudDialogueVisibleEvents.count) { _, _ in
+                if let pendingId = normalizedPendingSignalId, lastScrolledPendingSignalId != pendingId {
+                    focusPendingProactiveSignalIfVisible(pendingId, proxy: proxy)
+                }
+            }
         }
-        .onDisappear { store.cloudDialogueEntranceEventIds.removeAll() }
+        .sheet(item: pendingProactiveSheetBinding, onDismiss: {
+            if proactiveStore.pendingSignalId != nil {
+                proactiveStore.pendingSignalId = nil
+            }
+        }) { item in
+            CloudProactiveSignalDetailSheet(signalId: item.id, store: proactiveStore)
+        }
+        .onDisappear {
+            store.cloudDialogueEntranceEventIds.removeAll()
+            highlightClearTask?.cancel()
+            highlightClearTask = nil
+            highlightedProactiveEventId = nil
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { store.cloudDialogueEntranceEventIds.removeAll() }
         }
         .modifier(ChatCompletionFeedbackVisibility(owner: store.cloudCompletionFeedback,
             isVisible: scenePhase == .active && store.isCloudMainDialogueSelected))
         .accessibilityIdentifier("chat.cloudMainDialogue.inlineView")
+    }
+
+    private func focusPendingProactiveSignalIfVisible(_ signalId: String, proxy: ScrollViewProxy) {
+        let expectedEventId = "proactive:\(signalId)"
+        guard let target = store.cloudDialogueVisibleEvents.last(where: {
+            $0.kind == .proactiveMessage && ($0.proactive?.signalId == signalId || $0.id == expectedEventId)
+        }) else {
+            return
+        }
+        lastScrolledPendingSignalId = signalId
+        withAnimation(.easeInOut(duration: 0.25)) {
+            proxy.scrollTo(target.id, anchor: .center)
+        }
+        highlightedProactiveEventId = target.id
+        highlightClearTask?.cancel()
+        highlightClearTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.2))
+            guard !Task.isCancelled else { return }
+            if highlightedProactiveEventId == target.id {
+                highlightedProactiveEventId = nil
+            }
+        }
     }
 
     private var cloudHostHeaderBanner: some View {
@@ -919,19 +999,28 @@ struct AmberInlineCloudMainDialogueView: View {
         )
     }
 
+    @ViewBuilder
     private func cloudEventBubble(_ event: MacGatewayCloudDialogueEvent, isAssistantContinuation: Bool) -> some View {
-        let followup = store.cloudDialogueFollowup(for: event)
-        return CloudDialogueMessageRow(
-            event: event,
-            text: store.cloudDialogueDisplayText(for: event),
-            feedback: store.cloudCompletionFeedback,
-            followupStatus: event.kind == .followup ? followup.map {
-                $0.deliveryStatus(isSending: store.busyCloudDialogueRequestIds.contains($0.requestId))
-            } : nil,
-            isFollowupCancelled: followup?.state == .cancelled,
-            isAssistantContinuation: isAssistantContinuation,
-            userSendEntranceKey: store.cloudUserSendEntranceKey(for: event)
-        )
+        if event.kind == .proactiveMessage {
+            CloudProactiveCardView(
+                event: event,
+                isHighlighted: highlightedProactiveEventId == event.id,
+                store: proactiveStore
+            )
+        } else {
+            let followup = store.cloudDialogueFollowup(for: event)
+            CloudDialogueMessageRow(
+                event: event,
+                text: store.cloudDialogueDisplayText(for: event),
+                feedback: store.cloudCompletionFeedback,
+                followupStatus: event.kind == .followup ? followup.map {
+                    $0.deliveryStatus(isSending: store.busyCloudDialogueRequestIds.contains($0.requestId))
+                } : nil,
+                isFollowupCancelled: followup?.state == .cancelled,
+                isAssistantContinuation: isAssistantContinuation,
+                userSendEntranceKey: store.cloudUserSendEntranceKey(for: event)
+            )
+        }
     }
 
     private func followupBubble(_ followup: MacGatewayCloudDialogueFollowupRecord) -> some View {
@@ -979,9 +1068,12 @@ struct CloudDialogueMessageRow: View {
     var isFollowupCancelled = false
     var isAssistantContinuation = false
     var userSendEntranceKey: String? = nil
+    var isHighlighted = false
 
     var body: some View {
-        if event.role == "user" || event.kind == .userMessage || event.kind == .followup {
+        if event.kind == .proactiveMessage {
+            CloudProactiveCardView(event: event, isHighlighted: isHighlighted)
+        } else if event.role == "user" || event.kind == .userMessage || event.kind == .followup {
             AmberCloudFollowupBubbleRow(
                 text: text,
                 statusText: followupStatus,
