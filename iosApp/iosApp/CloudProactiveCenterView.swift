@@ -169,7 +169,11 @@ enum CloudProactiveCenterPresentation {
             return macGatewayL("达上限暂缓")
         case "muted", "suppressed_muted":
             return macGatewayL("话题已静音")
-        case "filtered_l1", "filtered_l2", "unchanged", "skipped":
+        case "blocked_ssrf":
+            return macGatewayL("监控地址已被安全策略拦截")
+        case "suppressed":
+            return macGatewayL("已暂缓推送")
+        case "filtered_l1", "filtered_l2", "dropped_l1", "dropped_low_score", "unchanged", "skipped":
             return macGatewayL("无需打扰")
         case "feedback_opened":
             return macGatewayL("已查看")
@@ -195,7 +199,7 @@ enum CloudProactiveCenterPresentation {
         switch trimmed {
         case "pushed", "delivered", "sent", "feedback_opened", "feedback_replied":
             return .success
-        case "error", "failed", "wakeup_expired", "feedback_mute_topic", "suppressed_quiet_hours", "deferred_budget":
+        case "error", "failed", "blocked_ssrf", "wakeup_expired", "feedback_mute_topic", "suppressed_quiet_hours", "deferred_budget":
             return .warning
         default:
             return .neutral
@@ -252,7 +256,7 @@ enum CloudProactiveCenterPresentation {
 // MARK: - Lightweight Cloud Proactive Center View
 
 struct CloudProactiveCenterView: View {
-    @ObservedObject private var store: CloudProactiveStore
+    @StateObject private var store: CloudProactiveStore
     private let gatewayStore: MacGatewayStore
 
     @Environment(\.dismiss) private var dismiss
@@ -271,10 +275,10 @@ struct CloudProactiveCenterView: View {
     @State private var isSubmittingGitHubMonitor = false
 
     init(
-        store: CloudProactiveStore = .shared,
+        store: CloudProactiveStore? = nil,
         gatewayStore: MacGatewayStore = .shared
     ) {
-        self._store = ObservedObject(wrappedValue: store)
+        self._store = StateObject(wrappedValue: store ?? CloudProactiveStore(gatewayStore: gatewayStore))
         self.gatewayStore = gatewayStore
     }
 
@@ -283,6 +287,9 @@ struct CloudProactiveCenterView: View {
             AmberTheme.background.ignoresSafeArea()
             VStack(spacing: 0) {
                 header
+                if let error = store.lastError, !error.isEmpty, !isPresentingGitHubTemplate {
+                    errorBanner(error)
+                }
                 scrollBody
             }
         }
@@ -383,10 +390,6 @@ struct CloudProactiveCenterView: View {
                     deviceContextGentleNotice
                 }
 
-                if let error = store.lastError, !error.isEmpty {
-                    errorBanner(error)
-                }
-
                 if let summary = store.summary {
                     let snapshot = CloudProactiveCenterPresentation.makeSnapshot(
                         summary: summary,
@@ -460,12 +463,6 @@ struct CloudProactiveCenterView: View {
                 .foregroundStyle(AmberTheme.foreground)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button(macGatewayL("重试")) {
-                Task { await store.refreshSummary() }
-            }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(AmberTheme.accent)
-            .buttonStyle(.plain)
         }
         .padding(12)
         .background(

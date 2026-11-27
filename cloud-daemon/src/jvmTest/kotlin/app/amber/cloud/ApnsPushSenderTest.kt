@@ -3,7 +3,11 @@ package app.amber.cloud
 import app.amber.cloud.gateway.ApnsConfig
 import app.amber.cloud.gateway.ApnsPushSender
 import app.amber.cloud.gateway.CloudGatewayState
+import app.amber.cloud.gateway.PairedDevice
+import app.amber.cloud.gateway.PendingApprovalDto
 import app.amber.cloud.gateway.PushMessagePayload
+import app.amber.cloud.gateway.PushSender
+import app.amber.cloud.gateway.SessionDto
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -13,7 +17,10 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.TextContent
 import io.ktor.http.headersOf
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonObject
@@ -32,6 +39,7 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -40,9 +48,9 @@ import kotlin.test.assertTrue
 class ApnsPushSenderTest {
     private val json = Json { ignoreUnknownKeys = true }
 
-    private fun generateTestEcKeyPair(): Pair<KeyPair, String> {
+    private fun generateTestEcKeyPair(curve: String = "secp256r1"): Pair<KeyPair, String> {
         val kp = KeyPairGenerator.getInstance("EC").apply {
-            initialize(ECGenParameterSpec("secp256r1"))
+            initialize(ECGenParameterSpec(curve))
         }.generateKeyPair()
         val pem = buildString {
             appendLine("-----BEGIN PRIVATE KEY-----")
@@ -69,6 +77,96 @@ class ApnsPushSenderTest {
         verifier.update("${parts[0]}.${parts[1]}".toByteArray(StandardCharsets.US_ASCII))
         assertTrue(verifier.verify(signatureBytes), "ES256 JWT 公钥验签必须通过")
         return claims["iat"]!!.jsonPrimitive.long
+    }
+
+    @Test
+    fun `rejects non ES256 EC key at configuration time`() {
+        val (_, pem) = generateTestEcKeyPair("secp384r1")
+        assertFailsWith<IllegalArgumentException> { ApnsPushSender.parseEcPrivateKey(pem) }
+    }
+
+    @Test
+    fun `timeout in APNs returns a failure without cancelling the caller`() = runTest {
+        val state = CloudGatewayState(Files.createTempDirectory("apns-request-timeout").toFile())
+        val paired = state.pairDevice(state.issuePairingTicket(), "ios", "Owner") as CloudGatewayState.PairResult.Success
+        state.registerPushToken(state.findDeviceById(paired.deviceId)!!, "original", "sandbox")
+        val client = HttpClient(MockEngine { awaitCancellation() })
+        try {
+            val sender = ApnsPushSender(
+                config = ApnsConfig("KID", "TEAM", "app.amber.ios", generateTestEcKeyPair().second),
+                deviceLookup = state::findDeviceById, httpClient = client,
+            )
+            val result = sender.send(PushMessagePayload(paired.deviceId, "ios", "original", "标题", "正文"))
+            assertTrue(result.isFailure)
+            assertEquals(ApnsPushSender.REQUEST_TIMEOUT_MS, testScheduler.currentTime)
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `token rotation before a provider retry skips the stale destination and delayed invalidation preserves replacement`() = runBlocking {
+        val state = CloudGatewayState(Files.createTempDirectory("apns-rotate").toFile())
+        val paired = state.pairDevice(state.issuePairingTicket(), "ios", "Owner") as CloudGatewayState.PairResult.Success
+        val device = state.findDeviceById(paired.deviceId)!!
+        val stale = PushMessagePayload(device.id, "ios", "old_token", "标题", "正文")
+        val requests = AtomicInteger(0)
+        var providerExpired = true
+        val client = HttpClient(MockEngine {
+            requests.incrementAndGet()
+            state.registerPushToken(device, "new_token", "production")
+            if (providerExpired) respond("""{"reason":"ExpiredProviderToken"}""", HttpStatusCode.Forbidden)
+            else respond("""{"reason":"Unregistered"}""", HttpStatusCode.Gone)
+        })
+        try {
+            val sender = ApnsPushSender(
+                config = ApnsConfig("KID", "TEAM", "app.amber.ios", generateTestEcKeyPair().second),
+                deviceLookup = state::findDeviceById,
+                onInvalidToken = { id, token, reason -> state.clearPushToken(id, token, reason) },
+                httpClient = client,
+            )
+            state.registerPushToken(device, stale.pushToken, "sandbox")
+            assertTrue(sender.send(stale).isFailure)
+            assertTrue(sender.send(stale).isFailure)
+            assertEquals(1, requests.get())
+            providerExpired = false
+            state.registerPushToken(device, stale.pushToken, "sandbox")
+            assertTrue(sender.send(stale).isFailure)
+            assertEquals("new_token", state.findDeviceById(device.id)?.pushToken)
+            assertEquals(2, requests.get())
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `paired device fanout bounds concurrent requests and total waiting time`() = runTest {
+        val state = CloudGatewayState(Files.createTempDirectory("apns-fanout").toFile())
+        repeat(6) { i ->
+            val paired = state.pairDevice(state.issuePairingTicket(), "ios", "Phone $i") as CloudGatewayState.PairResult.Success
+            state.registerPushToken(state.findDeviceById(paired.deviceId)!!, "device_$i", "sandbox")
+        }
+        var active = 0
+        var peak = 0
+        val attempted = mutableSetOf<String>()
+        state.pushSender = PushSender { payload ->
+            attempted.add(payload.pushToken)
+            active++
+            peak = maxOf(active, peak)
+            try { delay(7_000) } finally { active-- }
+            Result.success(Unit)
+        }
+        val payloadFor = { device: PairedDevice ->
+            PushMessagePayload(device.id, device.platform, device.pushToken!!, "标题", "正文")
+        }
+        state.sendToPairedAppleDevices("push-failed", payloadFor)
+        assertEquals(4, peak)
+        assertEquals(6, attempted.size)
+        assertEquals(14_000L, testScheduler.currentTime)
+        state.pushSender = PushSender { awaitCancellation() }
+        state.sendToPairedAppleDevices("push-failed", payloadFor)
+        assertEquals(34_000L, testScheduler.currentTime)
+        assertTrue(state.auditFile.readText().contains("batch_timeout"))
     }
 
     @Test
@@ -193,6 +291,19 @@ class ApnsPushSenderTest {
         val jwt3 = sender.getOrSignJwt(clock.get())
         assertNotEquals(jwt1, jwt3)
         verifyEs256Jwt(jwt3, keyPair, "KEY1234567", "TEAM765432")
+
+        val device = state.findDeviceById(prodPaired.deviceId)!!
+        val session = SessionDto(key = "amber:session", subject = "云端审批", state = "waiting", updatedAt = 1.0)
+        for (highRisk in listOf(false, true)) {
+            val approval = PendingApprovalDto("approval_1", "tool", highRisk = highRisk)
+            val payload = state.buildApprovalPushPayload(device, session, approval)!!
+            assertTrue(sender.send(payload).isSuccess)
+            val body = json.parseToJsonElement((requests.last().body as TextContent).text).jsonObject
+            assertEquals("amber://tasks/cloud", body["deepLink"]!!.jsonPrimitive.content)
+            assertEquals(session.key, body["sessionKey"]!!.jsonPrimitive.content)
+            assertEquals(if (highRisk) null else "approval_1", body["toolCallId"]?.jsonPrimitive?.content)
+            assertEquals(if (highRisk) null else "amber.cloud.approval", body["aps"]!!.jsonObject["category"]?.jsonPrimitive?.content)
+        }
         Unit
     }
 

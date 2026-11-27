@@ -270,6 +270,11 @@ sealed class InboundGateVerdict {
     data class DuplicateIgnored(val channelId: String, val messageId: String) : InboundGateVerdict()
 }
 
+internal fun InboundMessage.isProactiveCardCallback(): Boolean {
+    val action = callbackData?.trim() ?: return false
+    return action.startsWith("pa:") || action.startsWith("proactive:")
+}
+
 /**
  * 主人身份绑定管理器（支持 `/bind <一次性码>`，3 分钟有效且单次消费即刻销毁，并支持落盘持久化）。
  *
@@ -292,6 +297,7 @@ class OwnerBindingManager(
     private data class PersistedBindings(
         val boundOwners: Map<String, Set<String>> = emptyMap(),
         val ownerDirectChatIds: Map<String, String> = emptyMap(),
+        val feishuDirectChatsByOwner: Map<String, String> = emptyMap(),
     )
 
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
@@ -300,6 +306,7 @@ class OwnerBindingManager(
     private val pendingCodes = mutableMapOf<String, PendingCode>()
     private val boundOwners = mutableMapOf<String, MutableSet<String>>()
     private val ownerDirectChatIds = mutableMapOf<String, String>()
+    private val feishuDirectChatsByOwner = mutableMapOf<String, String>()
 
     init {
         loadFromDisk()
@@ -322,9 +329,22 @@ class OwnerBindingManager(
         require(cleanSender.isNotEmpty() && !cleanSender.startsWith("@")) {
             "主人绑定必须使用平台不可变 ID（如 Telegram 数字 ID 或飞书 open_id），禁止使用可变 @username: $senderId"
         }
-        boundOwners.getOrPut(cleanChannel) { mutableSetOf() }.add(cleanSender)
-        ownerDirectChatIds[cleanChannel] = directChatId?.trim()?.takeIf { it.isNotEmpty() } ?: cleanSender
-        saveToDisk()
+        val newOwner = boundOwners.getOrPut(cleanChannel) { mutableSetOf() }.add(cleanSender)
+        val chatId = directChatId?.trim()?.takeIf { it.isNotEmpty() }
+        val target = if (cleanChannel == FeishuChannel.CHANNEL_ID) {
+            if (chatId != null && chatId.startsWith("oc_")) {
+                feishuDirectChatsByOwner[cleanSender] = chatId
+            }
+            feishuDirectChatsByOwner[cleanSender] ?: cleanSender
+        } else {
+            chatId ?: cleanSender
+        }
+        if (ownerDirectChatIds.put(cleanChannel, target) != target || newOwner) saveToDisk()
+    }
+
+    @Synchronized
+    fun isFeishuOwnerDirectChat(senderId: String, chatId: String): Boolean {
+        return feishuDirectChatsByOwner[senderId] == chatId
     }
 
     @Synchronized
@@ -381,9 +401,7 @@ class OwnerBindingManager(
                 )
             }
             pendingCodes.remove(codeArg)
-            boundOwners.getOrPut(cleanChannel) { mutableSetOf() }.add(cleanSender)
-            ownerDirectChatIds[cleanChannel] = rawMessage.chatId.trim().ifEmpty { cleanSender }
-            saveToDisk()
+            bindOwnerDirectly(cleanChannel, cleanSender, rawMessage.chatId)
             return InboundGateVerdict.BoundSuccess(
                 channelId = rawMessage.channelId,
                 ownerSenderId = cleanSender,
@@ -399,11 +417,8 @@ class OwnerBindingManager(
             )
         }
 
-        if (rawMessage.scope == ConversationScope.DIRECT && rawMessage.chatId.isNotBlank()) {
-            if (ownerDirectChatIds[cleanChannel] != rawMessage.chatId.trim()) {
-                ownerDirectChatIds[cleanChannel] = rawMessage.chatId.trim()
-                saveToDisk()
-            }
+        if (rawMessage.callbackData == null && rawMessage.scope == ConversationScope.DIRECT && rawMessage.chatId.isNotBlank()) {
+            bindOwnerDirectly(cleanChannel, cleanSender, rawMessage.chatId)
         }
 
         val verifiedMessage = rawMessage.copy(
@@ -439,6 +454,16 @@ class OwnerBindingManager(
             boundOwners.getOrPut(ch) { mutableSetOf() }.addAll(set)
         }
         ownerDirectChatIds.putAll(loaded.ownerDirectChatIds)
+        feishuDirectChatsByOwner.putAll(loaded.feishuDirectChatsByOwner)
+        // Older files also saved untyped card chat IDs. Use the owner's open_id until
+        // a signed p2p message or a successful direct send confirms the chat again.
+        val feishu = FeishuChannel.CHANNEL_ID
+        val feishuTarget = ownerDirectChatIds[feishu]
+        if (feishuTarget != null && feishuTarget !in feishuDirectChatsByOwner.values &&
+            !isOwner(feishu, feishuTarget)
+        ) {
+            ownerDirectChatIds.remove(feishu)
+        }
     }
 
     private fun saveToDisk() {
@@ -448,6 +473,7 @@ class OwnerBindingManager(
             val snapshot = PersistedBindings(
                 boundOwners = boundOwners.mapValues { it.value.toSet() },
                 ownerDirectChatIds = ownerDirectChatIds.toMap(),
+                feishuDirectChatsByOwner = feishuDirectChatsByOwner.toMap(),
             )
             file.writeText(json.encodeToString(snapshot))
         }

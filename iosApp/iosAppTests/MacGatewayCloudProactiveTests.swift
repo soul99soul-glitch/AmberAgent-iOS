@@ -594,6 +594,97 @@ struct MacGatewayCloudProactiveTests {
         #expect(proactiveStore.lastError != nil)
     }
 
+    @Test @MainActor func mismatchedSignalAndFeedbackReceiptsDoNotReportSuccess() async throws {
+        let server = MockProactiveServer { method, _, _ in
+            if method == "GET" {
+                return (200, #"{"event":{"seq":1,"id":"proactive:other","kind":"proactive_message","role":"assistant","text":"","topicId":"proactive:other"}}"#)
+            }
+            return (200, #"{"ok":true,"action":"snooze","applied":false}"#)
+        }
+        let client = makeClient(server: server)
+        let wrongKind = MacGatewayCloudDialogueEvent(
+            seq: 1, id: "proactive:asked", kind: .assistantReply, role: "assistant", text: "", topicId: "turn"
+        )
+        let store = CloudProactiveStore(clientProvider: { client }, localEventsProvider: { [wrongKind] })
+        let invalid = await store.loadSignal(" asked ")
+        #expect(invalid == nil)
+        #expect(await server.requests.isEmpty)
+        let wrongSignal = await store.loadSignal("asked")
+        #expect(wrongSignal == nil)
+        #expect(store.lastError != nil)
+        let wrongFeedback = await store.sendFeedback(signalId: "asked", action: .muteTopic)
+        #expect(!wrongFeedback)
+        let replay = await store.sendFeedback(signalId: "asked", action: .snooze)
+        #expect(replay)
+        #expect(store.lastError == nil)
+    }
+
+    @Test @MainActor func submittedActReportsFeedbackFailureAndRetryOnlyPostsFeedback() async throws {
+        let server = MockProactiveServer { _, _, _ in (503, #"{"error":"feedback_unavailable"}"#) }
+        let client = makeClient(server: server)
+        var submitted = 0
+        let store = CloudProactiveStore(
+            clientProvider: { client },
+            localEventsProvider: { [] },
+            sendCloudMessageHandler: { _ in
+                submitted += 1
+                return .success(.init(eventId: "message", requestId: "req", topicId: "turn",
+                                      workItemIds: [], state: .received, replayed: false))
+            }
+        )
+        let event = MacGatewayCloudDialogueEvent(
+            seq: 1, id: "proactive:sig1", kind: .proactiveMessage, role: "assistant", text: "提醒", topicId: "proactive:sig1"
+        )
+        let accepted = await store.act(on: event)
+        #expect(accepted)
+        #expect(store.lastError?.contains("feedback_unavailable") == true)
+        let feedback = await store.sendFeedback(signalId: "sig1", action: .replied)
+        #expect(!feedback)
+        #expect(submitted == 1)
+        #expect(await server.requests.map(\.path) == Array(repeating: "/v2/proactive/signals/sig1/feedback", count: 2))
+    }
+
+    @Test @MainActor func dismissingReplacedSheetKeepsNewSignalPending() {
+        let store = CloudProactiveStore(clientProvider: { nil }, localEventsProvider: { [] })
+        store.pendingSignalId = "second"
+        store.dismissSignal("first")
+        #expect(store.pendingSignalId == "second")
+        store.dismissSignal("second")
+        #expect(store.pendingSignalId == nil)
+    }
+
+    @Test @MainActor func proactiveCardsDoNotCreateWatchActivitiesOrHubTasks() throws {
+        let suite = "CloudProactiveRemoteProjections-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let gateway = MacGatewayStore(defaults: defaults)
+        let soulStore = AgentSoulStore(userDefaults: defaults)
+        gateway.boundSoulStore = soulStore
+        gateway.configureForTesting(
+            connection: .init(gatewayId: "test", name: "Cloud", addrs: ["cloud.example"], port: 443,
+                              fingerprint: "fp", deviceId: "device"),
+            client: makeClient(server: MockProactiveServer { _, _, _ in (404, "{}") })
+        )
+        let event = MacGatewayCloudDialogueEvent(
+            seq: 1, id: "proactive:sig1", kind: .proactiveMessage, role: "assistant", text: "待回复的提醒", topicId: "proactive:sig1"
+        )
+        gateway.ingestCloudDialogueEventsPage(.init(items: [event], nextCursor: 1), requestedAfter: 0)
+        #expect(gateway.cloudDialogueCursor == 1)
+        #expect(gateway.cloudDialogueVisibleEvents == [event])
+        let watch = MacGatewayWatchExecutionAdapter(store: gateway).currentProjection()
+        #expect(watch.isPaired)
+        #expect(watch.primaryTask == nil)
+        #expect(watch.recentActivities.isEmpty)
+
+        let tasks = IOSAdvancedTaskStore(userDefaults: defaults)
+        let groups = AmberUnifiedTaskBuilder.buildTasks(
+            gateway: gateway, subAgentStore: IOSSubAgentActivityStore(tasks: tasks, defaults: defaults),
+            taskStore: tasks, wakeStore: IOSWakeTaskStore(fileURL: URL.temporaryDirectory.appending(path: suite)),
+            hubStore: AmberHubStore(defaults: defaults)
+        )
+        #expect(groups.isEmpty)
+    }
+
     @Test @MainActor func storeManagesSummaryFeedbackMonitorsWebhooksRestraintUnmuteAndAct() async throws {
         let server = MockProactiveServer { method, path, body in
             switch (method, path) {
@@ -1099,7 +1190,8 @@ struct MacGatewayCloudProactiveTests {
     @Test func buildGitHubReleaseFeedURLStrictlyEnforcesSecurityBoundaries() {
         let validCases: [(String, String)] = [
             ("owner/repo", "https://github.com/owner/repo/releases.atom"),
-            ("  org.name/repo_1-2 \n", "https://github.com/org.name/repo_1-2/releases.atom"),
+            ("  org-name/repo_1-2 \n", "https://github.com/org-name/repo_1-2/releases.atom"),
+            ("dev_company/repo", "https://github.com/dev_company/repo/releases.atom"),
             ("apple/swift", "https://github.com/apple/swift/releases.atom"),
             ("my-org/.github", "https://github.com/my-org/.github/releases.atom"),
         ]
@@ -1122,6 +1214,11 @@ struct MacGatewayCloudProactiveTests {
             "./repo",
             "owner/.",
             "a..b/repo",
+            "org.name/repo",
+            "-org/repo",
+            "org-/repo",
+            "my--org/repo",
+            String(repeating: "a", count: 40) + "/repo",
             "owner/a..b",
             "a/b?x=1",
             "a/b#frag",
@@ -1176,8 +1273,8 @@ struct MacGatewayCloudProactiveTests {
                   "monitors": [
                     {
                       "id": "mon_gh_1",
-                      "title": "org.name/repo_1-2 Releases",
-                      "url": "https://github.com/org.name/repo_1-2/releases.atom",
+                      "title": "org-name/repo_1-2 Releases",
+                      "url": "https://github.com/org-name/repo_1-2/releases.atom",
                       "enabled": true,
                       "deliveryMode": "digest"
                     }
@@ -1207,19 +1304,19 @@ struct MacGatewayCloudProactiveTests {
         #expect(await server.requests.isEmpty)
 
         // Valid slug posts to /v2/proactive/monitors with default deliveryMode="digest" and refreshes summary.
-        let created = await store.addGitHubReleaseMonitor(repoSlug: "  org.name/repo_1-2  ")
+        let created = await store.addGitHubReleaseMonitor(repoSlug: "  org-name/repo_1-2  ")
         #expect(created == true)
         #expect(store.lastError == nil)
         #expect(store.summary?.monitors.count == 1)
-        #expect(store.summary?.monitors.first?.url == "https://github.com/org.name/repo_1-2/releases.atom")
+        #expect(store.summary?.monitors.first?.url == "https://github.com/org-name/repo_1-2/releases.atom")
         #expect(store.summary?.monitors.first?.deliveryMode == "digest")
 
         let requests = await server.requests
         let postReq = try #require(requests.first(where: { $0.method == "POST" && $0.path == "/v2/proactive/monitors" }))
         let postData = try #require(postReq.body?.data(using: .utf8))
         let postObj = try #require(JSONSerialization.jsonObject(with: postData) as? [String: Any])
-        #expect(postObj["title"] as? String == "org.name/repo_1-2 Releases")
-        #expect(postObj["url"] as? String == "https://github.com/org.name/repo_1-2/releases.atom")
+        #expect(postObj["title"] as? String == "org-name/repo_1-2 Releases")
+        #expect(postObj["url"] as? String == "https://github.com/org-name/repo_1-2/releases.atom")
         #expect(postObj["deliveryMode"] as? String == "digest")
         #expect(requests.contains { $0.method == "GET" && $0.path == "/v2/proactive/summary" })
 

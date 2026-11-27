@@ -156,6 +156,7 @@ object CloudConfigLoader {
         KEY_TELEGRAM_BOT_TOKEN to ENV_TELEGRAM_BOT_TOKEN,
         KEY_FEISHU_APP_SECRET to ENV_FEISHU_APP_SECRET,
         KEY_FEISHU_ENCRYPT_KEY to ENV_FEISHU_ENCRYPT_KEY,
+        FeishuChannel.CONFIG_KEY_VERIFICATION_TOKEN to FeishuChannel.ENV_VERIFICATION_TOKEN,
         KEY_FEISHU_WEBHOOK_SECRET to ENV_FEISHU_WEBHOOK_SECRET,
         KEY_FEISHU_CALDAV_PASSWORD to ENV_FEISHU_CALDAV_PASSWORD,
         KEY_PROACTIVE_L2_API_KEY to ENV_PROACTIVE_L2_API_KEY,
@@ -323,7 +324,7 @@ object CloudConfigLoader {
         logger: RedactingChannelLogger = RedactingChannelLogger(),
         deviceLookup: (deviceId: String) -> PairedDevice?,
         onInvalidToken: (deviceId: String, pushToken: String, reason: String) -> Unit = { _, _, _ -> },
-        httpClient: HttpClient = ApnsPushSender.defaultHttpClient(),
+        httpClient: HttpClient? = null,
         baseUrlOverride: String? = null,
     ): ApnsPushSender? {
         val keyId = config.apnsKeyId.trim()
@@ -340,7 +341,7 @@ object CloudConfigLoader {
             ?: return null
 
         logger.registerLiteral(pem)
-        return runCatching {
+        return try {
             ApnsPushSender(
                 config = ApnsConfig(
                     keyId = keyId,
@@ -353,7 +354,10 @@ object CloudConfigLoader {
                 httpClient = httpClient,
                 baseUrlOverride = baseUrlOverride,
             )
-        }.getOrNull()
+        } catch (_: IllegalArgumentException) {
+            logger.warn("APNs 配置无效，云端推送已停用；请检查签名密钥与配置。")
+            null
+        }
     }
 
     private fun parseConfigFile(configFile: File?): Map<String, String> {

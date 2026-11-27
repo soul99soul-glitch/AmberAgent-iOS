@@ -200,6 +200,12 @@ interface TriggerSource {
     suspend fun pollAll(nowEpochMs: Long = System.currentTimeMillis()): List<ProactiveTriggerSignal> =
         listOfNotNull(poll())
 
+    /** A cancellable source can claim the item immediately before processing its poll snapshot. */
+    suspend fun processIfCurrent(
+        signal: ProactiveTriggerSignal,
+        process: suspend () -> ProactiveRunResult,
+    ): ProactiveRunResult? = process()
+
     /**
      * 单个信号在流水线处理完成后的回调（供触发源更新退避周期、状态摘要等）。
      */

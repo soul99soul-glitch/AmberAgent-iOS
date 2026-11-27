@@ -52,7 +52,9 @@ class ModelRouterBrain(
         val ownerPrincipal = input.events.firstOrNull {
             it.kind == "user_message" && it.sourceMessageId in input.ownerAuthorizedMessageIds
         }?.let { CloudPrincipal.OwnerUser(it.senderId, it.channelId) }
-        val tools = registry.declaredTools(ExecutionScope.MAIN_AGENT, ownerPrincipal)
+        val ownerOnlyTurn = input.events.all { it.kind == "user_message" && it.sourceMessageId in input.ownerAuthorizedMessageIds }
+        fun availableInTurn(name: String) = ownerOnlyTurn || name !in CloudRouter.WAKEUP_TOOL_NAMES
+        val tools = registry.declaredTools(ExecutionScope.MAIN_AGENT, ownerPrincipal).filter { availableInTurn(it.name) }
         val history = contextMessages(input)
         val messages = history.toMutableList()
         if (messages.isEmpty()) messages += UIMessage.system(systemPrompt)
@@ -100,9 +102,9 @@ class ModelRouterBrain(
                     "cancel_work_item" -> args["work_item_id"]?.jsonPrimitive?.contentOrNull?.let {cancel+=it}
                     else -> needsFollowup = true
                 }
-                val out = if (call.toolName in CloudRouter.ROUTER_TOOL_NAMES) {
+                val out = if (call.toolName in CloudRouter.ROUTER_TOOL_NAMES && availableInTurn(call.toolName)) {
                     runCatching {
-                        withContext(RouterTurnAuthContext(input.ownerAuthorizedMessageIds.isNotEmpty())) {
+                        withContext(RouterTurnAuthContext(ownerPrincipal != null, input.events.first().conversationId)) {
                             registry.executeGate(call.toolName, args, ExecutionScope.MAIN_AGENT, principal = ownerPrincipal).toString()
                         }
                     }.getOrElse { "{\"ok\":false}" }
@@ -122,6 +124,7 @@ class ModelRouterBrain(
     companion object {
         const val DEFAULT_ROUTER_SYSTEM_PROMPT = """你是云端主对话协调层（请全程使用 <agent-soul> 设定的身份、称呼与口吻和用户自然交流）。你负责对话交流、更新形象人设、派单与汇报：
 - 当用户要求更换人设、性格、称呼或说话口吻时，直接调用 agent_soul_update 更新全端共享形象人设，不要派给后台 Worker；
+- 主人要求到点提醒、查看或取消提醒时，直接使用 proactive_wakeup_create、proactive_wakeup_list 或 proactive_wakeup_cancel；
 - 其他需要实际执行的工作一律用 dispatch_work 派给后台 Worker，不要自己伪造执行结果；
 - 回复简短（不超过 100 词），保持当前形象人设口吻；
 - 简单问题直接给实质答案，不先生成通用确认；后台任务有状态反馈时不重复确认。阶段交流只报告新发现、阶段变化、阻塞或需要用户决定的事项，不重复说“继续查”“还在看”；

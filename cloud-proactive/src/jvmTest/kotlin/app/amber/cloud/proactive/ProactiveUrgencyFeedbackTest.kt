@@ -27,6 +27,32 @@ class ProactiveUrgencyFeedbackTest {
             .toEpochMilli()
 
     @Test
+    fun `a failed feedback write is retryable and an older opened card leaves the current card pending`() {
+        val dir = Files.createTempDirectory("proactive-gate-write").toFile()
+        val file = File(dir, "restraint-gate.json")
+        val gate = ProactiveRestraintGate(
+            quietHours = QuietHoursConfig(enabled = false),
+            budgetConfig = InterruptionBudgetConfig(topicCooldownMs = 0, consecutiveIgnoresForDecay = 1),
+            persistenceFile = file,
+        )
+        val now = epochMsAt(2026, 11, 26, 12, 0)
+        Files.createDirectory(file.toPath())
+        assertFailsWith<java.io.IOException> {
+            gate.applyFeedback("s", "topic", ProactiveFeedbackAction.MUTE_TOPIC, now)
+        }
+        assertTrue(gate.statusSnapshot(now).mutedTopics.isEmpty())
+        Files.delete(file.toPath())
+        assertTrue(gate.applyFeedback("s", "topic", ProactiveFeedbackAction.MUTE_TOPIC, now).applied)
+        gate.unmuteTopic("topic")
+
+        fun push(id: String, score: Int) = gate.evaluateAndConsume("topic", id, score, true, now, signalId = id)
+        assertIs<RestraintVerdict.AllowedToPush>(push("old", 20))
+        assertIs<RestraintVerdict.AllowedToPush>(push("current", 20))
+        gate.applyFeedback("old", "topic", ProactiveFeedbackAction.OPENED, now)
+        assertIs<RestraintVerdict.DroppedLowScore>(push("next", 12))
+    }
+
+    @Test
     fun `urgent userRequested penetrates normal budget cooldown quiet hours and degrades after 10 daily pushes`() {
         val gate = ProactiveRestraintGate(
             quietHours = QuietHoursConfig(enabled = true),

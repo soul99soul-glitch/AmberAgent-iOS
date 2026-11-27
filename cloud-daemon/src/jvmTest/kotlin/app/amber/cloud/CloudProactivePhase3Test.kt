@@ -459,6 +459,7 @@ class CloudProactivePhase3Test {
             assertEquals(0, snapDay1.pushesToday, "digest 模式不得扣减普通日预算")
             assertEquals(1, snapDay1.bufferedPulseCount)
             assertEquals("digest", kernel.proactiveMonitorStore.get(monitor.id)?.lastOutcome)
+            assertEquals("digest", kernel.proactiveRunHistoryStore.recent().single { it.signalId == suppressed.l1Delta.signalId }.outcome)
 
             // 第 2 阶段：次日 08:35 晨报窗口 -> Watchtower 返回 304 (L1 dropped, 0 L2)，DailyPulse 零 L2 汇总晨报并投递
             val l2BeforeMorning = l2Calls.get()
@@ -482,6 +483,23 @@ class CloudProactivePhase3Test {
             assertEquals(1, connector.sent.size)
             assertEquals(1, capturedPushes.size)
             assertEquals("brief_2026-11-27", capturedPushes.single().signalId)
+
+            val addTime = day2Morning + 60_000L
+            val immediate = kernel.proactiveMonitorStore.create(
+                title = "即时发布提醒", url = monitor.url, intervalMinutes = 60, nowMs = addTime,
+            )
+            val firstImmediate = kernel.runProactiveCycle(addTime).single()
+            assertEquals("watchtower:${immediate.id}", assertIs<ProactiveRunResult.PushedAtL3>(firstImmediate).l1Delta.topicKey)
+
+            pageBody.set("<feed><title>v3.3.0 Released</title></feed>")
+            pageEtag.set("\"rel-330\"")
+            val changed = kernel.runProactiveCycle(addTime + 3 * 3_600_000L)
+            val buffered = changed.filterIsInstance<ProactiveRunResult.SuppressedAtGate>().single()
+            val sent = changed.filterIsInstance<ProactiveRunResult.PushedAtL3>().single()
+            assertEquals("watchtower:${monitor.id}", buffered.l1Delta.topicKey)
+            assertEquals("digest", kernel.proactiveMonitorStore.get(monitor.id)?.lastOutcome)
+            assertEquals("watchtower:${immediate.id}", sent.l1Delta.topicKey)
+            assertEquals("pushed", kernel.proactiveMonitorStore.get(immediate.id)?.lastOutcome)
         } finally {
             mockHttp.close()
             closeKernel(kernel)

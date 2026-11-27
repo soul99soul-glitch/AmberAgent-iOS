@@ -26,13 +26,20 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import java.security.MessageDigest
+import java.util.Base64
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * 飞书入站 Webhook 处理响应。
@@ -76,6 +83,8 @@ class FeishuChannel(
         const val ENV_APP_SECRET = "AMBER_FEISHU_APP_SECRET"
         const val CONFIG_KEY_ENCRYPT_KEY = "feishu.encrypt_key"
         const val ENV_ENCRYPT_KEY = "AMBER_FEISHU_ENCRYPT_KEY"
+        const val CONFIG_KEY_VERIFICATION_TOKEN = "feishu.verification_token"
+        const val ENV_VERIFICATION_TOKEN = "AMBER_FEISHU_VERIFICATION_TOKEN"
         const val CONFIG_KEY_WEBHOOK_SECRET = "feishu.webhook_secret"
         const val ENV_WEBHOOK_SECRET = "AMBER_FEISHU_WEBHOOK_SECRET"
 
@@ -169,6 +178,7 @@ class FeishuChannel(
 
     private val appSecret: SecretValue? = secretLoader.resolveOptionalSecret(CONFIG_KEY_APP_SECRET, ENV_APP_SECRET)
     private val encryptKey: SecretValue? = secretLoader.resolveOptionalSecret(CONFIG_KEY_ENCRYPT_KEY, ENV_ENCRYPT_KEY)
+    private val verificationToken = secretLoader.resolveOptionalSecret(CONFIG_KEY_VERIFICATION_TOKEN, ENV_VERIFICATION_TOKEN)
     private val webhookSecret: SecretValue? = secretLoader.resolveOptionalSecret(CONFIG_KEY_WEBHOOK_SECRET, ENV_WEBHOOK_SECRET)
 
     private val tokenMutex = Mutex()
@@ -215,13 +225,19 @@ class FeishuChannel(
         onInboundOverride: (suspend (InboundMessage) -> Unit)? = null,
     ): FeishuWebhookResponse {
         val normalizedHeaders = headers.entries.associate { it.key.lowercase() to it.value }
-        val bodyObj = runCatching { json.parseToJsonElement(rawBody).jsonObject }.getOrElse {
+        val envelope = runCatching { json.parseToJsonElement(rawBody).jsonObject }.getOrElse {
             return FeishuWebhookResponse(400, """{"ok":false,"error":"invalid_json"}""")
         }
 
-        // 1. 签名校验
-        val configuredEncryptKey = encryptKey
-        if (configuredEncryptKey != null && !configuredEncryptKey.isWiped) {
+        val configuredEncryptKey = encryptKey?.takeUnless { it.isWiped }
+        val encrypted = (envelope["encrypt"] as? JsonPrimitive)?.contentOrNull
+        // Feishu's initial encrypted URL challenge can omit the signature. Only this
+        // branch may use its Verification Token and it returns before event dispatch.
+        val unsignedHandshakeToken = verificationToken?.takeIf {
+            !it.isWiped && configuredEncryptKey != null && encrypted != null && "x-lark-signature" !in normalizedHeaders
+        }
+        val unauthorized = FeishuWebhookResponse(401, """{"ok":false,"error":"invalid_signature"}""")
+        if (configuredEncryptKey != null && unsignedHandshakeToken == null) {
             val timestamp = normalizedHeaders["x-lark-request-timestamp"] ?: ""
             val nonce = normalizedHeaders["x-lark-request-nonce"] ?: ""
             val signature = normalizedHeaders["x-lark-signature"] ?: ""
@@ -233,9 +249,22 @@ class FeishuChannel(
                 expectedSignatureHex = signature,
             )
             if (!valid) {
-                logger.warn("飞书 Webhook 事件签名校验失败: signature=$signature")
-                return FeishuWebhookResponse(401, """{"ok":false,"error":"invalid_signature"}""")
+                logger.warn("飞书 Webhook 事件签名校验失败")
+                return unauthorized
             }
+        }
+
+        val bodyObj = if (encrypted == null) envelope else {
+            val key = configuredEncryptKey ?: return unauthorized
+            runCatching { decryptEvent(encrypted, key) }.getOrElse { return unauthorized }
+        }
+        if (unsignedHandshakeToken != null) {
+            val token = (bodyObj["token"] as? JsonPrimitive)?.contentOrNull ?: return unauthorized
+            val challenge = (bodyObj["challenge"] as? JsonPrimitive)?.contentOrNull ?: return unauthorized
+            if (bodyObj["type"] != JsonPrimitive("url_verification") || challenge.isBlank() ||
+                !MessageDigest.isEqual(unsignedHandshakeToken.expose().toByteArray(), token.toByteArray())
+            ) return unauthorized
+            return FeishuWebhookResponse(200, buildJsonObject { put("challenge", challenge) }.toString())
         }
 
         val configuredWebhookSecret = webhookSecret
@@ -268,16 +297,23 @@ class FeishuChannel(
             ?: bodyObj["uuid"]?.jsonPrimitive?.content
             ?: ""
 
-        if (eventId.isNotBlank() && !deduplicator.markIfFirstSeen(id, "event:$eventId")) {
-            return FeishuWebhookResponse(200, """{"ok":true,"duplicate":true}""")
-        }
-
         val parsedMessage = when (eventType) {
-            "im.message.receive_v1" -> parseImMessageEvent(bodyObj, eventId)
+            "im.message.receive_v1" -> parseImMessageEvent(bodyObj, eventId, signed = configuredEncryptKey != null)
             "card.action.trigger" -> parseCardActionEvent(bodyObj, eventId)
             else -> null
         } ?: return FeishuWebhookResponse(200, """{"ok":true,"ignored":true}""")
 
+        if (parsedMessage.isProactiveCardCallback()) {
+            if (configuredEncryptKey == null) {
+                return FeishuWebhookResponse(401, """{"ok":false,"error":"event_signature_required"}""")
+            }
+            if (parsedMessage.scope != ConversationScope.DIRECT) {
+                return FeishuWebhookResponse(200, """{"ok":true,"ignored":true}""")
+            }
+        }
+        if (eventId.isNotBlank() && !deduplicator.markIfFirstSeen(id, "event:$eventId")) {
+            return FeishuWebhookResponse(200, """{"ok":true,"duplicate":true}""")
+        }
         if (!deduplicator.markIfFirstSeen(id, "msg:${parsedMessage.id}")) {
             return FeishuWebhookResponse(200, """{"ok":true,"duplicate":true}""")
         }
@@ -332,6 +368,16 @@ class FeishuChannel(
                 FeishuWebhookResponse(200, """{"ok":true,"duplicate":true}""")
             }
         }
+    }
+
+    private fun decryptEvent(encrypted: String, encryptKey: SecretValue): JsonObject {
+        val bytes = Base64.getDecoder().decode(encrypted)
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        val key = MessageDigest.getInstance("SHA-256").digest(encryptKey.expose().toByteArray())
+        val iv = IvParameterSpec(bytes, 0, cipher.blockSize)
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), iv)
+        val plaintext = cipher.doFinal(bytes, cipher.blockSize, bytes.size - cipher.blockSize)
+        return json.parseToJsonElement(plaintext.decodeToString()).jsonObject
     }
 
     override suspend fun send(message: OutboundMessage): Result<String> {
@@ -456,6 +502,12 @@ class FeishuChannel(
         val dataObj = respObj?.get("data")?.jsonObject
         val msgId = dataObj?.get("message_id")?.jsonPrimitive?.content ?: ""
         val ok = response.status.isSuccess() && code == 0
+        val directChatId = dataObj?.get("chat_id")?.jsonPrimitive?.contentOrNull
+        if (ok && receiveIdType == "open_id" && directChatId?.startsWith("oc_") == true &&
+            ownerBinding.isOwner(id, receiveId)
+        ) {
+            ownerBinding.bindOwnerDirectly(id, receiveId, directChatId)
+        }
         logger.info("飞书 OpenAPI 发送消息完成: receiveId=$receiveId, msgType=$msgType, ok=$ok, messageId=$msgId")
         return OutboundReceipt(
             ok = ok,
@@ -498,7 +550,7 @@ class FeishuChannel(
         }
     }
 
-    private fun parseImMessageEvent(root: JsonObject, fallbackEventId: String): InboundMessage? {
+    private fun parseImMessageEvent(root: JsonObject, fallbackEventId: String, signed: Boolean): InboundMessage? {
         val eventObj = root["event"]?.jsonObject ?: return null
         val senderObj = eventObj["sender"]?.jsonObject
         val senderIdObj = senderObj?.get("sender_id")?.jsonObject
@@ -508,9 +560,15 @@ class FeishuChannel(
 
         val messageObj = eventObj["message"]?.jsonObject ?: return null
         val messageId = messageObj["message_id"]?.jsonPrimitive?.content ?: fallbackEventId.ifBlank { return null }
-        val chatId = messageObj["chat_id"]?.jsonPrimitive?.content ?: openId
-        val chatTypeStr = messageObj["chat_type"]?.jsonPrimitive?.content ?: "p2p"
+        val chatTypeStr = messageObj["chat_type"]?.jsonPrimitive?.contentOrNull
         val scope = if (chatTypeStr == "p2p") ConversationScope.DIRECT else ConversationScope.GROUP
+        // An unsigned p2p event may still receive a reply via the owner's open_id.
+        // Only the platform may establish an oc_ target for subsequent private callbacks.
+        val chatId = if (scope == ConversationScope.DIRECT && !signed) {
+            openId
+        } else {
+            messageObj["chat_id"]?.jsonPrimitive?.contentOrNull ?: openId
+        }
         val createTimeMs = messageObj["create_time"]?.jsonPrimitive?.longOrNull ?: clockMs()
         val rootId = messageObj["root_id"]?.jsonPrimitive?.content
 
@@ -540,14 +598,14 @@ class FeishuChannel(
             ?: eventObj["open_id"]?.jsonPrimitive?.content
             ?: return null
         val contextObj = eventObj["context"]?.jsonObject
-        val chatId = contextObj?.get("open_chat_id")?.jsonPrimitive?.content
-            ?: eventObj["open_chat_id"]?.jsonPrimitive?.content
-            ?: openId
+        val chatId = contextObj?.get("open_chat_id")?.jsonPrimitive?.contentOrNull
+            ?: eventObj["open_chat_id"]?.jsonPrimitive?.contentOrNull.orEmpty()
         val actionObj = eventObj["action"]?.jsonObject ?: return null
-        val valueObj = actionObj["value"]?.jsonObject
-        val actionString = valueObj?.get("action")?.jsonPrimitive?.content
-            ?: actionObj["value"]?.jsonPrimitive?.content
-            ?: ""
+        val actionString = when (val value = actionObj["value"]) {
+            is JsonObject -> value["action"]?.jsonPrimitive?.contentOrNull
+            is JsonPrimitive -> value.contentOrNull
+            else -> null
+        } ?: return null
 
         // 强制通过 ImApprovalGate 解析审批动作：任何批准请求在 IM 中一律转为 DENIED (allow = false)
         val approvalDecision = ImApprovalGate.resolveCallbackDecision(actionString)
@@ -556,10 +614,10 @@ class FeishuChannel(
         return InboundMessage(
             messageId = msgId,
             channel = kind,
-            chatId = chatId,
+            chatId = chatId.ifBlank { openId },
             senderId = openId,
             senderRole = SenderRole.GUEST,
-            scope = ConversationScope.DIRECT,
+            scope = if (ownerBinding.isFeishuOwnerDirectChat(openId, chatId)) ConversationScope.DIRECT else ConversationScope.GROUP,
             text = actionString,
             receivedAtEpochSeconds = clockMs() / 1000L,
             tainted = true,

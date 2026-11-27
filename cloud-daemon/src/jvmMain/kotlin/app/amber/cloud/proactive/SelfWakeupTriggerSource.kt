@@ -16,9 +16,8 @@ class SelfWakeupTriggerSource(
     override val category: TriggerCategory = TriggerCategory.CLOCK_CRON
 
     override suspend fun pollAll(nowEpochMs: Long): List<ProactiveTriggerSignal> {
-        val partition = wakeupStore.findDueAndExpireOverdue(nowEpochMs)
-        for (expired in partition.expired) {
-            runCatching { onExpired(expired, nowEpochMs) }
+        val partition = wakeupStore.findDueAndExpireOverdue(nowEpochMs) { expired ->
+            onExpired(expired, nowEpochMs)
         }
         return partition.due.map { record ->
             ProactiveTriggerSignal.SelfWakeupSignal(
@@ -33,6 +32,19 @@ class SelfWakeupTriggerSource(
                 topicKey = "wakeup:${record.id}",
                 timestampEpochMs = nowEpochMs,
             )
+        }
+    }
+
+    override suspend fun processIfCurrent(
+        signal: ProactiveTriggerSignal,
+        process: suspend () -> ProactiveRunResult,
+    ): ProactiveRunResult? {
+        val wakeup = signal as ProactiveTriggerSignal.SelfWakeupSignal
+        if (!wakeupStore.claimPending(wakeup.wakeupId)) return null
+        return try {
+            process()
+        } finally {
+            wakeupStore.releaseClaim(wakeup.wakeupId)
         }
     }
 

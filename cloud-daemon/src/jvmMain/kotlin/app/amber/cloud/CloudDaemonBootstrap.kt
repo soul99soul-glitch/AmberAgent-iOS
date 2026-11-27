@@ -67,9 +67,6 @@ internal fun loadConfiguredDaemon(
     )
     if (apnsSender != null) {
         kernel.gatewayState.pushSender = apnsSender
-        kernel.gatewayState.pushConfigured = true
-    } else {
-        kernel.gatewayState.pushConfigured = false
     }
     return ConfiguredCloudDaemon(config, kernel)
 }

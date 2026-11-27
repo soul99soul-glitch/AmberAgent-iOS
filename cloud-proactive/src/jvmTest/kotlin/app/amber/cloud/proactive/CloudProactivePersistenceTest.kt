@@ -81,6 +81,9 @@ class CloudProactivePersistenceTest {
         // Second instance simulates daemon restart
         val filter2 = L1DeterministicFilter(persistenceFile = l1File)
         assertEquals("\"v1\"", filter2.getWatchtowerSnapshot("https://example.com/status")?.etag)
+        val url = "https://example.com/status"
+        assertEquals("\"v1\"", filter2.getWatchtowerSnapshot(url, "existing", migrateLegacyUrlSnapshot = true)?.etag)
+        assertEquals(null, filter2.getWatchtowerSnapshot(url, "fresh"))
 
         val wtUnchanged = filter2.evaluate(
             ProactiveTriggerSignal.WatchtowerPageSignal(
@@ -94,6 +97,10 @@ class CloudProactivePersistenceTest {
             )
         )
         assertIs<L1Outcome.DroppedUnchanged>(wtUnchanged)
+        assertEquals("\"v2\"", filter2.getWatchtowerSnapshot(url)?.etag)
+        val migrated = L1DeterministicFilter(persistenceFile = l1File)
+        assertEquals("\"v1\"", migrated.getWatchtowerSnapshot(url, "existing")?.etag)
+        assertEquals(null, migrated.getWatchtowerSnapshot("https://example.com/new", "existing"))
 
         val prepDup = filter2.evaluate(
             ProactiveTriggerSignal.UpcomingEventPrepSignal(

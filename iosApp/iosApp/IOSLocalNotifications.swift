@@ -675,11 +675,9 @@ enum CloudProactiveNotification {
     }
 
     static func signalId(from userInfo: [AnyHashable: Any]) -> String? {
-        if let rawSignalId = userInfo[signalIdKey] as? String {
-            let trimmed = rawSignalId.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                return IOSAppDeepLink.isSafeProactiveSignalID(trimmed) ? trimmed : nil
-            }
+        if let value = userInfo[signalIdKey] {
+            guard let id = value as? String, IOSAppDeepLink.isSafeProactiveSignalID(id) else { return nil }
+            return id
         }
         if let rawDeepLink = userInfo[deepLinkKey] as? String,
            let url = URL(string: rawDeepLink),
@@ -735,13 +733,17 @@ enum CloudProactiveNotification {
 /// The gateway only attaches this category (and `toolCallId`) to non-high-risk calls; the Mac checks again.
 enum MacGatewayApprovalNotification {
     static let category = "amber.gateway.approval"
+    static let cloudCategory = "amber.cloud.approval"
     static let approveAction = "amber.gateway.approve"
     static let denyAction = "amber.gateway.deny"
+    static let openCloudApprovalAction = "amber.cloud.review"
+    static let denyCloudAction = "amber.cloud.deny"
 
     struct Decision: Equatable {
         var sessionKey: String
         var toolCallId: String
         var allow: Bool
+        var role: MacGatewayEndpointRole?
     }
 
     static var categories: Set<UNNotificationCategory> {
@@ -749,39 +751,56 @@ enum MacGatewayApprovalNotification {
                                            options: [.authenticationRequired])
         let deny = UNNotificationAction(identifier: denyAction, title: IOSAppLocalization.string("拒绝", defaultValue: "拒绝"),
                                         options: [.destructive])
-        return [UNNotificationCategory(identifier: category, actions: [deny, approve], intentIdentifiers: [])]
+        let review = UNNotificationAction(identifier: openCloudApprovalAction,
+                                          title: IOSAppLocalization.string("前往批准", defaultValue: "前往批准"),
+                                          options: [.foreground])
+        let cloudDeny = UNNotificationAction(identifier: denyCloudAction, title: deny.title, options: [.destructive])
+        return [
+            UNNotificationCategory(identifier: category, actions: [deny, approve], intentIdentifiers: []),
+            UNNotificationCategory(identifier: cloudCategory, actions: [cloudDeny, review], intentIdentifiers: [])
+        ]
     }
 
     static func decision(actionIdentifier: String, userInfo: [AnyHashable: Any]) -> Decision? {
         let allow: Bool
         switch actionIdentifier {
         case approveAction: allow = true
-        case denyAction: allow = false
+        case denyAction, denyCloudAction: allow = false
         default: return nil
         }
-        if allow, (userInfo["highRisk"] as? Bool) == true { return nil }
         guard let key = userInfo["sessionKey"] as? String, key.hasPrefix("amber:"),
               let call = userInfo["toolCallId"] as? String, !call.isEmpty else { return nil }
-        return Decision(sessionKey: key, toolCallId: call, allow: allow)
+        let role: MacGatewayEndpointRole? = actionIdentifier == denyCloudAction ? .cloud : endpointRole(userInfo)
+        if allow, role == .cloud || userInfo["highRisk"] as? Bool == true { return nil }
+        return Decision(sessionKey: key, toolCallId: call, allow: allow, role: role)
     }
 
-    static func highRiskOpenAppURL(actionIdentifier: String, userInfo: [AnyHashable: Any]) -> URL? {
-        guard actionIdentifier == approveAction || actionIdentifier == UNNotificationDefaultActionIdentifier,
-              (userInfo["highRisk"] as? Bool) == true else { return nil }
-        if let value = userInfo["deepLink"] as? String,
-           let url = URL(string: value),
-           IOSAppDeepLink.parse(url) != nil {
-            return url
+    private static func endpointRole(_ userInfo: [AnyHashable: Any]) -> MacGatewayEndpointRole? {
+        if let value = userInfo["deepLink"] as? String, let url = URL(string: value) {
+            switch IOSAppDeepLink.parse(url) {
+            case .gatewayTasks(let role): return role
+            case .macTasks: return .mac
+            default: break
+            }
         }
-        return URL(string: "amber://tasks")
+        return (userInfo["sessionKey"] as? String)?.hasPrefix("amber:wi:") == true ? .cloud : nil
+    }
+
+    static func openAppURL(actionIdentifier: String, userInfo: [AnyHashable: Any]) -> URL? {
+        guard let key = userInfo["sessionKey"] as? String, key.hasPrefix("amber:") else { return nil }
+        if actionIdentifier == openCloudApprovalAction { return IOSAppDeepLink.url(for: .gatewayTasks(.cloud)) }
+        let role = endpointRole(userInfo)
+        guard actionIdentifier == UNNotificationDefaultActionIdentifier ||
+                (actionIdentifier == approveAction && (role == .cloud || userInfo["highRisk"] as? Bool == true)) else { return nil }
+        if let role {
+            return IOSAppDeepLink.url(for: .gatewayTasks(role))
+        }
+        return IOSAppDeepLink.url(for: .macTasks)
     }
 }
 
 @MainActor
 final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUserNotificationCenterDelegate {
-    private static let proactiveDeepLinkDedupeWindow: TimeInterval = 2.0
-    private var lastSubmittedProactiveDeepLink: (url: String, at: Date)?
-
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
@@ -828,47 +847,16 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
         )
     }
 
-    private static func ensureCloudGatewayRestored() async {
-        // Touching MacGatewayStore.shared triggers synchronous credential/connection restoration on MainActor.
-        let cloudSlot = MacGatewayStore.shared.slot(for: .cloud)
-        if cloudSlot.client == nil {
-            await Task.yield()
-        }
-    }
-
-    @MainActor
-    private final class BackgroundTaskLease {
-        private var identifier: UIBackgroundTaskIdentifier = .invalid
-        private let endTask: @MainActor (UIBackgroundTaskIdentifier) -> Void
-
-        init(
-            beginTask: @MainActor (@escaping @MainActor () -> Void) -> UIBackgroundTaskIdentifier,
-            endTask: @escaping @MainActor (UIBackgroundTaskIdentifier) -> Void
-        ) {
-            self.endTask = endTask
-            self.identifier = beginTask { [weak self] in
-                self?.end()
-            }
-        }
-
-        func end() {
-            guard identifier != .invalid else { return }
-            let active = identifier
-            identifier = .invalid
-            endTask(active)
-        }
-    }
-
     @discardableResult
     func handleCloudProactiveNotificationResponse(
         categoryIdentifier: String,
         actionIdentifier: String,
         userInfo: [AnyHashable: Any],
         submitDeepLink: @MainActor (URL) -> Void = { IOSDeepLinkInbox.shared.submit($0) },
-        ensureCloudGatewayReady: @MainActor () async -> Void = {
-            await AmberAppDelegate.ensureCloudGatewayRestored()
+        ensureCloudGatewayReady: @escaping @MainActor () -> Void = {
+            MacGatewayStore.shared.restorePairingIfNeeded()
         },
-        sendProactiveFeedback: @MainActor (String, CloudProactiveFeedbackAction) async -> Bool = { signalId, action in
+        sendProactiveFeedback: @escaping @MainActor (String, CloudProactiveFeedbackAction) async -> Bool = { signalId, action in
             await CloudProactiveStore.shared.sendFeedback(signalId: signalId, action: action)
         },
         deliverFallbackNotification: @MainActor (String, String, String, [AnyHashable: Any]) async -> Void = { identifier, title, body, fallbackUserInfo in
@@ -890,7 +878,7 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
                 UIApplication.shared.endBackgroundTask(identifier)
             }
         },
-        now: @MainActor () -> Date = Date.init
+        feedbackBudget: Duration = .seconds(10)
     ) async -> Bool {
         guard categoryIdentifier == CloudProactiveNotification.category else { return false }
         guard let resolved = CloudProactiveNotification.resolveAction(
@@ -903,25 +891,25 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
 
         switch resolved {
         case .open(_, let deepLink):
-            let timestamp = now()
-            if let last = lastSubmittedProactiveDeepLink,
-               last.url == deepLink.absoluteString,
-               timestamp.timeIntervalSince(last.at) < Self.proactiveDeepLinkDedupeWindow {
-                return true
-            }
-            lastSubmittedProactiveDeepLink = (deepLink.absoluteString, timestamp)
             submitDeepLink(deepLink)
             return true
 
         case .feedback(let signalId, let action):
-            let lease = BackgroundTaskLease(
-                beginTask: beginBackgroundTask,
-                endTask: endBackgroundTask
-            )
-            defer { lease.end() }
-
-            await ensureCloudGatewayReady()
-            let succeeded = await sendProactiveFeedback(signalId, action)
+            let feedback = Task { @MainActor in
+                guard !Task.isCancelled else { return false }
+                ensureCloudGatewayReady()
+                return await sendProactiveFeedback(signalId, action)
+            }
+            let identifier = beginBackgroundTask { feedback.cancel() }
+            let deadline = Task {
+                try await Task.sleep(for: feedbackBudget)
+                feedback.cancel()
+            }
+            defer {
+                deadline.cancel()
+                if identifier != .invalid { endBackgroundTask(identifier) }
+            }
+            let succeeded = await feedback.value
             if !succeeded {
                 var fallbackUserInfo: [AnyHashable: Any] = [
                     CloudProactiveNotification.signalIdKey: signalId
@@ -976,21 +964,38 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
                 sessionKey: decision.sessionKey,
                 toolCallId: decision.toolCallId,
                 allow: decision.allow,
-                source: .notification
+                source: .notification,
+                role: decision.role,
+                refreshAfterDecision: false
             )
-            if !delivered, let message = MacGatewayStore.shared.notice.flatMap({ $0.isError ? $0.text : nil }) {
+            if !delivered {
                 let content = UNMutableNotificationContent()
                 content.title = IOSAppLocalization.string("操作未完成", defaultValue: "操作未完成")
-                content.body = message
+                content.body = MacGatewayStore.shared.notice.flatMap { $0.isError ? $0.text : nil }
+                    ?? IOSAppLocalization.string("请打开任务看板核对审批状态", defaultValue: "请打开任务看板核对审批状态")
+                if let url = MacGatewayApprovalNotification.openAppURL(
+                    actionIdentifier: UNNotificationDefaultActionIdentifier, userInfo: response.notification.request.content.userInfo
+                ) {
+                    content.userInfo = ["deepLink": url.absoluteString]
+                }
                 try? await center.add(UNNotificationRequest(identifier: "amber.gateway-decision-result", content: content, trigger: nil))
             }
             return
         }
-        if let openURL = MacGatewayApprovalNotification.highRiskOpenAppURL(
+        if let openURL = MacGatewayApprovalNotification.openAppURL(
             actionIdentifier: response.actionIdentifier,
             userInfo: content.userInfo
         ) {
-            await MainActor.run {
+            if response.actionIdentifier == MacGatewayApprovalNotification.approveAction,
+               UIApplication.shared.applicationState != .active {
+                // A legacy approval category has a background button. Its Cloud request requires the foreground App.
+                let reminder = UNMutableNotificationContent()
+                reminder.title = IOSAppLocalization.string("请在 App 内核对审批", defaultValue: "请在 App 内核对审批")
+                reminder.body = IOSAppLocalization.string("轻点打开任务看板，核对后批准。", defaultValue: "轻点打开任务看板，核对后批准。")
+                reminder.userInfo = ["deepLink": openURL.absoluteString]
+                try? await center.add(UNNotificationRequest(identifier: response.notification.request.identifier + ".review",
+                                                           content: reminder, trigger: nil))
+            } else {
                 IOSDeepLinkInbox.shared.submit(openURL)
             }
             return

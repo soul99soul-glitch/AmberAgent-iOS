@@ -1,6 +1,7 @@
 package app.amber.cloud.channels
 
 import app.amber.cloud.channel.ButtonStyle
+import app.amber.cloud.channel.ConversationScope
 import app.amber.cloud.channel.InboundMessage
 import app.amber.cloud.channel.OutboundButton
 import app.amber.cloud.channel.OutboundCard
@@ -10,13 +11,21 @@ import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.security.MessageDigest
+import java.util.Base64
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
+import javax.crypto.Cipher
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -42,6 +51,7 @@ class CloudChannelsTest {
     private val fakeTelegramToken = "9988776655:AAH_FAKE_TG_SECRET_TOKEN_987654321"
     private val fakeFeishuAppSecret = "sec_fake_feishu_app_secret_xyz987"
     private val fakeFeishuEncryptKey = "enc_fake_feishu_encrypt_key_123456"
+    private val fakeFeishuVerificationToken = "verification_test_token_01"
     private val fakeFeishuWebhookSecret = "whsec_fake_feishu_hmac_secret_654321"
     private val fakeFeishuTenantToken = "t-fake_tenant_access_token_abcdef123456"
     private val fakeCalDavPassword = "caldav_super_secret_password_999"
@@ -104,7 +114,9 @@ class CloudChannelsTest {
             path == "/open-apis/im/v1/messages" && exchange.requestMethod.equals("POST", ignoreCase = true) -> {
                 feishuSendRequests.add(rawReqBody)
                 val msgId = "om_fake_${feishuSendRequests.size}"
-                respondJson(exchange, 200, """{"code":0,"msg":"ok","data":{"message_id":"$msgId"}}""")
+                val recipient = Json.parseToJsonElement(rawReqBody).jsonObject.getValue("receive_id").jsonPrimitive.content
+                val chatId = if (recipient.startsWith("ou_")) "oc_dm_${recipient.removePrefix("ou_")}" else recipient
+                respondJson(exchange, 200, """{"code":0,"msg":"ok","data":{"message_id":"$msgId","chat_id":"$chatId"}}""")
             }
             path.startsWith("/open-apis/im/v1/messages/") && exchange.requestMethod.equals("PATCH", ignoreCase = true) -> {
                 feishuEditRequests.add(rawReqBody)
@@ -149,6 +161,15 @@ class CloudChannelsTest {
         exchange.responseHeaders.add("Content-Type", contentType)
         exchange.sendResponseHeaders(status, bytes.size.toLong())
         exchange.responseBody.use { it.write(bytes) }
+    }
+
+    private fun encryptedFeishuEvent(event: String): String {
+        val key = MessageDigest.getInstance("SHA-256").digest(fakeFeishuEncryptKey.toByteArray())
+        val iv = ByteArray(16) { it.toByte() }
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
+        val encrypted = Base64.getEncoder().encodeToString(iv + cipher.doFinal(event.toByteArray()))
+        return buildJsonObject { put("encrypt", encrypted) }.toString()
     }
 
     @Test
@@ -198,6 +219,96 @@ class CloudChannelsTest {
         val rejected = channel.rejectedHistory()
         assertEquals(3, rejected.size, "非主人的 3 次请求（未绑定、重放绑定码、绑定后越权）必须全部被拒绝")
         assertTrue(rejected.all { it.senderId == "999999" })
+    }
+
+    @Test
+    fun `telegram proactive buttons require an explicit private chat with the owner`() = runTest {
+        val logger = RedactingChannelLogger()
+        val bindings = OwnerBindingManager().apply { bindOwnerDirectly(TelegramChannel.CHANNEL_ID, "123456") }
+        val channel = TelegramChannel(
+            baseUrl = baseUrl,
+            secretLoader = ChannelSecretLoader(envProvider = { fakeTelegramToken }, logger = logger),
+            ownerBinding = bindings,
+            logger = logger,
+        )
+        val chats = listOf(
+            """{"id":-42,"type":"group"}""", """{"id":123456}""", """{"id":123456,"type":"private"}""",
+        )
+        chats.forEachIndexed { index, chat ->
+            telegramUpdatesQueue.add(
+                """{"update_id":$index,"callback_query":{"id":"button_$index","from":{"id":123456},"message":{"chat":$chat},"data":"pa:snooze:reminder"}}""",
+            )
+        }
+        val accepted = mutableListOf<InboundMessage>()
+        assertEquals(1, channel.pollOnce { accepted.add(it) })
+        assertEquals("cb_button_2", accepted.single().id)
+        assertEquals(SenderRole.OWNER, accepted.single().senderRole)
+        assertEquals(ConversationScope.DIRECT, accepted.single().scope)
+        assertEquals("123456", bindings.getOwnerDirectChatId(TelegramChannel.CHANNEL_ID))
+    }
+
+    @Test
+    fun `feishu proactive buttons require signed events in a confirmed owner chat across restart`() = runTest {
+        val logger = RedactingChannelLogger()
+        val owner = "ou_owner_001"
+        val dm = "oc_dm_owner_001"
+        val file = Files.createTempFile("owner-bindings", ".json").toFile()
+        try {
+            file.writeText("""{"boundOwners":{"feishu":["ou_owner_001"]},"ownerDirectChatIds":{"feishu":"oc_old_chat"}}""")
+            val initial = OwnerBindingManager(persistenceFile = file)
+            assertEquals(owner, initial.getOwnerDirectChatId(FeishuChannel.CHANNEL_ID))
+            fun channel(bindings: OwnerBindingManager, withSignatureKey: Boolean): FeishuChannel = FeishuChannel(
+                openApiBaseUrl = baseUrl,
+                appId = "cli_test",
+                secretLoader = ChannelSecretLoader(envProvider = {
+                    when (it) {
+                        FeishuChannel.ENV_APP_SECRET -> fakeFeishuAppSecret
+                        FeishuChannel.ENV_ENCRYPT_KEY -> if (withSignatureKey) fakeFeishuEncryptKey else null
+                        FeishuChannel.ENV_VERIFICATION_TOKEN -> fakeFeishuVerificationToken
+                        else -> null
+                    }
+                }, logger = logger),
+                ownerBinding = bindings,
+                logger = logger,
+            )
+
+            val outbound = channel(initial, withSignatureKey = false)
+            assertTrue(outbound.sendWithReceipt(OutboundMessage(chatId = owner, text = "今日提醒")).ok)
+            assertEquals(dm, initial.getOwnerDirectChatId(FeishuChannel.CHANNEL_ID))
+            val restarted = OwnerBindingManager(persistenceFile = file)
+            restarted.bindOwnerDirectly(FeishuChannel.CHANNEL_ID, owner)
+            assertEquals(dm, restarted.getOwnerDirectChatId(FeishuChannel.CHANNEL_ID))
+            val signed = channel(restarted, withSignatureKey = true)
+            val accepted = mutableListOf<InboundMessage>()
+            val handshake = encryptedFeishuEvent("""{"type":"url_verification","token":"$fakeFeishuVerificationToken","challenge":"setup"}""")
+            val handshakeResponse = signed.handleWebhookEvent(emptyMap(), handshake) { accepted.add(it) }
+            assertEquals(200, handshakeResponse.statusCode)
+            assertEquals("""{"challenge":"setup"}""", handshakeResponse.bodyJson)
+            suspend fun click(connector: FeishuChannel, eventId: String, chat: String?, sign: Boolean): Int {
+                val context = buildJsonObject { chat?.let { put("open_chat_id", it) } }
+                val event = """{"header":{"event_id":"$eventId","event_type":"card.action.trigger"},"event":{"operator":{"open_id":"$owner"},"context":$context,"action":{"value":{"action":"pa:snooze:reminder"}}}}"""
+                val body = if (connector === signed) encryptedFeishuEvent(event) else event
+                val headers = if (sign) mapOf(
+                    "X-Lark-Request-Timestamp" to "1730380100",
+                    "X-Lark-Request-Nonce" to eventId,
+                    "X-Lark-Signature" to ChannelCrypto.computeFeishuEventSignature("1730380100", eventId, fakeFeishuEncryptKey, body),
+                ) else emptyMap()
+                return connector.handleWebhookEvent(headers, body) { accepted.add(it) }.statusCode
+            }
+
+            assertEquals(401, click(outbound, "unsigned", dm, sign = false))
+            assertEquals(401, click(signed, "unsigned_encrypted", dm, sign = false))
+            assertEquals(200, click(signed, "group", "oc_group", sign = true))
+            assertEquals(200, click(signed, "no_chat", null, sign = true))
+            assertTrue(accepted.isEmpty())
+            assertEquals(dm, restarted.getOwnerDirectChatId(FeishuChannel.CHANNEL_ID))
+            assertEquals(200, click(signed, "direct", dm, sign = true))
+            assertEquals("direct", accepted.single().id)
+            assertEquals(SenderRole.OWNER, accepted.single().senderRole)
+            assertEquals(ConversationScope.DIRECT, accepted.single().scope)
+        } finally {
+            file.delete()
+        }
     }
 
     @Test
@@ -434,6 +545,7 @@ class CloudChannelsTest {
         )
         assertEquals(200, bindResp.statusCode)
         assertTrue(ownerBinding.isOwner(FeishuChannel.CHANNEL_ID, "ou_owner_feishu"))
+        assertTrue(ownerBinding.isFeishuOwnerDirectChat("ou_owner_feishu", "oc_p2p_001"))
 
         // 4. CalDAV 日历同步与空闲时段计算
         val calendarClient = FeishuCalendarClient(

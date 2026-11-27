@@ -113,7 +113,7 @@ data class RouterTurnInput(
     val batchPrompt: String,
 )
 
-internal class RouterTurnAuthContext(val ownerAuthorized: Boolean) : AbstractCoroutineContextElement(Key) {
+internal class RouterTurnAuthContext(val ownerAuthorized: Boolean, val conversationId: String) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<RouterTurnAuthContext>
 }
 
@@ -197,7 +197,7 @@ class CloudRouter(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     private val onReply: suspend (conversationId: String, text: String) -> Unit = { _, _ -> },
     private val agentCoordinator: AgentRouterCoordinator? = null,
-    private val onTurnCompleted: suspend (RouterTurnInput) -> Unit = {},
+    private val onTurnCompleted: suspend (RouterTurnInput, List<String>) -> Unit = { _, _ -> },
     private val onEventsHandled: suspend (List<RouterTriggerEvent>, List<String>) -> Unit = { _, _ -> },
     private val soulStore: CloudSoulStore? = null,
 ) {
@@ -482,8 +482,11 @@ class CloudRouter(
                 nowMs = clockMs(),
             )
         }
-        onEventsHandled(events,replies.map { OutwardTextSanitizer.sanitize(it,forbiddenToolNames) })
-        if (replies.isNotEmpty() && decision.dispatch.isEmpty() && events.any { it.kind == "user_message" }) onTurnCompleted(input)
+        val outwardReplies = replies.map { OutwardTextSanitizer.sanitize(it, forbiddenToolNames) }
+        onEventsHandled(events, outwardReplies)
+        if (replies.isNotEmpty() && decision.dispatch.isEmpty() && events.any { it.kind == "user_message" }) {
+            onTurnCompleted(input, outwardReplies)
+        }
         events.filter { it.kind == "batch_rollup" }
             .mapNotNull { it.batchId }
             .distinct()
@@ -621,16 +624,7 @@ class CloudRouter(
     // ------------------------------------------------------------------------
 
     private fun registerRouterTools(registry: CloudToolRegistry) {
-        listOf(
-            "device_context_read",
-            "proactive_monitor_create",
-            "proactive_monitor_list",
-            "proactive_monitor_update",
-            "proactive_monitor_delete",
-            "proactive_webhook_create",
-            "proactive_webhook_list",
-            "proactive_webhook_delete",
-        ).forEach { name ->
+        sharedRouterTools.forEach { name ->
             kernel.toolRegistry.get(name)?.let(registry::register)
         }
         registry.register(CloudToolDefinition("cancel_work_item","显式取消指定任务并停止其实际进程",false,ToolEffect.PURE) {
@@ -760,7 +754,20 @@ class CloudRouter(
     }
 
     companion object {
-        val ROUTER_TOOL_NAMES = setOf(
+        internal val WAKEUP_TOOL_NAMES = setOf("proactive_wakeup_create", "proactive_wakeup_list", "proactive_wakeup_cancel")
+
+        private val sharedRouterTools = setOf(
+            "device_context_read",
+            "proactive_monitor_create",
+            "proactive_monitor_list",
+            "proactive_monitor_update",
+            "proactive_monitor_delete",
+            "proactive_webhook_create",
+            "proactive_webhook_list",
+            "proactive_webhook_delete",
+        ) + WAKEUP_TOOL_NAMES
+
+        val ROUTER_TOOL_NAMES = sharedRouterTools + setOf(
             "propose_agent",
             "dispatch_work",
             "steer_worker",
@@ -772,14 +779,6 @@ class CloudRouter(
             "cancel_work_item",
             "agent_soul_get",
             "agent_soul_update",
-            "device_context_read",
-            "proactive_monitor_create",
-            "proactive_monitor_list",
-            "proactive_monitor_update",
-            "proactive_monitor_delete",
-            "proactive_webhook_create",
-            "proactive_webhook_list",
-            "proactive_webhook_delete",
         )
 
         fun parseDispatchSpecs(args: JsonObject): List<WorkItemSubmissionSpec> {

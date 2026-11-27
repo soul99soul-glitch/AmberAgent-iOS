@@ -24,9 +24,16 @@ import java.security.SecureRandom
 import java.time.Instant
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 internal class DecisionActorContext(val actorDevice: String) : AbstractCoroutineContextElement(Key) {
     companion object Key : CoroutineContext.Key<DecisionActorContext>
@@ -228,15 +235,17 @@ fun interface PushSender {
 class CloudGatewayState(
     val dataDir: File,
     gatewayNameOverride: String? = null,
-    pushSender: PushSender = PushSender { Result.success(Unit) },
+    pushSender: PushSender? = null,
     var soulRevisionProvider: () -> Long = { 0L },
     internal val clockEpochSeconds: () -> Double = { nowEpochSeconds() },
 ) {
     @Volatile
-    var pushConfigured: Boolean = false
+    var pushConfigured: Boolean = pushSender != null
 
     @Volatile
-    private var _pushSender: PushSender = pushSender
+    private var _pushSender: PushSender = pushSender ?: PushSender { Result.failure(IllegalStateException("push_not_configured")) }
+
+    private val pushSlots = Semaphore(4)
 
     var pushSender: PushSender
         get() = _pushSender
@@ -455,6 +464,51 @@ class CloudGatewayState(
     fun findDeviceById(deviceId: String): PairedDevice? =
         runCatching { loadDevicesStrict().firstOrNull { it.id == deviceId } }.getOrNull()
 
+    private fun PairedDevice.apnsToken(): String? {
+        if (platform.lowercase() !in setOf("ios", "watchos", "watch")) return null
+        if (pushEnvironment !in setOf("sandbox", "production")) return null
+        return pushToken?.takeIf(::validPushToken)
+    }
+
+    suspend fun sendToPairedAppleDevices(failureAudit: String, payloadFor: (PairedDevice) -> PushMessagePayload?) {
+        if (!pushConfigured) return
+        val devices = try {
+            loadDevicesStrict()
+        } catch (_: Exception) {
+            recordAudit(failureAudit, mapOf("reason" to "device_store_unavailable"))
+            return
+        }
+        val attemptedTokens = ConcurrentHashMap.newKeySet<String>()
+        // A single APNs request takes up to 8s and may retry once on an expired provider token.
+        val completed = withTimeoutOrNull(20_000L) {
+            coroutineScope {
+                for (paired in devices.filter { it.apnsToken() != null }) launch {
+                    pushSlots.withPermit {
+                        val device = findDeviceById(paired.id) ?: return@withPermit
+                        val token = device.apnsToken() ?: return@withPermit
+                        val payload = payloadFor(device) ?: return@withPermit
+                        if (attemptedTokens.add(token) && sendPush(payload).isFailure) {
+                            recordAudit(failureAudit, mapOf("device" to device.id))
+                        }
+                    }
+                }
+            }
+        }
+        if (completed == null) recordAudit(failureAudit, mapOf("reason" to "batch_timeout"))
+    }
+
+    internal suspend fun sendPush(payload: PushMessagePayload): Result<Unit> {
+        if (!pushConfigured) return Result.failure(IllegalStateException("push_not_configured"))
+        return try {
+            pushSender.send(payload).getOrThrow()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     fun buildProactivePushPayload(
         device: PairedDevice,
         card: OutboundCard,
@@ -462,9 +516,7 @@ class CloudGatewayState(
         silentDelivery: Boolean,
         urgency: ProactiveUrgency = ProactiveUrgency.NORMAL,
     ): PushMessagePayload? {
-        if (device.platform.lowercase() !in setOf("ios", "watchos", "watch")) return null
-        val pushToken = device.pushToken?.takeIf(::validPushToken) ?: return null
-        if (device.platform.equals("ios", ignoreCase = true) && device.pushEnvironment !in setOf("sandbox", "production")) return null
+        val pushToken = device.apnsToken() ?: return null
         val safeTitle = CredentialRedactor.redact(card.title).trim().ifBlank { "Amber 主动提醒" }.take(100)
         val firstLine = card.markdownBody
             .lineSequence()
@@ -505,7 +557,7 @@ class CloudGatewayState(
         workItemId: String,
         outcome: String,
     ): PushMessagePayload? {
-        val pushToken = device.pushToken ?: return null
+        val pushToken = device.apnsToken() ?: return null
         val body = when (outcome.trim().lowercase()) {
             "completed" -> "定时任务已完成，点击查看详情"
             "blocked", "paused", "needsyou" -> "定时任务需要你的确认，请在 App 内查看"
@@ -538,7 +590,9 @@ class CloudGatewayState(
             return 400 to "iOS 需要 environment（sandbox / production）"
         }
         return try {
-            val list = loadDevicesStrict().map { existing ->
+            val devices = loadDevicesStrict()
+            if (devices.none { it.id == device.id }) return 401 to "unauthorized"
+            val list = devices.map { existing ->
                 when {
                     existing.id == device.id -> existing.copy(
                         pushToken = token,
@@ -591,7 +645,7 @@ class CloudGatewayState(
             title = "Amber 云端网关",
             body = "测试推送连接正常",
         )
-        return pushSender.send(payload).fold(
+        return sendPush(payload).fold(
             onSuccess = { 200 to null },
             onFailure = { 502 to (it.message ?: "推送发送失败") },
         )
@@ -606,7 +660,7 @@ class CloudGatewayState(
         session: SessionDto,
         approval: PendingApprovalDto,
     ): PushMessagePayload? {
-        val pushToken = device.pushToken ?: return null
+        val pushToken = device.apnsToken() ?: return null
         return if (approval.highRisk) {
             PushMessagePayload(
                 deviceId = device.id,
@@ -618,6 +672,7 @@ class CloudGatewayState(
                 toolCallId = null,
                 category = null,
                 highRisk = true,
+                deepLink = "amber://tasks/cloud",
             )
         } else {
             PushMessagePayload(
@@ -628,8 +683,9 @@ class CloudGatewayState(
                 body = "等你确认",
                 sessionKey = session.key,
                 toolCallId = approval.toolCallId,
-                category = "amber.gateway.approval",
+                category = "amber.cloud.approval",
                 highRisk = false,
+                deepLink = "amber://tasks/cloud",
             )
         }
     }

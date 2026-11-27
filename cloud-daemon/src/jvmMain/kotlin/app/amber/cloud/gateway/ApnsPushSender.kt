@@ -9,7 +9,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -19,9 +19,12 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import java.nio.charset.StandardCharsets
+import java.security.AlgorithmParameters
 import java.security.KeyFactory
 import java.security.Signature
 import java.security.interfaces.ECPrivateKey
+import java.security.spec.ECGenParameterSpec
+import java.security.spec.ECParameterSpec
 import java.security.spec.PKCS8EncodedKeySpec
 import java.time.Duration
 import java.util.Base64
@@ -49,11 +52,12 @@ class ApnsPushSender(
     private val config: ApnsConfig,
     private val deviceLookup: (deviceId: String) -> PairedDevice?,
     private val onInvalidToken: (deviceId: String, pushToken: String, reason: String) -> Unit = { _, _, _ -> },
-    private val httpClient: HttpClient = defaultHttpClient(),
+    httpClient: HttpClient? = null,
     private val baseUrlOverride: String? = null,
     private val clockMs: () -> Long = { System.currentTimeMillis() },
 ) : PushSender {
 
+    private val client by lazy { httpClient ?: defaultHttpClient() }
     private val privateKey: ECPrivateKey
     private val tokenLock = Any()
     private var cachedToken: String? = null
@@ -67,12 +71,12 @@ class ApnsPushSender(
     }
 
     override suspend fun send(payload: PushMessagePayload): Result<Unit> {
-        val baseUrl = resolveBaseUrl(payload.deviceId)
-            ?: return Result.failure(IllegalArgumentException("missing_push_environment"))
         val token = payload.pushToken.trim()
         if (token.isEmpty()) {
             return Result.failure(IllegalArgumentException("missing_push_token"))
         }
+        val baseUrl = resolveBaseUrl(payload.deviceId, token)
+            ?: return Result.failure(IllegalStateException("invalid_push_registration"))
 
         val nowMs = clockMs()
         val nowSec = nowMs / 1000L
@@ -81,10 +85,11 @@ class ApnsPushSender(
         val collapseId = resolveCollapseId(payload)
         val bodyJson = buildApnsPayloadJson(payload, interruptionLevel)
 
+        val firstJwt = getOrSignJwt(nowMs)
         val firstAttempt = sendOnce(
             baseUrl = baseUrl,
             deviceToken = token,
-            jwt = getOrSignJwt(nowMs, forceRefresh = false),
+            jwt = firstJwt,
             bodyJson = bodyJson,
             isPassive = isPassive,
             expirationEpochSec = nowSec + DEFAULT_EXPIRATION_SECONDS,
@@ -94,11 +99,14 @@ class ApnsPushSender(
         if (firstAttempt.isSuccess) return Result.success(Unit)
         val firstResponse = firstAttempt.exceptionOrNull() as? ApnsHttpRejectedException
         if (firstResponse != null && firstResponse.status == 403 && firstResponse.reason == "ExpiredProviderToken") {
+            if (resolveBaseUrl(payload.deviceId, token) != baseUrl) {
+                return Result.failure(IllegalStateException("push_registration_changed"))
+            }
             val retryNowMs = clockMs()
             val retryAttempt = sendOnce(
                 baseUrl = baseUrl,
                 deviceToken = token,
-                jwt = getOrSignJwt(retryNowMs, forceRefresh = true),
+                jwt = synchronized(tokenLock) { getOrSignJwt(retryNowMs, forceRefresh = cachedToken == firstJwt) },
                 bodyJson = bodyJson,
                 isPassive = isPassive,
                 expirationEpochSec = (retryNowMs / 1000L) + DEFAULT_EXPIRATION_SECONDS,
@@ -122,7 +130,7 @@ class ApnsPushSender(
             }
             return Result.failure(IllegalStateException("apns_rejected:${err.status}:${err.reason.ifBlank { "unknown" }}"))
         }
-        return Result.failure(IllegalStateException("apns_transport_failed"))
+        return attempt
     }
 
     private suspend fun sendOnce(
@@ -135,8 +143,8 @@ class ApnsPushSender(
         collapseId: String?,
     ): Result<Unit> {
         return try {
-            withTimeout(REQUEST_TIMEOUT_MS) {
-                val response = httpClient.post("$baseUrl/3/device/$deviceToken") {
+            withTimeoutOrNull(REQUEST_TIMEOUT_MS) {
+                val response = client.post("$baseUrl/3/device/$deviceToken") {
                     contentType(ContentType.Application.Json)
                     header("authorization", "bearer $jwt")
                     header("apns-push-type", "alert")
@@ -152,10 +160,10 @@ class ApnsPushSender(
                 if (code in 200..299) {
                     Result.success(Unit)
                 } else {
-                    val reason = parseApnsErrorReason(runCatching { response.bodyAsText() }.getOrDefault(""))
+                    val reason = parseApnsErrorReason(response.bodyAsText())
                     Result.failure(ApnsHttpRejectedException(code, reason))
                 }
-            }
+            } ?: Result.failure(IllegalStateException("apns_transport_timeout"))
         } catch (ce: CancellationException) {
             throw ce
         } catch (_: Exception) {
@@ -199,14 +207,15 @@ class ApnsPushSender(
         return "$signingInput.${base64Url(sigBytes)}"
     }
 
-    private fun resolveBaseUrl(deviceId: String): String? {
-        baseUrlOverride?.trim()?.takeIf { it.isNotEmpty() }?.let { return it.trimEnd('/') }
-        val env = deviceLookup(deviceId)?.pushEnvironment?.trim()?.lowercase()
-        return when (env) {
+    private fun resolveBaseUrl(deviceId: String, token: String): String? {
+        val device = deviceLookup(deviceId) ?: return null
+        if (device.pushToken != token) return null
+        val host = when (device.pushEnvironment) {
             "sandbox" -> SANDBOX_BASE_URL
             "production" -> PRODUCTION_BASE_URL
-            else -> null
+            else -> return null
         }
+        return baseUrlOverride?.trim()?.trimEnd('/')?.takeIf { it.isNotEmpty() } ?: host
     }
 
     private fun resolveInterruptionLevel(payload: PushMessagePayload): String {
@@ -291,7 +300,10 @@ class ApnsPushSender(
             return try {
                 val der = Base64.getDecoder().decode(normalized)
                 val key = KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(der))
-                key as? ECPrivateKey ?: throw IllegalArgumentException("invalid_apns_p8_key")
+                require(key is ECPrivateKey)
+                val p256 = AlgorithmParameters.getInstance("EC").apply { init(ECGenParameterSpec("secp256r1")) }
+                require(key.params.order == p256.getParameterSpec(ECParameterSpec::class.java).order)
+                key
             } catch (_: Exception) {
                 throw IllegalArgumentException("invalid_apns_p8_key")
             }

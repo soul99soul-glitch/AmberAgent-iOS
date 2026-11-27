@@ -10,6 +10,8 @@ import app.amber.cloud.channel.InboundMessage
 import app.amber.cloud.channel.SenderRole
 import app.amber.cloud.gateway.AgentCentricApi
 import app.amber.cloud.gateway.PendingApprovalDto
+import app.amber.cloud.gateway.PushMessagePayload
+import app.amber.cloud.gateway.PushSender
 import app.amber.cloud.gateway.PublicWorkDetail
 import app.amber.cloud.gateway.configureCloudGateway
 import app.amber.cloud.gateway.configureDialogueRoutes
@@ -154,6 +156,13 @@ class Stage2ApprovalAndDelegationTest {
             setBody("""{"secret":"$secret","platform":"ios","deviceName":"iPhone 16 Pro"}""")
         }
         val token = json.parseToJsonElement(pairResp.bodyAsText()).jsonObject.getValue("token").jsonPrimitive.content
+        val phone = kernel.gatewayState.loadDevicesStrict().single()
+        assertEquals(200, kernel.gatewayState.registerPushToken(phone, "test-phone-token", "sandbox").first)
+        val delivered = mutableListOf<PushMessagePayload>()
+        kernel.gatewayState.pushSender = PushSender {
+            delivered += it
+            Result.success(Unit)
+        }
 
         val outbound = kernel.handleInbound(
             InboundMessage(
@@ -167,6 +176,14 @@ class Stage2ApprovalAndDelegationTest {
             )
         )
         val card = assertNotNull(outbound.approvalCard)
+        val push = delivered.single()
+        assertEquals(phone.id, push.deviceId)
+        assertEquals(card.sessionKey, push.sessionKey)
+        assertEquals("amber://tasks/cloud", push.deepLink)
+        assertTrue(push.highRisk)
+        assertEquals(null, push.category)
+        assertEquals(null, push.toolCallId)
+        assertFalse(push.body.contains("prod.internal"))
         assertEquals("L3", card.riskLevel)
         assertEquals(false, card.requiresLocalApproval)
         // The same tool on a paired Mac belongs to that execution device, even for a trusted phone.

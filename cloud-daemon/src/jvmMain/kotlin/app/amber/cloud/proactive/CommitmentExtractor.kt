@@ -33,7 +33,7 @@ import java.time.format.DateTimeFormatter
  *   3. 每日模型调用上限 30 次/天（按 `zoneId` 本地日期重置，可选持久化计数）；
  *   4. 仅调用主模型（同一信任边界，不发送给外部 L2 供应商），对话内容包裹在 `<untrusted_conversation>` 标签内防提示注入；
  *   5. 最多取 3 条，过滤 `confidence >= 0.75` 且 `dueAt ∈ (now + 10 min, now + 60 days)`；
- *   6. 若 10 分钟内同会话已有工具创建的 ±30 分钟内待触发唤醒，跳过不重复建；
+ *   6. 若 10 分钟内同会话已有工具创建的 ±30 分钟内唤醒，跳过不重复建；
  *   7. 写入 [ProactiveWakeupStore]（`kind = "commitment"`，`userRequested = explicit_reminder`）。
  */
 class CommitmentExtractor(
@@ -118,12 +118,12 @@ class CommitmentExtractor(
         if (cleanConv.isEmpty() || cleanUser.isEmpty()) return false
         val nowMs = clockMs()
         if (!restraintGate.statusSnapshot(nowMs).commitmentExtractionEnabled) return false
-        if (!passesRegexGate(cleanUser)) return false
+        if (!passesRegexGate(cleanUser.take(MAX_INPUT_USER_CHARS))) return false
         return queue.trySend(
             QueueCommand.ExtractTurn(
                 conversationId = cleanConv,
-                userText = cleanUser,
-                assistantText = assistantText.trim(),
+                userText = CredentialRedactor.redact(cleanUser).take(MAX_INPUT_USER_CHARS),
+                assistantText = CredentialRedactor.redact(assistantText.trim()).take(MAX_INPUT_ASSISTANT_CHARS),
             )
         ).isSuccess
     }
@@ -146,24 +146,21 @@ class CommitmentExtractor(
     @Synchronized
     private fun tryConsumeDailyCallSlot(nowEpochMs: Long, zoneId: ZoneId): Boolean {
         val today = Instant.ofEpochMilli(nowEpochMs).atZone(zoneId).toLocalDate()
-        if (quotaDay != today) {
-            if (quotaDay?.isAfter(today) == true) {
-                if (callsToday >= MAX_DAILY_MODEL_CALLS) return false
-            } else {
-                quotaDay = today
-                callsToday = 0
-            }
+        if (quotaDay?.isAfter(today) == true) return false
+        val nextCount = if (quotaDay == today) callsToday + 1 else 1
+        if (nextCount > MAX_DAILY_MODEL_CALLS) return false
+        persistenceFile?.let { file ->
+            val state = PersistedQuotaState(quotaDay = today.toString(), callsToday = nextCount)
+            ProactiveFilePersistence.atomicWrite0600(file, json.encodeToString(state))
         }
-        if (callsToday >= MAX_DAILY_MODEL_CALLS) return false
-        callsToday++
-        persistQuotaToDisk()
+        quotaDay = today
+        callsToday = nextCount
         return true
     }
 
     private suspend fun processTurn(turn: QueueCommand.ExtractTurn) {
         val nowMs = clockMs()
         if (!restraintGate.statusSnapshot(nowMs).commitmentExtractionEnabled) return
-        if (!passesRegexGate(turn.userText)) return
         val memoryMode = runCatching { memoryModeProvider(turn.conversationId) }.getOrNull()
         if (memoryMode != ConversationMemoryMode.ENABLED) return
 
@@ -171,8 +168,8 @@ class CommitmentExtractor(
         if (!tryConsumeDailyCallSlot(nowMs, zoneId)) return
 
         val nowIso = Instant.ofEpochMilli(nowMs).atZone(zoneId).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)
-        val safeUser = escapeUntrustedTag(CredentialRedactor.redact(turn.userText).take(MAX_INPUT_USER_CHARS))
-        val safeAssistant = escapeUntrustedTag(CredentialRedactor.redact(turn.assistantText).take(MAX_INPUT_ASSISTANT_CHARS))
+        val safeUser = escapeUntrustedTag(turn.userText)
+        val safeAssistant = escapeUntrustedTag(turn.assistantText)
         val wrappedConversation = buildString {
             append("<untrusted_conversation>\n")
             append("USER: ").append(safeUser).append('\n')
@@ -210,7 +207,7 @@ class CommitmentExtractor(
 
         val seenInBatch = mutableSetOf<String>()
         for (item in parsed.commitments.take(MAX_COMMITMENTS_PER_TURN)) {
-            if (item.confidence < MIN_CONFIDENCE) continue
+            if (item.confidence !in MIN_CONFIDENCE..1.0) continue
             val safeText = CredentialRedactor.redact(item.text.trim()).take(100)
             if (safeText.isBlank()) continue
             val dueAtMs = runCatching {
@@ -223,20 +220,9 @@ class CommitmentExtractor(
             val batchKey = "${safeText.lowercase()}|${dueAtMs / 60_000L}"
             if (!seenInBatch.add(batchKey)) continue
 
-            if (wakeupStore.hasRecentAgentWakeupNear(
-                    sourceConversationId = turn.conversationId,
-                    dueAtEpochMs = dueAtMs,
-                    nowEpochMs = commitNowMs,
-                )
-            ) {
-                continue
-            }
-
             runCatching {
-                wakeupStore.create(
-                    kind = ProactiveWakeupRecord.KIND_COMMITMENT,
+                wakeupStore.createExtractedCommitment(
                     title = safeText,
-                    detail = "从对话中记下的待办承诺：$safeText",
                     triggerAtEpochMs = dueAtMs,
                     userRequested = item.explicitReminder,
                     sourceConversationId = turn.conversationId,
@@ -262,15 +248,6 @@ class CommitmentExtractor(
         }.getOrNull() ?: return
         quotaDay = state.quotaDay?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
         callsToday = state.callsToday.coerceAtLeast(0)
-    }
-
-    private fun persistQuotaToDisk() {
-        val file = persistenceFile ?: return
-        val state = PersistedQuotaState(
-            quotaDay = quotaDay?.toString(),
-            callsToday = callsToday,
-        )
-        ProactiveFilePersistence.atomicWrite0600(file, json.encodeToString(state))
     }
 
     override fun close() {

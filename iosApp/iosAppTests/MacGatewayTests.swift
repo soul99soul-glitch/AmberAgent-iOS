@@ -89,7 +89,7 @@ struct MacGatewayTests {
     @Test func approvalNotificationActionsMapToDecisions() {
         let info: [AnyHashable: Any] = ["sessionKey": "amber:run-1", "toolCallId": "c1", "deepLink": "amber://tasks"]
         #expect(MacGatewayApprovalNotification.decision(actionIdentifier: MacGatewayApprovalNotification.approveAction, userInfo: info)
-                == .init(sessionKey: "amber:run-1", toolCallId: "c1", allow: true))
+                == .init(sessionKey: "amber:run-1", toolCallId: "c1", allow: true, role: .mac))
         #expect(MacGatewayApprovalNotification.decision(actionIdentifier: MacGatewayApprovalNotification.denyAction, userInfo: info)?.allow == false)
         #expect(MacGatewayApprovalNotification.decision(actionIdentifier: "com.apple.UNNotificationDefaultActionIdentifier", userInfo: info) == nil,
                 "tapping the banner opens the app instead")
@@ -97,9 +97,93 @@ struct MacGatewayTests {
                                                         userInfo: ["sessionKey": "claude:s", "toolCallId": "c1"]) == nil)
         #expect(MacGatewayApprovalNotification.decision(actionIdentifier: MacGatewayApprovalNotification.approveAction,
                                                         userInfo: ["sessionKey": "amber:run-1"]) == nil, "high-risk pushes carry no call id")
-        let category = MacGatewayApprovalNotification.categories.first
+        let category = MacGatewayApprovalNotification.categories.first { $0.identifier == MacGatewayApprovalNotification.category }
         #expect(category?.identifier == "amber.gateway.approval")
         #expect(category?.actions.first { $0.identifier == MacGatewayApprovalNotification.approveAction }?.options.contains(.authenticationRequired) == true)
+    }
+
+    @Test func cloudApprovalOpensTheForegroundBoardAndOnlyDenialIssuesADecision() {
+        let info: [AnyHashable: Any] = ["sessionKey": "amber:run-1", "toolCallId": "c1", "deepLink": "amber://tasks/cloud"]
+        for openAction in [MacGatewayApprovalNotification.openCloudApprovalAction,
+                           MacGatewayApprovalNotification.approveAction, UNNotificationDefaultActionIdentifier] {
+            #expect(MacGatewayApprovalNotification.decision(actionIdentifier: openAction, userInfo: info) == nil)
+            #expect(MacGatewayApprovalNotification.openAppURL(actionIdentifier: openAction, userInfo: info)?.absoluteString == "amber://tasks/cloud")
+        }
+        #expect(MacGatewayApprovalNotification.decision(actionIdentifier: MacGatewayApprovalNotification.denyCloudAction, userInfo: info)
+                == .init(sessionKey: "amber:run-1", toolCallId: "c1", allow: false, role: .cloud))
+    }
+
+    @Test @MainActor func coldNotificationApprovalsSendToTheirOriginBeforeBoardRefresh() async throws {
+        actor Decisions {
+            var hosts: [String] = []
+            func respond(_ request: URLRequest) throws -> (Data, URLResponse) {
+                let url = request.url!
+                #expect(url.path == "/v1/amber/decision")
+                #expect(request.value(forHTTPHeaderField: "X-Amber-Surface") == "notification")
+                hosts.append(url.host!)
+                let body = try JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any]
+                if body?["toolCallId"] as? String == "foreground-only" {
+                    let data = Data(#"{"error":"请在 App 前台核对批准","requiresLocalApproval":false}"#.utf8)
+                    return (data, HTTPURLResponse(url: url, statusCode: 403, httpVersion: nil, headerFields: nil)!)
+                }
+                return (Data("{}".utf8), HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+        }
+        let suite = "ApprovalNotification.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = MacGatewayStore(defaults: defaults)
+        let decisions = Decisions()
+        for role in [MacGatewayEndpointRole.cloud, .mac] {
+            let host = "\(role.rawValue).example"
+            let connection = MacGatewayConnection(gatewayId: host, name: host, addrs: [host], port: 443,
+                                                  fingerprint: "fp", deviceId: "d", role: role)
+            let client = MacGatewayClient(addrs: [host], port: 443, fingerprint: "fp", token: "token") { request, _ in
+                try await decisions.respond(request)
+            }
+            store.configureForTesting(role: role, connection: connection, client: client)
+        }
+        func respond(_ key: String, action: String = MacGatewayApprovalNotification.denyAction, deepLink: String?) async throws -> Bool {
+            var payload: [AnyHashable: Any] = ["sessionKey": key, "toolCallId": "same-call"]
+            payload["deepLink"] = deepLink
+            let decision = try #require(MacGatewayApprovalNotification.decision(
+                actionIdentifier: action, userInfo: payload
+            ))
+            return await store.decide(sessionKey: decision.sessionKey, toolCallId: decision.toolCallId,
+                                      allow: decision.allow, source: .notification, role: decision.role, refreshAfterDecision: false)
+        }
+        let sharedKey = "amber:0671c7f6-58ad-48b0-bcfb-328b6a043389"
+        #expect(try await respond(sharedKey, action: MacGatewayApprovalNotification.denyCloudAction, deepLink: "amber://tasks/cloud"))
+        #expect(try await respond(sharedKey, action: MacGatewayApprovalNotification.approveAction, deepLink: "amber://settings/mac-gateway"))
+        #expect(try await respond("amber:wi:work:1:approval-1", deepLink: nil))
+        #expect(try await !respond(sharedKey, deepLink: nil))
+        store.mac.client = nil
+        #expect(try await !respond(sharedKey, deepLink: "amber://settings/mac-gateway"))
+        #expect(store.notice?.isError == true)
+        #expect(await decisions.hosts == ["cloud.example", "mac.example", "cloud.example"])
+        let accepted = await store.decide(sessionKey: sharedKey, toolCallId: "foreground-only", allow: true,
+                                          source: .notification, role: .cloud, refreshAfterDecision: false)
+        #expect(!accepted)
+        #expect(store.notice?.text == "请在 App 前台核对批准")
+        #expect(!store.localApprovalOnlyCallIds.contains("foreground-only"))
+    }
+
+    @Test @MainActor func restoresPersistedPairingWhenKeychainBecomesReadableAfterColdLaunch() throws {
+        let suite = "ApprovalRestoration.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let saved = MacGatewayConnection(gatewayId: "cloud", name: "cloud", addrs: ["localhost"], port: 443,
+                                         fingerprint: "fp", deviceId: "d", role: .cloud)
+        defaults.set(try JSONEncoder().encode(saved), forKey: MacGatewayEndpointRole.cloud.connectionStorageKey)
+        let store = MacGatewayStore(defaults: defaults, loadToken: { key in
+            key == MacGatewayEndpointRole.cloud.tokenStorageKey && UserDefaults(suiteName: suite)!.bool(forKey: "unlocked")
+                ? "token" : nil
+        })
+        #expect(store.client == nil)
+        defaults.set(true, forKey: "unlocked")
+        store.restorePairingIfNeeded()
+        #expect(store.connection == saved)
+        #expect(store.client != nil)
     }
 
     @Test func scheduleDraftSendsOnlyNamePromptAndTime() throws {
@@ -849,8 +933,8 @@ struct MacGatewayTests {
         #expect(denyReq.headers["X-Amber-Biometric-Verified"] == nil)
 
         // 4) Notification path never touches biometrics and never attaches trusted headers.
-        let notifApproved = await okStore.decide(sessionKey: "amber:wi:1", toolCallId: "tc-4", allow: true, source: .notification)
-        #expect(notifApproved)
+        let notifDenied = await okStore.decide(sessionKey: "amber:wi:1", toolCallId: "tc-4", allow: false, source: .notification)
+        #expect(notifDenied)
         #expect(okAuth.callCount == 1)
         let notifReq = try #require(await okRecorder.requests.last)
         #expect(notifReq.headers["X-Amber-Surface"] == "notification")
@@ -877,10 +961,10 @@ struct MacGatewayTests {
         #expect(await okRecorder.requests.count == requestCount)
 
         // 5) High-risk notification approve resolves to opening the App rather than sending a decision.
-        let openURL = MacGatewayApprovalNotification.highRiskOpenAppURL(
+        let openURL = MacGatewayApprovalNotification.openAppURL(
             actionIdentifier: MacGatewayApprovalNotification.approveAction,
             userInfo: ["sessionKey": "amber:wi:1", "toolCallId": "tc-5", "highRisk": true]
         )
-        #expect(openURL?.absoluteString == "amber://tasks")
+        #expect(openURL?.absoluteString == "amber://tasks/cloud")
     }
 }

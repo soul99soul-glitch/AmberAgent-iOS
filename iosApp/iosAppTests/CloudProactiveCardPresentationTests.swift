@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import Testing
 @testable import iosApp
 
@@ -49,6 +50,22 @@ struct CloudProactiveCardPresentationTests {
     }
 
     // MARK: - 1. CloudProactiveCardPresentation
+
+    @Test @MainActor func openingHistoricalSignalKeepsScrollMetricsFromPullingItBackToTheTail() {
+        let coordinator = AmberCloudTimelineScrollCoordinator()
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 320, height: 500))
+        scroll.contentSize = CGSize(width: 320, height: 2000)
+        coordinator.resolve(scroll)
+        #expect(coordinator.isPinnedToBottom)
+        coordinator.setHistoricalSignalFocused(true)
+        scroll.contentOffset.y = 500
+        coordinator.handleMetricsChanged()
+        #expect(scroll.contentOffset.y == 500)
+        coordinator.setHistoricalSignalFocused(false)
+        coordinator.handleMetricsChanged()
+        #expect(!coordinator.isPinnedToBottom)
+        #expect(scroll.contentOffset.y == 500)
+    }
 
     @Test func presentationDegradesSafelyWhenMetaIsNil() {
         let event = MacGatewayCloudDialogueEvent(
@@ -284,6 +301,9 @@ struct CloudProactiveCardPresentationTests {
     }
 
     @Test func centerPreservesUnknownOutcomesSafelyAndMapsKnownOutcomes() {
+        #expect(CloudProactiveCenterPresentation.outcomeDisplayText(for: "dropped_l1") == "无需打扰")
+        #expect(CloudProactiveCenterPresentation.outcomeDisplayText(for: "dropped_low_score") == "无需打扰")
+        #expect(CloudProactiveCenterPresentation.outcomeTone(for: "blocked_ssrf") == .warning)
         #expect(CloudProactiveCenterPresentation.outcomeDisplayText(for: "pushed") == "已推送")
         #expect(CloudProactiveCenterPresentation.outcomeDisplayText(for: "digest") == "已转入晨报")
         #expect(CloudProactiveCenterPresentation.outcomeDisplayText(for: "feedback_snooze") == "已推迟提醒")

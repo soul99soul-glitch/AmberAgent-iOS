@@ -64,7 +64,8 @@ class ProactiveWakeupStore(
 
     private val file = File(proactiveDir, "wakeups.json")
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
-    private val records = LinkedHashMap<String, ProactiveWakeupRecord>()
+    private var records = LinkedHashMap<String, ProactiveWakeupRecord>()
+    private val processing = mutableSetOf<String>()
     private var agentQuotaDay: LocalDate? = null
     private var agentCreatedToday: Int = 0
 
@@ -84,9 +85,19 @@ class ProactiveWakeupStore(
     @Synchronized
     fun listAll(): List<ProactiveWakeupRecord> = records.values.toList()
 
+    @Synchronized
+    internal fun claimPending(id: String): Boolean =
+        records[id]?.status == ProactiveWakeupRecord.STATUS_PENDING && processing.add(id)
+
+    @Synchronized
+    internal fun releaseClaim(id: String) {
+        processing.remove(id)
+    }
+
     /**
      * 检查最近 [createdWithinMs]（默认 10 分钟）内同 [sourceConversationId] 下，
-     * 是否已有 Agent 工具创建的、触发时间在 `dueAtEpochMs ± triggerToleranceMs`（默认 30 分钟）内的待触发唤醒。
+     * 是否已有 Agent 工具创建的、触发时间在 `dueAtEpochMs ± triggerToleranceMs`（默认 30 分钟）内的唤醒。
+     * 已取消的提醒同样参与去重，以保留用户在抽取期间作出的取消决定。
      * 用于隐式承诺抽取防重。
      */
     @Synchronized
@@ -100,12 +111,31 @@ class ProactiveWakeupStore(
         val cleanConv = sourceConversationId.trim()
         if (cleanConv.isEmpty()) return false
         return records.values.any { record ->
-            record.status == ProactiveWakeupRecord.STATUS_PENDING &&
-                record.kind == ProactiveWakeupRecord.KIND_AGENT &&
+            record.kind == ProactiveWakeupRecord.KIND_AGENT &&
                 record.sourceConversationId == cleanConv &&
                 (nowEpochMs - record.createdAtEpochMs) in 0L..createdWithinMs &&
                 abs(record.triggerAtEpochMs - dueAtEpochMs) <= triggerToleranceMs
         }
+    }
+
+    @Synchronized
+    fun createExtractedCommitment(
+        title: String,
+        triggerAtEpochMs: Long,
+        userRequested: Boolean,
+        sourceConversationId: String,
+        nowEpochMs: Long,
+    ): ProactiveWakeupRecord? {
+        if (hasRecentAgentWakeupNear(sourceConversationId, triggerAtEpochMs, nowEpochMs)) return null
+        return create(
+            kind = ProactiveWakeupRecord.KIND_COMMITMENT,
+            title = title,
+            detail = "从对话中记下的待办承诺：$title",
+            triggerAtEpochMs = triggerAtEpochMs,
+            userRequested = userRequested,
+            sourceConversationId = sourceConversationId,
+            nowEpochMs = nowEpochMs,
+        )
     }
 
     /**
@@ -118,7 +148,7 @@ class ProactiveWakeupStore(
     }
 
     /**
-     * 为单张主动卡片创建或幂等更新确定性 snooze 唤醒（id 由 `originSignalId` 确定性派生）。
+     * 同一卡片重复提交时保留初次选择的时间及状态，包括已取消或已触发的提醒。
      */
     @Synchronized
     fun upsertSnooze(
@@ -131,12 +161,11 @@ class ProactiveWakeupStore(
     ): ProactiveWakeupRecord {
         val cleanOrigin = originSignalId.trim()
         require(cleanOrigin.isNotEmpty()) { "originSignalId 不能为空" }
-        validateTriggerWindow(triggerAtEpochMs = triggerAtEpochMs, nowEpochMs = nowEpochMs)
         val id = deterministicSnoozeId(cleanOrigin)
-        val existing = records[id]
-        if (existing == null || existing.status != ProactiveWakeupRecord.STATUS_PENDING) {
-            val pendingCount = records.values.count { it.status == ProactiveWakeupRecord.STATUS_PENDING }
-            require(pendingCount < MAX_PENDING) { "待触发提醒已达上限 ($MAX_PENDING)" }
+        records[id]?.let { return it }
+        validateTriggerWindow(triggerAtEpochMs = triggerAtEpochMs, nowEpochMs = nowEpochMs)
+        require(records.values.count { it.status == ProactiveWakeupRecord.STATUS_PENDING } < MAX_PENDING) {
+            "待触发提醒已达上限 ($MAX_PENDING)"
         }
         val safeTitle = CredentialRedactor.redact(title.trim()).take(100).ifBlank { "延后提醒" }
         val safeDetail = CredentialRedactor.redact(detail.trim()).take(1_000)
@@ -159,9 +188,7 @@ class ProactiveWakeupStore(
             createdAtEpochMs = nowEpochMs,
             firedAtEpochMs = null,
         )
-        records[id] = record
-        pruneHistoryLocked()
-        persistToDisk()
+        saveChanges(listOf(record))
         return record
     }
 
@@ -188,18 +215,17 @@ class ProactiveWakeupStore(
             val pendingCount = records.values.count { it.status == ProactiveWakeupRecord.STATUS_PENDING }
             require(pendingCount < MAX_PENDING) { "待触发提醒已达上限 ($MAX_PENDING)" }
         }
-        val quotaDayForAgent: LocalDate? = if (kind == ProactiveWakeupRecord.KIND_AGENT) {
+        var quotaDay = agentQuotaDay
+        var quotaCount = agentCreatedToday
+        if (kind == ProactiveWakeupRecord.KIND_AGENT) {
             val today = Instant.ofEpochMilli(nowEpochMs).atZone(zoneIdProvider()).toLocalDate()
-            val effectiveCount = when {
-                agentQuotaDay == today -> agentCreatedToday
-                agentQuotaDay?.isAfter(today) == true -> agentCreatedToday
-                else -> 0
-            }
-            require(effectiveCount < MAX_AGENT_DAILY_CREATES) {
+            require(quotaDay?.isAfter(today) != true) { "事项属于已结算日期" }
+            quotaCount = if (quotaDay == today) quotaCount + 1 else 1
+            quotaDay = today
+            require(quotaCount <= MAX_AGENT_DAILY_CREATES) {
                 "今日 Agent 创建提醒已达上限 ($MAX_AGENT_DAILY_CREATES 次/天)"
             }
-            if (agentQuotaDay?.isAfter(today) == true) agentQuotaDay else today
-        } else null
+        }
         val safeTitle = CredentialRedactor.redact(title.trim()).take(100).ifBlank { "定时提醒" }
         val safeDetail = CredentialRedactor.redact(detail.trim()).take(1_000)
         val safeCheckPrompt = checkPrompt
@@ -221,48 +247,38 @@ class ProactiveWakeupStore(
             createdAtEpochMs = nowEpochMs,
             firedAtEpochMs = null,
         )
-        if (kind == ProactiveWakeupRecord.KIND_AGENT && quotaDayForAgent != null) {
-            if (agentQuotaDay != quotaDayForAgent) {
-                agentQuotaDay = quotaDayForAgent
-                agentCreatedToday = 0
-            }
-            agentCreatedToday++
-        }
-        records[id] = record
-        pruneHistoryLocked()
-        persistToDisk()
+        saveChanges(listOf(record), quotaDay, quotaCount)
         return record
     }
 
     /**
      * 筛选所有已到期（`triggerAtEpochMs <= nowEpochMs`）的 pending 唤醒：
      * - 逾期 `<= overdueLimitMs`（默认 12h）：返回 [DuePartition.due] 供补发；
-     * - 逾期 `> overdueLimitMs`：立即标记为 `expired` 落盘，并返回 [DuePartition.expired] 供写入 Pulse 缓冲与历史。
+     * - 逾期 `> overdueLimitMs`：先在锁外通过 [onExpired] 写入 Pulse，再持久化终态。
      */
-    @Synchronized
     fun findDueAndExpireOverdue(
         nowEpochMs: Long,
         overdueLimitMs: Long = OVERDUE_LIMIT_MS,
+        onExpired: (ProactiveWakeupRecord) -> Unit = {},
     ): DuePartition {
         val due = mutableListOf<ProactiveWakeupRecord>()
         val expired = mutableListOf<ProactiveWakeupRecord>()
-        var dirty = false
-        for (record in records.values.toList().sortedBy { it.triggerAtEpochMs }) {
-            if (record.status != ProactiveWakeupRecord.STATUS_PENDING) continue
-            if (record.triggerAtEpochMs > nowEpochMs) continue
+        for (record in listPending()) {
+            if (record.triggerAtEpochMs > nowEpochMs) break
             val overdueMs = nowEpochMs - record.triggerAtEpochMs
             if (overdueMs > overdueLimitMs) {
-                val updated = record.copy(status = ProactiveWakeupRecord.STATUS_EXPIRED)
-                records[record.id] = updated
-                expired.add(updated)
-                dirty = true
+                if (!claimPending(record.id)) continue
+                try {
+                    val updated = record.copy(status = ProactiveWakeupRecord.STATUS_EXPIRED)
+                    onExpired(updated)
+                    synchronized(this) { saveChanges(listOf(updated)) }
+                    expired.add(updated)
+                } finally {
+                    releaseClaim(record.id)
+                }
             } else {
                 due.add(record)
             }
-        }
-        if (dirty) {
-            pruneHistoryLocked()
-            persistToDisk()
         }
         return DuePartition(due = due, expired = expired)
     }
@@ -275,31 +291,16 @@ class ProactiveWakeupStore(
             status = ProactiveWakeupRecord.STATUS_FIRED,
             firedAtEpochMs = firedAtEpochMs,
         )
-        records[id] = updated
-        pruneHistoryLocked()
-        persistToDisk()
+        saveChanges(listOf(updated))
         return updated
     }
 
     @Synchronized
     fun cancel(id: String): Boolean {
         val existing = records[id] ?: return false
-        if (existing.status != ProactiveWakeupRecord.STATUS_PENDING) return false
-        records[id] = existing.copy(status = ProactiveWakeupRecord.STATUS_CANCELLED)
-        pruneHistoryLocked()
-        persistToDisk()
+        if (existing.status != ProactiveWakeupRecord.STATUS_PENDING || id in processing) return false
+        saveChanges(listOf(existing.copy(status = ProactiveWakeupRecord.STATUS_CANCELLED)))
         return true
-    }
-
-    private fun pruneHistoryLocked() {
-        val terminal = records.values.filter { it.status != ProactiveWakeupRecord.STATUS_PENDING }
-        if (terminal.size <= MAX_TERMINAL_HISTORY) return
-        val toDrop = terminal
-            .sortedBy { it.firedAtEpochMs ?: it.createdAtEpochMs }
-            .take(terminal.size - MAX_TERMINAL_HISTORY)
-        for (item in toDrop) {
-            records.remove(item.id)
-        }
     }
 
     private fun validateTriggerWindow(triggerAtEpochMs: Long, nowEpochMs: Long) {
@@ -334,13 +335,28 @@ class ProactiveWakeupStore(
         agentCreatedToday = state.agentCreatedToday.coerceAtLeast(0)
     }
 
-    private fun persistToDisk() {
+    private fun saveChanges(
+        updates: List<ProactiveWakeupRecord>,
+        quotaDay: LocalDate? = agentQuotaDay,
+        quotaCount: Int = agentCreatedToday,
+    ) {
+        val nextRecords = LinkedHashMap(records)
+        for (record in updates) nextRecords[record.id] = record
+        val terminal = nextRecords.values.filter { it.status != ProactiveWakeupRecord.STATUS_PENDING }
+        if (terminal.size > MAX_TERMINAL_HISTORY) {
+            terminal.sortedBy { it.firedAtEpochMs ?: it.createdAtEpochMs }
+                .take(terminal.size - MAX_TERMINAL_HISTORY)
+                .forEach { nextRecords.remove(it.id) }
+        }
         val state = PersistedWakeupState(
-            agentQuotaDay = agentQuotaDay?.toString(),
-            agentCreatedToday = agentCreatedToday,
-            records = records.values.toList(),
+            agentQuotaDay = quotaDay?.toString(),
+            agentCreatedToday = quotaCount,
+            records = nextRecords.values.toList(),
         )
         ProactiveFilePersistence.atomicWrite0600(file, json.encodeToString(state))
+        records = nextRecords
+        agentQuotaDay = quotaDay
+        agentCreatedToday = quotaCount
     }
 
     companion object {

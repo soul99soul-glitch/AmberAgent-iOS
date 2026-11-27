@@ -275,14 +275,7 @@ class CloudAgentKernel(
         wakeupStore = proactiveWakeupStore,
         onExpired = { record, nowMs ->
             val summary = CredentialRedactor.redact("已过期提醒：${record.title}")
-            proactiveEngine.restraintGate.evaluateAndConsume(
-                topicKey = "wakeup_expired:${record.id}",
-                summary = summary,
-                score = 12,
-                noteworthy = true,
-                nowEpochMs = nowMs,
-                urgency = ProactiveUrgency.DIGEST,
-            )
+            proactiveEngine.restraintGate.bufferExpiredWakeup(record.id, summary)
             proactiveRunHistoryStore.record(
                 signalId = ProactiveWakeupStore.signalIdFor(record),
                 category = if (record.kind == ProactiveWakeupRecord.KIND_COMMITMENT) {
@@ -435,17 +428,21 @@ class CloudAgentKernel(
                     extractExplicitMemoryIfPresent(text, conversationId, if (agentId == MAIN_AGENT_ID) GLOBAL_MEMORY_AGENT_ID else agentId)
                 }
             },
-            onTurnCompleted = { input ->
+            onTurnCompleted = { input, replies ->
                 val conversation = conversationStorage.loadConversation(Uuid.parse(input.events.first().conversationId))
+                val userEvents = input.events.filter { it.kind == "user_message" }
                 val reply = conversation?.messageNodes?.lastOrNull { it.role == MessageRole.ASSISTANT }
                 if (conversation != null && reply != null) {
-                    // A newer inbound message may already be on the timeline while this reply finishes.
-                    val prompt = input.events.filter { it.kind == "user_message" }.joinToString("\n") { it.summaryText }
+                    val prompt = userEvents.joinToString("\n") { it.summaryText }
                     conversationTagger.enqueue(conversation.copy(messageNodes = listOf(UIMessage.user(prompt).toMessageNode(), reply)))
+                }
+                if (conversation?.memoryMode == ConversationMemoryMode.ENABLED && input.ownerAuthorizedMessageIds.isNotEmpty()) {
+                    val ownerEvents = userEvents.filter { it.sourceMessageId in input.ownerAuthorizedMessageIds }
                     commitmentExtractor.enqueue(
                         conversationId = conversation.id.toString(),
-                        userText = prompt,
-                        assistantText = reply.currentMessage.toText(),
+                        userText = ownerEvents.joinToString("\n") { it.summaryText },
+                        // A reply to a mixed batch can describe another sender's commitments.
+                        assistantText = if (ownerEvents.size == input.events.size) replies.joinToString("\n") else "",
                     )
                 }
             },
@@ -579,18 +576,14 @@ class CloudAgentKernel(
                 )
             }
         }
-        val rawResults = proactiveEngine.pollAllSources(
+        return proactiveEngine.pollAllSources(
             targetChatId = "",
             channel = null,
             nowOverrideMs = nowMs,
-        )
-        return rawResults.map { res ->
-            proactiveRunHistoryStore.recordFromResult(res, timestampEpochMs = nowMs)
-            if (res is ProactiveRunResult.PushedAtL3) {
-                deliverProactiveCardToOwner(res)
-            } else {
-                res
-            }
+        ) { signal, result ->
+            val delivered = if (result is ProactiveRunResult.PushedAtL3) deliverProactiveCardToOwner(result) else result
+            proactiveRunHistoryStore.recordFromResult(delivered, fallbackSignal = signal, timestampEpochMs = nowMs)
+            delivered
         }
     }
 
@@ -610,12 +603,9 @@ class CloudAgentKernel(
             channel = null,
             nowOverrideMs = nowOverrideMs,
         )
-        proactiveRunHistoryStore.recordFromResult(res, fallbackSignal = signal, timestampEpochMs = evalNowMs)
-        return if (res is ProactiveRunResult.PushedAtL3) {
-            deliverProactiveCardToOwner(res)
-        } else {
-            res
-        }
+        val delivered = if (res is ProactiveRunResult.PushedAtL3) deliverProactiveCardToOwner(res) else res
+        proactiveRunHistoryStore.recordFromResult(delivered, fallbackSignal = signal, timestampEpochMs = evalNowMs)
+        return delivered
     }
 
     sealed interface ProactiveFeedbackResult {
@@ -656,11 +646,8 @@ class CloudAgentKernel(
             action = action,
             nowEpochMs = nowEpochMs,
             muteHours = clampedMute,
-        )
-
-        var wakeupId: String? = null
-        if (action == ProactiveFeedbackAction.SNOOZE) {
-            wakeupId = if (outcome.applied) {
+        ) {
+            if (action == ProactiveFeedbackAction.SNOOZE) {
                 proactiveWakeupStore.upsertSnooze(
                     originSignalId = signalId,
                     title = title,
@@ -668,10 +655,7 @@ class CloudAgentKernel(
                     checkPrompt = meta?.checkPrompt,
                     triggerAtEpochMs = nowEpochMs + clampedSnooze * 60_000L,
                     nowEpochMs = nowEpochMs,
-                ).id
-            } else {
-                proactiveWakeupStore.get(ProactiveWakeupStore.deterministicSnoozeId(signalId))?.id
-                    ?: ProactiveWakeupStore.deterministicSnoozeId(signalId)
+                )
             }
         }
 
@@ -697,7 +681,9 @@ class CloudAgentKernel(
         return ProactiveFeedbackResult.Applied(
             action = action,
             applied = outcome.applied,
-            wakeupId = wakeupId,
+            wakeupId = if (action == ProactiveFeedbackAction.SNOOZE) {
+                proactiveWakeupStore.get(ProactiveWakeupStore.deterministicSnoozeId(signalId))?.id
+            } else null,
             mutedUntilEpochMs = outcome.mutedUntilEpochMs,
         )
     }
@@ -723,14 +709,15 @@ class CloudAgentKernel(
     }.take(24)
 
     internal suspend fun deliverProactiveCardToOwner(pushed: ProactiveRunResult.PushedAtL3): ProactiveRunResult.PushedAtL3 {
-        val card = pushed.card
+        val card = pushed.card.copy(
+            title = CredentialRedactor.redact(pushed.card.title).trim().ifBlank { "Amber 主动提醒" }.take(100),
+            markdownBody = CredentialRedactor.redact(pushed.card.markdownBody),
+        )
         val delta = pushed.l1Delta
         val signalId = delta.signalId
         var firstReceipt: OutboundReceipt? = pushed.receipt
 
         // 1. Write proactive_message DialogueEvent (idempotent by id="proactive:{signalId}"; failures must not block delivery)
-        val safeTitle = CredentialRedactor.redact(card.title).trim().ifBlank { "Amber 主动提醒" }.take(100)
-        val safeBody = CredentialRedactor.redact(card.markdownBody).take(4_000)
         val safeTopicKey = CredentialRedactor.redact(delta.topicKey).take(160)
         val safeCheckPrompt = delta.checkPrompt?.trim()?.takeIf { it.isNotEmpty() }
             ?.let { CredentialRedactor.redact(it).take(2_000) }
@@ -744,14 +731,14 @@ class CloudAgentKernel(
             id = eventId,
             kind = DialogueEventKinds.PROACTIVE_MESSAGE,
             role = "assistant",
-            text = safeBody,
+            text = card.markdownBody.take(4_000),
             topicId = eventId,
             workItemId = null,
             proactive = ProactiveEventMeta(
                 signalId = signalId,
                 topicKey = safeTopicKey,
                 category = delta.category.name,
-                title = safeTitle,
+                title = card.title,
                 urgency = urgencyWire,
                 silent = pushed.restraintVerdict.silentDelivery,
                 sourceLabel = resolveProactiveSourceLabel(delta),
@@ -762,10 +749,10 @@ class CloudAgentKernel(
             ),
         )
         try {
-            orchestrationStore.dialogue.append(proactiveEvent)
+            if (!orchestrationStore.dialogue.append(proactiveEvent)) return pushed
         } catch (ce: CancellationException) {
             throw ce
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
             runCatching {
                 orchestrationStore.appendDiagnosticEvent(
                     sessionId = PRIMARY_CONVERSATION_ID.toString(),
@@ -781,7 +768,7 @@ class CloudAgentKernel(
         val deterministicMsgId = Uuid.parse(UUID.nameUUIDFromBytes(eventId.toByteArray()).toString())
         routerIngress.recordReply(
             PRIMARY_CONVERSATION_ID.toString(),
-            CredentialRedactor.redact("【主动提醒 · ${card.title}】\n${card.markdownBody}"),
+            "【主动提醒 · ${card.title}】\n${card.markdownBody}",
             messageId = deterministicMsgId,
             createPrimaryIfMissing = true,
         )
@@ -810,30 +797,17 @@ class CloudAgentKernel(
             }
         }
 
-        // 4. Dispatch APNs push to paired owner iOS/Watch devices only when pushConfigured == true
-        if (gatewayState.pushConfigured) {
-            val pairedDevices = runCatching { gatewayState.loadDevicesStrict() }.getOrDefault(emptyList())
-            for (paired in pairedDevices) {
-                // Pairings and tokens may change while the preceding device's send is suspended.
-                val device = gatewayState.findDeviceById(paired.id) ?: continue
-                val pushPayload = gatewayState.buildProactivePushPayload(
-                    device = device,
-                    card = card,
-                    signalId = signalId,
-                    silentDelivery = pushed.restraintVerdict.silentDelivery,
-                    urgency = pushed.restraintVerdict.urgency,
-                ) ?: continue
-                try {
-                    gatewayState.pushSender.send(pushPayload).getOrThrow()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    gatewayState.recordAudit("proactive-push-failed", mapOf("device" to device.id))
-                }
-            }
+        gatewayState.sendToPairedAppleDevices("proactive-push-failed") { device ->
+            gatewayState.buildProactivePushPayload(
+                device = device,
+                card = card,
+                signalId = signalId,
+                silentDelivery = pushed.restraintVerdict.silentDelivery,
+                urgency = pushed.restraintVerdict.urgency,
+            )
         }
 
-        return pushed.copy(receipt = firstReceipt)
+        return pushed.copy(card = card, receipt = firstReceipt)
     }
 
     // Retained synchronous entry for existing direct callers and the P1 approval lifecycle.

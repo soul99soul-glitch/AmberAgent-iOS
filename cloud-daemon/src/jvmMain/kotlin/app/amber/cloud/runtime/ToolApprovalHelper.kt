@@ -43,7 +43,7 @@ internal class ToolApprovalHelper(
 
     fun argsDigest(rawArgs: JsonObject): String = OrchestrationHash.sha256Hex(rawArgs.toString())
 
-    fun upsertPendingApprovalSession(
+    suspend fun upsertPendingApprovalSession(
         sessionKey: String,
         agent: String = "amber",
         subject: String,
@@ -86,6 +86,12 @@ internal class ToolApprovalHelper(
                 ),
             )
         )
+        gw.sendToPairedAppleDevices("approval-push-failed") { device ->
+            val session = gw.getSession(sessionKey) ?: return@sendToPairedAppleDevices null
+            val approval = session.pendingApproval?.takeIf { it.toolCallId == toolCallId }
+                ?: return@sendToPairedAppleDevices null
+            gw.buildApprovalPushPayload(device, session, approval)
+        }
     }
 
     fun clearApprovalSession(

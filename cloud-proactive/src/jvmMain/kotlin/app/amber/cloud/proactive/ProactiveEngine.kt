@@ -98,20 +98,20 @@ class ProactiveEngine(
         targetChatId: String,
         channel: ChannelConnector? = null,
         nowOverrideMs: Long? = null,
+        completeResult: suspend (ProactiveTriggerSignal, ProactiveRunResult) -> ProactiveRunResult = { _, result -> result },
     ): List<ProactiveRunResult> {
         val nowMs = nowOverrideMs ?: clockMs()
         val results = mutableListOf<ProactiveRunResult>()
         for (source in registeredSources.toList()) {
             val signals = source.pollAll(nowMs)
             for (signal in signals) {
-                val res = processSignal(
-                    signal = signal,
-                    targetChatId = targetChatId,
-                    channel = channel,
-                    nowOverrideMs = nowOverrideMs,
-                )
-                source.onResult(signal, res, nowMs)
-                results.add(res)
+                val result = source.processIfCurrent(signal) {
+                    val evaluated = processSignal(signal, targetChatId, channel, nowOverrideMs)
+                    val completed = completeResult(signal, evaluated)
+                    source.onResult(signal, completed, nowMs)
+                    completed
+                }
+                if (result != null) results.add(result)
             }
         }
         return results
@@ -130,14 +130,18 @@ class ProactiveEngine(
         l1Evaluated.incrementAndGet()
 
         // Stage L1: 确定性零成本预筛
-        when (val l1 = l1Filter.evaluate(signal)) {
+        when (val outcome = l1Filter.evaluate(signal)) {
             is L1Outcome.DroppedUnchanged -> {
                 l1Dropped.incrementAndGet()
-                return ProactiveRunResult.DroppedAtL1(l1)
+                return ProactiveRunResult.DroppedAtL1(outcome)
             }
             is L1Outcome.PassedWithDelta -> {
                 // Stage L2: 小模型 noteworthy 打分（跨端缺陷 #3：进入 L2 提示词前强制脱敏）
-                val safeDeltaSummary = CredentialRedactor.redact(l1.deltaSummary)
+                val l1 = outcome.copy(
+                    topicKey = CredentialRedactor.redact(outcome.topicKey).take(160),
+                    title = CredentialRedactor.redact(outcome.title),
+                    deltaSummary = CredentialRedactor.redact(outcome.deltaSummary),
+                )
                 val l2Score: L2NoteworthyScore? = if (l1.skipL2 || l1.bypassL2ForScheduledBriefing) {
                     null
                 } else {
@@ -147,7 +151,7 @@ class ProactiveEngine(
                             signalId = l1.signalId,
                             category = l1.category,
                             topicKey = l1.topicKey,
-                            deltaSummary = safeDeltaSummary,
+                            deltaSummary = l1.deltaSummary,
                         )
                     )
                 }
@@ -194,7 +198,7 @@ class ProactiveEngine(
                             emptyList()
                         }
                         val card = L3ProactiveCardProducer.buildCard(
-                            delta = l1.copy(deltaSummary = safeDeltaSummary),
+                            delta = l1.copy(urgency = verdict.urgency),
                             l2Score = l2Score?.copy(summary = effectiveSummary),
                             extraPulseItems = extraPulse,
                         )

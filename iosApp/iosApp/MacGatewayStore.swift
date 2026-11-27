@@ -405,6 +405,14 @@ final class MacGatewayStore {
         #endif
     }
 
+    /// A notification can launch the app before the first unlock makes its Keychain token available.
+    func restorePairingIfNeeded() {
+        if connection == nil, client == nil,
+           defaults.data(forKey: connectionStorageKey) != nil || defaults.data(forKey: Self.legacyConnectionKey) != nil {
+            loadPersistedConnection()
+        }
+    }
+
     private func loadPersistedConnection() {
         if let data = defaults.data(forKey: connectionStorageKey),
            var saved = try? JSONDecoder().decode(MacGatewayConnection.self, from: data),
@@ -924,20 +932,30 @@ final class MacGatewayStore {
         toolCallId: String,
         allow: Bool,
         source: MacGatewayDecisionSource = .foregroundApp,
-        role: MacGatewayEndpointRole? = nil
+        role: MacGatewayEndpointRole? = nil,
+        refreshAfterDecision: Bool = true
     ) async -> Bool {
+        // Cloud orchestration owns amber:wi: keys. Legacy Cloud runs and Mac runs both use amber:<runId>.
+        let role = role ?? (sessionKey.hasPrefix("amber:wi:") ? .cloud : nil)
         if let role, role != endpointRole {
             guard role == .mac, let macSlot else {
                 notice = Notice(text: localized("审批所属终端已变化，请重新打开任务"), isError: true)
                 return false
             }
-            return await macSlot.decide(
+            let delivered = await macSlot.decide(
                 sessionKey: sessionKey,
                 toolCallId: toolCallId,
                 allow: allow,
                 source: source,
-                role: role
+                role: role,
+                refreshAfterDecision: refreshAfterDecision
             )
+            notice = macSlot.notice
+            return delivered
+        }
+        if source == .notification {
+            restorePairingIfNeeded()
+            if role == nil { macSlot?.restorePairingIfNeeded() }
         }
         if role == nil, endpointRole == .cloud, let macSlot {
             let macOwnsApproval = macSlot.boardItems.contains {
@@ -960,7 +978,8 @@ final class MacGatewayStore {
                     toolCallId: toolCallId,
                     allow: allow,
                     source: source,
-                    role: .mac
+                    role: .mac,
+                    refreshAfterDecision: refreshAfterDecision
                 )
                 notice = macSlot.notice
                 return delivered
@@ -976,7 +995,7 @@ final class MacGatewayStore {
             return false
         }
         guard let client else {
-            notice = Notice(text: localized("未与 Mac 配对"), isError: true)
+            notice = Notice(text: localized(endpointRole == .cloud ? "尚未配对 Amber · 云端" : "未与 Mac 配对"), isError: true)
             return false
         }
         guard decidingCalls.insert(toolCallId).inserted else { return false }
@@ -1021,17 +1040,17 @@ final class MacGatewayStore {
             )
             guard self.client === client else { return false }
             notice = Notice(text: localized(allow ? "已批准，任务继续运行" : "已拒绝这次调用"), isError: false)
-            await refresh()
+            if refreshAfterDecision { await refresh() }
             return true
         } catch {
             guard self.client === client else { return false }
-            if case MacGatewayError.forbidden = error {
+            if case MacGatewayError.forbidden = error, endpointRole == .mac {
                 localApprovalOnlyCallIds.insert(toolCallId)
                 notice = Notice(text: localized("此高危操作请在 Mac 上批准"), isError: true)
             } else if !forgetIfRevoked(error, for: client) {
                 notice = Notice(text: error.localizedDescription, isError: true)
             }
-            await refresh()
+            if refreshAfterDecision { await refresh() }
             return false
         }
     }

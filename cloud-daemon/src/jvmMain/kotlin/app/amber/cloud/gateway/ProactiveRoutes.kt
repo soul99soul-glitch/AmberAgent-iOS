@@ -91,7 +91,13 @@ internal fun Application.configureProactiveRoutes(
     )
 
     suspend fun ApplicationCall.parseJsonBody(): JsonObject? {
-        val raw = runCatching { receiveText() }.getOrDefault("")
+        val raw = try {
+            receiveText()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return null
+        }
         if (raw.isBlank()) return JsonObject(emptyMap())
         return runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull()
     }
@@ -247,7 +253,7 @@ internal fun Application.configureProactiveRoutes(
 
         get("/v2/proactive/signals/{signalId}") {
             call.authenticateOwnerDevice() ?: return@get
-            val signalId = call.parameters["signalId"]?.trim().orEmpty()
+            val signalId = call.parameters["signalId"].orEmpty()
             if (!PROACTIVE_SIGNAL_ID_REGEX.matches(signalId)) {
                 call.respondError(400, "invalid_signal_id")
                 return@get
@@ -265,13 +271,13 @@ internal fun Application.configureProactiveRoutes(
 
         post("/v2/proactive/signals/{signalId}/feedback") {
             val device = call.authenticateOwnerDevice() ?: return@post
-            val signalId = call.parameters["signalId"]?.trim().orEmpty()
+            val signalId = call.parameters["signalId"].orEmpty()
             if (!PROACTIVE_SIGNAL_ID_REGEX.matches(signalId)) {
                 call.respondError(400, "invalid_signal_id")
                 return@post
             }
             val body = call.parseJsonBody() ?: return@post call.respondError(400, "invalid_json")
-            val rawAction = body["action"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
+            val rawAction = (body["action"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
             val action = ProactiveFeedbackAction.entries.firstOrNull { it.wire == rawAction }
             if (action == null) {
                 call.respondError(400, "invalid_action")
@@ -284,14 +290,17 @@ internal fun Application.configureProactiveRoutes(
                 ?: body["mute_hours"]?.jsonPrimitive?.intOrNull
                 ?: 168).coerceIn(1, 720)
 
-            when (
-                val result = kernel.applyProactiveFeedback(
+            val result = try {
+                kernel.applyProactiveFeedback(
                     signalId = signalId,
                     action = action,
                     snoozeMinutes = snoozeMinutes,
                     muteHours = muteHours,
                 )
-            ) {
+            } catch (e: IllegalArgumentException) {
+                return@post call.respondError(409, e.message ?: "feedback_unavailable")
+            }
+            when (result) {
                 CloudAgentKernel.ProactiveFeedbackResult.SignalNotFound -> {
                     call.respondError(404, "signal_not_found")
                 }

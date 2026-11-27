@@ -140,6 +140,7 @@ class ProactiveRestraintGate(
         val consecutiveIgnoresByTopic: Map<String, Int> = emptyMap(),
         val mutedUntilByTopic: Map<String, Long> = emptyMap(),
         val bufferedPulseItems: List<String> = emptyList(),
+        val bufferedExpiredWakeupIds: List<String> = emptyList(),
         val pulseEnabled: Boolean = true,
         val pulseTime: String = "08:30",
         val commitmentExtractionEnabled: Boolean = true,
@@ -185,11 +186,14 @@ class ProactiveRestraintGate(
     private val consecutiveIgnoresByTopic = mutableMapOf<String, Int>()
     private val mutedUntilByTopic = mutableMapOf<String, Long>()
     private val bufferedPulseItems = ArrayDeque<String>()
+    private val bufferedExpiredWakeupIds = LinkedHashSet<String>()
     private val appliedFeedbackKeys = LinkedHashSet<String>()
     private val pendingFeedbackByTopic = LinkedHashMap<String, String>()
+    private var committedState: PersistedRestraintState? = null
 
     init {
         loadFromDisk()
+        if (persistenceFile != null) committedState = stateSnapshot()
     }
 
     @Synchronized
@@ -267,11 +271,13 @@ class ProactiveRestraintGate(
         action: ProactiveFeedbackAction,
         nowEpochMs: Long,
         muteHours: Int = 168,
+        beforeApply: () -> Unit = {},
     ): FeedbackOutcome {
         val dedupKey = "$signalId:${action.wire}"
         if (dedupKey in appliedFeedbackKeys) {
             return FeedbackOutcome(applied = false)
         }
+        beforeApply()
         appliedFeedbackKeys.add(dedupKey)
         while (appliedFeedbackKeys.size > MAX_APPLIED_FEEDBACK_KEYS) {
             val iter = appliedFeedbackKeys.iterator()
@@ -295,8 +301,7 @@ class ProactiveRestraintGate(
             }
             ProactiveFeedbackAction.SNOOZE -> Unit
         }
-        // 收到该 topic 的任意有效反馈即清除未读挂起记录，避免后续推送重复/误算隐式忽略
-        pendingFeedbackByTopic.remove(topicKey)
+        pendingFeedbackByTopic.remove(topicKey, signalId)
         persistToDisk()
         return FeedbackOutcome(applied = true, mutedUntilEpochMs = mutedUntil)
     }
@@ -346,6 +351,17 @@ class ProactiveRestraintGate(
 
     @Synchronized
     fun peekBufferedPulseItems(): List<String> = bufferedPulseItems.toList()
+
+    /** A crash after buffering and before marking the wakeup expired can replay this call. */
+    @Synchronized
+    fun bufferExpiredWakeup(wakeupId: String, summary: String) {
+        if (!bufferedExpiredWakeupIds.add(wakeupId)) return
+        if (bufferedExpiredWakeupIds.size > MAX_PULSE_ITEMS) {
+            bufferedExpiredWakeupIds.remove(bufferedExpiredWakeupIds.first())
+        }
+        bufferForMorning(summary)
+        persistToDisk()
+    }
 
     @Synchronized
     fun evaluateAndConsume(
@@ -604,6 +620,10 @@ class ProactiveRestraintGate(
         val state = runCatching {
             persistenceJson.decodeFromString<PersistedRestraintState>(file.readText())
         }.getOrNull() ?: return
+        restoreState(state)
+    }
+
+    private fun restoreState(state: PersistedRestraintState) {
         val loadedZone = runCatching { ZoneId.of(state.zoneId) }.getOrDefault(quietHours.zoneId)
         val loadedStart = runCatching { LocalTime.parse(state.quietHoursStart) }.getOrDefault(quietHours.start)
         val loadedEnd = runCatching { LocalTime.parse(state.quietHoursEnd) }.getOrDefault(quietHours.end)
@@ -634,6 +654,8 @@ class ProactiveRestraintGate(
         mutedUntilByTopic.putAll(state.mutedUntilByTopic)
         bufferedPulseItems.clear()
         state.bufferedPulseItems.takeLast(MAX_PULSE_ITEMS).forEach(::bufferForMorning)
+        bufferedExpiredWakeupIds.clear()
+        bufferedExpiredWakeupIds.addAll(state.bufferedExpiredWakeupIds.takeLast(MAX_PULSE_ITEMS))
         appliedFeedbackKeys.clear()
         appliedFeedbackKeys.addAll(state.appliedFeedbackKeys.takeLast(MAX_APPLIED_FEEDBACK_KEYS))
         pendingFeedbackByTopic.clear()
@@ -652,27 +674,42 @@ class ProactiveRestraintGate(
         commitmentExtractionEnabledValue: Boolean = commitmentExtractionEnabled,
     ) {
         val file = persistenceFile ?: return
-        val state = PersistedRestraintState(
-            quietHoursEnabled = quiet.enabled,
-            quietHoursStart = quiet.start.format(TIME_FMT),
-            quietHoursEnd = quiet.end.format(TIME_FMT),
-            zoneId = quiet.zoneId.id,
-            dailyMaxPushes = budget.dailyMaxPushes,
-            currentDay = currentDay?.toString(),
-            pushesToday = pushesToday,
-            lastGlobalPushEpochMs = lastGlobalPushEpochMs,
-            lastPushByTopic = lastPushByTopic.toMap(),
-            consecutiveIgnoresByTopic = consecutiveIgnoresByTopic.toMap(),
-            mutedUntilByTopic = mutedUntilByTopic.toMap(),
-            bufferedPulseItems = bufferedPulseItems.toList(),
-            pulseEnabled = pulseEnabledValue,
-            pulseTime = pulseTimeValue.format(TIME_FMT),
-            commitmentExtractionEnabled = commitmentExtractionEnabledValue,
-            appliedFeedbackKeys = appliedFeedbackKeys.toList().takeLast(MAX_APPLIED_FEEDBACK_KEYS),
-            urgentDay = urgentDay?.toString(),
-            urgentPushesToday = urgentPushesToday,
-            pendingFeedbackByTopic = pendingFeedbackByTopic.toMap(),
-        )
-        ProactiveFilePersistence.atomicWrite0600(file, persistenceJson.encodeToString(state))
+        val state = stateSnapshot(quiet, budget, pulseEnabledValue, pulseTimeValue, commitmentExtractionEnabledValue)
+        try {
+            ProactiveFilePersistence.atomicWrite0600(file, persistenceJson.encodeToString(state))
+        } catch (failure: Exception) {
+            committedState?.let(::restoreState)
+            throw failure
+        }
+        committedState = state
     }
+
+    private fun stateSnapshot(
+        quiet: QuietHoursConfig = quietHours,
+        budget: InterruptionBudgetConfig = budgetConfig,
+        pulseEnabledValue: Boolean = pulseEnabled,
+        pulseTimeValue: LocalTime = pulseTime,
+        commitmentExtractionEnabledValue: Boolean = commitmentExtractionEnabled,
+    ): PersistedRestraintState = PersistedRestraintState(
+        quietHoursEnabled = quiet.enabled,
+        quietHoursStart = quiet.start.format(TIME_FMT),
+        quietHoursEnd = quiet.end.format(TIME_FMT),
+        zoneId = quiet.zoneId.id,
+        dailyMaxPushes = budget.dailyMaxPushes,
+        currentDay = currentDay?.toString(),
+        pushesToday = pushesToday,
+        lastGlobalPushEpochMs = lastGlobalPushEpochMs,
+        lastPushByTopic = lastPushByTopic.toMap(),
+        consecutiveIgnoresByTopic = consecutiveIgnoresByTopic.toMap(),
+        mutedUntilByTopic = mutedUntilByTopic.toMap(),
+        bufferedPulseItems = bufferedPulseItems.toList(),
+        bufferedExpiredWakeupIds = bufferedExpiredWakeupIds.toList(),
+        pulseEnabled = pulseEnabledValue,
+        pulseTime = pulseTimeValue.format(TIME_FMT),
+        commitmentExtractionEnabled = commitmentExtractionEnabledValue,
+        appliedFeedbackKeys = appliedFeedbackKeys.toList().takeLast(MAX_APPLIED_FEEDBACK_KEYS),
+        urgentDay = urgentDay?.toString(),
+        urgentPushesToday = urgentPushesToday,
+        pendingFeedbackByTopic = pendingFeedbackByTopic.toMap(),
+    )
 }

@@ -158,6 +158,7 @@ class TelegramChannel(
                 continue
             }
             val parsed = parseUpdate(update) ?: continue
+            if (parsed.isProactiveCardCallback() && parsed.scope != ConversationScope.DIRECT) continue
             if (!deduplicator.markIfFirstSeen(id, "msg:${parsed.id}")) {
                 continue
             }
@@ -342,7 +343,7 @@ class TelegramChannel(
             val senderNumericId = fromObj["id"]?.jsonPrimitive?.longOrNull?.toString() ?: return null
             val chatObj = messageObj["chat"]?.jsonObject ?: return null
             val chatId = chatObj["id"]?.jsonPrimitive?.content ?: return null
-            val rawChatType = chatObj["type"]?.jsonPrimitive?.content ?: "private"
+            val rawChatType = chatObj["type"]?.jsonPrimitive?.content
             val scope = if (rawChatType == "private") ConversationScope.DIRECT else ConversationScope.GROUP
             val text = messageObj["text"]?.jsonPrimitive?.content
                 ?: messageObj["caption"]?.jsonPrimitive?.content
@@ -371,9 +372,9 @@ class TelegramChannel(
             val senderNumericId = fromObj["id"]?.jsonPrimitive?.longOrNull?.toString() ?: return null
             val msgObj = callbackObj["message"]?.jsonObject
             val chatObj = msgObj?.get("chat")?.jsonObject
-            val chatId = chatObj?.get("id")?.jsonPrimitive?.content ?: senderNumericId
-            val rawChatType = chatObj?.get("type")?.jsonPrimitive?.content ?: "private"
-            val scope = if (rawChatType == "private") ConversationScope.DIRECT else ConversationScope.GROUP
+            val chatId = chatObj?.get("id")?.jsonPrimitive?.longOrNull?.toString()
+            val rawChatType = chatObj?.get("type")?.jsonPrimitive?.content
+            val scope = if (rawChatType == "private" && chatId == senderNumericId) ConversationScope.DIRECT else ConversationScope.GROUP
             val callbackData = callbackObj["data"]?.jsonPrimitive?.content ?: ""
 
             // 强制通过 ImApprovalGate 解析审批动作：任何批准请求在 IM 中一律转为 DENIED (allow = false)
@@ -393,7 +394,7 @@ class TelegramChannel(
             return InboundMessage(
                 messageId = "cb_$callbackId",
                 channel = kind,
-                chatId = chatId,
+                chatId = chatId ?: senderNumericId,
                 senderId = senderNumericId,
                 senderRole = SenderRole.GUEST,
                 scope = scope,

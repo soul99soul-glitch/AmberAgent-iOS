@@ -228,7 +228,11 @@ class WatchtowerMonitorTriggerSource(
         val signals = mutableListOf<ProactiveTriggerSignal>()
 
         for (monitor in due) {
-            val prevEtag = l1Filter.getWatchtowerSnapshot(monitor.url)?.etag
+            val prevEtag = l1Filter.getWatchtowerSnapshot(
+                monitor.url,
+                monitorId = monitor.id,
+                migrateLegacyUrlSnapshot = monitor.lastCheckedAtMs != null,
+            )?.etag
             val page = try {
                 fetcher.fetch(monitor.url, prevEtag)
             } catch (e: CancellationException) {

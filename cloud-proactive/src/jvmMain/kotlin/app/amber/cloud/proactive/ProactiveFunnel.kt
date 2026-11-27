@@ -244,7 +244,19 @@ class L1DeterministicFilter(
     }
 
     @Synchronized
-    fun getWatchtowerSnapshot(url: String): WatchtowerPageSnapshot? = watchtowerSnapshots[url.trim()]
+    fun getWatchtowerSnapshot(
+        url: String,
+        monitorId: String? = null,
+        migrateLegacyUrlSnapshot: Boolean = false,
+    ): WatchtowerPageSnapshot? {
+        val cleanUrl = url.trim()
+        if (monitorId == null) return watchtowerSnapshots[cleanUrl]
+        val key = "monitor:$monitorId"
+        val current = watchtowerSnapshots[key]
+        if (current != null) return current.takeIf { it.url == cleanUrl }
+        if (!migrateLegacyUrlSnapshot) return null
+        return watchtowerSnapshots[cleanUrl]?.also { watchtowerSnapshots[key] = it }
+    }
 
     @Synchronized
     fun hasProcessedDeduplicationKey(key: String): Boolean = processedDeduplicationKeys.contains(key)
@@ -306,7 +318,8 @@ class L1DeterministicFilter(
     private fun evaluateWatchtower(signal: ProactiveTriggerSignal.WatchtowerPageSignal): L1Outcome {
         val cleanUrl = signal.url.trim()
         require(cleanUrl.isNotEmpty()) { "Watchtower URL 不能为空" }
-        val previous = watchtowerSnapshots[cleanUrl]
+        val snapshotKey = signal.monitorId?.let { "monitor:$it" } ?: cleanUrl
+        val previous = getWatchtowerSnapshot(cleanUrl, signal.monitorId)
 
         // 1. HTTP 304 Not Modified 或 ETag 完全命中 -> 0 Token 直接返回无变化
         if (signal.httpStatusCode == 304 && previous != null) {
@@ -315,7 +328,7 @@ class L1DeterministicFilter(
                 consecutiveUnchanged = nextUnchanged,
                 updatedAtEpochMs = signal.timestampEpochMs,
             )
-            watchtowerSnapshots[cleanUrl] = updated
+            watchtowerSnapshots[snapshotKey] = updated
             return L1Outcome.DroppedUnchanged(
                 reason = "HTTP 304 Not Modified",
                 sha256 = previous.sha256,
@@ -332,7 +345,7 @@ class L1DeterministicFilter(
                 consecutiveUnchanged = nextUnchanged,
                 updatedAtEpochMs = signal.timestampEpochMs,
             )
-            watchtowerSnapshots[cleanUrl] = updated
+            watchtowerSnapshots[snapshotKey] = updated
             return L1Outcome.DroppedUnchanged(
                 reason = "HTTP ETag 未变化 ($cleanEtag)",
                 sha256 = previous.sha256,
@@ -358,7 +371,7 @@ class L1DeterministicFilter(
                 consecutiveUnchanged = nextUnchanged,
                 updatedAtEpochMs = signal.timestampEpochMs,
             )
-            watchtowerSnapshots[cleanUrl] = updated
+            watchtowerSnapshots[snapshotKey] = updated
             return L1Outcome.DroppedUnchanged(
                 reason = "归一化正文 SHA-256 未变化",
                 sha256 = sha256,
@@ -386,7 +399,7 @@ class L1DeterministicFilter(
             consecutiveUnchanged = 0,
             updatedAtEpochMs = signal.timestampEpochMs,
         )
-        watchtowerSnapshots[cleanUrl] = nextSnapshot
+        watchtowerSnapshots[snapshotKey] = nextSnapshot
 
         val pageTitle = signal.title.ifBlank { cleanUrl }
         val deltaSummary = buildString {

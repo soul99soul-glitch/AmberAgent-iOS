@@ -408,10 +408,11 @@ class CloudDaemonE2ETest {
         }
         assertEquals(200, pushOk.status.value)
 
-        val testPushOk = client.post("/v1/test-push") {
+        val testPush = client.post("/v1/test-push") {
             header(HttpHeaders.Authorization, "Bearer $bearerToken")
         }
-        assertEquals(200, testPushOk.status.value)
+        assertEquals(503, testPush.status.value)
+        assertTrue(testPush.bodyAsText().contains("push_not_configured"))
 
         val createSchedResp = client.post("/v1/amber/schedules") {
             header(HttpHeaders.Authorization, "Bearer $bearerToken")

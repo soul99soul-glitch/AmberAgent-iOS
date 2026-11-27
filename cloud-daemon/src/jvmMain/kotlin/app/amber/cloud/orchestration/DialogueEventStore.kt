@@ -526,8 +526,8 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
             it.bindText(1, event.id); it.bindText(2, json.encodeToString(event)); it.step()
         }
 
-    fun append(event: DialogueEvent) = transaction {
-        if (!appendEventRawLocked(event)) return@transaction
+    fun append(event: DialogueEvent): Boolean = transaction {
+        if (!appendEventRawLocked(event)) return@transaction false
         val workItemId = event.workItemId
         if (workItemId != null) {
             updateWorkItemEpochLocked(workItemId, event.epoch)
@@ -542,6 +542,7 @@ class DialogueEventStore(private val db: SQLiteConnection, private val lock: Any
                 }
             }
         }
+        true
     }
 
     /**

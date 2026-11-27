@@ -79,15 +79,19 @@ internal class CloudRouterIngress(private val kernel: CloudAgentKernel) : Channe
 
         return when (verb) {
             "snooze" -> {
-                val res = kernel.applyProactiveFeedback(
-                    signalId = signalId,
-                    action = ProactiveFeedbackAction.SNOOZE,
-                    snoozeMinutes = 60,
-                )
+                val res = try {
+                    kernel.applyProactiveFeedback(
+                        signalId = signalId,
+                        action = ProactiveFeedbackAction.SNOOZE,
+                        snoozeMinutes = 60,
+                    )
+                } catch (e: IllegalArgumentException) {
+                    return ProactiveCallbackDisposition.Handled(response(message, e.message ?: "暂时无法安排提醒"))
+                }
                 val replyText = when (res) {
                     CloudAgentKernel.ProactiveFeedbackResult.SignalNotFound -> EXPIRED_CARD_REPLY
                     is CloudAgentKernel.ProactiveFeedbackResult.Applied ->
-                        if (res.applied) "好的，1 小时后再提醒你。" else "已为你安排 1 小时后提醒。"
+                        if (res.applied) "好的，1 小时后再提醒你。" else "这张卡片的延后操作已处理。"
                 }
                 ProactiveCallbackDisposition.Handled(response(message, replyText))
             }

@@ -28,7 +28,7 @@ class ProactiveRunHistoryStore(
 ) {
     private val file = File(proactiveDir, "run-history.json")
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true; encodeDefaults = true }
-    private val entries = ArrayList<ProactiveRunHistoryEntry>()
+    private var entries = emptyList<ProactiveRunHistoryEntry>()
 
     init {
         ProactiveFilePersistence.ensureOwnerOnlyDir(proactiveDir)
@@ -49,6 +49,9 @@ class ProactiveRunHistoryStore(
         summary: String,
         timestampEpochMs: Long,
     ): ProactiveRunHistoryEntry {
+        if (outcome == "wakeup_expired") {
+            entries.lastOrNull { it.signalId == signalId && it.outcome == outcome }?.let { return it }
+        }
         val entry = ProactiveRunHistoryEntry(
             id = "prun_" + UUID.randomUUID().toString().replace("-", "").take(10),
             signalId = signalId,
@@ -59,11 +62,9 @@ class ProactiveRunHistoryStore(
             summary = CredentialRedactor.redact(summary).take(300),
             timestampEpochMs = timestampEpochMs,
         )
-        entries.add(entry)
-        while (entries.size > maxEntries) {
-            entries.removeAt(0)
-        }
-        persistToDisk()
+        val nextEntries = (entries + entry).takeLast(maxEntries)
+        ProactiveFilePersistence.atomicWrite0600(file, json.encodeToString(nextEntries))
+        entries = nextEntries
         return entry
     }
 
@@ -89,7 +90,14 @@ class ProactiveRunHistoryStore(
             is ProactiveRunResult.SuppressedAtGate -> {
                 val (outcome, reason) = when (val v = result.restraintVerdict) {
                     is RestraintVerdict.SuppressedQuietHours -> "suppressed_quiet_hours" to v.reason
-                    is RestraintVerdict.DeferredByBudget -> "deferred_budget" to v.reason
+                    is RestraintVerdict.DeferredByBudget -> {
+                        val outcome = if (result.l1Delta.urgency == ProactiveUrgency.DIGEST && v.bufferedForMorningBriefing) {
+                            "digest"
+                        } else {
+                            "deferred_budget"
+                        }
+                        outcome to v.reason
+                    }
                     is RestraintVerdict.DroppedLowScore -> "dropped_low_score" to v.reason
                     is RestraintVerdict.AllowedToPush -> "allowed" to ""
                 }
@@ -122,11 +130,6 @@ class ProactiveRunHistoryStore(
         val loaded = runCatching {
             json.decodeFromString<List<ProactiveRunHistoryEntry>>(file.readText())
         }.getOrNull() ?: return
-        entries.clear()
-        entries.addAll(loaded.takeLast(maxEntries))
-    }
-
-    private fun persistToDisk() {
-        ProactiveFilePersistence.atomicWrite0600(file, json.encodeToString(entries.toList()))
+        entries = loaded.takeLast(maxEntries)
     }
 }

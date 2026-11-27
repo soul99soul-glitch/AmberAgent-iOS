@@ -3,6 +3,7 @@ package app.amber.cloud.runtime
 import app.amber.cloud.channel.PRIMARY_CONVERSATION_ID
 import app.amber.cloud.gateway.DeviceContextSnapshotStore
 import app.amber.cloud.gateway.PairedDevice
+import app.amber.cloud.orchestration.RouterTurnAuthContext
 import app.amber.cloud.proactive.ProactiveMonitorRecord
 import app.amber.cloud.proactive.ProactiveMonitorStore
 import app.amber.cloud.proactive.ProactiveWakeupRecord
@@ -13,6 +14,7 @@ import app.amber.cloud.security.CredentialRedactor
 import app.amber.cloud.security.EnvelopeCredentialVault
 import app.amber.cloud.security.PlaceholderCredentialException
 import app.amber.core.storage.conversation.JsonConversationStorage
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -31,7 +33,6 @@ import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
-import java.time.format.DateTimeFormatter
 import kotlin.uuid.Uuid
 
 /**
@@ -498,7 +499,7 @@ internal object CloudBuiltinTools {
                     name = "proactive_wakeup_create",
                     description = "创建一条一次性定时提醒唤醒。边界：到点只提醒/说话（0 Token）用 wakeup；到点需要执行工具或产出文件请用 schedule。支持 trigger_at（带偏移 ISO-8601；无偏移按用户当前时区解释）或 delay_minutes（二选一），触发时间须在未来 1 分钟至 90 天内。",
                     parameters = app.amber.cloud.tasks.schema(
-                        "{\"title\":{\"type\":\"string\",\"maxLength\":100},\"trigger_at\":{\"type\":\"string\"},\"delay_minutes\":{\"type\":\"integer\"},\"detail\":{\"type\":\"string\",\"maxLength\":1000},\"check_prompt\":{\"type\":\"string\",\"maxLength\":2000},\"user_requested\":{\"type\":\"boolean\"},\"conversation_id\":{\"type\":\"string\"}}",
+                        "{\"title\":{\"type\":\"string\",\"maxLength\":100},\"trigger_at\":{\"type\":\"string\"},\"delay_minutes\":{\"type\":\"integer\"},\"detail\":{\"type\":\"string\",\"maxLength\":1000},\"check_prompt\":{\"type\":\"string\",\"maxLength\":2000},\"user_requested\":{\"type\":\"boolean\"}}",
                         "title",
                     ),
                     highRisk = false,
@@ -520,10 +521,7 @@ internal object CloudBuiltinTools {
                     val userRequested = (args["user_requested"] ?: args["userRequested"])
                         ?.takeUnless { it is JsonNull }
                         ?.jsonPrimitive?.booleanOrNull ?: false
-                    val conversationId = (args["conversation_id"] ?: args["conversationId"])
-                        ?.takeUnless { it is JsonNull }
-                        ?.jsonPrimitive?.contentOrNull?.trim()
-                        ?.takeIf { it.isNotEmpty() }
+                    val conversationId = currentCoroutineContext()[RouterTurnAuthContext]?.conversationId
                         ?: PRIMARY_CONVERSATION_ID.toString()
 
                     runCatching {
@@ -616,8 +614,6 @@ internal object CloudBuiltinTools {
     }
 
     private const val MAX_WAKEUP_DELAY_MINUTES = 90L * 24L * 60L
-    private val SPACE_LOCAL_DATETIME_SEC: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-    private val SPACE_LOCAL_DATETIME_MIN: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 
     internal fun parseIsoTriggerAtEpochMs(raw: String, fallbackZoneId: ZoneId): Long {
         val text = raw.trim()
@@ -625,12 +621,8 @@ internal object CloudBuiltinTools {
         runCatching { return OffsetDateTime.parse(text).toInstant().toEpochMilli() }
         runCatching { return ZonedDateTime.parse(text).toInstant().toEpochMilli() }
         runCatching { return Instant.parse(text).toEpochMilli() }
-        runCatching { return LocalDateTime.parse(text).atZone(fallbackZoneId).toInstant().toEpochMilli() }
         runCatching {
-            return LocalDateTime.parse(text, SPACE_LOCAL_DATETIME_SEC).atZone(fallbackZoneId).toInstant().toEpochMilli()
-        }
-        runCatching {
-            return LocalDateTime.parse(text, SPACE_LOCAL_DATETIME_MIN).atZone(fallbackZoneId).toInstant().toEpochMilli()
+            return LocalDateTime.parse(text.replace(' ', 'T')).atZone(fallbackZoneId).toInstant().toEpochMilli()
         }
         throw IllegalArgumentException("trigger_at 格式非法，请提供 ISO-8601 时间（如 2026-11-27T09:30:00+08:00 或 2026-11-27T09:30）")
     }

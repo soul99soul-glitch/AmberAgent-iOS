@@ -223,7 +223,8 @@ docker run --rm -it \
 | **Telegram** | `telegram.owner_id` | `AMBER_TELEGRAM_OWNER_ID` | 否 | 可选预置主人数字 ID（未设置时在私聊发送 `/bind <一次性码>` 绑定） |
 | **飞书机器人** | `feishu.app_id` | `AMBER_FEISHU_APP_ID` | 否 | 飞书企业自建应用 App ID |
 | **飞书机器人** | `feishu.app_secret` | `AMBER_FEISHU_APP_SECRET` | 是（`secrets.enc.json`） | 飞书企业自建应用 App Secret（用于换取 `tenant_access_token`） |
-| **飞书机器人** | `feishu.encrypt_key` | `AMBER_FEISHU_ENCRYPT_KEY` | 是（`secrets.enc.json`） | 飞书事件订阅 Encrypt Key（用于校验 `X-Lark-Signature`） |
+| **飞书机器人** | `feishu.encrypt_key` | `AMBER_FEISHU_ENCRYPT_KEY` | 是（`secrets.enc.json`） | 飞书事件订阅 Encrypt Key，用于校验事件签名并解密回调 |
+| **飞书机器人** | `feishu.verification_token` | `AMBER_FEISHU_VERIFICATION_TOKEN` | 是（`secrets.enc.json`） | 首次验证回调网址时，用于核对无签名加密握手中的 Verification Token |
 | **飞书机器人** | `feishu.webhook_url` | `AMBER_FEISHU_WEBHOOK_URL` | 否 | 可选自定义群机器人 Webhook 地址 |
 | **飞书机器人** | `feishu.webhook_secret` | `AMBER_FEISHU_WEBHOOK_SECRET` | 是（`secrets.enc.json`） | 可选自定义群机器人签名校验密钥（HMAC-SHA256） |
 | **飞书机器人** | `feishu.owner_open_id` | `AMBER_FEISHU_OWNER_OPEN_ID` | 否 | 可选预置主人飞书 `open_id`（未设置时在私聊发送 `/bind <一次性码>` 绑定） |
@@ -249,7 +250,7 @@ docker run --rm -it \
 2. **飞书企业自建应用（`AMBER_FEISHU_APP_ID` / `AMBER_FEISHU_APP_SECRET` / `AMBER_FEISHU_ENCRYPT_KEY`）**
    - 登录飞书开放平台（开发者后台），创建「企业自建应用」，在「凭证与基础信息」页获取 `App ID` 与 `App Secret`。
    - 在「应用能力」中启用「机器人」，并在「权限管理」中开通消息收发（`im:message`）与日历只读/读写相关权限。
-   - 在「事件与回调」中配置请求网址为 `https://<你的网关域名>/v1/channels/feishu/webhook`，开启加密策略并获取 `Encrypt Key`，订阅 `im.message.receive_v1` 与卡片交互回调 `card.action.trigger`。
+   - 在「事件与回调」中开启加密策略，将 `Encrypt Key` 和 `Verification Token` 配置到 amberd。将请求网址设为 `https://<你的网关域名>/v1/channels/feishu/webhook`，订阅 `im.message.receive_v1` 与卡片交互回调 `card.action.trigger`。
    - 发布应用版本后，在飞书与机器人私聊发送 `/bind <一次性码>` 绑定主人 `open_id`。
 
 3. **飞书 CalDAV 日历凭据（`AMBER_FEISHU_CALDAV_USERNAME` / `AMBER_FEISHU_CALDAV_PASSWORD`）**

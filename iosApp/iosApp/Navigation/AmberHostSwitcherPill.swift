@@ -350,6 +350,12 @@ final class AmberCloudTimelineScrollCoordinator {
     private var lastViewportHeight: CGFloat = 0
     private var lastContentHeight: CGFloat = 0
     private(set) var isPinnedToBottom: Bool = true
+    private var isShowingHistoricalSignal = false
+
+    func setHistoricalSignalFocused(_ focused: Bool) {
+        isShowingHistoricalSignal = focused
+        if focused { isPinnedToBottom = false }
+    }
 
     func resolve(_ scrollView: UIScrollView) {
         let isNew = self.scrollView !== scrollView
@@ -404,6 +410,7 @@ final class AmberCloudTimelineScrollCoordinator {
         lastViewportHeight = scrollView.bounds.height
         lastContentHeight = scrollView.contentSize.height
 
+        guard !isShowingHistoricalSignal else { return }
         if !userInteracting && (isPinnedToBottom || distanceBeforeChange <= NativeTimelineScrollCore.resumeEpsilon) {
             isPinnedToBottom = true
             let targetY = bottomTarget(in: scrollView)
@@ -542,29 +549,22 @@ struct AmberInlineCloudMainDialogueView: View {
     @State private var scrollCoordinator = AmberCloudTimelineScrollCoordinator()
     @State private var highlightedProactiveEventId: String?
     @State private var highlightClearTask: Task<Void, Never>?
-    @State private var lastScrolledPendingSignalId: String?
 
     private struct PendingProactiveSheetItem: Identifiable, Equatable {
         let id: String
     }
 
-    private var normalizedPendingSignalId: String? {
-        guard let raw = proactiveStore.pendingSignalId?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !raw.isEmpty else {
-            return nil
-        }
-        return raw
+    private var pendingTimelineEventId: String? {
+        guard let signalId = proactiveStore.pendingSignalId else { return nil }
+        return store.cloudDialogueEvents.last(where: { $0.proactiveSignalId == signalId })?.id
     }
 
     private var pendingProactiveSheetBinding: Binding<PendingProactiveSheetItem?> {
-        Binding(
-            get: {
-                normalizedPendingSignalId.map { PendingProactiveSheetItem(id: $0) }
-            },
-            set: { newValue in
-                if newValue == nil, proactiveStore.pendingSignalId != nil {
-                    proactiveStore.pendingSignalId = nil
-                }
+        let presentedId = proactiveStore.pendingSignalId
+        return Binding(
+            get: { presentedId.map { PendingProactiveSheetItem(id: $0) } },
+            set: { item in
+                if item == nil, let presentedId { proactiveStore.dismissSignal(presentedId) }
             }
         )
     }
@@ -708,38 +708,29 @@ struct AmberInlineCloudMainDialogueView: View {
                     }
                     _ = await store.pollCloudDialogueEvents()
                 }
-                if let pendingId = normalizedPendingSignalId {
-                    focusPendingProactiveSignalIfVisible(pendingId, proxy: proxy)
-                } else {
+                if let eventId = pendingTimelineEventId {
+                    focusProactiveEvent(eventId, proxy: proxy)
+                } else if proactiveStore.pendingSignalId == nil {
                     proxy.scrollTo("cloud-dialogue-bottom-anchor", anchor: .bottom)
                     scrollCoordinator.scrollToBottom()
                 }
             }
             .onChange(of: scrollTailToken) { _, _ in
-                guard normalizedPendingSignalId == nil else { return }
+                guard proactiveStore.pendingSignalId == nil, scrollCoordinator.isPinnedToBottom else { return }
                 withAnimation(.easeOut(duration: 0.18)) {
                     proxy.scrollTo("cloud-dialogue-bottom-anchor", anchor: .bottom)
                 }
                 scrollCoordinator.scrollToBottom()
             }
-            .onChange(of: proactiveStore.pendingSignalId) { _, _ in
-                if let pendingId = normalizedPendingSignalId {
-                    focusPendingProactiveSignalIfVisible(pendingId, proxy: proxy)
+            .onChange(of: pendingTimelineEventId) { _, eventId in
+                if let eventId {
+                    focusProactiveEvent(eventId, proxy: proxy)
                 } else {
-                    lastScrolledPendingSignalId = nil
-                }
-            }
-            .onChange(of: store.cloudDialogueVisibleEvents.count) { _, _ in
-                if let pendingId = normalizedPendingSignalId, lastScrolledPendingSignalId != pendingId {
-                    focusPendingProactiveSignalIfVisible(pendingId, proxy: proxy)
+                    scrollCoordinator.setHistoricalSignalFocused(false)
                 }
             }
         }
-        .sheet(item: pendingProactiveSheetBinding, onDismiss: {
-            if proactiveStore.pendingSignalId != nil {
-                proactiveStore.pendingSignalId = nil
-            }
-        }) { item in
+        .sheet(item: pendingProactiveSheetBinding) { item in
             CloudProactiveSignalDetailSheet(signalId: item.id, store: proactiveStore)
         }
         .onDisappear {
@@ -756,23 +747,17 @@ struct AmberInlineCloudMainDialogueView: View {
         .accessibilityIdentifier("chat.cloudMainDialogue.inlineView")
     }
 
-    private func focusPendingProactiveSignalIfVisible(_ signalId: String, proxy: ScrollViewProxy) {
-        let expectedEventId = "proactive:\(signalId)"
-        guard let target = store.cloudDialogueVisibleEvents.last(where: {
-            $0.kind == .proactiveMessage && ($0.proactive?.signalId == signalId || $0.id == expectedEventId)
-        }) else {
-            return
-        }
-        lastScrolledPendingSignalId = signalId
+    private func focusProactiveEvent(_ eventId: String, proxy: ScrollViewProxy) {
+        scrollCoordinator.setHistoricalSignalFocused(true)
         withAnimation(.easeInOut(duration: 0.25)) {
-            proxy.scrollTo(target.id, anchor: .center)
+            proxy.scrollTo(eventId, anchor: .center)
         }
-        highlightedProactiveEventId = target.id
+        highlightedProactiveEventId = eventId
         highlightClearTask?.cancel()
         highlightClearTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(2.2))
             guard !Task.isCancelled else { return }
-            if highlightedProactiveEventId == target.id {
+            if highlightedProactiveEventId == eventId {
                 highlightedProactiveEventId = nil
             }
         }

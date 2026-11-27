@@ -31,7 +31,6 @@ struct AppShell: View {
     @State private var pendingAppDeepLinkDestination: IOSAppDeepLink.Destination?
     @State private var pendingAppDeepLinkURL: URL?
     @State private var isOpeningPendingAppDeepLink = false
-    @State private var lastRoutedProactiveSignal: (id: String, at: Date)?
     @State private var didBootstrapConversations = false
     @State private var didRunStartupRecovery = false
     @State private var didCompleteStartupRecovery = false
@@ -529,7 +528,6 @@ struct AppShell: View {
     }
 
     private static let coldStartMaintenanceDedupeWindow: TimeInterval = 3.0
-    private static let proactiveDeepLinkDedupeWindow: TimeInterval = 2.0
 
     private func shouldRunColdStartDeduplicated(_ lastTimestamp: inout Date?, now: Date = Date()) -> Bool {
         if let lastTimestamp, now.timeIntervalSince(lastTimestamp) < Self.coldStartMaintenanceDedupeWindow {
@@ -593,13 +591,6 @@ struct AppShell: View {
             pendingAgentActivityTarget = target
             pendingAgentActivityURL = url
             Task { await openPendingAgentActivityIfReady() }
-        case .proactiveSignal:
-            if pendingAppDeepLinkDestination == destination {
-                return
-            }
-            pendingAppDeepLinkDestination = destination
-            pendingAppDeepLinkURL = url
-            Task { await openPendingAppDeepLinkIfReady() }
         default:
             pendingAppDeepLinkDestination = destination
             pendingAppDeepLinkURL = url
@@ -792,7 +783,7 @@ struct AppShell: View {
             MacGatewayStore.shared.receivePairingLink(payload)
             rootRouter.path = [.settings, .macGateway]
         case .gatewayTasks(let role):
-            rootRouter.path = [.gatewayTasks(role)]
+            Self.openGatewayBoard(role: role, router: rootRouter, gatewayStore: .shared)
         case .macTasks:
             rootRouter.path = [.macTasks]
         case .cloudTask(let workItemId):
@@ -802,13 +793,6 @@ struct AppShell: View {
                 _ = await MacGatewayStore.shared.ensureCloudTaskLoaded(workItemId: workItemId)
             }
         case .proactiveSignal(let signalId):
-            let now = Date()
-            if let last = lastRoutedProactiveSignal,
-               last.id == signalId,
-               now.timeIntervalSince(last.at) < Self.proactiveDeepLinkDedupeWindow {
-                break
-            }
-            lastRoutedProactiveSignal = (signalId, now)
             Self.routeProactiveSignal(
                 signalId: signalId,
                 router: rootRouter,
@@ -834,6 +818,18 @@ struct AppShell: View {
         pendingAppDeepLinkURL = nil
     }
 
+    static func openGatewayBoard(role: MacGatewayEndpointRole, router: RouterPath, gatewayStore: MacGatewayStore) {
+        let slot = gatewayStore.slot(for: role)
+        slot.restorePairingIfNeeded()
+        if slot.connection != nil {
+            router.path = [.gatewayTasks(role)]
+        } else {
+            gatewayStore.preferredMultiDeviceTab = role == .cloud ? .cloud : .mac
+            slot.notice = .init(text: slot.localized("请先配对发送这条通知的终端，再重新打开通知。"), isError: true)
+            router.path = [.settings, .macGateway]
+        }
+    }
+
     @discardableResult
     static func routeProactiveSignal(
         signalId: String,
@@ -841,9 +837,19 @@ struct AppShell: View {
         gatewayStore: MacGatewayStore = .shared,
         proactiveStore: CloudProactiveStore = .shared,
         sendOpenedFeedback: (@MainActor (String) async -> Bool)? = nil
-    ) -> Task<Void, Never> {
+    ) -> Task<Void, Never>? {
+        gatewayStore.restorePairingIfNeeded()
+        guard gatewayStore.hasCloudConnection else {
+            proactiveStore.pendingSignalId = nil
+            gatewayStore.preferredMultiDeviceTab = .cloud
+            gatewayStore.notice = .init(text: gatewayStore.localized("请先配对发送这条提醒的云端，再重新打开通知。"), isError: true)
+            router.path = [.settings, .macGateway]
+            return nil
+        }
         router.path = [.chat]
-        gatewayStore.slot(for: .cloud).setCloudMainDialogueSelected(true)
+        if !gatewayStore.isCloudMainDialogueSelected { gatewayStore.setCloudMainDialogueSelected(true) }
+        // Both a notification and onOpenURL can reach here. A dismissed sheet may be reopened immediately.
+        guard proactiveStore.pendingSignalId != signalId else { return nil }
         proactiveStore.pendingSignalId = signalId
         let feedbackSender = sendOpenedFeedback ?? { id in
             await proactiveStore.sendFeedback(signalId: id, action: .opened)

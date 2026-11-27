@@ -398,33 +398,6 @@ struct CloudProactiveFeedbackResponse: Codable, Equatable, Sendable {
     var applied: Bool
     var wakeupId: String? = nil
     var mutedUntilEpochMs: Int64? = nil
-
-    init(
-        ok: Bool,
-        action: String,
-        applied: Bool,
-        wakeupId: String? = nil,
-        mutedUntilEpochMs: Int64? = nil
-    ) {
-        self.ok = ok
-        self.action = action
-        self.applied = applied
-        self.wakeupId = wakeupId
-        self.mutedUntilEpochMs = mutedUntilEpochMs
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case ok, action, applied, wakeupId, mutedUntilEpochMs
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        ok = try container.decodeIfPresent(Bool.self, forKey: .ok) ?? false
-        action = try container.decodeIfPresent(String.self, forKey: .action) ?? ""
-        applied = try container.decodeIfPresent(Bool.self, forKey: .applied) ?? false
-        wakeupId = try container.decodeIfPresent(String.self, forKey: .wakeupId)
-        mutedUntilEpochMs = try container.decodeIfPresent(Int64.self, forKey: .mutedUntilEpochMs)
-    }
 }
 
 struct CloudProactiveSignalResponse: Codable, Equatable, Sendable {
@@ -469,76 +442,20 @@ extension MacGatewayClient {
         mode == "immediate" || mode == "digest"
     }
 
-    /// Strictly validates a GitHub `owner/repo` slug and returns
-    /// `https://github.com/{owner}/{repo}/releases.atom`.
-    /// Rejects schemes, whitespace, path traversal (`..`), query/fragment characters,
-    /// extra slashes, non-ASCII/illegal characters, and dotted numeric IPv4 literals.
+    /// Both path segments are ASCII. Managed GitHub users can have an enterprise shortcode suffix.
     static func buildGitHubReleaseFeedURL(from repoSlug: String) -> URL? {
-        let trimmed = repoSlug.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let parts = trimmed.split(separator: "/", omittingEmptySubsequences: false)
+        let parts = repoSlug.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: "/", omittingEmptySubsequences: false)
         guard parts.count == 2 else { return nil }
-
         let owner = String(parts[0])
         let repo = String(parts[1])
-        guard !owner.isEmpty, !repo.isEmpty,
-              owner.utf8.count <= 100, repo.utf8.count <= 100 else {
+        guard owner.utf8.count <= 39,
+              owner.range(of: #"\A[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*(?:_[A-Za-z0-9]+)?\z"#, options: .regularExpression) != nil,
+              repo.utf8.count <= 100, repo != ".", !repo.contains(".."),
+              repo.range(of: #"\A[A-Za-z0-9_.-]+\z"#, options: .regularExpression) != nil else {
             return nil
         }
-
-        func isAllowedSlugSegment(_ segment: String) -> Bool {
-            guard segment != ".", segment != "..", !segment.contains("..") else {
-                return false
-            }
-            return segment.unicodeScalars.allSatisfy { scalar in
-                (scalar.value >= 0x30 && scalar.value <= 0x39)      // 0-9
-                    || (scalar.value >= 0x41 && scalar.value <= 0x5A) // A-Z
-                    || (scalar.value >= 0x61 && scalar.value <= 0x7A) // a-z
-                    || scalar.value == 0x5F                           // _
-                    || scalar.value == 0x2E                           // .
-                    || scalar.value == 0x2D                           // -
-            }
-        }
-
-        func isDottedNumericHostLiteral(_ segment: String) -> Bool {
-            guard segment.contains(".") else { return false }
-            let labels = segment.split(separator: ".", omittingEmptySubsequences: false)
-            guard !labels.isEmpty else { return false }
-            return labels.allSatisfy { label in
-                guard !label.isEmpty else { return false }
-                if label.allSatisfy({ $0.isASCII && $0.isNumber }) {
-                    return true
-                }
-                if label.count > 2,
-                   (label.hasPrefix("0x") || label.hasPrefix("0X")),
-                   label.dropFirst(2).allSatisfy({ $0.isASCII && $0.isHexDigit }) {
-                    return true
-                }
-                return false
-            }
-        }
-
-        guard isAllowedSlugSegment(owner),
-              isAllowedSlugSegment(repo),
-              !owner.hasPrefix("."),
-              !owner.hasSuffix("."),
-              !isDottedNumericHostLiteral(owner) else {
-            return nil
-        }
-
-        var components = URLComponents()
-        components.scheme = "https"
-        components.host = "github.com"
-        components.path = "/\(owner)/\(repo)/releases.atom"
-        guard let url = components.url,
-              url.scheme == "https",
-              url.host?.lowercased() == "github.com",
-              url.query == nil,
-              url.fragment == nil,
-              url.path == "/\(owner)/\(repo)/releases.atom" else {
-            return nil
-        }
-        return url
+        return URL(string: "https://github.com/\(owner)/\(repo)/releases.atom")
     }
 
     private static func encodeProactivePathSegment(_ raw: String) throws -> String {
@@ -581,6 +498,7 @@ extension MacGatewayClient {
         let response: CloudProactiveSignalResponse = try decode(
             await send("GET", "/v2/proactive/signals/\(encoded)")
         )
+        guard response.event.proactiveSignalId == signalId else { throw MacGatewayError.invalidResponse }
         return response.event
     }
 
@@ -598,9 +516,11 @@ extension MacGatewayClient {
         if let muteHours {
             body["muteHours"] = muteHours
         }
-        return try decode(
+        let receipt: CloudProactiveFeedbackResponse = try decode(
             await send("POST", "/v2/proactive/signals/\(encoded)/feedback", body: body)
         )
+        guard receipt.ok, receipt.action == action.rawValue else { throw MacGatewayError.invalidResponse }
+        return receipt
     }
 
     @discardableResult
@@ -750,6 +670,10 @@ final class CloudProactiveStore: ObservableObject {
         )
     }
 
+    func dismissSignal(_ signalId: String) {
+        if pendingSignalId == signalId { pendingSignalId = nil }
+    }
+
     private func requireClient() -> MacGatewayClient? {
         guard let client = clientProvider() else {
             let message = IOSAppLocalization.string("尚未配对 Amber · 云端", defaultValue: "尚未配对 Amber · 云端")
@@ -769,11 +693,13 @@ final class CloudProactiveStore: ObservableObject {
     }
 
     func refreshSummary() async {
-        guard let client = requireClient() else { return }
-        if !isLoading { isLoading = true }
-        defer { if isLoading { isLoading = false } }
+        guard !isLoading, let client = requireClient() else { return }
+        isLoading = true
+        defer { isLoading = false }
+        let previous = summary
         do {
             let fetched = try await client.fetchProactiveSummary()
+            guard summary == previous, clientProvider() === client else { return }
             if summary != fetched { summary = fetched }
             clearErrorIfNeeded()
         } catch {
@@ -802,24 +728,20 @@ final class CloudProactiveStore: ObservableObject {
     }
 
     func loadSignal(_ signalId: String) async -> MacGatewayCloudDialogueEvent? {
-        let trimmed = signalId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
+        guard MacGatewayClient.isValidProactiveSignalId(signalId) else {
             let message = IOSAppLocalization.string("无效的主动消息标识", defaultValue: "无效的主动消息标识")
             if lastError != message { lastError = message }
             return nil
         }
 
-        let expectedEventId = "proactive:\(trimmed)"
-        if let cached = localEventsProvider().last(where: {
-            $0.proactive?.signalId == trimmed || $0.id == expectedEventId
-        }) {
+        if let cached = localEventsProvider().last(where: { $0.proactiveSignalId == signalId }) {
             clearErrorIfNeeded()
             return cached
         }
 
         guard let client = requireClient() else { return nil }
         do {
-            let fetched = try await client.fetchProactiveSignal(signalId: trimmed)
+            let fetched = try await client.fetchProactiveSignal(signalId: signalId)
             clearErrorIfNeeded()
             return fetched
         } catch {
@@ -838,20 +760,37 @@ final class CloudProactiveStore: ObservableObject {
         return "关于这条主动提醒「\(title)」，请帮我处理：\n\n" + String(event.text.prefix(600))
     }
 
+    enum ActResult {
+        case sendFailed
+        case submitted
+        case submittedWithFeedbackError(String)
+    }
+
     func act(on event: MacGatewayCloudDialogueEvent) async -> Bool {
-        let prompt = Self.buildActPrompt(for: event)
-        let sendResult = await sendCloudMessageHandler(prompt)
-        switch sendResult {
+        if case .sendFailed = await submitAct(on: event) { return false }
+        return true
+    }
+
+    func submitAct(on event: MacGatewayCloudDialogueEvent) async -> ActResult {
+        guard let signalId = event.proactiveSignalId else {
+            recordError(MacGatewayError.invalidResponse)
+            return .sendFailed
+        }
+        guard let client = requireClient() else { return .sendFailed }
+        switch await sendCloudMessageHandler(Self.buildActPrompt(for: event)) {
         case .failure(let error):
             recordError(error)
-            return false
+            return .sendFailed
         case .success:
-            clearErrorIfNeeded()
-            if let signalId = Self.resolvedSignalId(for: event),
-               let client = clientProvider() {
-                _ = try? await client.sendProactiveFeedback(signalId: signalId, action: .replied)
+            // The dialogue already accepted the message. Retrying feedback must never submit it again.
+            do {
+                _ = try await client.sendProactiveFeedback(signalId: signalId, action: .replied)
+                clearErrorIfNeeded()
+                return .submitted
+            } catch {
+                recordError(error)
+                return .submittedWithFeedbackError(error.localizedDescription)
             }
-            return true
         }
     }
 
@@ -952,9 +891,7 @@ final class CloudProactiveStore: ObservableObject {
                 if summary != current { summary = current }
             }
             clearErrorIfNeeded()
-            if let refreshed = try? await client.fetchProactiveSummary() {
-                if summary != refreshed { summary = refreshed }
-            }
+            if summary == nil { await refreshSummary() }
             return true
         } catch {
             recordError(error)
@@ -1041,18 +978,20 @@ final class CloudProactiveStore: ObservableObject {
         }
     }
 
-    private static func resolvedSignalId(for event: MacGatewayCloudDialogueEvent) -> String? {
-        if let metaId = event.proactive?.signalId.trimmingCharacters(in: .whitespacesAndNewlines),
-           MacGatewayClient.isValidProactiveSignalId(metaId) {
-            return metaId
-        }
+}
+
+// A legacy cached card can identify itself through its event id even without metadata.
+extension MacGatewayCloudDialogueEvent {
+    var proactiveSignalId: String? {
+        guard kind == .proactiveMessage else { return nil }
         let prefix = "proactive:"
-        if event.id.hasPrefix(prefix) {
-            let suffix = String(event.id.dropFirst(prefix.count))
-            if MacGatewayClient.isValidProactiveSignalId(suffix) {
-                return suffix
-            }
+        let idSuffix = id.hasPrefix(prefix) ? String(id.dropFirst(prefix.count)) : nil
+        if let metadataId = proactive?.signalId {
+            guard MacGatewayClient.isValidProactiveSignalId(metadataId),
+                  idSuffix == nil || idSuffix == metadataId else { return nil }
+            return metadataId
         }
-        return nil
+        guard let idSuffix, MacGatewayClient.isValidProactiveSignalId(idSuffix) else { return nil }
+        return idSuffix
     }
 }

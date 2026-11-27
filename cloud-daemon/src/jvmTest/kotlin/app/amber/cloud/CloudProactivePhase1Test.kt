@@ -13,12 +13,15 @@ import app.amber.cloud.gateway.AgentCentricApi
 import app.amber.cloud.gateway.CloudGatewayState
 import app.amber.cloud.gateway.PushMessagePayload
 import app.amber.cloud.gateway.PushSender
+import app.amber.cloud.gateway.ScheduleSummaryDto
 import app.amber.cloud.gateway.configureCloudGateway
 import app.amber.cloud.orchestration.DialogueEvent
 import app.amber.cloud.orchestration.DialogueEventKinds
 import app.amber.cloud.orchestration.DialoguePage
 import app.amber.cloud.orchestration.RouterBrain
 import app.amber.cloud.orchestration.RouterDecision
+import app.amber.cloud.orchestration.WorkerSettlementReport
+import app.amber.cloud.orchestration.WorkItemState
 import app.amber.cloud.proactive.ProactiveRunResult
 import app.amber.cloud.proactive.ProactiveTriggerSignal
 import app.amber.cloud.proactive.ProactiveUrgency
@@ -35,6 +38,9 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
@@ -56,6 +62,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -121,6 +128,9 @@ class CloudProactivePhase1Test {
         val kernel = CloudAgentKernel(dir, l2Client, masterSecretOverride = "p1-events-secret")
         try {
             val ios = pairIosWithPush(kernel)
+            val connector = TestConnector()
+            kernel.registerConnector(connector)
+            kernel.ownerBinding.bindOwnerDirectly(connector.kind.wireName, "owner")
             kernel.gatewayState.pushSender = PushSender { payload ->
                 capturedPushes.add(payload)
                 Result.success(Unit)
@@ -163,11 +173,16 @@ class CloudProactivePhase1Test {
             assertEquals(1, allPage.items.count { it.id == "proactive:edge_sig_001" })
 
             // 3. Push payload carries signalId and interruptionLevel
-            assertTrue(capturedPushes.isNotEmpty())
-            val firstPush = capturedPushes.first()
+            val firstPush = capturedPushes.single()
+            assertFalse(connector.sent.single().card!!.markdownBody.contains("sk-live-secret-99887766554433221100"))
             assertEquals("edge_sig_001", firstPush.signalId)
             assertEquals("passive", firstPush.interruptionLevel)
             assertEquals("amber://proactive/edge_sig_001", firstPush.deepLink)
+
+            val concurrent = pushed.copy(l1Delta = pushed.l1Delta.copy(signalId = "simultaneous"))
+            (1..8).map { async(Dispatchers.Default) { kernel.deliverProactiveCardToOwner(concurrent) } }.awaitAll()
+            assertEquals(1, capturedPushes.count { it.signalId == "simultaneous" })
+            assertEquals(1, connector.sent.count { it.idempotencyKey == "proactive:simultaneous:telegram" })
 
             // 4. HTTP pagination: legacy (no header) hides proactive_message; X-Amber-Dialogue-Version: 1 returns it
             testApplication {
@@ -410,6 +425,78 @@ class CloudProactivePhase1Test {
 
             // Next cycle does not re-fire
             assertTrue(kernel.runProactiveCycle(nowOverrideMs = nightDueMs + 60_000L).isEmpty())
+        } finally {
+            closeKernel(kernel)
+        }
+    }
+
+    @Test
+    fun `snooze at capacity can be retried after freeing a slot`() = runBlocking {
+        val dir = Files.createTempDirectory("proactive-p1-full-snooze").toFile()
+        val kernel = CloudAgentKernel(dir, CloudModelClient { _, _ -> error("unexpected model call") }, masterSecretOverride = "snooze-test")
+        try {
+            val now = epochMsAt(2026, 11, 26, 12, 0)
+            val id = "full_snooze"
+            kernel.orchestrationStore.dialogue.append(DialogueEvent(
+                id = "proactive:$id", kind = DialogueEventKinds.PROACTIVE_MESSAGE, role = "assistant", text = "提醒", topicId = "proactive:$id",
+                proactive = app.amber.cloud.orchestration.ProactiveEventMeta(id, "topic", "CLOCK_CRON", "提醒"),
+            ))
+            val occupied = (1..50).map { i ->
+                kernel.proactiveWakeupStore.upsertSnooze("occupied_$i", "another reminder", triggerAtEpochMs = now + 60_000L, nowEpochMs = now)
+            }
+            val action = app.amber.cloud.proactive.ProactiveFeedbackAction.SNOOZE
+            assertFailsWith<IllegalArgumentException> { kernel.applyProactiveFeedback(id, action, nowEpochMs = now) }
+            val phone = pairIosWithPush(kernel)
+            testApplication {
+                application { configureCloudGateway(kernel.gatewayState, agentApi = AgentCentricApi(kernel)) }
+                val response = client.post("/v2/proactive/signals/$id/feedback") {
+                    bearerAuth(phone.token)
+                    contentType(ContentType.Application.Json)
+                    setBody("""{"action":"snooze"}""")
+                }
+                assertEquals(409, response.status.value)
+                assertTrue(response.bodyAsText().contains("上限"))
+            }
+            assertTrue(kernel.proactiveWakeupStore.cancel(occupied.first().id))
+            val results = (1..4).map {
+                async(Dispatchers.Default) {
+                    assertIs<CloudAgentKernel.ProactiveFeedbackResult.Applied>(kernel.applyProactiveFeedback(id, action, nowEpochMs = now))
+                }
+            }.awaitAll()
+            assertEquals(1, results.count { it.applied })
+            val wakeup = kernel.proactiveWakeupStore.listPending().single { it.originSignalId == id }
+            assertTrue(results.all { it.wakeupId == wakeup.id })
+        } finally {
+            closeKernel(kernel)
+        }
+    }
+
+    @Test
+    fun `schedule notification failure leaves the task outcome intact and waiting alerts retry`() = runBlocking {
+        val dir = Files.createTempDirectory("proactive-p1-schedule-push").toFile()
+        val kernel = CloudAgentKernel(dir, CloudModelClient { _, _ -> error("unexpected model call") }, masterSecretOverride = "schedule-test")
+        kernel.orchestrationKernel.autoExecuteWorkersInBackground = false
+        try {
+            val paired = pairIosWithPush(kernel)
+            val state = kernel.gatewayState
+            val schedule = state.createSchedule("检查", "读取本机状态", "daily", deviceId = paired.deviceId).second as ScheduleSummaryDto
+            val (status, data) = kernel.scheduleRunner.triggerManual(schedule.id, state.findDeviceById(paired.deviceId)!!)
+            assertEquals(200, status)
+            val workId = assertNotNull((data as ScheduleSummaryDto).lastWorkItemId)
+            val item = assertNotNull(kernel.orchestrationStore.getWorkItem(workId))
+            val attempts = AtomicInteger()
+            state.pushSender = PushSender {
+                if (attempts.incrementAndGet() == 2) Result.success(Unit) else Result.failure(IllegalStateException("test_failure"))
+            }
+            repeat(3) { kernel.scheduleRunner.onWorkItemNeedsYou(item) }
+            assertEquals(2, attempts.get(), "a successful waiting alert is sent only once")
+            kernel.scheduleRunner.onWorkItemSettled(
+                item.copy(state = WorkItemState.COMPLETED),
+                WorkerSettlementReport(workId, "completed", "完成"),
+            )
+            assertEquals(3, attempts.get())
+            assertEquals("completed", state.getSchedule(schedule.id)?.lastStatus)
+            assertEquals(2, state.auditFile.readLines().count { it.contains("schedule-push-failed") && it.contains(workId) })
         } finally {
             closeKernel(kernel)
         }

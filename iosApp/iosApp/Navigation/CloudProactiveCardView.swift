@@ -62,7 +62,7 @@ struct CloudProactiveCardPresentation: Equatable, Sendable {
     init(event: MacGatewayCloudDialogueEvent) {
         let meta = event.proactive
         self.hasMetadata = meta != nil
-        self.signalId = Self.resolvedSignalId(for: event)
+        self.signalId = event.proactiveSignalId
 
         let rawSource = meta?.sourceLabel.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !rawSource.isEmpty {
@@ -139,21 +139,6 @@ struct CloudProactiveCardPresentation: Equatable, Sendable {
         }
         return result
     }
-
-    static func resolvedSignalId(for event: MacGatewayCloudDialogueEvent) -> String? {
-        if let metaId = event.proactive?.signalId.trimmingCharacters(in: .whitespacesAndNewlines),
-           MacGatewayClient.isValidProactiveSignalId(metaId) {
-            return metaId
-        }
-        let prefix = "proactive:"
-        if event.id.hasPrefix(prefix) {
-            let suffix = String(event.id.dropFirst(prefix.count))
-            if MacGatewayClient.isValidProactiveSignalId(suffix) {
-                return suffix
-            }
-        }
-        return nil
-    }
 }
 
 // MARK: - Structured Proactive Timeline Card
@@ -171,6 +156,7 @@ struct CloudProactiveCardView: View {
     @State private var completedAction: CloudProactiveCardAction?
     @State private var feedbackMessage: String?
     @State private var isErrorFeedback = false
+    @State private var needsRepliedFeedback = false
 
     init(
         event: MacGatewayCloudDialogueEvent,
@@ -344,7 +330,7 @@ struct CloudProactiveCardView: View {
                     Image(systemName: isCompleted ? "checkmark" : action.systemImage)
                         .font(.caption.weight(.semibold))
                 }
-                Text(verbatim: action.title)
+                Text(verbatim: action == .act && needsRepliedFeedback ? macGatewayL("重试记录反馈") : action.title)
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
             }
@@ -393,10 +379,24 @@ struct CloudProactiveCardView: View {
         isErrorFeedback = false
 
         Task { @MainActor in
+            var replyFeedbackError: String?
             let succeeded: Bool
             switch action {
             case .act:
-                succeeded = await store.act(on: event)
+                if needsRepliedFeedback, let signalId {
+                    succeeded = await store.sendFeedback(signalId: signalId, action: .replied)
+                    needsRepliedFeedback = !succeeded
+                    replyFeedbackError = succeeded ? nil : store.lastError
+                } else {
+                    switch await store.submitAct(on: event) {
+                    case .sendFailed: succeeded = false
+                    case .submitted: succeeded = true
+                    case .submittedWithFeedbackError(let message):
+                        succeeded = true
+                        needsRepliedFeedback = true
+                        replyFeedbackError = message
+                    }
+                }
             case .snooze:
                 if let signalId {
                     succeeded = await store.sendFeedback(signalId: signalId, action: .snooze)
@@ -418,7 +418,10 @@ struct CloudProactiveCardView: View {
             }
 
             inFlightAction = nil
-            if succeeded {
+            if action == .act && needsRepliedFeedback {
+                isErrorFeedback = true
+                feedbackMessage = macGatewayL("已交由 Amber 处理，反馈记录失败。") + " " + (replyFeedbackError ?? "")
+            } else if succeeded {
                 completedAction = action
                 isErrorFeedback = false
                 feedbackMessage = action.successMessage
@@ -463,7 +466,6 @@ struct CloudProactiveSignalDetailSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(macGatewayL("关闭")) {
-                        clearPendingIfMatching()
                         dismiss()
                     }
                 }
@@ -472,9 +474,6 @@ struct CloudProactiveSignalDetailSheet: View {
         .tint(AmberTheme.accent)
         .task(id: "\(signalId):\(reloadNonce)") {
             await fetchSignal()
-        }
-        .onDisappear {
-            clearPendingIfMatching()
         }
     }
 
@@ -522,7 +521,6 @@ struct CloudProactiveSignalDetailSheet: View {
                         reloadNonce += 1
                     }
                     Button(macGatewayL("关闭")) {
-                        clearPendingIfMatching()
                         dismiss()
                     }
                     .font(.subheadline.weight(.semibold))
@@ -540,19 +538,15 @@ struct CloudProactiveSignalDetailSheet: View {
     private func fetchSignal() async {
         loadState = .loading
         if let event = await store.loadSignal(signalId) {
+            guard !Task.isCancelled else { return }
             loadState = .loaded(event)
         } else {
+            guard !Task.isCancelled else { return }
             let reason = store.lastError?.trimmingCharacters(in: .whitespacesAndNewlines)
             let message = (reason?.isEmpty == false)
                 ? reason!
                 : macGatewayL("未找到该主动提醒，可能已过期或已被清理。")
             loadState = .failed(message)
-        }
-    }
-
-    private func clearPendingIfMatching() {
-        if store.pendingSignalId == signalId {
-            store.pendingSignalId = nil
         }
     }
 }

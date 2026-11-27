@@ -92,17 +92,20 @@ final class IOSDeepLinkRoutingTests: XCTestCase {
         XCTAssertFalse(gatewayStore.isCloudMainDialogueSelected)
 
         var openedSignalIds: [String] = []
-        let feedbackTask = AppShell.routeProactiveSignal(
-            signalId: "wt_route_01",
-            router: router,
-            gatewayStore: gatewayStore,
-            proactiveStore: proactiveStore,
-            sendOpenedFeedback: { id in
-                openedSignalIds.append(id)
-                return await proactiveStore.sendFeedback(signalId: id, action: .opened)
-            }
-        )
-        await feedbackTask.value
+        func openNotification() async {
+            await AppShell.routeProactiveSignal(
+                signalId: "wt_route_01",
+                router: router,
+                gatewayStore: gatewayStore,
+                proactiveStore: proactiveStore,
+                sendOpenedFeedback: { id in
+                    openedSignalIds.append(id)
+                    return await proactiveStore.sendFeedback(signalId: id, action: .opened)
+                }
+            )?.value
+        }
+        await openNotification()
+        await openNotification()
 
         XCTAssertTrue(router.path.isEmpty)
         XCTAssertTrue(router.isShowingChat)
@@ -111,10 +114,33 @@ final class IOSDeepLinkRoutingTests: XCTestCase {
         XCTAssertEqual(openedSignalIds, ["wt_route_01"])
         // Routing must not inject synthetic events into cloudDialogueEvents.
         XCTAssertTrue(gatewayStore.cloudDialogueEvents.isEmpty)
+        proactiveStore.pendingSignalId = nil
+        await openNotification()
+        XCTAssertEqual(openedSignalIds, ["wt_route_01", "wt_route_01"])
     }
 
     @MainActor
-    func testProactiveSignalDeepLinkStillSetsPendingSignalWhenCloudUnpaired() async {
+    func testApprovalBoardForUnpairedCloudKeepsTheUserOffThePairedMacBoard() throws {
+        let suite = "approval-board-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = MacGatewayStore(defaults: defaults)
+        let mac = MacGatewayConnection(gatewayId: "gateway", name: "Mac", addrs: ["localhost"], port: 443,
+                                       fingerprint: "fp", deviceId: "device", role: .mac)
+        store.configureForTesting(role: .mac, connection: mac, client: MacGatewayClient(
+            addrs: mac.addrs, port: mac.port, fingerprint: mac.fingerprint, token: "token"
+        ))
+        let router = RouterPath()
+        AppShell.openGatewayBoard(role: .mac, router: router, gatewayStore: store)
+        XCTAssertEqual(router.path, [.gatewayTasks(.mac)])
+        AppShell.openGatewayBoard(role: .cloud, router: router, gatewayStore: store)
+        XCTAssertEqual(router.path, [.settings, .macGateway])
+        XCTAssertEqual(store.preferredMultiDeviceTab, .cloud)
+        XCTAssertTrue(store.notice?.isError == true)
+    }
+
+    @MainActor
+    func testProactiveSignalWithoutPairingShowsCloudPairingAndSkipsOpenedFeedback() async {
         let suite = "proactive-w2-i2-unpaired-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -128,13 +154,18 @@ final class IOSDeepLinkRoutingTests: XCTestCase {
             signalId: "wk_unpaired_02",
             router: router,
             gatewayStore: gatewayStore,
-            proactiveStore: proactiveStore
+            proactiveStore: proactiveStore,
+            sendOpenedFeedback: { _ in
+                XCTFail("An unpaired signal must not be marked opened")
+                return false
+            }
         )
-        await feedbackTask.value
+        await feedbackTask?.value
 
-        XCTAssertTrue(router.path.isEmpty)
-        XCTAssertTrue(router.isShowingChat)
+        XCTAssertEqual(router.path, [.settings, .macGateway])
+        XCTAssertTrue(gatewayStore.notice?.isError == true)
+        XCTAssertEqual(gatewayStore.preferredMultiDeviceTab, .cloud)
         XCTAssertFalse(gatewayStore.isCloudMainDialogueSelected)
-        XCTAssertEqual(proactiveStore.pendingSignalId, "wk_unpaired_02")
+        XCTAssertNil(proactiveStore.pendingSignalId)
     }
 }

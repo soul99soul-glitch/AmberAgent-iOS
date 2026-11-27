@@ -19,7 +19,7 @@ class CloudScheduleRunner(
     private val agentApi by lazy { AgentCentricApi(kernel) }
     private val nativeTaskApi by lazy { NativeTaskApi(agentApi) }
     private val dispatchMutex = Mutex()
-    private val settledOrNotifiedWorkItems = ConcurrentHashMap.newKeySet<String>()
+    private val needsYouNotifications = ConcurrentHashMap.newKeySet<String>()
 
     suspend fun triggerManual(id: String, requesterDevice: PairedDevice): Pair<Int, Any> {
         return when (val claimResult = kernel.gatewayState.claimScheduleForManualRun(id, requesterDevice)) {
@@ -51,14 +51,21 @@ class CloudScheduleRunner(
         val schedule = kernel.gatewayState.listRunningSchedules().firstOrNull { it.lastWorkItemId == item.workItemId } ?: return
         val ownerId = schedule.ownerDeviceId ?: return
         val owner = kernel.gatewayState.findDeviceById(ownerId) ?: return
-        if (!settledOrNotifiedWorkItems.add("needsYou:${item.workItemId}")) return
+        if (!kernel.gatewayState.pushConfigured) return
         val payload = kernel.gatewayState.buildSchedulePushPayload(
             device = owner,
             schedule = schedule,
             workItemId = item.workItemId,
             outcome = "needsYou",
         ) ?: return
-        kernel.gatewayState.pushSender.send(payload)
+        if (!needsYouNotifications.add(item.workItemId)) return
+        var sent = false
+        try {
+            sent = sendNotification(payload)
+        } finally {
+            // A waiting task is reconciled again on the next cycle.
+            if (!sent) needsYouNotifications.remove(item.workItemId)
+        }
     }
 
     suspend fun recoverAfterRestart() {
@@ -134,7 +141,8 @@ class CloudScheduleRunner(
             errorDetail = errorDetail,
         ) ?: return null
         val (updatedSchedule, ownerDevice) = settled
-        if (ownerDevice != null && settledOrNotifiedWorkItems.add("settled:$workItemId")) {
+        needsYouNotifications.remove(workItemId)
+        if (ownerDevice != null && kernel.gatewayState.pushConfigured) {
             val pushOutcome = updatedSchedule.lastStatus ?: outcome
             kernel.gatewayState.buildSchedulePushPayload(
                 device = ownerDevice,
@@ -142,9 +150,20 @@ class CloudScheduleRunner(
                 workItemId = workItemId,
                 outcome = pushOutcome,
             )?.let { payload ->
-                kernel.gatewayState.pushSender.send(payload)
+                sendNotification(payload)
             }
         }
         return updatedSchedule
+    }
+
+    private suspend fun sendNotification(payload: PushMessagePayload): Boolean {
+        val result = kernel.gatewayState.sendPush(payload)
+        if (result.isFailure) {
+            kernel.gatewayState.recordAudit("schedule-push-failed", mapOf(
+                "device" to payload.deviceId,
+                "workItemId" to payload.workItemId.orEmpty(),
+            ))
+        }
+        return result.isSuccess
     }
 }
