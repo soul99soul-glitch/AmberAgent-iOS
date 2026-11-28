@@ -2151,7 +2151,52 @@ extension MacGatewayStore {
         }
     }
 
+    private func beginCloudPersonaStatus(text: String, requestID: String, workItemID: String?, conversationID: String?) {
+        guard let settings = boundSharedSettings else { return }
+        let addition = workItemID != nil || cloudPersonaRequestID != nil && isAwaitingCloudMainReply
+        if workItemID != cloudPersonaWorkItemID || !addition { cloudPersonaStatus.clear() }
+        cloudPersonaRequestID = requestID
+        cloudPersonaWorkItemID = workItemID
+        cloudPersonaStartCursor = cloudDialogueCursor
+        let recent = cloudDialogueVisibleEvents.suffix(4).compactMap { event -> String? in
+            guard (event.role == "user" || event.role == "assistant"),
+                  event.conversationId == conversationID else { return nil }
+            return "\(event.role): \(event.text.prefix(160))"
+        }
+        ChatViewModel.refreshPersonaStatus(cloudPersonaStatus, settings: settings, soul: boundSoulStore ?? .shared,
+                                         recent: recent, latest: text, addition: addition, conversationId: nil,
+                                         fallbackModel: settings.snapshot.getCurrentChatModel(),
+                                         provider: OpenAIKmpProviderAdapter())
+    }
+
+    func cloudPersonaHeadline(for progress: MacGatewayCloudDialogueWorkItemProgress) -> String {
+        if progress.workItemId == cloudPersonaWorkItemID, progress.isLive, !progress.isStopRequested,
+           !progress.needsOutcomeUnknownAction, let phrase = cloudPersonaStatus.phrase,
+           progress.processEventCount == 0 || cloudPersonaRequestID.flatMap({ cloudDialogueReceipts[$0]?.state }) == .consumed {
+            return phrase
+        }
+        return progress.displaySingleLine
+    }
+
+    private func endCloudPersonaStatus() {
+        cloudPersonaStatus.clear()
+        cloudPersonaRequestID = nil
+        cloudPersonaWorkItemID = nil
+    }
+
+    private func settleCloudPersonaStatus(for event: MacGatewayCloudDialogueEvent) {
+        guard let requestID = cloudPersonaRequestID, event.seq > cloudPersonaStartCursor,
+              !event.isUpfrontAcknowledgement else { return }
+        guard [.assistantReply, .processEvent, .taskResult, .stopRequested, .stopTooLate].contains(event.kind),
+              event.causedByRequestId == requestID ||
+                (event.workItemId != nil && event.workItemId == cloudPersonaWorkItemID) ||
+                (event.workItemId == nil && event.causedByRequestId == nil &&
+                 event.topicId == cloudDialogueReceipts[requestID]?.topicId) else { return }
+        endCloudPersonaStatus()
+    }
+
     func resetCloudDialogueMemoryState() {
+        endCloudPersonaStatus()
         stopCloudDialoguePolling()
         cloudDialogueIdlePollStreak = 0
         isCloudMainDialogueSelected = false
@@ -2231,6 +2276,11 @@ extension MacGatewayStore {
             }
         }
         if let stagingError { return .failure(stagingError) }
+        if !isUnifiedDelegation {
+            beginCloudPersonaStatus(text: effectiveText, requestID: requestId, workItemID: nil,
+                                   conversationID: effectiveConversationId)
+        }
+
 
         busyCloudDialogueRequestIds.insert(requestId)
         defer { busyCloudDialogueRequestIds.remove(requestId) }
@@ -2331,6 +2381,11 @@ extension MacGatewayStore {
             )
         }
         if let stagingError { return .failure(stagingError) }
+        if !isUnifiedDelegation {
+            beginCloudPersonaStatus(text: effectiveText, requestID: requestId, workItemID: effectiveWorkItemId,
+                                   conversationID: effectiveConversationId)
+        }
+
 
         busyCloudDialogueRequestIds.insert(requestId)
         defer { busyCloudDialogueRequestIds.remove(requestId) }
@@ -2415,6 +2470,8 @@ extension MacGatewayStore {
             }
         }
         if let stagingError { return .failure(stagingError) }
+        if cloudPersonaWorkItemID == effectiveWorkItemId { endCloudPersonaStatus() }
+
 
         busyCloudDialogueRequestIds.insert(requestId)
         defer { busyCloudDialogueRequestIds.remove(requestId) }
@@ -2943,6 +3000,7 @@ extension MacGatewayStore {
         allowHeuristicSoulFallback: Bool = true,
         skipSoulSync: Bool = false
     ) {
+        settleCloudPersonaStatus(for: event)
         if event.outcomeUnknown == true,
            [.taskResult, .processEvent, .assistantReply, .stopTooLate].contains(event.kind) {
             var (key, progress) = resolveWorkItemProgress(for: event, defaultOutcome: nil)
@@ -3316,6 +3374,7 @@ extension MacGatewayStore {
             if let id = Self.nonEmptyTrimmed(event.conversationId) { cloudDialogueFollowups[idx].conversationId = id }
             if let id = Self.nonEmptyTrimmed(event.ledgerId) { cloudDialogueFollowups[idx].ledgerId = id }
         }
+        if newState == .cancelled, matchedRequestId == cloudPersonaRequestID { endCloudPersonaStatus() }
         cloudDialogueReceipts[matchedRequestId]?.state = newState
         if let idx = cloudDialogueSubmissions.firstIndex(where: { $0.requestId == matchedRequestId }) {
             cloudDialogueSubmissions[idx].receipt?.state = newState
@@ -3375,6 +3434,17 @@ extension MacGatewayStore {
             )
         }
         cloudDialogueReceipts[receipt.requestId] = receipt
+        if receipt.requestId == cloudPersonaRequestID {
+            cloudPersonaWorkItemID = target
+            if receipt.state == .cancelled || needsRecovery {
+                endCloudPersonaStatus()
+            } else {
+                for event in cloudDialogueEvents.reversed() {
+                    if event.seq <= cloudPersonaStartCursor || cloudPersonaRequestID == nil { break }
+                    settleCloudPersonaStatus(for: event)
+                }
+            }
+        }
         if let idx = submissionIndex {
             cloudDialogueSubmissions[idx].receipt = receipt
             cloudDialogueSubmissions[idx].lastError = nil
@@ -3410,6 +3480,7 @@ extension MacGatewayStore {
     }
 
     private func recordSubmissionError(requestId: String, error: String, isConfirmedNotExecuted: Bool = false) {
+        if requestId == cloudPersonaRequestID { endCloudPersonaStatus() }
         if let idx = cloudDialogueSubmissions.firstIndex(where: { $0.requestId == requestId }) {
             cloudDialogueSubmissions[idx].lastError = error
             cloudDialogueSubmissions[idx].isConfirmedNotExecuted = isConfirmedNotExecuted

@@ -27,6 +27,15 @@ struct ChatLocalTaskFollowup: Identifiable, Equatable, Sendable {
 /// anchor position in `state.messages`; follow-ups live in the conversation queue.
 @MainActor
 final class ChatAsyncTaskSlot {
+    let personaStatus = PersonaStatusOwner()
+    var personaFollowupID: String?
+
+    func discardPersonaFollowup(_ id: String) {
+        guard personaFollowupID == id else { return }
+        personaFollowupID = nil
+        personaStatus.clear()
+    }
+
     let interjections = IOSLiveInterjectionSignal()
     let slotId: String
     var runId: String
@@ -93,7 +102,9 @@ final class ChatAsyncTaskSlot {
     /// Placeholder message shown at this task's anchor position while waiting for a local concurrency slot.
     var queuedPlaceholderMessageId: String?
     var isQueuedForConcurrencySlot: Bool = false
-    var isTerminal: Bool = false
+    var isTerminal: Bool = false {
+        didSet { if isTerminal { personaStatus.clear() } }
+    }
 
     var host: ChatKernelRunHost?
 
@@ -452,6 +463,7 @@ extension ChatViewModel {
         let latestProseSig = Self.visibleSyncedProseSignature(in: coalescedGenerated)
         slot.lastSyncedVisibleProseSignature = latestProseSig
         if let latestProseSig, latestProseSig != previousProseSig {
+            slot.personaStatus.clear()
             slot.recordMeaningfulUserVisibleProgress()
         }
         var displayed = newGenerated
@@ -552,6 +564,7 @@ extension ChatViewModel {
                 let latestText = Self.provisionalVisibleProse(for: message, isSegmented: isSegmented)
                 slot.lastProvisionalProseSnapshot = (message.id, isSegmented, latestText)
                 if !latestText.isEmpty, latestText != previousText {
+                    slot.personaStatus.clear()
                     slot.recordMeaningfulUserVisibleProgress()
                 }
                 // The aggregate is rebuilt only when an authoritative transcript next arrives.

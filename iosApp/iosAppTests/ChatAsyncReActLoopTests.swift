@@ -1130,6 +1130,41 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         )
     }
 
+    func testAddedPersonaPhraseYieldsToToolAndNextVisibleText() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let defaults = makeDefaults()
+        let model = makeViewModel(defaults: defaults, sharedSettings: makeSharedSettings(defaults: defaults), store: store)
+        let state = model.currentRun.state
+        let user = UIMessage.companion.user(prompt: "赵大哥")
+        state.messages = [user]
+        let slot = ChatAsyncTaskSlot(conversationId: state.conversationId, inputDigest: "persona",
+            anchorUserMessageId: ChatMessageProjector.messageId(for: user), phoneControlUserInitiated: false,
+            providerSetting: IOSChatForegroundFixtures.makeProviderSetting(),
+            params: IOSChatForegroundFixtures.makeParams(toolNames: []), toolExposureBridge: nil,
+            recipeCatalogSnapshot: nil, baselineMessages: [user])
+        model.currentRun.registerSlot(slot)
+        let bindings = model.makeGenerationBindings(state: state, taskSlot: slot)
+        let prior = IOSChatForegroundFixtures.assistantText("大哥在。\n\n")
+        XCTAssertTrue(bindings.setProvisionalAssistant(prior))
+        slot.personaStatus.refresh(assistant: "赵大哥", persona: "温柔", recent: [], latest: "哄我",
+                                   isAddition: true) { _ in "在哄着呢" }
+        let arrived = await waitForCondition { slot.personaStatus.phrase == "在哄着呢" }
+        XCTAssertTrue(arrived)
+        XCTAssertTrue(bindings.setProvisionalAssistant(prior))
+        func headline(_ kind: ChatActivityIslandState.Kind) -> String {
+            ChatTimelineActivity(anchorMessageID: "test", hasAssistant: true,
+                presentation: .activity(kind: kind, title: "正在搜索", systemImage: "magnifyingglass", tint: .amber),
+                tool: nil, taskSlot: slot, plannedStages: [], stagePlanStartedUptime: nil,
+                liveReasoningSummary: nil, tracksTaskLiveness: false, showsThought: false)
+                .resolvedPresentation(at: ProcessInfo.processInfo.systemUptime).title
+        }
+        XCTAssertEqual(headline(.generating), "在哄着呢")
+        XCTAssertEqual(headline(.tool), "正在搜索")
+        XCTAssertTrue(bindings.setProvisionalAssistant(IOSChatForegroundFixtures.assistantText("来抱抱。\n\n")))
+        XCTAssertNil(slot.personaStatus.phrase)
+    }
+
     func testSameIDProvisionalVisibleGrowthResetsKeepaliveButDuplicateBlankAndReasoningDoNot() throws {
         let (store, directory) = try makeStore()
         defer { try? FileManager.default.removeItem(at: directory) }

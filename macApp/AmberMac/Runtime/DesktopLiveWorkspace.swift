@@ -44,6 +44,7 @@ import Foundation
             plugins: plugins,
             intelligentUIStateStore: IOSIntelligentUIStateStore(fileURL: directory.appendingPathComponent("intelligent-ui-state.json")),
             intelligentUIReceiptsFileURL: directory.appendingPathComponent("intelligent-ui-receipts.json"))
+        statusProvider = text
         let scheduler = DesktopScheduler(store: DesktopScheduleStore(directory: directory.appendingPathComponent("schedules", isDirectory: true)),
             runner: { [weak self] task, slot in
                 guard let self else {

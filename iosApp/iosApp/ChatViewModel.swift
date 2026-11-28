@@ -69,6 +69,7 @@ final class ChatViewModel {
     /// composer 发送因此等入场动画落位再启动；需要 run 已存在的入口先补启动。
     struct DeferredGenerationStart {
         let token: UUID
+        let personaMessage: String
         let run: ChatConversationRun
         let inputDigest: String
         let conversationId: KotlinUuid?

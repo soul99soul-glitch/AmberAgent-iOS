@@ -188,6 +188,50 @@ extension ChatViewModel {
         }
     }
 
+    static func refreshPersonaStatus(_ owner: PersonaStatusOwner, settings: IOSSharedSettingsStore,
+                                    soul: AgentSoulStore, recent: [String], latest: String, addition: Bool,
+                                    conversationId: KotlinUuid?, fallbackModel: Model?,
+                                    provider client: any IOSAgentTextProvider) {
+        let snapshot = settings.snapshot
+        guard let model = snapshot.findModelById(uuid: snapshot.titleModelId) ?? fallbackModel else {
+            owner.clear()
+            return
+        }
+        let assistant = snapshot.getCurrentAssistant()
+        let persona = [soul.tagline, soul.soulPrompt, assistant.systemPrompt].joined(separator: "\n")
+        owner.refresh(assistant: soul.isDefault ? assistant.name : soul.displayName,
+                      persona: persona, recent: recent, latest: latest, isAddition: addition) { prompt in
+            guard let provider = ChatProviderConfiguration.provider(for: model, providers: snapshot.providers),
+                  ChatProviderConfiguration.issue(for: model, provider: provider) == nil,
+                  !IOSGrokWebProviderResolver.isGrokWebProvider(provider),
+                  !IOSCodexProviderResolver.isCodexProvider(provider),
+                  !IOSCodexProviderResolver.isChatGptSiwcProvider(provider) else { return nil }
+            let headers = ChatProviderConfiguration.requestHeaders(for: provider, assistant: assistant.customHeaders,
+                model: model.customHeaders, conversationId: conversationId?.toHexDashString())
+            let params = model.personaStatusParams(headers: headers)
+            let step = IOSAgentProviderStep(provider: client)
+            guard let request = try? await step.prepareStepRequest(providerSetting: provider, params: params),
+                  !Task.isCancelled else { return nil }
+            let chunk = try? await step.streamStep(request: request, messages: [.companion.user(prompt: prompt)],
+                citationTracker: nil, onAssistantStage: nil, onAssistantText: nil,
+                onAssistantReasoning: nil, onAssistantMessageSnapshot: nil)
+            return chunk?.choices.first?.message?.toText()
+        }
+    }
+
+    func refreshPersonaStatus(for slot: ChatAsyncTaskSlot, latest: String, addition: Bool) {
+        let messages = addition ? slot.currentTranscript[...] : slot.baselineMessages.dropLast()
+        let recent = messages.suffix(4).compactMap { message -> String? in
+            guard message.role == .user || message.role == .assistant else { return nil }
+            let text = message.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.first ?? ""
+            return text.isEmpty ? nil : "\(message.role == .user ? "User" : "Assistant"): \(text.prefix(160))"
+        }
+        Self.refreshPersonaStatus(slot.personaStatus, settings: sharedSettings, soul: agentSoulStore,
+                                 recent: recent, latest: latest, addition: addition,
+                                 conversationId: slot.conversationId, fallbackModel: slot.params.model,
+                                 provider: auxiliaryTextProvider)
+    }
+
     static func makeAuxiliaryTextGenerationParams(
         model: Model,
         assistantHeaders: [CustomHeader],

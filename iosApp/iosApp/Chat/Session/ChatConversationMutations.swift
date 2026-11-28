@@ -403,7 +403,8 @@ extension ChatViewModel {
                 inputDigest: digest,
                 conversationId: conversationId,
                 phoneControlUserInitiated: true,
-                anchorUserMessageId: messageId
+                anchorUserMessageId: messageId,
+                personaMessage: text
             )
             return
         }
@@ -411,6 +412,7 @@ extension ChatViewModel {
         let (digest, conversationId, messageId) = appendUserMessage(text: text, images: images, metadata: metadata)
         deferredGenerationStart = DeferredGenerationStart(
             token: token,
+            personaMessage: text,
             run: currentRun,
             inputDigest: digest,
             conversationId: conversationId,
@@ -446,7 +448,8 @@ extension ChatViewModel {
             inputDigest: pending.inputDigest,
             conversationId: pending.conversationId,
             phoneControlUserInitiated: true,
-            anchorUserMessageId: pending.anchorUserMessageId
+            anchorUserMessageId: pending.anchorUserMessageId,
+            personaMessage: pending.personaMessage
         )
     }
 

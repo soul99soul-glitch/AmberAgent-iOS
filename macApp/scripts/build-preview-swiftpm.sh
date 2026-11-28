@@ -38,7 +38,7 @@ excluded = {'DesktopProvider.swift', 'DesktopAgentProvider.swift', 'DesktopConve
 for folder in [project/'AmberMac'/'Runtime', project/'AmberMac'/'UI', project/'Preview']:
     for source in folder.glob('*.swift'):
         if source.name not in excluded: shutil.copy2(source, sources/source.name)
-for name in ['IOSMcpClient.swift', 'IOSCredentialRedactor.swift', 'IOSWebDAVClient.swift', 'IOSSyncBackupError.swift',
+for name in ['PersonaStatusOwner.swift', 'IOSMcpClient.swift', 'IOSCredentialRedactor.swift', 'IOSWebDAVClient.swift', 'IOSSyncBackupError.swift',
     'IOSCodexOAuthClient.swift', 'IOSImageGenerationModels.swift', 'IOSImageGenerationRepository.swift',
     'Chat/Media/ChatGeneratedImageURL.swift', 'Infrastructure/Networking/IOSPublicURLPolicy.swift', 'IOSWebMountPublicDNS.swift',
     'IOSIntelligentUIProtocol.swift', 'IOSIntelligentUIComponents.swift', 'IOSIntelligentUIStudy.swift',

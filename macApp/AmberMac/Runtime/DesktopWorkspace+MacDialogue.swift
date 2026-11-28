@@ -11,6 +11,14 @@ extension DesktopWorkspace {
             guard let self, let coordinator else { return }
             self.startMacDialogueWorkItem(item, coordinator: coordinator)
         }
+        coordinator.onFollowupAccepted = { [weak self, weak coordinator] workItemId in
+            guard let self, let coordinator,
+                  let id = coordinator.workItem(workItemId)?.localConversationID,
+                  let conversation = self.conversations.first(where: { $0.id == id }),
+                  let latest = coordinator.pendingFollowups(workItemId: workItemId).last else { return }
+            self.dialoguePersonaStatus[id]?.refresh(soul: self.agentSoul, systemPrompt: self.settings.systemPrompt,
+                                                   history: conversation.messages, latest: latest.text, isAddition: true)
+        }
         coordinator.onStopWorkItem = { [weak self, weak coordinator] workItemId in
             guard let self, let coordinator else { return }
             self.stopMacDialogueWorkItem(workItemId, coordinator: coordinator)
@@ -57,6 +65,7 @@ extension DesktopWorkspace {
             for waiting in agentTasks.records where waiting.conversationID == active.conversationID && waiting.status == .waiting {
                 agentTasks.cancel(waiting.id)
             }
+            dialoguePersonaStatus[active.conversationID]?.clear()
             active.run.cancel()
         }
         if let task = dialogueRunTasks[workItemId], dialogueGenerations[workItemId] == nil {
@@ -128,6 +137,7 @@ extension DesktopWorkspace {
 
         var succeeded = false
         defer {
+            dialoguePersonaStatus.removeValue(forKey: conversationID)?.clear()
             dialogueGenerations[workItemId] = nil
             dialogueRunConversationIDs.remove(conversationID)
             dialogueWorkItemByConversation[conversationID] = nil
@@ -238,6 +248,12 @@ extension DesktopWorkspace {
                 followupSaveFailed = true
                 run.cancel()
             }
+            if let latest = history.last {
+                let status = makePersonaStatus(configuration: request.0, apiKey: request.1)
+                dialoguePersonaStatus[conversationID] = status
+                status?.refresh(soul: agentSoul, systemPrompt: settings.systemPrompt, history: Array(history.dropLast()),
+                                latest: latest.text, isAddition: !continuationInputs.isEmpty)
+            }
             dialogueGenerations[workItemId] = (run, conversationID, startedAt)
             if Task.isCancelled || coordinator.isStoppingOrTerminal(workItemId) {
                 run.cancel()
@@ -255,6 +271,7 @@ extension DesktopWorkspace {
             } onCancel: {
                 run.cancel()
             }
+            dialoguePersonaStatus.removeValue(forKey: conversationID)?.clear()
             outcomeUnknown = run.hasUnknownToolOutcome
             dialogueGenerations[workItemId] = nil
             await persistence?.value
@@ -355,6 +372,7 @@ extension DesktopWorkspace {
                 }
                 switch event {
                 case .snapshot(let text, let reasoning, let canonicalJSON, let unsupportedPartCount, let tools):
+                    dialoguePersonaStatus[owner]?.received(text: text, tools: tools)
                     if let messageIndex = conversations[index].messages.firstIndex(where: { $0.id == assistantID }) {
                         conversations[index].messages[messageIndex].text = text
                         conversations[index].messages[messageIndex].reasoning = reasoning
@@ -373,6 +391,9 @@ extension DesktopWorkspace {
                     }
                 case .transcript(let turns):
                     guard !turns.isEmpty, replaceDialogueSuffix(turns, owner: owner, prefixIDs: prefixIDs) else { continue }
+                    if let reply = turns.last(where: { $0.role == .assistant }) {
+                        dialoguePersonaStatus[owner]?.received(text: reply.text, tools: reply.tools)
+                    }
                     assistantID = turns.last?.role == .assistant ? turns.last?.id : nil
                     if let activeTool = turns.last?.tools.last?.name, !activeTool.isEmpty, activeTool != lastReportedTool {
                         lastReportedTool = activeTool

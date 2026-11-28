@@ -82,11 +82,15 @@ struct DesktopTranscript: View {
                         let taskToken = matchedTask?.token
                         let isSupplementSelected = taskToken != nil && workspace.selectedSupplementRunID == taskToken
                         let taskStopping = taskToken.map(workspace.isTaskStopping) ?? false
+                        let status = message.state == .streaming
+                            ? matchedTask?.personaStatus ?? workspace.dialoguePersonaStatus[conversation.id] : nil
                         DesktopMessageRow(message: message, conversationID: conversation.id, settings: workspace.settings,
                             speech: workspace.speech, shelf: workspace.artifactShelf, reasoningExpansion: reasoningExpansion,
                             layoutWidth: CGFloat(max(240, layoutWidth)),
                             mutationsDisabled: mutationsDisabled, highlighted: highlighted, followingCount: following,
                             activeTaskToken: taskToken,
+                            personaPhrase: workspace.settings.hidesToolCalls && status?.toolActive == true
+                                ? "正在使用工具…" : status?.phrase,
                             isSupplementTarget: isSupplementSelected,
                             isTaskStopping: taskStopping,
                             onToggleSupplement: { if let taskToken { workspace.toggleSupplementTarget(taskToken) } },
@@ -389,6 +393,7 @@ private struct DesktopMessageRow: View, Equatable {
     let highlighted: Bool
     let followingCount: Int
     let activeTaskToken: UUID?
+    let personaPhrase: String?
     let isSupplementTarget: Bool
     let isTaskStopping: Bool
     let onToggleSupplement: () -> Void
@@ -409,7 +414,7 @@ private struct DesktopMessageRow: View, Equatable {
          shelf: DesktopArtifactShelf, reasoningExpansion: DesktopReasoningExpansion,
          layoutWidth: CGFloat = 680,
          mutationsDisabled: Bool, highlighted: Bool, followingCount: Int,
-         activeTaskToken: UUID? = nil, isSupplementTarget: Bool = false, isTaskStopping: Bool = false,
+         activeTaskToken: UUID? = nil, personaPhrase: String? = nil, isSupplementTarget: Bool = false, isTaskStopping: Bool = false,
          onToggleSupplement: @escaping () -> Void = {}, onStopTask: @escaping () -> Void = {},
          onExport: @escaping () -> Void,
          onEdit: @escaping () -> Void, onRegenerate: @escaping () -> Void,
@@ -419,6 +424,7 @@ private struct DesktopMessageRow: View, Equatable {
         self.layoutWidth = layoutWidth
         self.mutationsDisabled = mutationsDisabled; self.highlighted = highlighted
         self.followingCount = followingCount
+        self.personaPhrase = personaPhrase
         self.activeTaskToken = activeTaskToken
         self.isSupplementTarget = isSupplementTarget
         self.isTaskStopping = isTaskStopping
@@ -435,6 +441,7 @@ private struct DesktopMessageRow: View, Equatable {
                 && lhs.layoutWidth == rhs.layoutWidth
                 && lhs.mutationsDisabled == rhs.mutationsDisabled && lhs.highlighted == rhs.highlighted
                 && lhs.followingCount == rhs.followingCount
+                && lhs.personaPhrase == rhs.personaPhrase
                 && lhs.activeTaskToken == rhs.activeTaskToken
                 && lhs.isSupplementTarget == rhs.isSupplementTarget
                 && lhs.isTaskStopping == rhs.isTaskStopping
@@ -532,7 +539,16 @@ private struct DesktopMessageRow: View, Equatable {
                             .accessibilityIdentifier("stop-task-\(message.id.uuidString)")
                         }
                     }
-                    Spacer()
+                    Spacer().overlay(alignment: .leading) {
+                        if !message.text.isEmpty, !isTaskStopping {
+                            Text(personaPhrase ?? "")
+                                .lineLimit(1)
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(DesktopTheme.inkSecondary)
+                                .contentTransition(.opacity)
+                                .animation(.easeInOut(duration: 0.18), value: personaPhrase)
+                        }
+                    }
                     actionButtons.opacity(hovering || menuOpen ? 1 : 0).allowsHitTesting(hovering || menuOpen)
                 }
                 .frame(height: 24)
@@ -580,7 +596,10 @@ private struct DesktopMessageRow: View, Equatable {
             if message.text.isEmpty, message.state == .streaming, message.role != .user,
                message.images.isEmpty, message.videos.isEmpty, message.audios.isEmpty,
                message.tools.isEmpty || settings.hidesToolCalls {
-                Text(message.tools.isEmpty ? "正在等待回复…" : "正在使用工具…")
+                Text(message.tools.isEmpty ? personaPhrase ?? "正在等待回复…" : "正在使用工具…")
+                    .lineLimit(1)
+                    .contentTransition(.opacity)
+                    .animation(.easeInOut(duration: 0.18), value: personaPhrase)
                     .font(.system(size: 14))
                     .foregroundStyle(DesktopTheme.inkTertiary)
                     .modifier(DesktopSoftShimmer(active: true))

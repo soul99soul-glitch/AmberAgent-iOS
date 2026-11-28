@@ -191,7 +191,8 @@ extension DesktopWorkspace {
                 configuration: request.0,
                 apiKey: request.1,
                 triggerUserMessageID: message.id,
-                taskTitle: taskTitle
+                taskTitle: taskTitle,
+                statusInput: rawDraft
             )
         } catch { errorMessage = error.localizedDescription }
     }
@@ -225,6 +226,10 @@ extension DesktopWorkspace {
         )
         draft = ""
         drafts[owner] = nil
+        if let conversation = conversations.first(where: { $0.id == owner }) {
+            active.personaStatus?.refresh(soul: agentSoul, systemPrompt: settings.systemPrompt, history: conversation.messages,
+                                         latest: text, isAddition: true)
+        }
         supplementTargets[owner] = nil
         return true
     }
@@ -236,7 +241,9 @@ extension DesktopWorkspace {
         let restored = [existing, item.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
         if item.conversationID == selectedID { draft = restored }
         drafts[item.conversationID] = restored
+        let latestSupplement = instructionQueue.last { $0.kind == .supplement && $0.runID == item.runID }
         instructionQueue.removeAll { $0.id == id }
+        if latestSupplement?.id == id { activeTasks[item.runID]?.personaStatus?.clear() }
     }
 
     func sendQueuedInstructions() {
@@ -400,7 +407,8 @@ extension DesktopWorkspace {
         apiKey: String,
         preparedResponseID: UUID? = nil,
         triggerUserMessageID: UUID? = nil,
-        taskTitle: String? = nil
+        taskTitle: String? = nil,
+        statusInput: String? = nil
     ) {
         guard let index = conversations.firstIndex(where: { $0.id == conversationID }) else { return }
         let otherOwnedIDs = Set(activeTasks(in: conversationID).flatMap(\.ownedMessageIDs))
@@ -493,6 +501,12 @@ extension DesktopWorkspace {
                 task: nil,
                 lastCheckpoint: Date()
             )
+            state.personaStatus = makePersonaStatus(configuration: configuration, apiKey: apiKey)
+            if let latest = resolvedUserMessage {
+                let history = messages.filter { $0.id != latest.id && !otherOwnedIDs.contains($0.id) }
+                state.personaStatus?.refresh(soul: agentSoul, systemPrompt: settings.systemPrompt, history: history,
+                                            latest: statusInput ?? latest.textForEditing, isAddition: false)
+            }
             state.task = Task { [weak self] in
                 for await _ in run.signals {
                     guard let self, self.activeTasks[token] != nil else { return }
@@ -531,6 +545,7 @@ extension DesktopWorkspace {
             case .snapshot(let text, let reasoning, let canonicalJSON, let unsupportedPartCount, let tools):
                 guard let messageID = active.assistantID ?? active.ownedMessageIDs.last,
                       let messageIndex = conversations[index].messages.firstIndex(where: { $0.id == messageID }) else { continue }
+                active.personaStatus?.received(text: text, tools: tools)
                 if conversations[index].messages[messageIndex].text != text {
                     conversations[index].messages[messageIndex].text = text
                 }
@@ -544,6 +559,9 @@ extension DesktopWorkspace {
                 }
             case .transcript(let turns):
                 guard !turns.isEmpty else { continue }
+                if let reply = turns.last(where: { $0.role == .assistant }) {
+                    active.personaStatus?.received(text: reply.text, tools: reply.tools)
+                }
                 replaceTaskTurnsInPlace(turns, for: &active, in: &conversations[index].messages)
             case .complete:
                 terminal = .complete
@@ -690,6 +708,7 @@ extension DesktopWorkspace {
     func stopTask(_ token: UUID) {
         guard let active = activeTasks[token], !stoppingTaskIDs.contains(token) else { return }
         stoppingTaskIDs.insert(token)
+        active.personaStatus?.clear()
         if supplementTargets[active.conversationID] == token {
             supplementTargets[active.conversationID] = nil
         }
@@ -746,6 +765,7 @@ extension DesktopWorkspace {
 
     func clearTask(token: UUID, conversationID: UUID? = nil) {
         let owner = conversationID ?? activeTasks[token]?.conversationID
+        activeTasks[token]?.personaStatus?.clear()
         activeTasks[token] = nil
         generatingTaskIDs.remove(token)
         stoppingTaskIDs.remove(token)
@@ -759,6 +779,7 @@ extension DesktopWorkspace {
         guard let owner = conversationID ?? generationConversationID else { return }
         let tokens = activeTasks(in: owner).map(\.token)
         for token in tokens {
+            activeTasks[token]?.personaStatus?.clear()
             activeTasks[token]?.task?.cancel()
             activeTasks[token] = nil
             generatingTaskIDs.remove(token)

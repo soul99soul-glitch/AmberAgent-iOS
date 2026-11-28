@@ -150,6 +150,10 @@ struct MacGatewayCloudDialogueCausalContractTests {
         _ = try await store.sendCloudWorkItemInput(workItemId: "work:p", text: "按第二版", requestId: req3).get()
         store.stopCloudDialoguePolling()
 
+        // The visible status belongs to the second input. A late cancellation for
+        // another input on the same work item must leave that status in place.
+        store.cloudPersonaRequestID = req2
+        store.cloudPersonaWorkItemID = "work:p"
         // Priority 2: causedByRequestId targets req2 only
         // Priority 3: deterministic prefix `cancelled:evt-p-3` targets req3 only
         // req1 must stay `.received`
@@ -171,6 +175,20 @@ struct MacGatewayCloudDialogueCausalContractTests {
         #expect(store.cloudDialogueReceipts[req1]?.state == .received)
         #expect(store.cloudDialogueReceipts[req2]?.state == .consumed)
         #expect(store.cloudDialogueReceipts[req3]?.state == .cancelled)
+        #expect(store.cloudPersonaRequestID == req2)
+
+        func ingest(_ id: String, _ kind: MacGatewayCloudDialogueEventKind, seq: Int64,
+                    workItem: String? = "work:p", request: String? = nil) {
+            let event = MacGatewayCloudDialogueEvent(seq: seq, id: id, kind: kind, role: "assistant",
+                text: "正在处理", topicId: "topic-p", workItemId: workItem, causedByRequestId: request)
+            store.ingestCloudDialogueEventsPage(.init(items: [event], nextCursor: seq), requestedAfter: seq - 1)
+        }
+        ingest("ack:evt-p-2", .assistantReply, seq: 3)
+        #expect(store.cloudPersonaRequestID == req2)
+        ingest("older-reply", .assistantReply, seq: 4, workItem: nil, request: req1)
+        #expect(store.cloudPersonaRequestID == req2)
+        ingest("tool-start", .processEvent, seq: 5)
+        #expect(store.cloudPersonaRequestID == nil)
     }
 
     // MARK: - 3. Legacy Degradation: Missing Causal IDs Never Guess & Reconcile via Receipt

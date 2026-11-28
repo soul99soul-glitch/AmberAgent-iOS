@@ -12,7 +12,8 @@ extension ChatViewModel {
         conversationId: KotlinUuid?,
         phoneControlUserInitiated: Bool = false,
         anchorUserMessageId: String? = nil,
-        allowsConcurrentBackgroundJob: Bool = false
+        allowsConcurrentBackgroundJob: Bool = false,
+        personaMessage: String? = nil
     ) {
         // generateResponse 本身完全同步（kernelRunHost.start 内部再起 Task），
         // 用 begin/defer-end 包住整个函数体即测到主线程被占用的时长。
@@ -71,6 +72,9 @@ extension ChatViewModel {
             recipeCatalogSnapshot: lastAssembledDynamicToolSnapshot,
             baselineMessages: baselineMessages
         )
+        if !targetRun.state.isOrchestratedChild, let personaMessage, !personaMessage.isEmpty {
+            refreshPersonaStatus(for: slot, latest: personaMessage, addition: false)
+        }
         _ = startOrEnqueueTaskSlot(slot, in: targetRun)
     }
 

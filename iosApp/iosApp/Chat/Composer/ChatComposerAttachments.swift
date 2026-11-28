@@ -44,7 +44,8 @@ extension ChatViewModel {
                     userMessageId: userMessageId
                 ) else { return }
                 self.cacheVisionRecognitionTexts(texts)
-                self.generateResponse(inputDigest: digest, conversationId: conversationId, phoneControlUserInitiated: true)
+                self.generateResponse(inputDigest: digest, conversationId: conversationId, phoneControlUserInitiated: true,
+                                      personaMessage: text)
             }
         }
     }

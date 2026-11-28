@@ -41,6 +41,7 @@ targets:
             subpath: Contents/Library/LaunchAgents
       - path: ../iosApp/iosApp/IOSGeminiProvider.swift
       - path: ../iosApp/iosApp/IOSAntigravityOAuthClient.swift
+      - path: ../iosApp/iosApp/PersonaStatusOwner.swift
       - path: ../iosApp/iosApp/IOSCodexOAuthClient.swift
       - path: ../iosApp/iosApp/IOSImageGenerationModels.swift
       - path: ../iosApp/iosApp/IOSImageGenerationRepository.swift
@@ -170,6 +171,7 @@ targets:
       - path: Preview
         excludes:
           - Info.plist
+      - path: ../iosApp/iosApp/PersonaStatusOwner.swift
       - path: ../iosApp/iosApp/IOSCodexOAuthClient.swift
       - path: ../iosApp/iosApp/IOSImageGenerationModels.swift
       - path: ../iosApp/iosApp/IOSImageGenerationRepository.swift

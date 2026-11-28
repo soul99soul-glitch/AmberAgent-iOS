@@ -22,6 +22,10 @@ extension ChatViewModel {
             selectedFile: selectedFile.map(IOSSteerQueuedFile.init), targetRunId: targetRunId,
             status: routing ? .routing : .received
         )
+        if let slot = targetRunId.flatMap(currentRun.slot(forRunId:)), slot.isActiveOrQueued, !trimmed.isEmpty {
+            slot.personaFollowupID = entry.id
+            refreshPersonaStatus(for: slot, latest: trimmed, addition: true)
+        }
         state.steerQueue.append(entry)
         persistSteerQueue()
         if consumesComposer {
@@ -200,7 +204,8 @@ extension ChatViewModel {
                     conversationId: state.conversationId,
                     phoneControlUserInitiated: phoneControlUserInitiated,
                     anchorUserMessageId: entry.messageId,
-                    allowsConcurrentBackgroundJob: true
+                    allowsConcurrentBackgroundJob: true,
+                    personaMessage: entry.text
                 )
                 return run.orderedSlots.last {
                     $0.isActiveOrQueued && $0.anchorUserMessageId == entry.messageId

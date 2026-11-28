@@ -588,7 +588,7 @@ struct AmberInlineCloudMainDialogueView: View {
             return liveProgressItems.enumerated().map { index, progress in
                 CloudTailStatusRowItem(
                     id: index == 0 ? "cloud-status-primary" : "cloud-status-\(progress.workItemId)",
-                    headline: progress.displaySingleLine,
+                    headline: store.cloudPersonaHeadline(for: progress),
                     isLive: progress.isLive,
                     outcome: progress.outcome,
                     workItemId: progress.workItemId,
@@ -601,7 +601,7 @@ struct AmberInlineCloudMainDialogueView: View {
             return [
                 CloudTailStatusRowItem(
                     id: "cloud-status-primary",
-                    headline: macGatewayL("正在思考"),
+                    headline: store.cloudPersonaStatus.phrase ?? macGatewayL("正在思考"),
                     isLive: true,
                     outcome: nil,
                     workItemId: nil,
@@ -979,7 +979,7 @@ struct AmberInlineCloudMainDialogueView: View {
 
     private var awaitingCloudReplyRow: some View {
         AmberCloudTaskProgressRowView(
-            headline: macGatewayL("正在思考"),
+            headline: store.cloudPersonaStatus.phrase ?? macGatewayL("正在思考"),
             isLive: true
         )
     }
@@ -1147,7 +1147,7 @@ struct MacGatewayCloudDialogueSheet: View {
                     VStack(spacing: 6) {
                         ForEach(Array(store.cloudDialogueProgressByWorkItem.values.sorted(by: { $0.lastEventSeq > $1.lastEventSeq }))) { progress in
                             AmberCloudTaskProgressRowView(
-                                headline: progress.displaySingleLine,
+                                headline: store.cloudPersonaHeadline(for: progress),
                                 isLive: progress.isLive,
                                 outcome: progress.outcome,
                                 showsActions: progress.isLive && !progress.isStopRequested,
@@ -1167,6 +1167,10 @@ struct MacGatewayCloudDialogueSheet: View {
                     .padding(.vertical, 8)
                 }
 
+                if store.isAwaitingCloudMainReply && store.liveCloudDialogueProgressItems.isEmpty {
+                    AmberCloudTaskProgressRowView(headline: store.cloudPersonaStatus.phrase ?? macGatewayL("正在思考"), isLive: true)
+                        .padding(.horizontal, 16)
+                }
                 List {
                     ForEach(store.cloudDialogueVisibleEvents) { event in
                         let followup = store.cloudDialogueFollowup(for: event)

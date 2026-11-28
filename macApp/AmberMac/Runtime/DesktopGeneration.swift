@@ -139,3 +139,24 @@ extension DesktopTextProvider {
     }
 }
 
+
+extension DesktopGeneration {
+    /// Read the final text of an auxiliary run. Cancellation propagates to its transport.
+    func finalText() async -> String? {
+        await withTaskCancellationHandler {
+            var text = ""
+            for await _ in signals {
+                guard !Task.isCancelled else { return nil }
+                for event in drain() {
+                    switch event {
+                    case .snapshot(let value, _, _, _, _): text = value
+                    case .transcript(let turns): text = turns.last { $0.role == .assistant }?.text ?? text
+                    case .complete: return text
+                    case .failed, .cancelled: return nil
+                    }
+                }
+            }
+            return nil
+        } onCancel: { self.cancel() }
+    }
+}

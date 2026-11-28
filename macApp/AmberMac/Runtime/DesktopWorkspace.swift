@@ -222,9 +222,12 @@ final class DesktopWorkspace {
         let usesTools: Bool
         var task: Task<Void, Never>?
         var lastCheckpoint: Date
+        var personaStatus: DesktopPersonaStatus?
     }
 
     @ObservationIgnored let storage: any DesktopConversationStorage
+    @ObservationIgnored var statusProvider: (any DesktopTextProvider)?
+    var dialoguePersonaStatus: [UUID: DesktopPersonaStatus] = [:]
     @ObservationIgnored let provider: any DesktopTextProvider
     @ObservationIgnored var persistence: Task<Void, Never>?
     @ObservationIgnored var activeTasks: [UUID: ActiveGeneration] = [:]

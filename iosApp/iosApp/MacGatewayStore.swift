@@ -275,6 +275,10 @@ final class MacGatewayStore {
     @ObservationIgnored var cloudSuggestionSequence: Int64 = 0
     var cloudDialogueReceipts: [String: MacGatewayCloudDialogueReceipt] = [:]
     var cloudDialogueFollowups: [MacGatewayCloudDialogueFollowupRecord] = []
+    let cloudPersonaStatus = PersonaStatusOwner()
+    var cloudPersonaRequestID: String?
+    var cloudPersonaWorkItemID: String?
+    var cloudPersonaStartCursor: Int64 = 0
     var cloudDialogueProgressByWorkItem: [String: MacGatewayCloudDialogueWorkItemProgress] = [:]
     var cloudDialogueSubmissions: [MacGatewayCloudDialoguePersistedSubmission] = []
     var cloudDialogueFirstSeenAtByEventId: [String: Date] = [:]

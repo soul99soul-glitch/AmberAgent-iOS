@@ -50,6 +50,7 @@ enum IOSCredentialRedactor {
         return rehydratedJSON(object, original: jsonString, loadCredential: loadCredential)
     }
 
+    #if os(iOS)
     /// Older installations stored provider and search keys by ID. Prefer those refs,
     /// falling back to the generic path in the same credential walk as headers and bodies.
     static func decodeSettings<Snapshot>(
@@ -90,6 +91,7 @@ enum IOSCredentialRedactor {
             return (try decode(String(decoding: typed, as: UTF8.self)), hasPlaintext)
         }
     }
+    #endif
 
     private static func rehydratedJSON(
         _ object: Any, original jsonString: String, loadCredential: (String) -> String?

@@ -50,6 +50,7 @@ extension ChatViewModel {
             selectedFileContextError = "请先发送或移除输入框中的附件，再回填这条消息。"
             return
         }
+        entry.targetRunId.flatMap(currentRun.slot(forRunId:))?.discardPersonaFollowup(entry.id)
         projectQueuedEntry(entry, receipt: "not_applied", state: state)
         let draft = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         inputText = draft.isEmpty ? entry.text : draft + "\n" + entry.text
@@ -211,6 +212,7 @@ extension ChatViewModel {
         let slot = target.flatMap(run.slot(forRunId:))
         var reply = decision.reply
         let cancelledSteer = decision.route == .steer && state.steerQueue[index].status == .cancelled
+        if cancelledSteer || decision.route != .steer { slot?.discardPersonaFollowup(entry.id) }
         if cancelledSteer {
             reply = entry.text.unicodeScalars.allSatisfy(\.isASCII) ? "The task stopped before I could apply that change." : "任务已停止，这次补充已保留在对话里。"
         } else if decision.route == .steer {

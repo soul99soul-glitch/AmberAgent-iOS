@@ -96,20 +96,7 @@ import Foundation
     private func complete(_ messages: [DesktopMessage], configuration: DesktopProviderConfiguration, apiKey: String) async -> String? {
         guard let generation = try? provider.start(configuration: configuration, apiKey: apiKey, messages: messages, responseID: UUID())
         else { return nil }
-        let consume = Task { @MainActor () -> String? in
-            var text = ""
-            for await _ in generation.signals {
-                for event in generation.drain() {
-                    switch event {
-                    case .snapshot(let value, _, _, _, _): text = value
-                    case .transcript(let turns): text = turns.last { $0.role == .assistant }?.text ?? text
-                    case .complete: return text
-                    case .failed, .cancelled: return nil
-                    }
-                }
-            }
-            return nil
-        }
+        let consume = Task { await generation.finalText() }
         let timeout = timeout
         let timer = Task {
             try? await Task.sleep(for: timeout)

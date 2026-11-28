@@ -38,6 +38,9 @@ struct ChatTimelineActivity: Equatable {
         if tracksTaskLiveness, let taskSlot, uptime - taskSlot.lastActivityUptime >= 30 {
             return .activity(kind: .waiting, title: "等待响应", systemImage: "clock", tint: .amber)
         }
+        if let phrase = taskSlot?.personaStatus.phrase, showsThought || presentation.kind == .generating {
+            return .activity(kind: .thinking, title: phrase, systemImage: presentation.systemImage, tint: presentation.tint)
+        }
         guard showsThought else { return presentation }
         return .activity(kind: presentation.kind,
                          title: Self.thoughtTitle(stages: plannedStages, start: stagePlanStartedUptime,

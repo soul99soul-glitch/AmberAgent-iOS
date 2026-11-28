@@ -95,6 +95,51 @@ import XCTest
         workspace.stop(); _ = await workspace.flush()
     }
 
+    func testSupplementRefreshesOnlyUntilNewBodyAndYieldsToTools() async throws {
+        let settings = settings()
+        let chat = DesktopModelConfiguration(modelID: "chat")
+        let fast = DesktopModelConfiguration(modelID: "title", maxOutputTokens: 512, reasoning: .high)
+        let configuration = DesktopProviderConfiguration(name: "Fixture", kind: .openAI,
+            baseURL: "http://localhost:1234/v1", models: [chat, fast], selectedModelID: chat.id)
+        try settings.saveProvider(configuration, apiKey: "")
+        settings.selectModel(chat.id)
+        settings.setAuxiliaryModel(fast.id, for: .title)
+        let conversation = DesktopConversation()
+        let primary = TitleProvider(), auxiliary = TitleProvider()
+        let workspace = DesktopWorkspace(settings: settings, storage: DesktopMemoryConversationStorage([conversation]),
+            provider: primary, initialConversations: [conversation])
+        workspace.statusProvider = auxiliary
+        workspace.draft = "赵大哥赵大哥"
+        workspace.send()
+        let run = try XCTUnwrap(workspace.selectedConversationActiveTasks.first)
+        let status = try XCTUnwrap(run.personaStatus)
+        defer { workspace.stopTask(run.token) }
+        workspace.apply([.snapshot(text: "来了", reasoning: "")], for: conversation.id, token: run.token)
+        workspace.selectSupplementTarget(run.token)
+        workspace.draft = "哄我"
+        workspace.send()
+        for _ in 0..<150 where auxiliary.prompt?.contains("哄我") != true {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(auxiliary.prompt?.contains("哄我") == true)
+        XCTAssertEqual(auxiliary.model, "title")
+        XCTAssertEqual(auxiliary.options?.maxOutputTokens, 24)
+        XCTAssertEqual(auxiliary.options?.reasoning, .off)
+        XCTAssertEqual(settings.configuredAuxiliaryModel(for: .title)?.selectedModel?.maxOutputTokens, 512)
+        auxiliary.run?.yield(.snapshot(text: "「在哄着呢」", reasoning: ""))
+        auxiliary.run?.yield(.complete)
+        for _ in 0..<100 where status.phrase == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(status.phrase, "在哄着呢")
+        let tool = DesktopToolCall(id: "t", name: "search", status: .running)
+        workspace.apply([.snapshot(text: "来了", reasoning: "", tools: [tool])], for: conversation.id, token: run.token)
+        XCTAssertNil(status.phrase)
+        workspace.apply([.snapshot(text: "来了", reasoning: "")], for: conversation.id, token: run.token)
+        XCTAssertEqual(status.phrase, "在哄着呢")
+        workspace.apply([.snapshot(text: "来了，先抱抱你", reasoning: "")], for: conversation.id, token: run.token)
+        XCTAssertNil(status.phrase)
+        XCTAssertFalse(workspace.selectedConversation?.messages.contains { $0.text.contains("在哄着呢") } ?? true)
+    }
+
     func testWorkspaceTitlePersistsToCapturedOwnerAndCannotOverwriteManualRename() async throws {
         let settings = settings()
         let title = DesktopModelConfiguration(modelID: "title-model")
@@ -139,10 +184,14 @@ import XCTest
 @MainActor private final class TitleProvider: DesktopTextProvider {
     var run: DesktopGeneration?
     var model: String?
+    var prompt: String?
+    var options: DesktopModelConfiguration?
     var startCount = 0
     var apiKey: String?
     func start(configuration: DesktopProviderConfiguration, apiKey: String, messages: [DesktopMessage], responseID: UUID) throws -> DesktopGeneration {
         model = configuration.modelID
+        prompt = messages.last?.text
+        options = configuration.selectedModel
         startCount += 1
         self.apiKey = apiKey
         let run = DesktopGeneration(); self.run = run
