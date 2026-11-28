@@ -34,6 +34,7 @@ class PersonaStatusTest {
         assertEquals(model.id, request.model.id)
         assertEquals(24, request.maxTokens)
         assertEquals(0.6f, request.temperature)
+        assertEquals(4000L, PERSONA_STATUS_TIMEOUT_MS)
         assertEquals(ReasoningLevel.OFF, request.reasoningLevel)
         assertFalse(request.reasoningLevel.isEnabled)
         assertEquals(headers, request.customHeaders)

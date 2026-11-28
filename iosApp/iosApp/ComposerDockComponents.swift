@@ -104,9 +104,6 @@ struct ComposerDockSendButton: View {
         .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.88, haptic: isLoading ? .mediumImpact : .lightImpact))
         .disabled(!isActionable)
         .disabled(isStopping)
-        .animation(.easeOut(duration: 0.18), value: isLoading)
-        .animation(.easeOut(duration: 0.18), value: isStopping)
-        .animation(.easeOut(duration: 0.18), value: sendEnabled)
         .accessibilityLabel(isStopping ? "正在停止生成" : (isLoading ? "停止生成" : "发送消息"))
     }
 

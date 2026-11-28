@@ -51,8 +51,6 @@ extension DesktopWorkspace {
                 guard let resolved = try? validatedRequest(title) else { return nil }
                 request = resolved
             }
-            // These OAuth transports strip max_output_tokens from the wire request.
-            guard request.0.authMode != .codexOAuth, request.0.authMode != .chatgptSiwc, request.0.authMode != .grokOAuth else { return nil }
             guard let index = request.0.models.firstIndex(where: { $0.id == request.0.selectedModel?.id }) else { return nil }
             request.0.models[index].maxOutputTokens = 24
             request.0.models[index].temperature = 0.6
@@ -61,7 +59,7 @@ extension DesktopWorkspace {
             let input = [DesktopMessage(role: .user, text: prompt)]
             guard let run = try? statusProvider.start(configuration: request.0, apiKey: request.1,
                                                       messages: input, responseID: UUID()) else { return nil }
-            return await run.finalText()
+            return await run.firstStatusLine()
         }
     }
 }

@@ -202,20 +202,58 @@ extension ChatViewModel {
         owner.refresh(assistant: soul.isDefault ? assistant.name : soul.displayName,
                       persona: persona, recent: recent, latest: latest, isAddition: addition) { prompt in
             guard let provider = ChatProviderConfiguration.provider(for: model, providers: snapshot.providers),
-                  ChatProviderConfiguration.issue(for: model, provider: provider) == nil,
-                  !IOSGrokWebProviderResolver.isGrokWebProvider(provider),
-                  !IOSCodexProviderResolver.isCodexProvider(provider),
-                  !IOSCodexProviderResolver.isChatGptSiwcProvider(provider) else { return nil }
+                  ChatProviderConfiguration.issue(for: model, provider: provider) == nil else { return nil }
             let headers = ChatProviderConfiguration.requestHeaders(for: provider, assistant: assistant.customHeaders,
                 model: model.customHeaders, conversationId: conversationId?.toHexDashString())
             let params = model.personaStatusParams(headers: headers)
             let step = IOSAgentProviderStep(provider: client)
             guard let request = try? await step.prepareStepRequest(providerSetting: provider, params: params),
                   !Task.isCancelled else { return nil }
-            let chunk = try? await step.streamStep(request: request, messages: [.companion.user(prompt: prompt)],
-                citationTracker: nil, onAssistantStage: nil, onAssistantText: nil,
-                onAssistantReasoning: nil, onAssistantMessageSnapshot: nil)
-            return chunk?.choices.first?.message?.toText()
+            return await Self.streamPersonaStatusText(
+                step: step,
+                request: request,
+                prompt: prompt
+            )
+        }
+    }
+
+    /// Stream at most one non-empty line or 32 characters, cancelling the transport early when providers ignore max_tokens.
+    static func streamPersonaStatusText(
+        step: IOSAgentProviderStep,
+        request: IOSAgentProviderStep.PreparedStepRequest,
+        prompt: String
+    ) async -> String? {
+        let (stream, continuation) = AsyncStream<String?>.makeStream(bufferingPolicy: .bufferingOldest(1))
+        let streamTask = Task {
+            let chunk = try? await step.streamStep(
+                request: request,
+                messages: [.companion.user(prompt: prompt)],
+                citationTracker: nil,
+                onAssistantStage: nil,
+                onAssistantText: { text in
+                    if let early = PersonaStatusOwner.earlyStopChunk(from: text) {
+                        continuation.yield(early)
+                        continuation.finish()
+                    }
+                },
+                onAssistantReasoning: nil,
+                onAssistantMessageSnapshot: nil
+            )
+            continuation.yield(chunk?.choices.first?.message?.toText())
+            continuation.finish()
+        }
+        defer {
+            streamTask.cancel()
+            continuation.finish()
+        }
+        return await withTaskCancellationHandler {
+            for await value in stream {
+                return value
+            }
+            return nil
+        } onCancel: {
+            streamTask.cancel()
+            continuation.finish()
         }
     }
 

@@ -29,6 +29,19 @@ final class PersonaStatusOwner {
         #endif
         if phrase != nil { phrase = nil }
     }
+
+    /// Return the first non-empty status chunk as soon as a newline arrives or length reaches `maxCharacters`.
+    nonisolated static func earlyStopChunk(from accumulated: String, maxCharacters: Int = 32) -> String? {
+        let trimmedStart = accumulated.drop(while: \.isWhitespace)
+        guard !trimmedStart.isEmpty else { return nil }
+        if let newline = trimmedStart.firstIndex(where: \.isNewline) {
+            return String(trimmedStart[..<newline])
+        }
+        if trimmedStart.count >= maxCharacters {
+            return String(trimmedStart)
+        }
+        return nil
+    }
 }
 
 #if !AMBER_MAC_PREVIEW

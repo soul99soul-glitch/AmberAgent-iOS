@@ -159,4 +159,33 @@ extension DesktopGeneration {
             return nil
         } onCancel: { self.cancel() }
     }
+
+    /// Read the first non-empty status line (or up to 32 characters) and cancel the stream early.
+    func firstStatusLine() async -> String? {
+        await withTaskCancellationHandler {
+            var text = ""
+            for await _ in signals {
+                guard !Task.isCancelled else { return nil }
+                for event in drain() {
+                    switch event {
+                    case .snapshot(let value, _, _, _, _):
+                        text = value
+                        if let early = PersonaStatusOwner.earlyStopChunk(from: text) {
+                            cancel()
+                            return early
+                        }
+                    case .transcript(let turns):
+                        text = turns.last { $0.role == .assistant }?.text ?? text
+                        if let early = PersonaStatusOwner.earlyStopChunk(from: text) {
+                            cancel()
+                            return early
+                        }
+                    case .complete: return text
+                    case .failed, .cancelled: return nil
+                    }
+                }
+            }
+            return nil
+        } onCancel: { self.cancel() }
+    }
 }

@@ -143,6 +143,49 @@ import XCTest
         XCTAssertFalse(workspace.selectedConversation?.messages.contains { $0.text.contains("在哄着呢") } ?? true)
     }
 
+    func testPersonaStatusStreamsEarlyStopAndAllowsOAuthTransport() async throws {
+        let settings = settings()
+        let model = DesktopModelConfiguration(modelID: "gpt-5-codex")
+        let configuration = DesktopProviderConfiguration(name: "Codex", kind: .responses,
+            baseURL: "https://chatgpt.com/backend-api/codex", models: [model], selectedModelID: model.id,
+            authMode: .codexOAuth)
+        try settings.saveProvider(configuration, apiKey: "")
+        settings.selectModel(model.id)
+        let conversation = DesktopConversation()
+        let primary = TitleProvider(), auxiliary = TitleProvider()
+        let workspace = DesktopWorkspace(settings: settings, storage: DesktopMemoryConversationStorage([conversation]),
+            provider: primary, initialConversations: [conversation])
+        workspace.statusProvider = auxiliary
+        workspace.draft = "你在干嘛"
+        workspace.send()
+        let run = try XCTUnwrap(workspace.selectedConversationActiveTasks.first)
+        let status = try XCTUnwrap(run.personaStatus)
+        defer { workspace.stopTask(run.token) }
+        for _ in 0..<100 where auxiliary.run == nil { try await Task.sleep(for: .milliseconds(10)) }
+        let stream = try XCTUnwrap(auxiliary.run)
+        // Stream ignores max_output_tokens and emits a newline + extra prose without completing.
+        stream.yield(.snapshot(text: "\n在哄着呢\n后面还有一整段多余的回复内容", reasoning: ""))
+        for _ in 0..<100 where status.phrase == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(status.phrase, "在哄着呢")
+
+        // Exceeding 32 characters without newline stops early too and rejects verbose prose.
+        final class CancelFlag: @unchecked Sendable {
+            private let lock = NSLock()
+            private var value = false
+            func mark() { lock.withLock { value = true } }
+            var isMarked: Bool { lock.withLock { value } }
+        }
+        let verboseRun = DesktopGeneration()
+        let cancelled = CancelFlag()
+        verboseRun.installCancellation { cancelled.mark() }
+        let task = Task { await verboseRun.firstStatusLine() }
+        await Task.yield()
+        verboseRun.yield(.snapshot(text: String(repeating: "话", count: 35), reasoning: ""))
+        let early = await task.value
+        XCTAssertEqual(early?.count, 35)
+        XCTAssertTrue(cancelled.isMarked)
+    }
+
     func testWorkspaceTitlePersistsToCapturedOwnerAndCannotOverwriteManualRename() async throws {
         let settings = settings()
         let title = DesktopModelConfiguration(modelID: "title-model")

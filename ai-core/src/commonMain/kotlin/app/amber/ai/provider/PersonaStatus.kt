@@ -10,7 +10,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 private const val PERSONA_STATUS_MAX_TOKENS = 24
-private const val PERSONA_STATUS_TIMEOUT_MS = 2500L
+internal const val PERSONA_STATUS_TIMEOUT_MS = 4000L
 private const val PERSONA_STATUS_DEBOUNCE_MS = 150L
 private const val PERSONA_STATUS_TEMPERATURE = 0.6f
 private const val DEFAULT_ASSISTANT_NAME = "Amber"

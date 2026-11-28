@@ -1165,6 +1165,67 @@ final class ChatAsyncReActLoopTests: XCTestCase {
         XCTAssertNil(slot.personaStatus.phrase)
     }
 
+    func testPlainChatBurstSteersSilentlyWithoutRobotAckOrStatusBubbles() async throws {
+        let (store, directory) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        await store.bootstrap()
+        let defaults = makeDefaults()
+        let sharedSettings = makeSharedSettings(defaults: defaults)
+        let provider = ControlledStreamingProvider()
+        let viewModel = makeViewModel(defaults: defaults, sharedSettings: sharedSettings, store: store)
+        viewModel.kernelTextProviderOverrideForTesting = provider
+        viewModel.reloadFromStore()
+
+        viewModel.inputText = "回来啦"
+        XCTAssertTrue(viewModel.sendMessage())
+        let started = await waitForCondition { provider.ready }
+        XCTAssertTrue(started)
+
+        // Pure chat waiting for first token (no active tool): follow-up messages must steer silently with zero robot ack/status bubbles.
+        viewModel.inputText = "你在干嘛"
+        XCTAssertTrue(viewModel.sendMessage())
+        viewModel.inputText = "中午好呀"
+        XCTAssertTrue(viewModel.sendMessage())
+
+        let assistantBubbles = viewModel.messages.filter { $0.role == MessageRole.assistant }
+        XCTAssertTrue(
+            assistantBubbles.isEmpty,
+            "Pure-chat follow-ups without an active tool must never insert robot steer_ack or status_reply bubbles"
+        )
+        XCTAssertEqual(viewModel.messages.filter { $0.role == MessageRole.user }.map { $0.toText() }, ["回来啦", "你在干嘛", "中午好呀"])
+
+        viewModel.cancelGeneration()
+        provider.finish()
+        let settled = await waitForCondition { !viewModel.isGenerationActive }
+        XCTAssertTrue(settled)
+    }
+
+    func testPersonaStatusStreamStopsEarlyOnNewlineOrCharacterBudget() async throws {
+        XCTAssertNil(PersonaStatusOwner.earlyStopChunk(from: "\n  "))
+        XCTAssertEqual(PersonaStatusOwner.earlyStopChunk(from: "\n在哄着呢\n多余正文"), "在哄着呢")
+        XCTAssertEqual(PersonaStatusOwner.earlyStopChunk(from: String(repeating: "a", count: 32)), String(repeating: "a", count: 32))
+
+        let provider = ControlledStreamingProvider()
+        let step = IOSAgentProviderStep(provider: provider)
+        let request = try await step.prepareStepRequest(
+            providerSetting: IOSChatForegroundFixtures.makeProviderSetting(),
+            params: IOSChatForegroundFixtures.makeParams(toolNames: [])
+        )
+        let task = Task {
+            await ChatViewModel.streamPersonaStatusText(
+                step: step,
+                request: request,
+                prompt: "status"
+            )
+        }
+        let ready = await waitForCondition { provider.ready }
+        XCTAssertTrue(ready)
+        // Emit a newline chunk without ever finishing the stream; streamPersonaStatusText must return immediately.
+        provider.send(IOSChatForegroundFixtures.assistantText("查GPT6.2\n我会继续长篇大论"))
+        let result = await task.value
+        XCTAssertEqual(result, "查GPT6.2")
+    }
+
     func testSameIDProvisionalVisibleGrowthResetsKeepaliveButDuplicateBlankAndReasoningDoNot() throws {
         let (store, directory) = try makeStore()
         defer { try? FileManager.default.removeItem(at: directory) }

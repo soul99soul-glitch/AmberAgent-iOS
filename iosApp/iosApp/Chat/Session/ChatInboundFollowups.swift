@@ -161,16 +161,21 @@ extension ChatViewModel {
         } ?? slot.map { max(0, Int(ProcessInfo.processInfo.systemUptime - $0.lastUserVisibleProgressUptime)) }
         let backgroundReasoning = backgroundJob?.job.messagesSnapshot.lastMessage?.parts
             .compactMap { ($0 as? UIMessagePart.Reasoning)?.reasoning }.last
+        let activeTool = slot?.activeToolTitle ?? lastTool.flatMap { $0.output.isEmpty ? ChatToolStepModel(tool: $0).title : nil }
+        let hasActiveTool = activeTool != nil || stage == .runningTool
         let context = ChatInboundTurnTriage(
             text: text, attachments: !pendingImages.isEmpty || pendingSelectedFilePreview != nil,
             originalRequest: original.last(where: { $0.role == .user })?.toText() ?? "",
             stage: slot?.isQueuedForConcurrencySlot == true ? "等待执行槽位" : stage?.title ?? "处理中",
             stageName: stage?.rawValue ?? "processing",
-            tool: slot?.activeToolTitle ?? lastTool.flatMap { $0.output.isEmpty ? ChatToolStepModel(tool: $0).title : nil },
+            tool: activeTool,
             reasoning: slot?.liveReasoningSummary ?? backgroundReasoning, elapsed: elapsed,
             recentNote: slot?.explicitFailureOrStallReason ?? lastTool?.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.last
                 ?? slot?.keepaliveMessages.last?.toText()
         )
+        if !hasActiveTool, context.explicitRoute == nil {
+            return enqueueSteerMessage(text: text, targetRunId: target, routing: false)
+        }
         let stopTargets = Set(run.orderedSlots.filter(\.isActiveOrQueued).map(\.runId))
             .union(background.runIds(for: state.conversationId))
         guard enqueueSteerMessage(text: text, targetRunId: target, routing: true),
@@ -219,6 +224,7 @@ extension ChatViewModel {
             state.clearChildResultWait()
             state.steerQueue[index].status = .received
             projectQueuedEntry(state.steerQueue[index], receipt: "queued", state: state)
+            reply = ""
         } else {
             state.steerQueue[index].status = .consumed
         }
@@ -228,11 +234,14 @@ extension ChatViewModel {
             let stopped = targets.filter { cancelGeneration(runId: $0) }
             if stopped.isEmpty { reply = entry.text.unicodeScalars.allSatisfy(\.isASCII) ? "The task has ended." : "任务已经结束。" }
         }
-        let ack = UIMessage.companion.assistant(prompt: reply)
-        if let user = state.messages.firstIndex(where: { $0.id.toHexDashString() == entry.messageId }) {
-            state.messages.insert(ack, at: user + 1)
+        let trimmedReply = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedReply.isEmpty {
+            let ack = UIMessage.companion.assistant(prompt: trimmedReply)
+            if let user = state.messages.firstIndex(where: { $0.id.toHexDashString() == entry.messageId }) {
+                state.messages.insert(ack, at: user + 1)
+            }
+            run.state.interjectionReplyIDs[entry.messageId] = ack.id.toHexDashString()
         }
-        run.state.interjectionReplyIDs[entry.messageId] = ack.id.toHexDashString()
         if isCurrentConversation(state.conversationId) { bumpMessageRevision(reason: .toolResultAppended) }
         switch decision.route {
         case .steer where !cancelledSteer:
