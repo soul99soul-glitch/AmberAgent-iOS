@@ -2158,13 +2158,15 @@ extension MacGatewayStore {
         cloudPersonaRequestID = requestID
         cloudPersonaWorkItemID = workItemID
         cloudPersonaStartCursor = cloudDialogueCursor
-        let recent = cloudDialogueVisibleEvents.suffix(4).compactMap { event -> String? in
+        let recent = cloudDialogueVisibleEvents.reversed().lazy.compactMap { event -> String? in
             guard (event.role == "user" || event.role == "assistant"),
                   event.conversationId == conversationID else { return nil }
-            return "\(event.role): \(event.text.prefix(160))"
-        }
+            let trimmed = event.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return "\(event.role): \(trimmed)"
+        }.prefix(4).reversed()
         ChatViewModel.refreshPersonaStatus(cloudPersonaStatus, settings: settings, soul: boundSoulStore ?? .shared,
-                                         recent: recent, latest: text, addition: addition, conversationId: nil,
+                                         recent: Array(recent), latest: text, addition: addition, conversationId: nil,
                                          fallbackModel: settings.snapshot.getCurrentChatModel(),
                                          provider: OpenAIKmpProviderAdapter())
     }

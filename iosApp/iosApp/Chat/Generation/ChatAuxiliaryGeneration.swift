@@ -221,13 +221,16 @@ extension ChatViewModel {
 
     func refreshPersonaStatus(for slot: ChatAsyncTaskSlot, latest: String, addition: Bool) {
         let messages = addition ? slot.currentTranscript[...] : slot.baselineMessages.dropLast()
-        let recent = messages.suffix(4).compactMap { message -> String? in
+        let recent = messages.reversed().lazy.compactMap { message -> String? in
             guard message.role == .user || message.role == .assistant else { return nil }
-            let text = message.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.first ?? ""
-            return text.isEmpty ? nil : "\(message.role == .user ? "User" : "Assistant"): \(text.prefix(160))"
-        }
+            let text = message.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }
+                .joined(separator: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            return "\(message.role == .user ? "user" : "assistant"): \(text)"
+        }.prefix(4).reversed()
         Self.refreshPersonaStatus(slot.personaStatus, settings: sharedSettings, soul: agentSoulStore,
-                                 recent: recent, latest: latest, addition: addition,
+                                 recent: Array(recent), latest: latest, addition: addition,
                                  conversationId: slot.conversationId, fallbackModel: slot.params.model,
                                  provider: auxiliaryTextProvider)
     }

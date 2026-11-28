@@ -17,8 +17,12 @@ import Observation
                  latest: String, isAddition: Bool) {
         guard !latest.isEmpty else { clear(); return }
         waiting = true
-        let recent = history.reversed().lazy.filter { ($0.role == .user || $0.role == .assistant) && !$0.text.isEmpty }
-            .prefix(4).reversed().map { "\($0.role.rawValue): \($0.textForEditing.prefix(160))" }
+        let recent = history.reversed().lazy.compactMap { message -> String? in
+            guard message.role == .user || message.role == .assistant else { return nil }
+            let text = message.textForEditing.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            return "\(message.role.rawValue): \(text)"
+        }.prefix(4).reversed()
         let persona = [soul.tagline, soul.soulMarkdown, systemPrompt].filter { !$0.isEmpty }.joined(separator: "\n")
         owner.refresh(assistant: soul.displayName, persona: persona, recent: Array(recent), latest: latest,
                       isAddition: isAddition, generate: generate)
@@ -48,9 +52,10 @@ extension DesktopWorkspace {
                 request = resolved
             }
             // These OAuth transports strip max_output_tokens from the wire request.
-            guard request.0.authMode != .codexOAuth, request.0.authMode != .chatgptSiwc else { return nil }
+            guard request.0.authMode != .codexOAuth, request.0.authMode != .chatgptSiwc, request.0.authMode != .grokOAuth else { return nil }
             guard let index = request.0.models.firstIndex(where: { $0.id == request.0.selectedModel?.id }) else { return nil }
             request.0.models[index].maxOutputTokens = 24
+            request.0.models[index].temperature = 0.6
             request.0.models[index].reasoning = .off
             request.0.models[index].customBody = nil
             let input = [DesktopMessage(role: .user, text: prompt)]
