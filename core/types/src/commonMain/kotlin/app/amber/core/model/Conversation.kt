@@ -45,58 +45,105 @@ data class Conversation(
     }
 
     fun updateCurrentMessages(messages: List<UIMessage>): Conversation {
-        val newNodes = this.messageNodes.toMutableList()
+        val originalNodes = this.messageNodes
+        val nodeIndexByMessageId = HashMap<Uuid, Int>(originalNodes.size * 2)
+        originalNodes.forEachIndexed { nodeIndex, node ->
+            node.messages.forEach { msg ->
+                if (msg.id !in nodeIndexByMessageId) {
+                    nodeIndexByMessageId[msg.id] = nodeIndex
+                }
+            }
+        }
+
+        val claimedNodeByMsg = IntArray(messages.size) { -1 }
+        val claimedNodes = BooleanArray(originalNodes.size)
+
+        // Pass 1: Claim existing nodes by stable message ID so shifting/reordering
+        // (e.g. [U1, A1, U2] -> [U1, U2, A2] when a provisional reply is withdrawn on steer)
+        // moves the user's node cleanly instead of mixing user and assistant variants.
+        for (index in messages.indices) {
+            val matchedNodeIndex = nodeIndexByMessageId[messages[index].id]
+            if (matchedNodeIndex != null && !claimedNodes[matchedNodeIndex]) {
+                claimedNodeByMsg[index] = matchedNodeIndex
+                claimedNodes[matchedNodeIndex] = true
+            }
+        }
+
+        // Pass 2: Positional fallback only for unclaimed nodes at the same index whose role matches
+        // (preserves same-slot regenerate sibling variants while never mixing user/assistant roles).
+        for (index in messages.indices) {
+            if (claimedNodeByMsg[index] >= 0) continue
+            val candidate = originalNodes.getOrNull(index) ?: continue
+            if (!claimedNodes[index]
+                && candidate.messages.isNotEmpty()
+                && candidate.messages.all { it.role == messages[index].role }
+            ) {
+                claimedNodeByMsg[index] = index
+                claimedNodes[index] = true
+            }
+        }
+
+        val newNodes = ArrayList<MessageNode>(maxOf(messages.size, originalNodes.size))
         var anyNodeChanged = false
 
         messages.forEachIndexed { index, message ->
-            val existingNode = newNodes.getOrNull(index)
-            if (existingNode == null) {
-                // Brand-new index — append a fresh node.
+            val matchedNodeIndex = claimedNodeByMsg[index]
+            if (matchedNodeIndex < 0) {
                 newNodes.add(message.toMessageNode())
                 anyNodeChanged = true
                 return@forEachIndexed
             }
 
+            val existingNode = originalNodes[matchedNodeIndex]
             val existingIdx = existingNode.messages.indexOfFirst { it.id == message.id }
             // Identity short-circuit: if the incoming UIMessage is the SAME
             // reference as the one already at the selected slot AND that
             // slot is the currently-selected branch, the node is unchanged
             // for every observable purpose. Skip `node.copy(...)` so the
             // outer reference stays stable across the 33ms streaming flush.
-            //
-            // Without this guard, ChatService.updateConversation re-emits
-            // a new MessageNode instance for *every* historical node every
-            // flush, defeating @Immutable MessageNode's reference-equality
-            // skip in LazyColumn item { ChatMessage(node = node) } —
-            // which is precisely the payoff M1.1 was meant to deliver.
-            // (See M1.1 review report for the original analysis.)
             if (existingIdx >= 0
                 && existingNode.messages[existingIdx] === message
                 && existingNode.selectIndex == existingIdx
             ) {
+                newNodes.add(existingNode)
+                if (matchedNodeIndex != index) {
+                    anyNodeChanged = true
+                }
                 return@forEachIndexed
             }
 
             val newMessages = existingNode.messages.toMutableList()
-            var newMessageIndex = existingNode.selectIndex
-            if (existingIdx >= 0) {
+            val newMessageIndex = if (existingIdx >= 0) {
                 newMessages[existingIdx] = message
+                existingIdx
             } else {
                 newMessages.add(message)
-                newMessageIndex = newMessages.lastIndex
+                newMessages.lastIndex
             }
 
-            newNodes[index] = existingNode.copy(
-                messages = newMessages,
-                selectIndex = newMessageIndex
+            newNodes.add(
+                existingNode.copy(
+                    messages = newMessages,
+                    selectIndex = newMessageIndex
+                )
             )
             anyNodeChanged = true
+        }
+
+        // Preserve untouched trailing nodes beyond `messages.size` only if they were not already
+        // claimed/shifted into an earlier slot (prevents duplicating shifted nodes when a draft is withdrawn).
+        for (tailIndex in messages.size until originalNodes.size) {
+            if (!claimedNodes[tailIndex]) {
+                newNodes.add(originalNodes[tailIndex])
+            } else {
+                anyNodeChanged = true
+            }
         }
 
         // If nothing changed at the node-list level either, return `this`
         // so the outer Conversation reference is also preserved — gives
         // every snapshotFlow downstream a chance to short-circuit too.
-        if (!anyNodeChanged && newNodes.size == this.messageNodes.size) {
+        if (!anyNodeChanged && newNodes.size == originalNodes.size) {
             return this
         }
         return this.copy(

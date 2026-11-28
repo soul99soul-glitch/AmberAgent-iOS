@@ -1288,53 +1288,52 @@ private struct ChatComposerInputDockRow: View {
                 sendEnabled: isSendEnabled
             )
 
-        AmberGlassGroup(spacing: 8) {
-            HStack(alignment: .bottom, spacing: 8) {
-                HStack(alignment: .center, spacing: 6) {
-                    ComposerAttachToggleButton(
-                        isExpanded: isAttachExpanded,
-                        isBusy: viewModel.isAttachingSelectedFile,
-                        // 生成中允许加附件以便入队；识图中/审批中/读文件中仍禁用。
-                        isDisabled: viewModel.isRecognizingImages
-                            || viewModel.isAttachingSelectedFile
-                            || hasPendingComposerGate
-                            || viewModel.currentConversationIsOrchestratedChild,
-                        action: onToggleAttach
-                    )
-
-                    ZStack(alignment: .leading) {
-                        ComposerInputTextView(
-                            text: $bindableViewModel.inputText,
-                            height: $composerInputHeight,
-                            isFocused: $isInputFocused,
-                            isEnabled: !hasPendingComposerGate
-                                && !viewModel.currentConversationIsOrchestratedChild
-                                && !collapsesComposerForDuetPanel,
-                            sendOnEnter: sharedSettings.displaySetting.sendOnEnter,
-                            controller: composerInputController,
-                            onSubmit: onSendMessage
-                        )
-                        .frame(height: composerInputHeight)
-
-                        if currentInputText.isEmpty {
-                            ComposerPlaceholderText(text: inputPlaceholder)
-                        }
-                    }
-                    .frame(minHeight: 40)
-                }
-                .padding(.leading, 8)
-                .padding(.trailing, 18)
-                .padding(.vertical, 5)
-                .composerDockGlass(cornerRadius: 27)
-
-                ComposerDockSendButton(
-                    isLoading: isStopMode,
-                    sendEnabled: isSendEnabled,
-                    diameter: 54,
-                    onSend: onSendMessage,
-                    onStop: onStopGeneration
+        // 发送/停止圆钮与左侧输入胶囊独立分离，不包入 GlassEffectContainer，避免 tint 切换叠加键盘收起时玻璃层延迟 morph。
+        HStack(alignment: .bottom, spacing: 8) {
+            HStack(alignment: .center, spacing: 6) {
+                ComposerAttachToggleButton(
+                    isExpanded: isAttachExpanded,
+                    isBusy: viewModel.isAttachingSelectedFile,
+                    // 生成中允许加附件以便入队；识图中/审批中/读文件中仍禁用。
+                    isDisabled: viewModel.isRecognizingImages
+                        || viewModel.isAttachingSelectedFile
+                        || hasPendingComposerGate
+                        || viewModel.currentConversationIsOrchestratedChild,
+                    action: onToggleAttach
                 )
+
+                ZStack(alignment: .leading) {
+                    ComposerInputTextView(
+                        text: $bindableViewModel.inputText,
+                        height: $composerInputHeight,
+                        isFocused: $isInputFocused,
+                        isEnabled: !hasPendingComposerGate
+                            && !viewModel.currentConversationIsOrchestratedChild
+                            && !collapsesComposerForDuetPanel,
+                        sendOnEnter: sharedSettings.displaySetting.sendOnEnter,
+                        controller: composerInputController,
+                        onSubmit: onSendMessage
+                    )
+                    .frame(height: composerInputHeight)
+
+                    if currentInputText.isEmpty {
+                        ComposerPlaceholderText(text: inputPlaceholder)
+                    }
+                }
+                .frame(minHeight: 40)
             }
+            .padding(.leading, 8)
+            .padding(.trailing, 18)
+            .padding(.vertical, 5)
+            .composerDockGlass(cornerRadius: 27)
+
+            ComposerDockSendButton(
+                isLoading: isStopMode,
+                sendEnabled: isSendEnabled,
+                diameter: 54,
+                onSend: onSendMessage,
+                onStop: onStopGeneration
+            )
         }
     }
 }

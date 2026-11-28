@@ -83,6 +83,7 @@ struct ComposerDockSendButton: View {
     var body: some View {
         Button {
             if isStopping { return }
+            AmberHaptics.trigger(isLoading ? .mediumImpact : .lightImpact)
             if isLoading { onStop() } else { onSend() }
         } label: {
             ZStack {
@@ -99,9 +100,9 @@ struct ComposerDockSendButton: View {
             }
             .frame(width: diameter, height: diameter)
             .contentShape(Circle())
-            .modifier(ComposerDockCircleGlass(tint: glassTint))
+            .modifier(ComposerDockCircleGlass(tint: glassTint, interactive: false))
         }
-        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.88, haptic: isLoading ? .mediumImpact : .lightImpact))
+        .buttonStyle(.plain)
         .disabled(!isActionable)
         .disabled(isStopping)
         .accessibilityLabel(isStopping ? "正在停止生成" : (isLoading ? "停止生成" : "发送消息"))
@@ -347,12 +348,16 @@ struct ComposerInputTextView: UIViewRepresentable {
 
 struct ComposerDockCircleGlass: ViewModifier {
     var tint: Color?
+    var interactive: Bool = true
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if #available(iOS 26.0, *) {
             // 单一 glassEffect 调用 —— 只让可空的 tint 参数在 accent ↔ nil 间变化,保持视图身份
             // 不变。垫上轻量材质底与细边,保证后台回前台首帧(CABackdropLayer 重连前)玻璃圆钮持续可见。
+            let effect: Glass = interactive
+                ? .regular.tint(tint).interactive()
+                : .regular.tint(tint)
             content
                 .background {
                     Circle()
@@ -363,7 +368,7 @@ struct ComposerDockCircleGlass: ViewModifier {
                             }
                         }
                 }
-                .glassEffect(.regular.tint(tint).interactive(), in: Circle())
+                .glassEffect(effect, in: Circle())
                 .overlay {
                     Circle()
                         .strokeBorder(
